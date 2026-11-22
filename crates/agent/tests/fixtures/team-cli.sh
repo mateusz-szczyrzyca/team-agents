@@ -44,6 +44,8 @@
 #   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
 #                   the number of the run): a message can reach the agent while its run works
 #   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
+#   clean-sleep     hides own files and ends with STATUS: SLEEPING without changing the worktree
+#   clean-done:TEXT hides own files and ends with TEXT and STATUS: DONE without changing the worktree
 #   split-line:L@S  ends with the line `SPLIT: L` and `STATUS: S` (and, for QUESTIONS, writes questions-1.md in this task's
 #                   directory): a coordinator whose submission the harness may refuse, with the status it ends with
 #   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
@@ -471,6 +473,14 @@ case $action in
     result "${action#target-done:}"'\nSTATUS: DONE'
     ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
+  clean-sleep)
+    hide_own_files
+    result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
+  clean-done:*)
+    hide_own_files
+    result "${action#clean-done:}"'\nSTATUS: DONE'
+    ;;
   return:*)
     spec=${action#return:}
     send_to "${spec%%:*}" "${spec#*:}"

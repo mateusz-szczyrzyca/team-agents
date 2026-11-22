@@ -352,3 +352,54 @@ fn only_a_members_work_is_owed_to_a_lead() {
         );
     }
 }
+
+#[test]
+fn handing_a_task_to_a_split_replacement_does_not_resume_the_previous_holders_session() {
+    let mut state = old_state();
+    assert!(state.find_task(&task()).unwrap().member.last_session().is_some());
+
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.last_session(), None);
+    assert_eq!(member.session_runs().len(), 0);
+    assert_eq!(member.bad_runs_since_renewal(), 0);
+    assert_eq!(member.renewals(), None);
+}
+
+#[test]
+fn replacement_run_keeps_earlier_history_but_only_resumes_its_own_session() {
+    let mut state = old_state();
+    let earlier = state.find_task(&task()).unwrap().member.runs().len();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let session = "replacement-session".parse().unwrap();
+    let (_, mut member) = state.find_task_mut(&task()).unwrap();
+    member
+        .begin_run("run-20261121-000000-frsh".parse().unwrap(), at(), Some(session))
+        .unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.runs().len(), earlier + 1);
+    assert_eq!(member.session_runs().len(), 1);
+    assert_eq!(
+        member.last_session().map(crate::state::SessionId::as_str),
+        Some("replacement-session")
+    );
+}
+
+#[test]
+fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_debt() {
+    let mut state = old_state();
+    state
+        .owe_lead(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert!(
+        !member.owes_lead(),
+        "a replacement owns the work instead of leaving it owed to the lead"
+    );
+    assert_eq!(member.renewals().map(crate::state::Renewals::used), Some(0));
+}

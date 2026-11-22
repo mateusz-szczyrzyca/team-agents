@@ -217,7 +217,7 @@ impl Owner {
     }
 
     /// The agent `name` as the participant of a task, by its tier in the configuration.
-    fn participant_of(&self, name: &AgentName) -> Option<Participant> {
+    pub(super) fn participant_of(&self, name: &AgentName) -> Option<Participant> {
         match self.tier_of(name)? {
             Tier::Investigator => name.as_str().parse().ok().map(Participant::Investigator),
             Tier::Normal => Some(Participant::Normal(name.clone())),
@@ -226,7 +226,7 @@ impl Owner {
     }
 
     /// The names of the agents in a run now, in any team: a task of theirs runs, or a run of it is going.
-    fn agents_in_runs(&self) -> Vec<&str> {
+    pub(super) fn agents_in_runs(&self) -> Vec<&str> {
         self.parts
             .state
             .teams()

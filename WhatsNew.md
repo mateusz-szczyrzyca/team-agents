@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.71.0 — 22.11.2026 — PR #189
+## 0.72.0 — 22.11.2026 — PR #189
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A wrong result of a worker is tried once elsewhere: the request goes to a free worker of another CLI (of the same CLI when no other is free), whose prompt says who served it before and why that result did not serve, and the requester is told it went again. A second wrong result returns the step to the requester with the reasons of both results, and no third worker starts. `[workers] tries = 1` never gives a request to a second worker.
@@ -21,6 +21,19 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Configuration
 - [agent-core] changed: `[workers] tries` (default `2`) is applied now to the result of a run that ended `STATUS: DONE`: a wrong first result goes to a second worker. `1` never gives a request to a second worker; a value above `2` behaves as `2` (a request gets one second try at most). A run that ends otherwise than DONE is still answered as failed at once.
+
+## 0.71.0 — 22.11.2026 — PR #188
+
+### Bug fixes
+- [agent] [agent-core] A split no longer stops silently when its previous member is stopped, failed or handed over: the next part goes to a qualified configured replacement or the lead, or asks the human once when nobody can take it. Splits already waiting for a holder resume after an upgrade or daemon restart.
+- [agent] [agent-core] A lead can report a split part delivered with `DELIVERED: #N` when its pull request was merged outside the harness. The next part opens, and the last part closes the item and team; unrelated, open or unmerged pull requests are refused.
+- [agent] [agent-core] An outside replacement starts its own CLI session and failure history when taking over a task, instead of resuming the previous holder's session; the earlier runs remain in history.
+- [agent] [agent-core] A later split part accepts a merged pull request from its parent task branch as well as its current part branch, including after the lead takes over.
+- [agent] [agent-core] A replacement starts only after its new split round opens; a branch collision keeps the old holder stopped until the round can open. A replacement can also continue a stopped lead's task.
+
+### Configuration
+- [agent] [agent-core] changed: `[replacement] mode` (default `"auto"`) also controls who takes the next split part when its previous holder cannot continue; `auto` tries configured replacements then the lead, `lead` tries the lead, and `off` asks the human.
+- [agent] [agent-core] changed: `[replacement] agents` (default `[]`) also orders the qualified replacements considered for the next split part; an empty list leaves the lead as the automatic fallback.
 
 ## 0.70.0 — 22.11.2026 — PR #187
 

@@ -104,6 +104,9 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
+    /// The last run of the previous holder; omitted for tasks written before holder boundaries.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    holder_after_run: Option<RunId>,
 }
 
 /// Why a task begins a new session.
@@ -149,6 +152,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before hand-overs existed has none.
     #[serde(default)]
     past_holders: Vec<holding::Holding>,
+    /// See [`Member`]; legacy tasks have no holder boundary.
+    #[serde(default)]
+    holder_after_run: Option<RunId>,
 }
 
 /// Serializes a member's [`PlanKeeping`] while storing its `judging` marker in `plan_judging` on the enclosing
@@ -430,6 +436,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            holder_after_run: None,
         }
     }
 
@@ -449,6 +456,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            holder_after_run: None,
         }
     }
 
@@ -467,6 +475,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            holder_after_run: None,
         }
     }
 
@@ -530,7 +539,7 @@ impl Member {
     getter!(
         "The session of the latest run since the task was last started anew that has one: the one a new run resumes. \
          No session of a run before that renewal is resumed.",
-        pub fn last_session(&self) -> Option<&SessionId> = renewal::runs_since(&self.runs, self.renewals.as_ref())
+        pub fn last_session(&self) -> Option<&SessionId> = self.session_runs()
         .iter()
         .rev()
         .find_map(Run::session)
@@ -755,6 +764,8 @@ impl Member {
     /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own. Only
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
+        self.holder_after_run = self.runs.last().map(|run| run.id().clone());
+        self.lead_told();
         let before = std::mem::replace(&mut self.agent, holder);
         self.past_holders.push(holding::Holding {
             agent: before,
@@ -814,7 +825,19 @@ impl Member {
     /// The runs of the session the task is in: those since it was last started anew, or all of them.
     #[must_use]
     pub fn session_runs(&self) -> &[Run] {
-        renewal::runs_since(&self.runs, self.renewals.as_ref())
+        let runs = renewal::runs_since(&self.runs, self.renewals.as_ref());
+        let Some(boundary) = &self.holder_after_run else {
+            return runs;
+        };
+        let mut remaining = runs;
+        while let Some((run, rest)) = remaining.split_first() {
+            if run.id() == boundary {
+                return rest;
+            }
+            remaining = rest;
+        }
+        // A later renewal may already have excluded the previous holder's last run.
+        runs
     }
 
     /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
@@ -828,14 +851,14 @@ impl Member {
     /// How many of the latest runs went bad in a row since the task was started anew.
     #[must_use]
     pub fn bad_runs_since_renewal(&self) -> u32 {
-        let Some(end) = self.runs.last().and_then(|run| match run.state() {
+        let Some(end) = self.session_runs().last().and_then(|run| match run.state() {
             RunState::Ended { end, .. } => Some(end),
             RunState::Running => None,
         }) else {
             return 0;
         };
         renewal::trouble_of(end).map_or(0, |trouble| {
-            renewal::bad_runs_in_a_row(&self.runs, self.renewals.as_ref(), trouble)
+            renewal::bad_runs_in_a_row(self.session_runs(), None, trouble)
         })
     }
 
@@ -1006,6 +1029,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                holder_after_run: None,
             };
             member.sync_plan_judging();
             check_member(&member)?;
