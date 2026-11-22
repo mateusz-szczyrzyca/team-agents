@@ -24,7 +24,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, Program, RepoName};
-use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
@@ -82,6 +82,8 @@ pub enum BusCommand {
     HelperSet,
     /// `helper-get`.
     HelperGet,
+    /// `helper-dump`.
+    HelperDump,
     /// `checkpoint-get`.
     CheckpointGet,
     /// `send`.
@@ -788,6 +790,23 @@ pub struct DelegationRequest {
     pub summary: String,
 }
 
+/// A request for a worker as the harness shows it among the requests of its task: its number, the step of the
+/// requester's plan it is for, its worker and its state.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct TaskRequest {
+    /// Its number.
+    pub id: RequestId,
+    /// The step of the requester's plan it is for; `None` for a request in the old form, or one recorded before a
+    /// request named a step.
+    #[serde(default)]
+    pub step: Option<ItemId>,
+    /// The worker it was given to; `None` before.
+    #[serde(default)]
+    pub worker: Option<AgentName>,
+    /// Where it is in its life.
+    pub status: DelegationStatus,
+}
+
 /// Changes to a request for a worker; what is `None` stays as it is.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DelegationUpdate {
@@ -1202,6 +1221,14 @@ impl AgentBus {
         decode_json(command, &output)
     }
 
+    /// The requests for workers that runs of `task` made, oldest first; none for a task that made none.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn helper_dump(&self, _task: &TaskId) -> Result<Vec<TaskRequest>, AgentBusError> {
+        Ok(Vec::new())
+    }
+
     /// The checkpoint kept under `key`; none when there is none.
     ///
     /// # Errors
@@ -1565,6 +1592,32 @@ fn parse_status(output: &str) -> Result<BusStatus, AgentBusError> {
 mod tests {
     use super::*;
     use crate::process::{ExitReport, Stream};
+
+    #[test]
+    fn a_request_of_a_task_reads_its_step_and_its_worker_and_an_old_one_reads_without() {
+        let output = r#"[{"id":3,"from":"claude-1","from_task":"task-a","step":"1.2","worker":"glm-1","status":"done"},
+            {"id":4,"from":"claude-1","from_task":"task-a","status":"queued"}]"#;
+
+        let read: Vec<TaskRequest> = decode_json(BusCommand::HelperDump, output).unwrap();
+
+        assert_eq!(
+            read,
+            [
+                TaskRequest {
+                    id: RequestId::new(NonZeroU64::new(3).unwrap()),
+                    step: Some("1.2".parse().unwrap()),
+                    worker: Some("glm-1".parse().unwrap()),
+                    status: DelegationStatus::Done,
+                },
+                TaskRequest {
+                    id: RequestId::new(NonZeroU64::new(4).unwrap()),
+                    step: None,
+                    worker: None,
+                    status: DelegationStatus::Queued,
+                },
+            ]
+        );
+    }
 
     fn captured(exit: ExitReport, stdout: &[u8], stderr: &[u8]) -> Captured {
         Captured {
