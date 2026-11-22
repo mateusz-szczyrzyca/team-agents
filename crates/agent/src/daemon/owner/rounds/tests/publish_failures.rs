@@ -326,7 +326,11 @@ async fn conflict_changes_read_failure_routes_through_publish_failed_keeping_pas
         .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(item.merge_passes(), 1, "pushed conflict pass must stay accounted");
-    assert_eq!(item.conflict_accounted_head(), Some(&approved_head), "accounted head must be retained");
+    assert_eq!(
+        item.conflict_accounted_head(),
+        Some(&approved_head),
+        "accounted head must be retained"
+    );
     assert_eq!(item.conflict_refunded_head(), None, "must not be marked refunded");
 
     rig.stop().await.unwrap();
