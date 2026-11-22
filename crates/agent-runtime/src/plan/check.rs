@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::{self, SeekFrom};
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::time::{Duration, Instant};
@@ -497,4 +497,13 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
         }
         Check::Exists(repo_path) => check_exists(context.worktree, repo_path, check.to_string()).await,
     }
+}
+
+/// Ends the process group of a command check that a daemon which died left running in `task_dir`, and removes its record.
+///
+/// # Errors
+/// [`CheckError`] when the record cannot be read, is not a process ID, or its group cannot be ended.
+pub fn recover_checks(task_dir: &Path) -> Result<Option<NonZeroU32>, CheckError> {
+    let _ = task_dir;
+    Ok(None)
 }

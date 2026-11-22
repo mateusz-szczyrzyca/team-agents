@@ -626,3 +626,87 @@ async fn output_creation_failure_mismatches_without_running_command() {
     assert_eq!(result.output_path, None);
     assert!(!env.worktree.join("executed").exists());
 }
+
+/// The path of the record of the check that runs in `task_dir`.
+fn running_record(task_dir: &std::path::Path) -> std::path::PathBuf {
+    task_dir.join("checks").join("running")
+}
+
+#[tokio::test]
+async fn check_command_records_its_process_while_it_runs_and_clears_the_record_when_it_ends() {
+    let env = TestEnv::new();
+    let command = "sleep 30";
+    let step = parse_first_step("[x] 1.1 First item\n    Check: sleep 30\n");
+    let record = running_record(&env.task_dir);
+    let refuse: Vec<String> = Vec::new();
+    let ctx = CheckContext {
+        worktree: &env.worktree,
+        task_dir: &env.task_dir,
+        run: Some(&env.run),
+        check_seconds: 1,
+        check_refuse: &refuse,
+        envs: &[],
+    };
+
+    let running = super::execute_command_check(&ctx, &step, command);
+    tokio::pin!(running);
+    let mut seen = None;
+    let result = loop {
+        tokio::select! {
+            result = &mut running => break result.unwrap(),
+            () = tokio::time::sleep(std::time::Duration::from_millis(10)), if seen.is_none() => {
+                seen = fs::read_to_string(&record).ok();
+            }
+        }
+    };
+
+    let pid = seen.expect("the record of the process is written while the check runs");
+    assert!(pid.trim().parse::<u32>().is_ok(), "the record holds a process ID: {pid:?}");
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert_eq!(result.reason.as_deref(), Some("ran past 1 seconds"));
+    assert!(!record.exists(), "the record is cleared when the check has ended");
+}
+
+#[test]
+fn recover_checks_ends_the_group_of_a_check_left_by_a_dead_daemon() {
+    use std::os::unix::process::CommandExt;
+
+    let env = TestEnv::new();
+    let record = running_record(&env.task_dir);
+    fs::create_dir_all(record.parent().expect("checks dir")).expect("checks dir");
+    let mut child = std::process::Command::new("sleep")
+        .arg("300")
+        .process_group(0)
+        .spawn()
+        .expect("spawn sleep");
+    fs::write(&record, format!("{}\n", child.id())).expect("write record");
+
+    let ended = super::recover_checks(&env.task_dir).expect("recovery");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break Some(status);
+        }
+        if std::time::Instant::now() >= deadline {
+            break None;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    if status.is_none() {
+        child.kill().expect("cleanup kill");
+        child.wait().expect("cleanup wait");
+    }
+    assert!(status.is_some(), "the group of the left-over check is ended");
+    assert!(ended.is_some(), "the recovery reports the group it ended");
+    assert!(!record.exists(), "the record is removed by the recovery");
+}
+
+#[test]
+fn recover_checks_without_a_record_does_nothing() {
+    let env = TestEnv::new();
+
+    let ended = super::recover_checks(&env.task_dir).expect("recovery");
+
+    assert_eq!(ended, None);
+}
