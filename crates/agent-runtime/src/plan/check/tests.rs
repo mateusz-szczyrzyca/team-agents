@@ -752,3 +752,58 @@ async fn check_command_mismatches_without_running_when_its_record_cannot_be_writ
         result.reason
     );
 }
+
+#[test]
+fn recover_checks_leaves_an_unrelated_process_group_alone_when_start_time_differs() {
+    use std::os::unix::process::CommandExt;
+
+    let env = TestEnv::new();
+    let record = running_record(&env.task_dir);
+    fs::create_dir_all(record.parent().expect("checks dir")).expect("checks dir");
+    let mut child = std::process::Command::new("sleep")
+        .arg("300")
+        .process_group(0)
+        .spawn()
+        .expect("spawn sleep");
+    let ticks = start_ticks_of(child.id());
+    fs::write(&record, format!("{} {}\n", child.id(), ticks.saturating_add(1))).expect("write mismatched record");
+
+    let ended = super::recover_checks(&env.task_dir).expect("recovery ignores reused PID");
+    let still_alive = child.try_wait().expect("try_wait").is_none();
+    child.kill().expect("cleanup kill");
+    child.wait().expect("cleanup wait");
+
+    assert_eq!(ended, None);
+    assert!(
+        still_alive,
+        "unrelated process with different start time is not signalled"
+    );
+    assert!(!record.exists(), "stale record is removed");
+}
+
+#[tokio::test]
+async fn check_command_does_not_spawn_process_when_record_cannot_be_written() {
+    let env = TestEnv::new();
+    fs::create_dir_all(running_record(&env.task_dir)).expect("record blocker");
+    let step = parse_first_step("[x] 1.1 First item\n    Check: touch spawned.txt\n");
+    let ctx = env.context(60, &[]);
+
+    let result = super::execute_command_check(&ctx, &step, "touch spawned.txt")
+        .await
+        .unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(
+        result
+            .reason
+            .as_deref()
+            .unwrap()
+            .starts_with("cannot record the running check"),
+        "reason: {:?}",
+        result.reason
+    );
+    assert!(
+        !env.worktree.join("spawned.txt").exists(),
+        "command must not run before its record is writable"
+    );
+}

@@ -9,6 +9,7 @@ use std::num::NonZeroU32;
 use serde::{Deserialize, Serialize};
 
 use super::run::RunEnd;
+use crate::decide::outcome::Pause;
 use crate::ids::{ItemId, RunId};
 
 /// The record of a finished run whose plan checks or settlement are in progress (`docs/state.md`).
@@ -19,15 +20,15 @@ pub struct RunningPlanCheck {
     pub run: RunId,
     /// How the run ended.
     pub end: RunEnd,
+    /// The pause the run's end implies, when it ended with a provider limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause: Option<Pause>,
+    /// Whether the run made progress before it ended.
+    #[serde(default)]
+    pub made_progress: bool,
     /// The agent's final message of the run, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_message: Option<String>,
-    /// The step whose command check is running now, when one is.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub step: Option<ItemId>,
-    /// The process group ID of the running command check, when one is running.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pid: Option<NonZeroU32>,
 }
 
 /// Where the task is with its plan: going back until it is clean, asked about, or released by the human.

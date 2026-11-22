@@ -673,7 +673,7 @@ impl Owner {
     /// Ends the runs a restart left going and finds the pauses to wake.
     async fn recover(&mut self) -> Result<(), OwnerError> {
         // A command check a dead daemon left running is ended before any run is looked at: nothing runs without its daemon.
-        self.end_leftover_checks();
+        self.end_leftover_checks()?;
         let now = Timestamp::now(&self.parts.clock)?;
         let recovery = recover(&mut self.parts.state, now, self.parts.settings.config.limits())?;
         for (at, task) in recovery.wakes {
@@ -1186,9 +1186,9 @@ impl Owner {
                         member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
                             run: run_id,
                             end: run.classified.end.clone(),
+                            pause: None,
+                            made_progress: true,
                             final_message: run.final_message.clone(),
-                            step: wait.commands.first().map(|(step, _)| *step),
-                            pid: None,
                         }));
                         self.save().await?;
                     }

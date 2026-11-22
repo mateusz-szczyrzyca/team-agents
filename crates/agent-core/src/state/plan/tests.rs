@@ -98,3 +98,40 @@ fn state_from_main_before_running_check_loads() {
     let state = crate::state::State::from_json(fixture).expect("legacy state from main loads");
     assert_eq!(state.teams().len(), 3);
 }
+
+#[test]
+fn legacy_member_without_plan_persists_running_plan_check_without_enabling_plan_keeping() {
+    use crate::decide::outcome::{Pause, PauseReason};
+    use crate::state::Member;
+    use crate::state::fixtures::{at, normal, task};
+
+    let mut member = Member::without_plan(task(1), normal("claude-1"));
+    assert_eq!(member.plan(), None);
+    assert_eq!(member.plan_running_check(), None);
+
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::RateLimited,
+        pause: Some(Pause {
+            until: at(600),
+            reason: PauseReason::RateLimit,
+            evidence: "429 Too Many Requests".to_owned(),
+        }),
+        made_progress: false,
+        final_message: None,
+    };
+    member.set_plan_running_check(Some(check.clone()));
+    assert_eq!(member.plan(), None, "legacy member still has no PlanKeeping");
+    assert_eq!(member.plan_running_check(), Some(&check));
+
+    let json = serde_json::to_string(&member).expect("serialize legacy member with running_check");
+    assert!(json.contains(r#""running_check":"#), "{json}");
+    let loaded: Member = serde_json::from_str(&json).expect("deserialize legacy member with running_check");
+    assert_eq!(loaded.plan(), None);
+    assert_eq!(loaded.plan_running_check(), Some(&check));
+
+    member.set_plan_running_check(None);
+    assert_eq!(member.plan_running_check(), None);
+    let cleared = serde_json::to_string(&member).expect("serialize cleared legacy member");
+    assert!(!cleared.contains("running_check"), "{cleared}");
+}

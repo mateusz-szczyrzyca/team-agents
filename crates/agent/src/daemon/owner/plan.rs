@@ -951,10 +951,12 @@ impl Owner {
     }
 
     /// Ends the command checks that a daemon which died left running, from their records, before any run is looked at.
-    /// Each ended check is reported; a record that cannot be used is reported too, and the daemon starts anyway.
-    pub(super) fn end_leftover_checks(&self) {
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the tasks directory cannot be read or a recorded check cannot be ended.
+    pub(super) fn end_leftover_checks(&self) -> Result<(), OwnerError> {
         let Ok(entries) = std::fs::read_dir(self.parts.store.home().tasks_dir()) else {
-            return;
+            return Ok(());
         };
         for entry in entries.flatten() {
             let Ok(name) = entry.file_name().into_string() else {
@@ -972,6 +974,7 @@ impl Owner {
                 );
             }
         }
+        Ok(())
     }
 
     /// Finishes the runs that had ended before a restart and were waiting for their plan command checks or settlement.

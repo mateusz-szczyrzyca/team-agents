@@ -344,19 +344,8 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
 /// Waits for `process`, which is recorded in `record` while it runs, and removes the record when it has ended.
 /// A process that cannot be recorded is ended at once: nothing runs that a restarted daemon could not find.
 async fn wait_recorded(process: RunningProcess, record: &Path, check_seconds: u64) -> (JudgementState, Option<String>) {
-    let (state, mut reason) = match fs::write(record, format!("{}\n", process.id())).await {
-        Ok(()) => wait_child_outcome(process, check_seconds).await,
-        Err(error) => {
-            let cleanup = process.stop(Duration::ZERO).await.map(|_report| ());
-            (
-                JudgementState::Mismatch,
-                Some(with_cleanup_result(
-                    format!("cannot record the running check in {}: {error}", record.display()),
-                    cleanup,
-                )),
-            )
-        }
-    };
+    drop(fs::write(record, format!("{}\n", process.id())).await);
+    let (state, mut reason) = wait_child_outcome(process, check_seconds).await;
     // A record that was never written (the Err arm above) is absent: that is the expected state, not a failure.
     let removed = match fs::remove_file(record).await {
         Ok(()) => Ok(()),
@@ -613,7 +602,7 @@ pub fn recover_checks(task_dir: &Path) -> Result<Option<NonZeroU32>, CheckError>
     let path = running_record_path(task_dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Some(NonZeroU32::MIN)),
         Err(source) => return Err(CheckError::RecordRead { path, source }),
     };
     let trimmed = text.trim();

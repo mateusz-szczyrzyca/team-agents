@@ -1333,3 +1333,558 @@ async fn a_restart_after_the_judgement_is_recorded_settles_the_run_without_rerun
         agent_core::plan::judge::JudgementState::Confirmed
     );
 }
+
+/// Waits for `path` to hold a process ID and returns it.
+async fn wait_for_pid_file(path: &std::path::Path) -> u32 {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(pid) = text.trim().parse::<u32>()
+        {
+            return pid;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "timed out waiting for pid file {}",
+            path.display()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Ends process group `pid` if a test failure left it running.
+fn cleanup_group_if_alive(pid: u32) {
+    if process_runs(pid)
+        && let Ok(raw) = i32::try_from(pid)
+        && let Some(group) = rustix::process::Pid::from_raw(raw)
+        && rustix::process::kill_process_group(group, rustix::process::Signal::KILL).is_err()
+    {}
+}
+
+#[tokio::test]
+async fn a_refused_gate_command_check_is_judged_declared_with_its_refused_reason() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Refused\n    Check: agent gate\n"),
+    )
+    .await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let judgement = judgement_of(&daemon, "1.1");
+    assert_eq!(judgement.state, agent_core::plan::judge::JudgementState::Declared);
+    assert_eq!(judgement.reason.as_deref(), Some("refused gate command"));
+}
+
+#[tokio::test]
+async fn stopping_or_pausing_a_task_while_its_command_check_runs_ends_the_check_and_halts_the_task() {
+    use agent_core::protocol::{Command, ControlRequest, Target};
+
+    for (control, expected_status) in [
+        (
+            Command::Pause(ControlRequest {
+                target: Target::Task(task(1)),
+            }),
+            TaskStatus::Paused,
+        ),
+        (
+            Command::Stop(ControlRequest {
+                target: Target::Task(task(1)),
+            }),
+            TaskStatus::Stopped,
+        ),
+    ] {
+        let mut daemon = with_bounces(&solo_state(), 0);
+        let dir = daemon.scenario(1, "done");
+        std::fs::create_dir_all(dir.join(".agent")).unwrap();
+        std::fs::write(
+            dir.join(".agent/plan.md"),
+            "Finish it.\n\n1. Work\n[x] 1.1 Long\n    Check: /bin/sh -c 'echo $$ > check.pid; sleep 300'\n",
+        )
+        .unwrap();
+        daemon.start().await;
+
+        let group = wait_for_pid_file(&dir.join("check.pid")).await;
+        let reply = daemon.ask(control).await.unwrap();
+        assert_eq!(reply, agent_core::protocol::Reply::Applied { tasks: vec![task(1)] });
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while process_runs(group) && std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let check_still_running = process_runs(group);
+        let saved = State::from_json(&std::fs::read_to_string(daemon.home.state_file()).unwrap()).unwrap();
+        let member = saved.find_task(&task(1)).unwrap().member.clone();
+        cleanup_group_if_alive(group);
+        daemon.stop().await.unwrap();
+
+        assert!(
+            !check_still_running,
+            "the running command check group {group} must be ended by stop/pause"
+        );
+        assert_eq!(member.status(), expected_status);
+        assert_eq!(member.plan_running_check(), None);
+        assert!(!daemon.home.task_dir(&task(1)).join("checks").join("running").exists());
+    }
+}
+
+#[tokio::test]
+async fn a_legacy_task_restarted_while_its_command_check_runs_settles_once_without_rerunning_cli() {
+    let mut state = State::new();
+    let crew = Crew::solo(Member::without_plan(task(1), normal("claude-1"))).unwrap();
+    state
+        .insert_team(Team::new(
+            team_id(0),
+            repo(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(LIST.to_owned()).unwrap(),
+            crew,
+        ))
+        .unwrap();
+    let mut daemon = with_bounces(&state, 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Legacy\n    Check: /bin/sh -c 'echo $$ > check.pid; if [ ! -f restarted.txt ]; then sleep 300; fi; touch legacy-checked.txt'\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let group = wait_for_pid_file(&dir.join("check.pid")).await;
+    cleanup_group_if_alive(group);
+    daemon.stop().await.unwrap();
+
+    std::fs::write(dir.join("restarted.txt"), "yes").unwrap();
+    daemon.start().await;
+    let settled = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let member = settled.find_task(&task(1)).unwrap().member;
+    assert_eq!(member.plan(), None, "legacy member still has no PlanKeeping");
+    assert_eq!(
+        member.runs().len(),
+        1,
+        "legacy member's finished run must settle once without rerunning the CLI"
+    );
+    assert_eq!(member.plan_running_check(), None);
+    assert!(dir.join("legacy-checked.txt").exists());
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_restart_during_a_second_command_check_keeps_the_first_judgement_and_does_not_rerun_it() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    let plan = concat!(
+        "Finish it.\n\n1. Work\n",
+        "[x] 1.1 First\n",
+        "    Check: /bin/sh -c 'echo ran >> first.txt'\n",
+        "[x] 1.2 Second\n",
+        "    Check: /bin/sh -c 'echo $$ > second.pid; if [ ! -f restarted.txt ]; then sleep 300; fi; echo ran >> second.txt'\n",
+    );
+    std::fs::write(dir.join(".agent/plan.md"), plan).unwrap();
+    daemon.start().await;
+
+    let group = wait_for_pid_file(&dir.join("second.pid")).await;
+    cleanup_group_if_alive(group);
+    daemon.stop().await.unwrap();
+
+    std::fs::write(dir.join("restarted.txt"), "yes").unwrap();
+    daemon.start().await;
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let first_runs = std::fs::read_to_string(dir.join("first.txt")).unwrap();
+    assert_eq!(
+        first_runs.lines().count(),
+        1,
+        "the first command check was already persisted before the restart and must not rerun"
+    );
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    assert_eq!(
+        reader.step_judgements(&task(1)).unwrap().len(),
+        2,
+        "exactly two step judgement rows exist across the restart"
+    );
+    assert_eq!(
+        reader.plan_versions(&task(1)).unwrap().len(),
+        1,
+        "exactly one plan version row exists across the restart"
+    );
+}
+
+#[tokio::test]
+async fn mixed_inline_and_command_checks_keep_inline_states_in_status_when_history_is_disabled() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_core::state::{NewRun, RunEnd};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join("ok.txt"), "present").unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Exists\n    Check: exists ok.txt\n[x] 1.2 Command\n    Check: /bin/sh -c 'exit 0'\n",
+    )
+    .unwrap();
+
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id,
+                at: at(0),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+
+    owner
+        .finished(
+            &task(1),
+            FinishedRun {
+                classified: Classified {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                    pause: None,
+                },
+                finish: RunFinish {
+                    exit: ExitStatus::Code(0),
+                    stopped_by: StoppedBy::Nobody,
+                },
+                progress: Progress::Made,
+                session: None,
+                final_message: Some("STATUS: DONE".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+
+    let joined = owner.checks.join_next_with_id().await.expect("command check batch");
+    owner.check_batch_done(joined).await.unwrap();
+
+    let summaries = owner.task_plans.get(&task(1)).expect("cached task plan summaries");
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(
+        summaries[0].state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed),
+        "inline check judgement must be preserved in cached status summaries when history is disabled"
+    );
+    assert_eq!(
+        summaries[1].state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+}
+
+#[tokio::test]
+async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use agent_core::state::{NewRun, RunEnd, RunningPlanCheck};
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+
+    // Case 1: pause until timestamp is preserved as classified when the run finished, not recomputed from restart time.
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id.clone(),
+                at: at(0),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.set_plan_running_check(Some(RunningPlanCheck {
+            run: run_id,
+            end: RunEnd::RateLimited,
+            pause: Some(Pause {
+                until: at(1200),
+                reason: PauseReason::RateLimit,
+                evidence: "HTTP 429 Too Many Requests".to_owned(),
+            }),
+            made_progress: true,
+            final_message: None,
+        }));
+    }
+    owner.recover_plan_checks().await.unwrap();
+    assert_eq!(
+        owner.wakes.get(&task(1)),
+        Some(&at(1200)),
+        "recovered pause wake time must match the run's classified pause"
+    );
+
+    // Case 2: a hung run that made no progress increments hang strikes on recovery instead of resetting to 1.
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.hangs.insert(task(1), 1);
+    let run_id: agent_core::ids::RunId = "run-20261122-060500-efgh".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id.clone(),
+                at: at(0),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.set_plan_running_check(Some(RunningPlanCheck {
+            run: run_id,
+            end: RunEnd::Hung,
+            pause: None,
+            made_progress: false,
+            final_message: None,
+        }));
+    }
+    owner.recover_plan_checks().await.unwrap();
+    assert_ne!(
+        owner.hangs.get(&task(1)),
+        Some(&1),
+        "a recovered hang without progress must not reset the hang strike count to 1"
+    );
+}
+
+#[tokio::test]
+async fn deferred_and_reviewer_target_cleanup_waits_until_parked_command_checks_finish() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_core::state::{NewRun, RunEnd};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::create_dir_all(dir.join("target")).unwrap();
+    std::fs::write(dir.join("target/built.txt"), "artifact").unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Build\n    Check: /bin/sh -c 'test -f target/built.txt'\n",
+    )
+    .unwrap();
+
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let round_id = agent_core::ids::RoundId::derive(&team_id(0), 1);
+    owner
+        .parts
+        .state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(round_id.clone(), Some("1.1".parse().unwrap()), at(0))
+        .unwrap();
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id,
+                at: at(0),
+                session: None,
+                rounds: vec![round_id.clone()],
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+
+    owner
+        .finished(
+            &task(1),
+            FinishedRun {
+                classified: Classified {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                    pause: None,
+                },
+                finish: RunFinish {
+                    exit: ExitStatus::Code(0),
+                    stopped_by: StoppedBy::Nobody,
+                },
+                progress: Progress::Made,
+                session: None,
+                final_message: Some("STATUS: DONE".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(owner.parked.contains_key(&task(1)));
+
+    // Closing a round while the task's command check is parked must defer target removal until the check finishes.
+    owner.cleanup_round_targets(&team_id(0), &round_id);
+    assert!(
+        owner.deferred_targets.contains_key(&task(1)),
+        "round target cleanup must defer while a task's command check is parked"
+    );
+
+    let joined = owner.checks.join_next_with_id().await.expect("command check batch");
+    owner.check_batch_done(joined).await.unwrap();
+    assert!(
+        !owner.deferred_targets.contains_key(&task(1)),
+        "deferred target cleanup is released once the parked command check settles"
+    );
+}
+
+#[tokio::test]
+async fn unreadable_history_during_recovery_does_not_rerun_command_checks() {
+    use agent_core::state::{NewRun, RunEnd, RunningPlanCheck};
+    use agent_core::status::RunOutcome;
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'touch reran.txt'\n",
+    )
+    .unwrap();
+    // Write a corrupt history.db file so Reader::open fails with a read error.
+    std::fs::write(daemon.home.history_file(), b"corrupt-sqlite-header").unwrap();
+
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id.clone(),
+                at: at(0),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.set_plan_running_check(Some(RunningPlanCheck {
+            run: run_id,
+            end: RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            pause: None,
+            made_progress: true,
+            final_message: Some("STATUS: DONE".to_owned()),
+        }));
+    }
+
+    let result = owner.recover_plan_checks().await;
+    for (_id, _task) in owner.checking.drain() {}
+    owner.checks.abort_all();
+    assert!(
+        result.is_err() || owner.parked.is_empty(),
+        "recovery must not spawn command checks when an existing history.db cannot be read"
+    );
+    assert!(
+        !dir.join("reran.txt").exists(),
+        "command check must not rerun when existing judgements in history.db are unreadable"
+    );
+}
+
+#[tokio::test]
+async fn check_environment_failure_and_leftover_check_errors_are_reported() {
+    use super::super::Located;
+    use agent_core::decide::plan::PlanRead;
+    use agent_core::kinds::Role;
+    use agent_core::plan::parse_plan;
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let checks_dir = daemon.home.task_dir(&task(1)).join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    std::fs::write(checks_dir.join("running"), "not-a-pid\n").unwrap();
+
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let leftover = owner.end_leftover_checks();
+    assert!(
+        leftover.is_err(),
+        "end_leftover_checks must propagate an invalid or unkillable running check record"
+    );
+    std::fs::remove_file(checks_dir.join("running")).unwrap();
+
+    let bad_located = Located {
+        team: team_id(0),
+        role: Role::Solo,
+        agent: "invalid agent name".to_owned(),
+    };
+    let plan = parse_plan("Finish it.\n\n1. Work\n[x] 1.1 Cmd\n    Check: /bin/sh -c 'exit 0'\n").unwrap();
+    let found = super::Found {
+        read: PlanRead::Parsed(plan),
+        text: None,
+    };
+    let worktree = owner.worktree_of(&task(1), &bad_located).unwrap();
+    let judged = owner
+        .judge_steps_at_end(
+            &task(1),
+            &bad_located,
+            None,
+            &found,
+            &worktree,
+            (None, &std::collections::HashMap::new()),
+        )
+        .await
+        .unwrap();
+    let super::Judged::Known(records) = judged else {
+        panic!("expected Known judgements when check_environment fails");
+    };
+    let step_id: ItemId = "1.1".parse().unwrap();
+    let record = records.get(&step_id).expect("mismatch record for step 1.1");
+    assert_eq!(record.state, agent_core::plan::judge::JudgementState::Mismatch);
+    assert!(
+        record
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("cannot prepare the environment of the check: invalid agent name \"invalid agent name\""),
+        "reason: {:?}",
+        record.reason
+    );
+}
