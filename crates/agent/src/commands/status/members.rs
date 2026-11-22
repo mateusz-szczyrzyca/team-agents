@@ -5,7 +5,7 @@ use agent_core::ids::TaskId;
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::protocol::{MemberSummary, TeamSummary};
-use agent_core::state::{Activity, ActivityOutcome};
+use agent_core::state::{Activity, ActivityEnd, ActivityOutcome};
 use agent_core::status::TaskStatus;
 
 use super::reviewer;
@@ -75,9 +75,38 @@ pub(super) fn listed(member: &MemberSummary, activities: &[Activity]) -> bool {
 
 /// Whether the short view lists a task of `role` in `status`; `review` is the outcome of the newest activity the team
 /// recorded of it, `None` when it recorded none.
-pub(super) const fn alive(_role: Role, _status: TaskStatus, _review: Option<&ActivityOutcome>) -> bool {
-    // RED: the stub lists no task, as the short view did before.
-    false
+///
+/// The team's own tasks — a solo task, the coordinator, a member, a worker — are always listed: the human wants to see
+/// the team, also the one that stopped, failed or is done. A reviewer is listed while its review is not over: always
+/// while its task runs, never once its task is done or stopped, and otherwise unless the record says the review ended
+/// for good — with its report, stopped by the human, or as a second opinion that was abandoned. A review that failed
+/// is still listed: its task can be resumed.
+pub(super) const fn alive(role: Role, status: TaskStatus, review: Option<&ActivityOutcome>) -> bool {
+    match role {
+        Role::Solo | Role::Coordinator | Role::Member | Role::Worker => true,
+        Role::Reviewer => match status {
+            TaskStatus::Running => true,
+            TaskStatus::Done | TaskStatus::Stopped => false,
+            TaskStatus::Waiting
+            | TaskStatus::Questions
+            | TaskStatus::Queued
+            | TaskStatus::Paused
+            | TaskStatus::Failed => match review {
+                None
+                | Some(
+                    ActivityOutcome::Working
+                    | ActivityOutcome::Finished {
+                        end: ActivityEnd::Failed { .. },
+                        ..
+                    },
+                ) => true,
+                Some(ActivityOutcome::Finished {
+                    end: ActivityEnd::Reported | ActivityEnd::Stopped | ActivityEnd::OpinionFailed { .. },
+                    ..
+                }) => false,
+            },
+        },
+    }
 }
 
 #[cfg(test)]

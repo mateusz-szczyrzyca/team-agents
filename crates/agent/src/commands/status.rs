@@ -147,11 +147,12 @@ pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
     zone.stamp(at)
 }
 
-/// What a list of the teams prints of each team: the short view of the team, its rounds and a count of its tasks, or
-/// the tasks with their plans and parts as before the short view.
+/// What a list of the teams prints of each team: the short view of the team, its rounds, its tasks that are alive and
+/// a count of its tasks, or every task with its plan, and the parts, as before the short view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Detail {
-    /// The team, its rounds and a count of its tasks, with the questions that wait for answers named.
+    /// The team, its rounds, a line for each of its tasks that is alive (its crew, its workers and the reviewers whose
+    /// review is not over) and a count of all its tasks, with the questions that wait for answers named.
     Short,
     /// The team, its rounds, its tasks with their plans, and its parts.
     Tasks,
