@@ -5,6 +5,7 @@
 //! on the remote or not — is never touched; where one slipped through, the checks before the review find it.
 
 pub mod hooks;
+pub mod text;
 
 use agent_core::config::Checks;
 use agent_core::decide::commit_guard::{PendingCommit, Verdict, frozen_tests, judge_commit};
