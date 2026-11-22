@@ -23,6 +23,8 @@ pub struct Replacement {
     replacements: replacements::Limit,
     /// How many times the lead may return an item before the agent that holds it is replaced; `0` never replaces it.
     rejections: rejections::Limit,
+    /// Seconds a queued task waits for its busy agent before it is handed over to a free agent; `0` never hands one over.
+    busy_after: u32,
 }
 
 impl Replacement {
@@ -54,6 +56,12 @@ impl Replacement {
     #[must_use]
     pub const fn rejections(&self) -> rejections::Limit {
         self.rejections
+    }
+
+    /// Seconds a queued task waits for its busy agent before a free agent takes it over; `0` never takes one over.
+    #[must_use]
+    pub const fn busy_after(&self) -> u32 {
+        self.busy_after
     }
 }
 
