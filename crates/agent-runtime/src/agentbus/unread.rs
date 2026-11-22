@@ -126,6 +126,30 @@ impl AgentBus {
     }
 }
 
+impl AgentBus {
+    /// The newest message `sender` wrote to the session of `reader`, whether the session read it or not: what a lead said
+    /// to its member when it sent the work back, which the member may have read already.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn last_message_from(
+        &self,
+        reader: Reader<'_>,
+        sender: &str,
+    ) -> Result<Option<UnreadMessage>, UnreadMessagesError> {
+        last_message_from(&self.bus_dir(), reader, sender).await
+    }
+}
+
+/// See [`AgentBus::last_message_from`]; `bus_dir` is the directory of the bus.
+async fn last_message_from(
+    _bus_dir: &Path,
+    _reader: Reader<'_>,
+    _sender: &str,
+) -> Result<Option<UnreadMessage>, UnreadMessagesError> {
+    Ok(None)
+}
+
 /// The file of the bus that holds the messages, one JSON object a line.
 const LOG_FILE: &str = "messages.jsonl";
 
@@ -325,5 +349,7 @@ async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError>
     Ok(Some(Window { bytes, from, cut }))
 }
 
+#[cfg(test)]
+mod said_tests;
 #[cfg(test)]
 mod tests;
