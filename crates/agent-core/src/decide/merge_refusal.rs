@@ -98,5 +98,106 @@ pub fn changed_by_lead(since_approved: &[RepoPath], on_branch: &[RepoPath], vs_b
         .collect()
 }
 
+/// The result of attempting to publish a conflict resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictPublishResult {
+    /// Publication succeeded and the resolution was pushed to the pull request branch.
+    Published,
+    /// Publication failed before reaching the pull request branch.
+    Failed,
+}
+
+/// The accounting state of a conflict resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountingState {
+    /// The pass has not yet been recorded for this conflict resolution.
+    Unrecorded,
+    /// The pass has already been recorded for this conflict resolution.
+    AlreadyRecorded,
+}
+
+/// The outcome of conflict pass accounting on publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAccountingStep {
+    /// The pass is recorded as spent exactly once upon successful publication.
+    SpendPass,
+    /// Publication failed or repeated failure occurred; no pass is spent and earlier passes are untouched.
+    RetainBudget,
+}
+
+#[must_use]
+/// Decides whether a conflict pass should be spent given the publication result and its accounting state.
+pub fn account_conflict_pass(result: ConflictPublishResult, accounting: AccountingState) -> ConflictAccountingStep {
+    match (result, accounting) {
+        (ConflictPublishResult::Published, AccountingState::Unrecorded) => ConflictAccountingStep::SpendPass,
+        (ConflictPublishResult::Published, AccountingState::AlreadyRecorded) | (ConflictPublishResult::Failed, _) => {
+            ConflictAccountingStep::RetainBudget
+        }
+    }
+}
+
+/// Whether the conflict resolution was published to the pull request branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictPublication {
+    /// The conflict pass was successfully published to the pull request branch.
+    Published,
+    /// The conflict pass was never published to the pull request branch.
+    Unpublished,
+}
+
+/// The gating status of the round's commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatingStatus {
+    /// A valid gated commit is recorded for this round.
+    Gated,
+    /// No valid gated commit is recorded.
+    Ungated,
+}
+
+/// The state of the pull request and its conflict publication for split round recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPullStatus {
+    /// The pull request has already merged on remote.
+    Merged,
+    /// The pull request is open and ready for merge attempts.
+    Open {
+        /// The gating status of the commit to be merged.
+        gating: GatingStatus,
+        /// The conflict budget for the round.
+        budget: ConflictBudget,
+        /// Whether the last conflict pass reached the pull request branch.
+        conflict: ConflictPublication,
+    },
+    /// The pull request was closed without merging.
+    ClosedUnmerged,
+}
+
+/// What the daemon does when recovering an exhausted split round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustedRoundRecovery {
+    /// Complete the round because it was already merged.
+    CompleteMerged,
+    /// Resume merge attempts because valid gated work was published or ready without exhausting valid passes.
+    ResumeMerge,
+    /// Retain the exhausted state and continue waiting for the human.
+    WaitHuman,
+}
+
+#[must_use]
+/// Decides how to recover a split round that appeared exhausted.
+pub fn recover_exhausted_split_round(status: SplitPullStatus) -> ExhaustedRoundRecovery {
+    match status {
+        SplitPullStatus::Merged => ExhaustedRoundRecovery::CompleteMerged,
+        SplitPullStatus::Open {
+            gating: GatingStatus::Gated,
+            budget,
+            conflict,
+        } if budget.spent < budget.limit || conflict == ConflictPublication::Unpublished => {
+            ExhaustedRoundRecovery::ResumeMerge
+        }
+        SplitPullStatus::Open { .. } | SplitPullStatus::ClosedUnmerged => ExhaustedRoundRecovery::WaitHuman,
+    }
+}
+
 #[cfg(test)]
 mod tests;

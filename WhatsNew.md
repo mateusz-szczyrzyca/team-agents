@@ -5,6 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.64.0 — 22.11.2026 — PR #181
+
+### Bug fixes
+- [agent] [agent-core] A failed publication of a merge conflict resolution no longer consumes a conflict pass or refunds an earlier published pass. Retries and daemon restarts count each published result once.
+- [agent] [agent-core] Exhausted split rounds with valid gated work that never reached the pull request branch now resume publication and merging; legitimately spent passes and open human questions are preserved.
+- [agent] Errors while reading changes after publication now follow the retry limit, lead notice and human question flow instead of retrying indefinitely.
+
 ## 0.63.0 — 22.11.2026 — PR #180
 
 ### New features

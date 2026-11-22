@@ -243,6 +243,8 @@ At `level = "debug"`:
   approved, corrected or asked outcome and its reason as result.
   Bounded publication retries emit `publish_tries_step` (with current tries count, limit, and the resulting step)
   and `publish_answer` (with task and answer result).
+  Conflict pass publication emits `account_conflict_pass` (with the pull request number, publication result and accounting state as input, and the accounting step as result)
+  and `recover_exhausted_split_round` (with the pull request number and split pull status as input, and the recovery action as result).
 - `outside_call_completed` is emitted whenever an external call (`git`, `agentbus`, the GitHub API, or a model CLI
   process) finishes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code` in `fields`.
   For a GitHub call, `exit_code` is the actual HTTP response status.
