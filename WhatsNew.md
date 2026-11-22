@@ -5,13 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.63.0 — 22.11.2026 — PR pending
+## 0.63.0 — 22.11.2026 — PR #180
 
 ### New features
-- [agent] [agent-core] A run that ends `STATUS: DONE` while a step it marked done fails its check goes back to its agent, with the step, its check, the reason and the last lines of the check's output; after `[plan] bounces` such send-backs the human is asked, in a questions file that names the step and its check.
-- [agent] [agent-core] A step whose check is the repository's gate command (`make gate`, `agent gate`) is not run; the agent is told once, in the prompt of its next run, that the gate is never a step's check.
+- [agent] [agent-core] [agentbus] An agent that keeps a plan names its work when it asks a worker: `delegate` takes `for` (a step of its plan still to do or in hand), `files`, `check` (a command or `exists PATH`, never `reviewer` or the gate) and `do`. A request that lacks one, names a step the plan does not have or that is done, a path outside the repository or a refused check is refused with words that say what to add, and no worker starts.
+- [agent] [agentbus] The worker's prompt quotes the step of the requester's plan in full, then the request's files, check and what to do, and tells the worker to return a request that needs a decision with its question.
+- [agentbus] In a team, a request for a step is refused at once when no worker of the team waits for work, so that the requester does the step itself.
+- [agentbus] An investigator may now ask a worker too; a worker still may not.
 
-Action: a run that ends `DONE` with a failing command or file check is now sent back for its plan (up to `[plan] bounces`, default 3). To keep the old behaviour, set `bounces = 0` under `[plan]`.
+### Enhancements
+- [agentbus] Agents without a plan, such as a worker, a reviewer, an investigator answering an investigation request or a run whose worktree has no plan yet, still send the old form of a request, for look-ups. A bus state from before still loads.
 
 ## 0.62.0 — 22.11.2026 — PR #177
 

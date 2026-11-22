@@ -465,6 +465,7 @@ type Server struct {
 	agentCmd string        // path to the `agent` script (to spawn helper dispatch)
 	home     string        // AGENTS_HOME (passed to spawned processes)
 	remote   string        // the node a remote team member works on ("" = a local agent); its tools run here
+	plan     string        // the path of the requester's plan file (--plan): only a run whose role keeps a plan has one
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -1021,7 +1022,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "delegate":
 		return toolResult(s.delegateFields(DelegateFields{Goal: a.str("goal"), Workdir: a.str("workdir"), Steps: a.str("steps"),
 			Returns: a.str("returns"), Terms: a.str("terms"), Requires: a.strings("requires"),
-			AnswersTo: a.str("answers_to"), Answers: a.str("answers")}))
+			AnswersTo: a.str("answers_to"), Answers: a.str("answers"), Step: a.str("for"), Files: a.str("files"),
+			Check: a.str("check"), Doing: a.str("do")}))
 	case "delegation_feedback":
 		return toolResult(s.delegationFeedback(a.str("id"), a.str("verdict"), a.str("note")))
 	case "delegation_status":
@@ -1120,9 +1122,12 @@ func (s *Server) fail(id json.RawMessage, code int, msg string) {
 func (s *Server) tools() []map[string]any {
 	tools := append(toolDefs(), invToolDefs(s.role)...)
 	tools = append(tools, teamToolDefs(s.team != "")...)
+	// An investigator sees nothing of the board or the quiz, but it may hand a mechanical step to a worker.
 	if s.role != RoleInvestigator {
 		tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
 		tools = append(tools, consultToolDefs(s.team != "")...)
+	} else {
+		tools = append(tools, delegationToolDefs()...)
 	}
 	if s.remote != "" {
 		tools = withoutRemoteUnavailable(tools)
@@ -1218,62 +1223,85 @@ func (s *Server) handle(line []byte) {
 }
 
 // serve: runs the MCP server on stdio for one agent run until stdin closes or a signal arrives.
+// serveFlags are the flags of serve, as defineServeFlags defined them on a flag set.
+type serveFlags struct {
+	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string // where the bus is, and who the run is
+	tasksDir, team, tier, agentCmd, plan, home                     *string // its team, its tier and its harness
+	relay, member, source                                          *string // a remote member's relay to its lead
+	queueMax, slots                                                *int    // the limits of the investigations
+}
+
+// defineServeFlags defines the flags of serve on fs.
+func defineServeFlags(fs *flag.FlagSet) serveFlags {
+	return serveFlags{
+		dir:      fs.String("dir", defaultDir(), "state directory"),
+		agent:    fs.String("agent", "", "this agent's name (required)"),
+		task:     fs.String("task", "", "task ID"),
+		taskDir:  fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run"),
+		repo:     fs.String("repo", "", "repository name"),
+		branch:   fs.String("branch", "", "agent's branch"),
+		worktree: fs.String("worktree", "", "path to the agent's worktree"),
+		peers:    fs.String("peers", "", "configured agents, comma-separated"),
+		role:     fs.String("role", "worker", "worker | investigator"),
+		queueMax: fs.Int("queue-max", 3, "investigation queue limit"),
+		slots:    fs.Int("inv-slots", 1, "number of investigators"),
+		tasksDir: fs.String("tasks-dir", "", "tasks directory (for investigation files)"),
+		team:     fs.String("team", "", "team ID (team mode)"),
+		tier:     fs.String("tier", "normal", "normal | worker"),
+		agentCmd: fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
+		plan: fs.String("plan", "", "path to the requester's plan file: a run whose role keeps a plan, whose "+
+			"delegate requests must name a step"),
+		home:   fs.String("home", agentsHome(), "AGENTS_HOME"),
+		relay:  fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead"),
+		member: fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>"),
+		source: fs.String("source", "", "with --relay: an optional local source IP (isolated installations, as node-request)"),
+	}
+}
+
+// server is the MCP server of the run the flags describe, with its role and tier already parsed, writing to out.
+func (f serveFlags) server(r Role, tr Tier, out *json.Encoder) *Server {
+	s := &Server{
+		taskDir: *f.taskDir,
+		bus:     &Bus{dir: *f.dir}, me: *f.agent, out: out,
+		info:  Presence{Agent: *f.agent, Task: *f.task, Repo: *f.repo, Branch: *f.branch, Worktree: *f.worktree},
+		peers: strings.Split(*f.peers, ","),
+		role:  r, queueMax: *f.queueMax, tasksDir: *f.tasksDir, team: *f.team,
+		tier: tr, agentCmd: *f.agentCmd, home: *f.home, plan: *f.plan,
+	}
+	if s.tasksDir == "" {
+		s.tasksDir = filepath.Join(filepath.Dir(*f.dir), "tasks")
+	}
+	return s
+}
+
 func cmdServe(args []string) {
 	fs := newFlagSet("serve")
-	dir := fs.String("dir", defaultDir(), "state directory")
-	agent := fs.String("agent", "", "this agent's name (required)")
-	task := fs.String("task", "", "task ID")
-	taskDir := fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run")
-	repo := fs.String("repo", "", "repository name")
-	branch := fs.String("branch", "", "agent's branch")
-	worktree := fs.String("worktree", "", "path to the agent's worktree")
-	peers := fs.String("peers", "", "configured agents, comma-separated")
-	role := fs.String("role", "worker", "worker | investigator")
-	queueMax := fs.Int("queue-max", 3, "investigation queue limit")
-	slots := fs.Int("inv-slots", 1, "number of investigators")
-	tasksDir := fs.String("tasks-dir", "", "tasks directory (for investigation files)")
-	team := fs.String("team", "", "team ID (team mode)")
-	tier := fs.String("tier", "normal", "normal | worker")
-	agentCmd := fs.String("agent-cmd", "", "path to the agent script (worker requests)")
-	home := fs.String("home", agentsHome(), "AGENTS_HOME")
-	relay := fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead")
-	member := fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>")
-	source := fs.String("source", "", "with --relay: an optional local source IP (isolated installations, as node-request)")
+	f := defineServeFlags(fs)
 	parseFlags(fs, args)
-	if *relay != "" { // a remote member's MCP server: a relay to the lead, nothing local
-		setupLogging(*home, "serve-relay", "member", *member)
-		u, perr := url.Parse(*relay)
-		if *member == "" || perr != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
+	if *f.relay != "" { // a remote member's MCP server: a relay to the lead, nothing local
+		setupLogging(*f.home, "serve-relay", "member", *f.member)
+		u, perr := url.Parse(*f.relay)
+		if *f.member == "" || perr != nil || u.Scheme != "http" || u.Hostname() == "" || u.User != nil || (u.Path != "" && u.Path != "/") {
 			exitOn(opErr(NodeClientInvalidArgument, "--relay needs a plain HTTP lead URL and --member <agent>@<node>").asError())
 		}
-		if *source != "" && net.ParseIP(*source) == nil {
+		if *f.source != "" && net.ParseIP(*f.source) == nil {
 			exitOn(opErr(NodeClientInvalidArgument, "--source must be a local IP literal").asError())
 		}
-		exitOn(relayMCP(nodeRequestConfig{url: strings.TrimSuffix(*relay, "/"), source: *source}, *member, os.Stdin, os.Stdout).asError())
+		exitOn(relayMCP(nodeRequestConfig{url: strings.TrimSuffix(*f.relay, "/"), source: *f.source}, *f.member, os.Stdin, os.Stdout).asError())
 		return
 	}
-	if *agent == "" {
+	if *f.agent == "" {
 		exitOn(opErr(CmdServeMissingAgent, "--agent is required").asError())
 	}
-	r, verr := parseEnum[Role](*role, "role")
+	r, verr := parseEnum[Role](*f.role, "role")
 	exitOn(fromValue(CmdServeInvalidRole, verr).asError())
-	tr, verr := parseEnum[Tier](*tier, "tier")
+	tr, verr := parseEnum[Tier](*f.tier, "tier")
 	exitOn(fromValue(CmdServeInvalidTier, verr).asError())
-	setupLogging(*home, "serve", "agent", *agent, "task", *task, "team", *team)
+	setupLogging(*f.home, "serve", "agent", *f.agent, "task", *f.task, "team", *f.team)
 	out := json.NewEncoder(os.Stdout)
 	out.SetEscapeHTML(false)
-	s := &Server{
-		taskDir: *taskDir,
-		bus:     &Bus{dir: *dir}, me: *agent, out: out,
-		info:  Presence{Agent: *agent, Task: *task, Repo: *repo, Branch: *branch, Worktree: *worktree},
-		peers: strings.Split(*peers, ","),
-		role:  r, queueMax: *queueMax, tasksDir: *tasksDir, team: *team,
-		tier: tr, agentCmd: *agentCmd, home: *home,
-	}
-	invSlots = *slots
-	if s.tasksDir == "" {
-		s.tasksDir = filepath.Join(filepath.Dir(*dir), "tasks")
-	}
+	s := f.server(r, tr, out)
+	invSlots = *f.slots
 	exitOn(fromStorage(CmdServeStorage, s.register()).asError())
 	logInfo(LogServerStarted, "role", r, "tier", tr, "version", version)
 	sig := make(chan os.Signal, 1)

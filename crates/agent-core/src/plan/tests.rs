@@ -851,3 +851,23 @@ fn each_kind_of_change_alone_counts() {
         assert_eq!(changes.loses_a_step(), loses, "{newer:?}");
     }
 }
+
+#[test]
+fn a_check_read_alone_is_one_line() {
+    for text in [
+        "true\nreviewer",
+        "true\r\nfalse",
+        "exists docs/guide.md\n",
+        "\ncargo test",
+    ] {
+        assert_eq!(
+            text.parse::<Check>(),
+            Err(PlanError::MultilineCheck { line: line(1) }),
+            "{text:?}"
+        );
+    }
+    assert_eq!(
+        "cargo test".parse::<Check>(),
+        Ok(Check::Command("cargo test".to_owned()))
+    );
+}
