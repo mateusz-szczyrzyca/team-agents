@@ -286,7 +286,7 @@ impl Git {
     }
 
     /// What a command of the scratch index prints, without its last line break.
-    async fn scratch_text(
+    pub(super) async fn scratch_text(
         &self,
         operation: GitOperation,
         overrides: &[OsString],

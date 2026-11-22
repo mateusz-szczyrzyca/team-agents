@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.68.0 — 22.11.2026 — PR #185
+## 0.69.0 — 22.11.2026 — PR #185
 
 ### New features
 - [agent] [agent-core] An agent has one run at a time over all its teams and solo tasks. A task queued for an agent that runs another task waits, queued, and starts when that run ends; it is never failed. `agent status` shows it as `queued, waits for claude-1, running in team-…`.
@@ -19,6 +19,11 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent] [agent-core] [agent-runtime] A queued task that waits for its agent is recorded once in the log as `task_waits_for_agent`.
+
+## 0.68.0 — 22.11.2026 — PR #186
+
+### Enhancements
+- [agent-runtime] The harness can now name the files a worker's commit changes, tell which of them the request's `files` do not name, and bring the commit to the requester's branch after a snapshot of the requester's worktree: the requester's uncommitted and untracked files stay as they were, a commit that conflicts, one that cannot be written because the requester changed the same files, or one made while the requester committed meanwhile applies nothing and is returned or refused with the files named. The daemon does not use it yet.
 
 ## 0.67.0 — 22.11.2026 — PR #184
 
