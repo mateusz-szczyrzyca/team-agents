@@ -585,7 +585,7 @@ fn render_in(
             }
         }
         for (item, tier) in &team.tier_waits {
-            if team.splits.iter().any(|plan| plan.parent() == *item) {
+            if detail == Detail::Tasks && team.splits.iter().any(|plan| plan.parent() == *item) {
                 continue;
             }
             lines.push(format!("    {item}  waiting for {tier} agent"));
@@ -639,16 +639,69 @@ pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
 }
 
-/// The line that counts the tasks of `team` by what they do, in the order of [`TASK_COUNTS`], and names each question
+/// Tallies of a team's tasks by status, in the order the short view prints them: the tasks that act or wait first.
+#[derive(Default)]
+struct StatusCounts {
+    /// Tasks currently in a model run.
+    running: usize,
+    /// Tasks waiting for a message, assignment or merge.
+    waiting: usize,
+    /// Tasks waiting for the human's answers.
+    questions: usize,
+    /// Tasks queued to start their next run.
+    queued: usize,
+    /// Tasks paused by the human or a quota limit.
+    paused: usize,
+    /// Tasks stopped by the human.
+    stopped: usize,
+    /// Tasks whose last run failed.
+    failed: usize,
+    /// Finished tasks.
+    done: usize,
+}
+
+impl StatusCounts {
+    /// Increments the counter for `status` through an exhaustive match so no [`TaskStatus`] variant can be omitted.
+    const fn record(&mut self, status: TaskStatus) {
+        let slot = match status {
+            TaskStatus::Running => &mut self.running,
+            TaskStatus::Waiting => &mut self.waiting,
+            TaskStatus::Questions => &mut self.questions,
+            TaskStatus::Queued => &mut self.queued,
+            TaskStatus::Paused => &mut self.paused,
+            TaskStatus::Stopped => &mut self.stopped,
+            TaskStatus::Failed => &mut self.failed,
+            TaskStatus::Done => &mut self.done,
+        };
+        *slot = slot.saturating_add(1);
+    }
+
+    /// The non-zero counts in display order, each paired with its status label.
+    fn non_zero(&self) -> Vec<String> {
+        [
+            (self.running, count_word(TaskStatus::Running)),
+            (self.waiting, count_word(TaskStatus::Waiting)),
+            (self.questions, count_word(TaskStatus::Questions)),
+            (self.queued, count_word(TaskStatus::Queued)),
+            (self.paused, count_word(TaskStatus::Paused)),
+            (self.stopped, count_word(TaskStatus::Stopped)),
+            (self.failed, count_word(TaskStatus::Failed)),
+            (self.done, count_word(TaskStatus::Done)),
+        ]
+        .into_iter()
+        .filter_map(|(count, word)| (count > 0).then(|| format!("{count} {word}")))
+        .collect()
+    }
+}
+
+/// The line that counts the tasks of `team` by what they do, in the order of [`StatusCounts`], and names each question
 /// that waits for the human's answer with its number, the agent and its task: what the human must act on.
 fn tasks_line(team: &TeamSummary) -> String {
-    let counts: Vec<String> = TASK_COUNTS
-        .iter()
-        .filter_map(|status| {
-            let count = team.members.iter().filter(|member| member.status == *status).count();
-            (count > 0).then(|| format!("{count} {}", count_word(*status)))
-        })
-        .collect();
+    let mut tally = StatusCounts::default();
+    for member in &team.members {
+        tally.record(member.status);
+    }
+    let counts = tally.non_zero();
     let mut text = if counts.is_empty() {
         String::from("  tasks: none")
     } else {
@@ -673,18 +726,6 @@ fn tasks_line(team: &TeamSummary) -> String {
     }
     text
 }
-
-/// The statuses a count of tasks lists, in the order it writes them: the tasks that act or wait first.
-const TASK_COUNTS: [TaskStatus; 8] = [
-    TaskStatus::Running,
-    TaskStatus::Waiting,
-    TaskStatus::Questions,
-    TaskStatus::Queued,
-    TaskStatus::Paused,
-    TaskStatus::Stopped,
-    TaskStatus::Failed,
-    TaskStatus::Done,
-];
 
 /// The word a count of tasks writes for a status.
 const fn count_word(status: TaskStatus) -> &'static str {
