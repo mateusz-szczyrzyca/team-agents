@@ -75,5 +75,18 @@ pub fn who_gets_part<'a>(
     PartChoice::Nobody
 }
 
+/// Decides who gets a split part under a specific replacement mode.
+#[must_use]
+pub fn who_gets_part_in_mode<'a>(
+    required: Tier,
+    previous: Option<Candidate<'a>>,
+    replacements: &[Candidate<'a>],
+    lead: Option<Candidate<'a>>,
+    mode: crate::decide::replacement::ReplacementMode,
+) -> PartChoice<'a> {
+    let _ = (required, previous, replacements, lead, mode);
+    PartChoice::Nobody
+}
+
 #[cfg(test)]
 mod tests;

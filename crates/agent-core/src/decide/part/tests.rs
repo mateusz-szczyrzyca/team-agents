@@ -189,3 +189,34 @@ fn who_gets_part_falls_back_to_lead_or_nobody() {
         assert_eq!(actual, case.expected, "case: {}", case.name);
     }
 }
+
+#[test]
+fn who_gets_part_in_mode_respects_replacement_modes() {
+    use crate::decide::replacement::ReplacementMode;
+
+    let normal_prev = normal("prev-normal");
+    let normal_rep = normal("rep-normal");
+    let normal_lead = normal("lead-normal");
+
+    let stopped_prev = Candidate {
+        agent: &normal_prev,
+        status: TaskStatus::Stopped,
+        handed_over: false,
+        busy: false,
+    };
+    let rep = Candidate::available(&normal_rep);
+    let lead = Candidate::available(&normal_lead);
+
+    assert_eq!(
+        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Auto),
+        PartChoice::Replacement(&normal_rep)
+    );
+    assert_eq!(
+        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Lead),
+        PartChoice::Lead(&normal_lead)
+    );
+    assert_eq!(
+        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Off),
+        PartChoice::Nobody
+    );
+}
