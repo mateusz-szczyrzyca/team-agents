@@ -714,8 +714,11 @@ When another pull request of the same team already contains an item's deliverabl
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
 line `DELIVERED: #N` before its final `STATUS: DONE`. The harness checks that the report identifies one current
 item, the PR belongs to another round of this team and uses its recorded branch, the member's worktree is clean,
-and the item has no commits outside the published PR or base branch. Git or GitHub failures refuse the claim and
-the coordinator receives a correction with the reason in its next prompt; the item stays in progress.
+and the item has no commits outside the published PR or base branch. For an approved split part, the coordinator
+can likewise deliver the part with `DELIVERED: #N` when an external or already merged PR of the same repository
+delivers the part's branch, without running the round's agent or reviewers. Git or GitHub failures, unmerged or closed PRs,
+or foreign repositories and branches refuse the claim and the coordinator receives a correction with the reason in its
+next prompt; the item stays in progress.
 
 An accepted open claim says `delivered by PR #N, waits for its merge` in `agent status` and
 `agent status <round>`. It creates no separate PR and keeps waiting across daemon restarts. An already merged PR
