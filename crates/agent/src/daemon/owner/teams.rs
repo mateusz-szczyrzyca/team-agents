@@ -37,9 +37,8 @@ use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
-    assignable_in_mode,
-    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
-    request_outcome, shared_agents, start_item, team_done_notification,
+    assignable_in_mode, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile,
+    render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
