@@ -938,6 +938,7 @@ const (
 	DelegateMissingDo                                // the request says nothing to do (do) [InvalidArgument]
 	DelegatePlanUnreadable                           // the requester's plan does not read, so its steps cannot be checked [Process]
 	DelegateCheckFailed                              // the harness could not answer whether the request names a step of the plan [Process]
+	DelegateNoFreeWorker                             // the requester has a plan and no worker of its team is free to take the request: it does the step itself [InvalidState]
 	DelegateStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -966,6 +967,7 @@ var delegateCauses = [...]causeInfo{
 	{"MissingDo", ClassInvalidArgument},
 	{"PlanUnreadable", ClassProcess},
 	{"CheckFailed", ClassProcess},
+	{"NoFreeWorker", ClassInvalidState},
 	{"Storage", ClassStorage},
 }
 

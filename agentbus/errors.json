@@ -638,6 +638,11 @@
      "name": "CheckFailed",
      "class": "Process",
      "doc": "the harness could not answer whether the request names a step of the plan"
+    },
+    {
+     "name": "NoFreeWorker",
+     "class": "InvalidState",
+     "doc": "the requester has a plan and no worker of its team is free to take the request: it does the step itself"
     }
    ]
   },

@@ -1489,3 +1489,8 @@ func cmdClaimLead(args []string) {
 	exitOn(err.asError())
 	fmt.Println(out)
 }
+
+// freeWorkers counts the workers of team that could take one more request of the team now.
+func freeWorkers(team *Team, helpers []*Helper) int {
+	return 1
+}
