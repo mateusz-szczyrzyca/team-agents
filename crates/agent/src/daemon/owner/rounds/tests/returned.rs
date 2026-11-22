@@ -219,7 +219,12 @@ async fn a_return_is_saved_with_the_end_of_the_run_that_made_it() {
     .await;
 
     let mut seen = 0;
+    let deadline = std::time::Instant::now() + super::rig::PATIENCE;
     while counted(&rig.state(), &team) < 2 {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for two returns counted"
+        );
         let state = rig.state();
         let team_state = state.team(&team).unwrap();
         let lead_ended = team_state
