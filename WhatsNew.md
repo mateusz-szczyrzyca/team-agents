@@ -5,13 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.61.0 — 22.11.2026 — PR #177
-
-### New features
-- [agent] [agent-core] [agent-runtime] When a run ends with a step of its plan newly marked done (`[x]`), changed while done or previously mismatched, the daemon now runs that step's command check in the task's worktree in the background, one command at a time for a task and without blocking other tasks or `agent status`. A command that exits `0` within `[plan] check_seconds` (default `120`) marks the step `confirmed`, and a command that exits non-zero, is ended by a signal or runs past `check_seconds` marks it `mismatch` with its reason and saves its output under the task's `checks/<run>/<step>.log`. Commands that match `[plan] check_refuse` (`agent gate`, `make gate`) are not run and stay `declared`.
-- [agent] [agent-core] **Action:** command checks in `.agent/plan.md` now run automatically at the end of a run; set `[plan] check_seconds = 0` in `agents.toml` if you want command checks disabled while keeping `exists` checks active.
-- [agent] [agent-core] [agent-runtime] Stopping or pausing a task, or stopping or restarting the daemon while a step's command check runs, ends the check's process group (validated by its kernel start time) and loses no finished run or completed judgement: a restarted daemon re-runs only the command checks not yet persisted for that run and settles the run once without starting a second agent CLI run.
-
 ## 0.60.0 — 22.11.2026 — PR #178
 
 ### Enhancements
