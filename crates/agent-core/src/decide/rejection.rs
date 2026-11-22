@@ -18,8 +18,25 @@ const RETURNED: &str = "RETURNED";
 /// is no item number — a title, a sentence, an item of another task list that starts differently — is skipped: the
 /// machine reads no item out of it and never guesses. An item named twice is returned once, where it is named first.
 #[must_use]
-pub fn returned_items(_message: &str) -> Vec<ItemId> {
-    Vec::new()
+pub fn returned_items(message: &str) -> Vec<ItemId> {
+    let mut returned: Vec<ItemId> = Vec::new();
+    for line in message.lines() {
+        let plain: String = line.chars().filter(|c| !matches!(*c, '*' | '`')).collect();
+        let Some(value) = plain
+            .trim_start()
+            .strip_prefix(RETURNED)
+            .and_then(|rest| rest.strip_prefix(':'))
+        else {
+            continue;
+        };
+        let Some(item) = value.split_whitespace().next().and_then(|text| text.parse().ok()) else {
+            continue;
+        };
+        if !returned.contains(&item) {
+            returned.push(item);
+        }
+    }
+    returned
 }
 
 #[cfg(test)]
