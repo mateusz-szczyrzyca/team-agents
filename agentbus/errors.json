@@ -588,6 +588,56 @@
      "name": "SnapshotFailed",
      "class": "Process",
      "doc": "the requester commit could not be captured"
+    },
+    {
+     "name": "MissingFor",
+     "class": "InvalidArgument",
+     "doc": "the request names no step of the requester's plan (for)"
+    },
+    {
+     "name": "NoSuchStep",
+     "class": "InvalidArgument",
+     "doc": "for names no step of the requester's plan"
+    },
+    {
+     "name": "StepClosed",
+     "class": "InvalidArgument",
+     "doc": "for names a step of the plan that is done or given up"
+    },
+    {
+     "name": "MissingFiles",
+     "class": "InvalidArgument",
+     "doc": "the request names no files (files)"
+    },
+    {
+     "name": "PathOutside",
+     "class": "InvalidArgument",
+     "doc": "a path of files is not a path inside the repository"
+    },
+    {
+     "name": "MissingCheck",
+     "class": "InvalidArgument",
+     "doc": "the request names no check (check)"
+    },
+    {
+     "name": "CheckRefused",
+     "class": "InvalidArgument",
+     "doc": "check is reviewer or one the [plan] check_refuse refuses"
+    },
+    {
+     "name": "MissingDo",
+     "class": "InvalidArgument",
+     "doc": "the request says nothing to do (do)"
+    },
+    {
+     "name": "PlanUnreadable",
+     "class": "Process",
+     "doc": "the requester's plan does not read, so its steps cannot be checked"
+    },
+    {
+     "name": "CheckFailed",
+     "class": "Process",
+     "doc": "the harness could not answer whether the request names a step of the plan"
     }
    ]
   },

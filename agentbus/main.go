@@ -465,6 +465,7 @@ type Server struct {
 	agentCmd string        // path to the `agent` script (to spawn helper dispatch)
 	home     string        // AGENTS_HOME (passed to spawned processes)
 	remote   string        // the node a remote team member works on ("" = a local agent); its tools run here
+	plan     string        // the path of the requester's plan file (--plan): only a run whose role keeps a plan has one
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.

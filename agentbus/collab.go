@@ -86,6 +86,7 @@ type Helper struct {
 	VerdictNote string          `json:"verdict_note,omitempty"` // what was wrong with a corrected or discarded result
 	AnsweredBy  int64           `json:"answered_by,omitempty"`  // the request that answered this unclear one's questions
 	FollowsUp   int64           `json:"follows_up,omitempty"`   // the unclear request whose questions this one answers
+	Step        string          `json:"step,omitempty"`         // the step of the requester's plan the work is for (absent: a request before a step existed, or the old form)
 }
 
 // AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
@@ -777,6 +778,10 @@ type DelegateFields struct {
 	Requires  []string // capabilities the worker's node must have
 	AnswersTo string   // "H<n>": the requester's unclear request whose worker's questions this one answers
 	Answers   string   // the answers to those questions (required with AnswersTo)
+	Step      string   // the step of the requester's plan the work is for; empty for an agent without a plan
+	Files     string   // the paths the worker may read and write, as a step's Files: line lists them
+	Check     string   // how the result is shown to be right, as a step's Check: line
+	Doing     string   // what to do, in the requester's words
 }
 
 // harnessIDRE matches the harness's identifiers — a round (R12, R10B), a board item (B80), a request (H1091) — which
@@ -810,6 +815,12 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 	} else if unrated := unratedResults(st, s.me, s.info.Task); len(unrated) > 0 {
 		return "", opErr(DelegateUnratedResult, "first rate your task's worker results — %s: delegation_feedback(id, "+
 			"verdict: used | corrected | discarded, note: what was wrong, for the last two)", strings.Join(unrated, ", "))
+	}
+	if strings.TrimSpace(s.plan) != "" {
+		_, why := s.planCheck(f)
+		if why != nil {
+			return "", why
+		}
 	}
 	var follows int64
 	var first *Helper
@@ -857,6 +868,11 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 			trunc(first.Request, 2000), trunc(first.Summary, 2000), strings.TrimSpace(f.Answers))
 	}
 	return s.delegateWith(request, context, follows, f.Requires...)
+}
+
+// planCheck is the check of planCheckOf: a stub that accepts every request and names no step.
+func (s *Server) planCheck(_ DelegateFields) (string, *DelegateError) {
+	return "", nil
 }
 
 // answerable says why request h cannot be answered by requester me (empty: it can): it must be me's own, unclear,
