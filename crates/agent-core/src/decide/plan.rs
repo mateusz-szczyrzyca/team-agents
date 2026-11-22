@@ -159,8 +159,14 @@ pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReas
     if limit == 0 {
         return PlanVerdict::Accept;
     }
-    let Some(reason) = fault(facts.read, facts.earlier).or(mismatch) else {
-        return PlanVerdict::Accept;
+    let reason = match (fault(facts.read, facts.earlier), mismatch) {
+        (Some(fault), Some(mismatch)) => PlanReason::FaultAndMismatch {
+            fault: Box::new(fault),
+            mismatch: Box::new(mismatch),
+        },
+        (Some(fault), None) => fault,
+        (None, Some(mismatch)) => mismatch,
+        (None, None) => return PlanVerdict::Accept,
     };
     if keeping.sent_back() < limit {
         PlanVerdict::SendBack(reason)

@@ -1819,7 +1819,9 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
                 .with("reason", reason.as_deref().unwrap_or(""))?
                 .with("output", tail.as_str())?,
         )?,
-        PlanReason::FaultAndMismatch { fault, .. } => correction(texts, fault)?,
+        PlanReason::FaultAndMismatch { fault, mismatch } => {
+            format!("{}\n\n{}", correction(texts, fault)?, correction(texts, mismatch)?)
+        }
     };
     Ok(text)
 }
