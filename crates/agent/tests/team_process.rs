@@ -883,13 +883,16 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
 
     /// The prompt of the first run of `task`, which the stand-in CLI keeps in the worktree of the task.
     fn first_prompt(world: &World, task: &str) -> String {
-        std::fs::read_to_string(world.home.join("worktrees/example").join(task).join(".fake-prompt-1")).unwrap_or_default()
+        std::fs::read_to_string(world.home.join("worktrees/example").join(task).join(".fake-prompt-1"))
+            .unwrap_or_default()
     }
 
     /// Starts `first` (held by `agent` until released) and `second` for the same agent, which waits for it.
     fn busy_agent_with_a_second_task(world: &World, agent: &str) -> (String, String) {
         let first = solo_task(&world.agent(&["run", agent, "First."]));
-        world.status_where("the first run to go", |status| line_of(status, &first).contains("running"));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
         let second = solo_task(&world.agent(&["run", agent, "Second."]));
         world.status_where("the second task to wait", |status| {
             line_of(status, &second).contains(&format!("waits for {agent}"))
@@ -915,7 +918,12 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let prompt = first_prompt(&world, &second);
         assert!(prompt.contains("busy"), "the briefing says why: {prompt}");
         assert!(
-            world.home.join("worktrees/example").join(&second).join(".fake-runs").is_file(),
+            world
+                .home
+                .join("worktrees/example")
+                .join(&second)
+                .join(".fake-runs")
+                .is_file(),
             "the new holder ran in the worktree of the task"
         );
         assert_eq!(world.runs(&first), 1);
@@ -939,7 +947,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&second), 0, "{status}");
 
         release(&world, &first);
-        eventually("the second task to start with its own agent", || world.runs(&second) == 1);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
         let status = world.status_where("the second task to run", |status| {
             line_of(status, &second).contains("running")
         });
@@ -962,7 +972,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert!(line_of(&status, &second).contains("waits for claude-1"), "{status}");
         assert_eq!(world.runs(&second), 0, "{status}");
         release(&world, &first);
-        eventually("the second task to start with its own agent", || world.runs(&second) == 1);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
         release(&world, &second);
     }
 

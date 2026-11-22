@@ -116,7 +116,10 @@ fn the_candidate_whose_cli_runs_least_is_taken_and_among_equals_the_first_of_the
     );
 
     let equal = [free(&first, Tier::Normal, 1), free(&second, Tier::Normal, 1)];
-    assert_eq!(decide(&waiting(Tier::Normal, 10, 300, &equal)), Decision::HandOver(&first));
+    assert_eq!(
+        decide(&waiting(Tier::Normal, 10, 300, &equal)),
+        Decision::HandOver(&first)
+    );
 }
 
 #[test]
