@@ -282,6 +282,14 @@ crew, not twice a reviewer, and its task is not the crew's. Reading checks the s
 | `renewals` | how the ladder started the task in a new session ([`[replacement]`](configuration.md#replacement)); **optional**: absent until it did, and on every member of a state written before 0.38.0. `used` (how many new sessions), `at` (when the last one was decided), `reason` (`"no_status"`, `"hang"` or `"turn_limit"`), `after_runs` (how many runs the task had then: the runs after them are the new session's, and no session before them is resumed). A hand-over to another agent, and the question to the human after the last step, mark the same boundary without raising `used`. `asked` (**optional**, absent until then) is the number of the questions the human was asked what becomes of the task after the last step of the ladder; it is asked once. `lead_owed` (**optional**, absent unless owed) is when a member's task stopped with its work given to its lead, until the bus took the notice to the lead: a daemon that restarts with it tells the lead then. A renewal before the task's first run, or counting more runs than the task has, is refused. The schema's number does not change: an older state loads; 0.37.0 and older refuse a state with the field, and 0.38.0 to 0.43.0 one with `asked` or `lead_owed` (the fields of `renewals` are strict), so going back needs the state of before the upgrade |
 | `past_holders` | the agents that held the task before the one that holds it now, oldest first; **optional**: absent until it was handed over, and on every member of a state written before hand-overs existed. Each entry is `{"agent": <participant>, "until": <time>}`: the agent the task was taken from, and when it was given to the next one. The agent that holds it now stays in `agent`. The schema's number does not change: an older state loads; a version that does not know the field refuses a state that has it |
 
+Publication escalation may move a `waiting` or `failed` task directly to `questions`. It creates no run and
+records no intermediate `queued` or `running` status. Older state and history remain readable: the persisted
+status names are unchanged, and history/log readers store status changes without rejecting these pairs.
+`publication_history_compat.rs` loads a pre-change history database, preserves its old log and reads both new
+pairs; `grouped_publish_state.rs` loads the former flat publication question identity. New publication questions
+store one optional identity with task, number, timestamp and branch; old complete identities retain their task
+and number, while incomplete timestamp-only markers supply no fabricated identity.
+
 A `Run` is `{id, started_at, session?, rounds?, state}`; `rounds` are the rounds it works for (below), oldest first, absent =
 none; its state is `running` or `ended` with a time and **how**:
 
