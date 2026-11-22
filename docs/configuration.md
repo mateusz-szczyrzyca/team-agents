@@ -315,6 +315,13 @@ only as a whole segment. A file that matches `test_paths` is a test even when `c
 inside a source file is not a test file (the reviewers look at those). How the rules use the lists is in
 [`architecture.md`](architecture.md#round-checks-before-the-review).
 
+The same lists drive the **early refusal of a commit** (`agent guard-commit`): the `git` of every run of an agent is given a
+`commit-msg` hook through its environment (`core.hooksPath` in `GIT_CONFIG_*`; nothing is written into the repository), which
+refuses a commit that takes lines out of a test its `RED:` commit froze unless it is a `TEST-FIX:` commit of test files only,
+and tells the agent to make that commit. The hook runs the repository's own hook of the same name afterwards and keeps its
+other hooks. It judges the files of `test_paths` only: without the table, or with `test_paths = []`, every commit is allowed
+(there is no separate switch; this also turns the checks before a review off for that repository).
+
 ### `[disk]`
 
 Thresholds for filesystem free space in `AGENTS_HOME`.

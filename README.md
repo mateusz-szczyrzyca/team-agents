@@ -154,6 +154,19 @@ never on the orchestrator's host or a network with anything you care about.
 - Be wary of tasks that feed agents **untrusted input** (issues written by strangers, scraped web pages) while they
   hold write access: that is the classic prompt-injection path.
 
+### The commit hook of the runs
+
+Every run of an agent gets the harness's hooks directory **through its environment**: the `git` the CLI starts has
+`core.hooksPath` set in `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, for that run only. **Nothing is written into the
+repository** — not its `.git/hooks`, not its configuration — and your own checkout is not touched. The directory holds a
+`commit-msg` hook that runs `agent guard-commit` (see "What the daemon does", the checks before a review) and then the
+repository's own `commit-msg`, and links the repository's other hooks (its `hooks` directory, or the directory of its own
+`core.hooksPath`), so a hook of the repository still runs in an agent's run, and one that fails still fails the commit. An
+agent that wants to skip the hook can use `git commit --no-verify`; the checks before the review find the commit then.
+To turn the early refusal off for a repository, take its `[repos.NAME.checks]` table out of `agents.toml` or leave its
+`test_paths` empty: the guard judges only the tests that table names (this also turns the checks before a review off for
+that repository, as it names the same files); `docs/configuration.md` has the table.
+
 ### Monitoring and response
 
 - Ship the daemon's log ([`docs/log.md`](docs/log.md)) somewhere you look at, and alert on warnings and errors.
