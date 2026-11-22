@@ -2,11 +2,13 @@
 //! task from now on and starts it briefed in a new session, in its worktree and on its branch; or, with nobody fitting,
 //! the team's lead, which is given a member's work; or, as before, nobody, and the human decides.
 
+use agent_core::decide::busy::{self, Availability, Decision, Offer, Waiting};
 use agent_core::decide::ladder::Trouble;
 use agent_core::decide::replacement::{Activity, Candidate, Handover, ReplacementMode, choose};
+use agent_core::decide::slot::runs_going;
 use agent_core::ids::{AgentName, ItemId, TaskId};
-use agent_core::kinds::{Role, Tier};
-use agent_core::state::{ItemPhase, Participant, Timestamp};
+use agent_core::kinds::{CliKind, Role, Tier};
+use agent_core::state::{ItemPhase, Participant, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 
@@ -21,6 +23,28 @@ pub(super) enum Takeover {
     Lead,
     /// Nobody: the task fails and the human decides, as before `[replacement] agents`.
     Nobody,
+}
+
+/// Whether the agent `name` can take a task over now: busy when one of its tasks runs or waits to start, paused when one
+/// is paused, and free otherwise, in any team.
+fn availability_of(teams: &[Team], name: &AgentName) -> Availability {
+    let members = teams.iter().flat_map(|team| {
+        let crew = team.crew().roster().into_iter().map(|(_, member)| member);
+        crew.chain(team.reviewers().iter())
+    });
+    let mut availability = Availability::Free;
+    for member in members.filter(|member| member.agent().agent_name() == *name) {
+        match member.status() {
+            TaskStatus::Running | TaskStatus::Queued => return Availability::Busy,
+            TaskStatus::Paused => availability = Availability::Paused,
+            TaskStatus::Waiting
+            | TaskStatus::Questions
+            | TaskStatus::Done
+            | TaskStatus::Stopped
+            | TaskStatus::Failed => {}
+        }
+    }
+    availability
 }
 
 impl Owner {
@@ -223,6 +247,149 @@ impl Owner {
             Tier::Normal => Some(Participant::Normal(name.clone())),
             Tier::Worker => Some(Participant::Worker(name.clone())),
         }
+    }
+
+    /// The hand-over of a queued `task` that waits for its busy agent: once it has waited `[replacement] busy_after`
+    /// seconds, a free agent of `[replacement] agents` takes it over, as [`Owner::hand_task_over`] does, and the task
+    /// starts with it. Returns whether the task was handed over; the moment its wait began is kept in the state.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is not in the state or the state cannot be saved.
+    pub(super) async fn hand_over_busy_wait(&mut self, task: &TaskId) -> Result<bool, OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let was_waiting = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member
+            .waiting_since()
+            .is_some();
+        let since = self
+            .parts
+            .state
+            .start_waiting(task, now)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        if !was_waiting {
+            self.save().await?;
+        }
+        let Some((name, held)) = self.busy_choice(task, since, now)? else {
+            return Ok(false);
+        };
+        let team = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .team
+            .id()
+            .clone();
+        self.hand_task_over(task, &name, &held, Trouble::Busy, now)?;
+        tracing::info!(
+            event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
+            team = %team,
+            task = %task,
+            from = held.name(),
+            to = name.as_str(),
+            reason = "busy",
+            "a task that waited too long for its busy agent is handed over to a free agent"
+        );
+        self.save().await?;
+        Ok(true)
+    }
+
+    /// The free agent that takes the waiting `task` over now, and the participant that holds it now; `None` when the task
+    /// keeps waiting: its wait is shorter than `[replacement] busy_after`, no agent of `[replacement] agents` fits, or the
+    /// task was taken over as often as `[replacement] replacements` allows.
+    fn busy_choice(
+        &self,
+        task: &TaskId,
+        since: Timestamp,
+        now: Timestamp,
+    ) -> Result<Option<(AgentName, Participant)>, OwnerError> {
+        let replacement = self.parts.settings.config.replacement();
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let held = found.member.agent().clone();
+        let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
+        let names: Vec<AgentName> = replacement.agents().to_vec();
+        let teams = self.parts.state.teams();
+        let going = runs_going(teams);
+        let in_team: Vec<&str> = found
+            .team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(found.team.reviewers())
+            .map(|member| member.agent().name())
+            .collect();
+        let mut offers_data = Vec::new();
+        for name in &names {
+            let Some(participant) = self.participant_of(name) else {
+                continue;
+            };
+            let cli = self.cli_of(&participant);
+            let cli_runs = going.iter().filter(|run| self.cli_of_name(&run.agent) == cli).count();
+            offers_data.push((
+                name,
+                participant.tier(),
+                in_team.contains(&name.as_str()),
+                availability_of(teams, name),
+                u32::try_from(cli_runs).unwrap_or(u32::MAX),
+            ));
+        }
+        let offers: Vec<Offer<'_>> = offers_data
+            .iter()
+            .map(|(agent, tier, in_team, availability, cli_runs)| Offer {
+                agent,
+                tier: *tier,
+                in_team: *in_team,
+                availability: *availability,
+                cli_runs: *cli_runs,
+            })
+            .collect();
+        let offers: &[Offer<'_>] = if taken_over >= replacement.replacements().get() {
+            &[]
+        } else {
+            &offers
+        };
+        let member_runs = found
+            .team
+            .crew()
+            .roster()
+            .into_iter()
+            .any(|(_, member)| member.status() == TaskStatus::Running);
+        let waiting = Waiting {
+            role: found.role,
+            member_runs,
+            held: held.tier(),
+            waited: now.as_utc() - since.as_utc(),
+            busy_after: replacement.busy_after(),
+            offers,
+        };
+        Ok(match busy::decide(&waiting) {
+            Decision::Keep => None,
+            Decision::HandOver(agent) => Some((agent.clone(), held)),
+        })
+    }
+
+    /// The CLI of the agent `participant` is, by the configuration; `None` for an agent the configuration does not name.
+    fn cli_of(&self, participant: &Participant) -> Option<CliKind> {
+        let config = &self.parts.settings.config;
+        match participant {
+            Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| agent.cli),
+            Participant::Investigator(name) => config.investigator(name).map(|agent| agent.cli),
+        }
+    }
+
+    /// The CLI of the agent named `name`, as [`Owner::cli_of`] gives it for its participant.
+    fn cli_of_name(&self, name: &AgentName) -> Option<CliKind> {
+        self.participant_of(name)
+            .and_then(|participant| self.cli_of(&participant))
     }
 
     /// The names of the agents in a run now, in any team: a task of theirs runs, or a run of it is going.
