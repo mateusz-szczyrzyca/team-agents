@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.66.0 — 22.11.2026
+
+### New features
+- [agent-core] [agent-runtime] The request a worker's result is checked with keeps the paths it may write, its check and what to do, next to its step; the daemon reads them from the bus (`files`, `check`, `doing` in the bus state).
+- [agent-core] [agentbus] **Action:** `[workers]` in `agents.toml` says how many tries a request for a worker gets and how long its run may last — `tries = 2` and `seconds = 0` (no limit) unless you set them. A file without `[workers]` keeps these defaults.
+
+### Enhancements
+- [agent-core] The harness decides, in one pure decision, whether a worker's result serves the request: accept it, give the request once more to a free worker of another CLI, or return the step to the requester with every reason. The requester is told each of those in its own text; the daemon uses them from the version that wires them.
+
 ## 0.65.0 — 22.11.2026 — PR #183
 
 ### New features
