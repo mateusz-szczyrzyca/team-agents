@@ -23,7 +23,7 @@ async fn the_findings_of_a_fix_pass_are_in_its_first_prompt_and_in_a_file_that_t
     rig.notification_with("The lead's fix response was refused").await;
     rig.stop().await.unwrap();
 
-    let file = rig.home.fix_pass_findings_file(&tasks[0]);
+    let file = rig.home.fix_pass_findings_file_of(&tasks[0], 1);
     let kept = std::fs::read_to_string(&file).unwrap_or_default();
     let named = file.display().to_string();
     let first = rig.kept_prompt(&tasks[0], 2);
@@ -56,7 +56,7 @@ async fn a_findings_file_that_cannot_be_written_does_not_fail_the_fix_pass() {
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     // A directory where the file is to be written: the atomic replacement cannot succeed.
-    std::fs::create_dir_all(rig.home.fix_pass_findings_file(&tasks[0])).unwrap();
+    std::fs::create_dir_all(rig.home.fix_pass_findings_file_of(&tasks[0], 1)).unwrap();
     rig.notification_with("The lead's fix response was refused").await;
     rig.stop().await.unwrap();
 
@@ -68,7 +68,7 @@ async fn a_findings_file_that_cannot_be_written_does_not_fail_the_fix_pass() {
         "the pass still carries its findings: {first}"
     );
     for prompt in [&first, &correction] {
-        assert!(!prompt.contains("fix-pass-findings.md"), "{prompt}");
+        assert!(!prompt.contains("fix-pass-1-findings.md"), "{prompt}");
     }
 }
 

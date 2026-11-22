@@ -19,4 +19,4 @@ FINDING 3: FIXED or EXPLAINED — why
 After FIXED or RESOLVED, optionally add ` — reason`, ` - reason`, or `: reason`.
 
 The full text of the findings of this fix pass, each with its number, its reviewer and its level, is also in the file
-`<home>/tasks/<task>/fix-pass-findings.md`. If a message asks you to correct your answers and you no longer have the findings, read that file.
+`<home>/tasks/<task>/fix-pass-1-findings.md`. If a message asks you to correct your answers and you no longer have the findings, read that file.
