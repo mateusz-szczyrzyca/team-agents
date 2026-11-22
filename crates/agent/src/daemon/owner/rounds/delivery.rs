@@ -191,7 +191,14 @@ impl Owner {
         let derived_part_branch = team
             .round(&round)
             .and_then(agent_core::state::Round::part)
-            .map(|p| format!("{branch}{p}"));
+            .map(|p| {
+                let p_str = p.to_string();
+                if branch.as_str().ends_with(&p_str) {
+                    branch.to_string()
+                } else {
+                    format!("{branch}{p_str}")
+                }
+            });
         let repo = team.repo().clone();
         let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;
         let git = self.worktree_git(&repo, &member, &assignee)?;
