@@ -24,7 +24,7 @@ use agent_core::state::CommitId;
 
 use super::changes::{close_scratch, make_scratch};
 use super::snapshot::Snapshot;
-use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, whole};
+use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, text, whole};
 use crate::process::{CaptureLimits, capture_with_input};
 
 /// The name of the environment variable that points git at the index of a merge.
@@ -215,9 +215,53 @@ impl Git {
         // changed uncommitted, or a directory where one side has a file, makes it refuse before it writes. What it
         // would have written is exactly what the two sides' trees say, and the requester's files play no part in it.
         match handle.settle_tree(&overrides, head, commit).await? {
-            Settled::Clean(tree) => handle.commit_tree(&overrides, &tree, head, round, task).await,
+            Settled::Clean(tree) => handle.commit_tree(&overrides, &tree, head, commit, round, task).await,
             Settled::Conflicts(conflicts) => Ok(Merged::Conflicts(conflicts)),
         }
+    }
+
+    /// The worker's message for the commit brought over, with a line that names the worker's commit, and a handle that
+    /// commits under the worker's name and date: the requester's branch keeps what the worker wrote.
+    async fn worker_message(
+        &self,
+        worker: &CommitId,
+        task: &TaskId,
+        round: &RoundId,
+    ) -> Result<(Self, String), GitError> {
+        let operation = GitOperation::Log;
+        let revision = worker.to_string();
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("log"),
+                    arg("-1"),
+                    arg("--format=%an%x00%ae%x00%aI%x00%B"),
+                    arg(&revision),
+                ],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        let mut parts = printed.splitn(4, '\0');
+        let (Some(name), Some(email), Some(date), Some(message)) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            return Err(GitError::Unexpected {
+                operation,
+                output: diagnostic(printed.as_bytes()),
+            });
+        };
+        let handle = self
+            .clone()
+            .with_env(env_name("GIT_AUTHOR_NAME")?, name)
+            .with_env(env_name("GIT_AUTHOR_EMAIL")?, email)
+            .with_env(env_name("GIT_AUTHOR_DATE")?, date);
+        let message = format!(
+            "{}\n\nBrought over from {worker} for {task} in round {round}",
+            message.trim_end()
+        );
+        Ok((handle, message))
     }
 
     /// Writes `tree` as a commit on `head`, under a reference of the round and the task, and returns it.
@@ -226,12 +270,13 @@ impl Git {
         overrides: &[OsString],
         tree: &str,
         head: &CommitId,
+        worker: &CommitId,
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Merged, GitError> {
         let head_text = head.to_string();
-        let message = format!("The worker's change brought over {head_text} for {task} in round {round}");
-        let written = self
+        let (author, message) = self.worker_message(worker, task, round).await?;
+        let written = author
             .scratch_text(
                 GitOperation::CommitTree,
                 overrides,
@@ -566,11 +611,13 @@ impl Git {
 
 /// The name of the environment variable that points git at the index of a merge.
 fn index_name() -> Result<EnvName, GitError> {
-    EnvName::from_str(INDEX_VARIABLE).map_err(|source| GitError::Scratch {
-        source: ScratchError::Name {
-            name: INDEX_VARIABLE,
-            source,
-        },
+    env_name(INDEX_VARIABLE)
+}
+
+/// The name of an environment variable of a git command.
+fn env_name(name: &'static str) -> Result<EnvName, GitError> {
+    EnvName::from_str(name).map_err(|source| GitError::Scratch {
+        source: ScratchError::Name { name, source },
     })
 }
 
