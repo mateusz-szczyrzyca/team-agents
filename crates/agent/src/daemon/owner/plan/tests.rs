@@ -1220,7 +1220,7 @@ async fn a_daemon_restarted_while_a_command_check_runs_reruns_the_check_and_sett
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     std::fs::write(
         dir.join(".agent/plan.md"),
-        "Finish it.\n\n1. Work\n[x] 1.1 Recoverable\n    Check: /bin/sh -c 'if [ ! -f attempt-1.txt ]; then touch attempt-1.txt; sleep 300; fi; touch attempt-2.txt'\n",
+        "Finish it.\n\n1. Work\n[x] 1.1 Recoverable\n    Check: /bin/sh -c 'if [ ! -f restarted.txt ]; then sleep 300; fi; touch attempt-2.txt'\n",
     )
     .unwrap();
     daemon.start().await;
@@ -1238,6 +1238,7 @@ async fn a_daemon_restarted_while_a_command_check_runs_reruns_the_check_and_sett
         "state.json records the unsettled finished run while its check is running"
     );
 
+    std::fs::write(dir.join("restarted.txt"), "yes").unwrap();
     daemon.start().await;
     let state = daemon.status_is(1, TaskStatus::Done).await;
     daemon.stop().await.unwrap();
