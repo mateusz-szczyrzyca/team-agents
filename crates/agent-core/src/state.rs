@@ -103,7 +103,7 @@ pub struct UnsupportedSchema {
 ///
 /// Task IDs are unique in the whole state, team IDs too; [`State::insert_team`] and [`State::add_reviewer`] keep
 /// them so, and reading a state checks it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Deserialize)]
 #[serde(try_from = "StateWire")]
 pub struct State {
     /// Always [`SCHEMA_VERSION`]; first in the file, so that a reader sees it before anything else.
@@ -111,8 +111,51 @@ pub struct State {
     /// The teams, oldest first.
     teams: Vec<Team>,
     /// Delivery budgets by task; an absent entry means no message has a recorded wake-up budget.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
+    /// The queued tasks in the order they entered the queue, oldest first.
+    queued: Vec<TaskId>,
+}
+
+/// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
+#[derive(Serialize)]
+struct StateOut<'a> {
+    /// See [`State`].
+    schema_version: SchemaVersion,
+    /// See [`State`].
+    teams: &'a [Team],
+    /// See [`State`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wake_deliveries: &'a BTreeMap<TaskId, WakeDelivery>,
+    /// See [`State`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    queued: Vec<TaskId>,
+}
+
+impl Serialize for State {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let effective = self.effective_queued();
+        let queued = if effective == self.natural_queued() {
+            Vec::new()
+        } else {
+            effective
+        };
+        StateOut {
+            schema_version: self.schema_version,
+            teams: &self.teams,
+            wake_deliveries: &self.wake_deliveries,
+            queued,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_version == other.schema_version
+            && self.teams == other.teams
+            && self.wake_deliveries == other.wake_deliveries
+            && self.effective_queued() == other.effective_queued()
+    }
 }
 
 /// What a [`State`] is written as, before its checks.
@@ -126,6 +169,9 @@ struct StateWire {
     /// Optional in state written before wake-up delivery budgets were persisted.
     #[serde(default)]
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
+    /// Optional in state written before queue-entry order was persisted.
+    #[serde(default)]
+    queued: Vec<TaskId>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -279,6 +325,7 @@ impl State {
             schema_version: SchemaVersion,
             teams: Vec::new(),
             wake_deliveries: BTreeMap::new(),
+            queued: Vec::new(),
         }
     }
 
@@ -287,6 +334,96 @@ impl State {
         for team in &mut self.teams {
             team.record_activities(at);
         }
+        self.sync_queued();
+    }
+
+    /// The tasks currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in team-creation and roster order.
+    fn natural_queued(&self) -> Vec<TaskId> {
+        self.teams
+            .iter()
+            .flat_map(team_members)
+            .filter(|member| member.status() == crate::status::TaskStatus::Queued)
+            .map(|member| member.task().clone())
+            .collect()
+    }
+
+    /// The tasks currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in queue-entry order, oldest first.
+    fn effective_queued(&self) -> Vec<TaskId> {
+        let natural = self.natural_queued();
+        let natural_set: HashSet<&TaskId> = natural.iter().collect();
+        let mut seen: HashSet<TaskId> = HashSet::with_capacity(natural.len());
+        let mut order = Vec::with_capacity(natural.len());
+        for task in &self.queued {
+            if natural_set.contains(task) && seen.insert(task.clone()) {
+                order.push(task.clone());
+            }
+        }
+        for task in natural {
+            if seen.insert(task.clone()) {
+                order.push(task);
+            }
+        }
+        order
+    }
+
+    /// Synchronizes the queue-entry order with the members currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued).
+    pub fn sync_queued(&mut self) {
+        self.queued = self.effective_queued();
+    }
+
+    /// The task IDs currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in queue-entry order.
+    #[must_use]
+    pub fn queued_order(&self) -> Vec<TaskId> {
+        self.effective_queued()
+    }
+
+    /// Places tasks that were interrupted from [`TaskStatus::Running`](crate::status::TaskStatus::Running) into
+    /// [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) (in team order) ahead of the tasks in `waiting` that
+    /// were already queued before the interruption (in their `waiting` order).
+    pub fn place_waiting_after_interrupted(&mut self, waiting: &[TaskId]) {
+        let natural = self.natural_queued();
+        let natural_set: HashSet<&TaskId> = natural.iter().collect();
+        let waiting_set: HashSet<&TaskId> = waiting.iter().collect();
+        let mut seen: HashSet<TaskId> = HashSet::with_capacity(natural.len());
+        let mut order = Vec::with_capacity(natural.len());
+        for task in &natural {
+            if !waiting_set.contains(task) && seen.insert(task.clone()) {
+                order.push(task.clone());
+            }
+        }
+        for task in waiting {
+            if natural_set.contains(task) && seen.insert(task.clone()) {
+                order.push(task.clone());
+            }
+        }
+        self.queued = order;
+    }
+
+    /// The queued tasks in the order they entered the queue, oldest first.
+    pub fn queued_tasks(&mut self) -> Vec<crate::decide::slot::Queued> {
+        self.sync_queued();
+        let mut by_task: HashMap<TaskId, crate::decide::slot::Queued> = self
+            .teams
+            .iter()
+            .flat_map(|team| {
+                let team_id = team.id();
+                team_members(team)
+                    .filter(|member| member.status() == crate::status::TaskStatus::Queued)
+                    .map(move |member| {
+                        let task = member.task().clone();
+                        (
+                            task.clone(),
+                            crate::decide::slot::Queued {
+                                task,
+                                team: team_id.clone(),
+                                agent: member.agent().agent_name(),
+                                tier: member.agent().tier(),
+                            },
+                        )
+                    })
+            })
+            .collect();
+        self.queued.iter().filter_map(|task| by_task.remove(task)).collect()
     }
 
     /// The teams, oldest first.
@@ -620,6 +757,7 @@ impl State {
             }
         }
         self.teams.push(team);
+        self.sync_queued();
         Ok(())
     }
 
@@ -639,7 +777,11 @@ impl State {
             .into());
         }
         match self.teams.iter_mut().find(|found| found.id() == team) {
-            Some(found) => found.add_reviewer(reviewer).map_err(AddReviewerError::from),
+            Some(found) => {
+                found.add_reviewer(reviewer).map_err(AddReviewerError::from)?;
+                self.sync_queued();
+                Ok(())
+            }
             None => Err(AddReviewerError::UnknownTeam { team: team.clone() }),
         }
     }
@@ -735,11 +877,14 @@ impl TryFrom<StateWire> for State {
                 }
             }
         }
-        Ok(Self {
+        let mut state = Self {
             schema_version: wire.schema_version,
             teams: wire.teams,
             wake_deliveries: wire.wake_deliveries,
-        })
+            queued: wire.queued,
+        };
+        state.sync_queued();
+        Ok(state)
     }
 }
 
@@ -1091,6 +1236,57 @@ mod tests {
 
             assert_eq!(err.classify(), Category::Data, "{text}");
         }
+    }
+
+    #[test]
+    fn resuming_an_older_teams_task_places_it_after_an_already_queued_newer_task_across_save_and_load() {
+        let mut state = State::new();
+        for (team_no, first_task) in [(1, 1), (2, 11), (3, 21)] {
+            state.insert_team(team_of(team_no, first_task)).unwrap();
+        }
+        for (team_no, first_task) in [(1, 1), (2, 11), (3, 21)] {
+            let mut team = state.team_mut(&team_id(team_no)).unwrap();
+            for offset in [0, 1, 2] {
+                let (_, mut member) = team.find_mut(&task(first_task + offset)).unwrap();
+                member.transition(TaskStatus::Running).unwrap();
+                if !(team_no == 2 && offset == 1) {
+                    member.transition(TaskStatus::Waiting).unwrap();
+                }
+            }
+        }
+        state.sync_queued();
+        state
+            .team_mut(&team_id(3))
+            .unwrap()
+            .find_mut(&task(22))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Queued)
+            .unwrap();
+        state.sync_queued();
+        state
+            .team_mut(&team_id(1))
+            .unwrap()
+            .find_mut(&task(2))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Queued)
+            .unwrap();
+        state.sync_queued();
+
+        let json = state.to_json().unwrap();
+        let mut reloaded = State::from_json(&json).unwrap();
+        reloaded
+            .team_mut(&team_id(2))
+            .unwrap()
+            .find_mut(&task(12))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Waiting)
+            .unwrap();
+        let queued: Vec<_> = reloaded.queued_tasks().into_iter().map(|item| item.task).collect();
+
+        assert_eq!(queued, vec![task(22), task(2)]);
     }
 }
 

@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
     Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Reply, Response, Returned, ReviewPass,
-    RoundDetail, RoundItem, RoundTask, SharedAgent, TeamSummary, Versions,
+    RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, TeamSummary, Versions, mark_runs_elsewhere,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,

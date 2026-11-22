@@ -180,6 +180,16 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             self.daemon = Some(daemon);
         }
 
+        /// Stops the daemon and starts it again on the same home, as after a restart of the machine's service.
+        fn restart(&mut self) {
+            if let Some(mut daemon) = self.daemon.take() {
+                let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+                rustix::process::kill_process(pid, Signal::TERM).unwrap();
+                daemon.wait().unwrap();
+            }
+            self.start();
+        }
+
         /// Runs `agent` with `args` in the scratch repository.
         fn agent(&self, args: &[&str]) -> Output {
             agent()
@@ -637,5 +647,237 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         let diag_removed = world.home.join("diag_removed");
         let debug_removed = world.agent(&["debug", "--team", &team, "--out", diag_removed.to_str().unwrap()]);
         assert!(debug_removed.status.success(), "{}", stderr(&debug_removed));
+    }
+
+    /// The task of the solo run that `output` started: the first word of its second line.
+    fn solo_task(output: &Output) -> String {
+        assert!(output.status.success(), "{}", stderr(output));
+        stdout(output)
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
+    }
+
+    /// The line of `status` about `task`.
+    fn line_of<'a>(status: &'a str, task: &str) -> &'a str {
+        status.lines().find(|line| line.contains(task)).unwrap_or_default()
+    }
+
+    /// Appends `text` to the configuration of the home, before the daemon starts.
+    fn configure(world: &World, text: &str) {
+        let path = world.home.join("agents.toml");
+        let mut config = std::fs::read_to_string(&path).unwrap();
+        config.push_str(text);
+        std::fs::write(path, config).unwrap();
+    }
+
+    /// Lets the run of `task` end: the `hold` scenario waits for this file in the worktree of the task.
+    fn release(world: &World, task: &str) {
+        std::fs::write(
+            world.home.join("worktrees/example").join(task).join(".fake-continue"),
+            "",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn a_task_whose_agent_runs_in_another_task_waits_for_that_run_and_starts_after_it() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
+
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second."]));
+
+        let status = world.status_where("the second task to wait for its agent", |status| {
+            line_of(status, &second).contains("queued, waits for claude-1, running in team-")
+        });
+        assert!(line_of(&status, &first).contains("running"), "{status}");
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(!line_of(&status, &second).contains("failed"), "{status}");
+
+        release(&world, &first);
+        eventually("the second task to start after the first run", || {
+            world.runs(&second) == 1
+        });
+        let status = world.status_where("the second task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        assert!(!line_of(&status, &second).contains("waits for"), "{status}");
+        assert_eq!(world.runs(&first), 1);
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_limit_of_no_runs_starts_both_tasks_of_one_agent_at_once() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        configure(&world, "\n[limits]\nruns_per_agent = 0\n");
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second."]));
+
+        let status = world.status_where("both tasks to run", |status| {
+            line_of(status, &first).contains("running") && line_of(status, &second).contains("running")
+        });
+        assert!(!status.contains("waits for"), "{status}");
+        eventually("both runs to go", || {
+            world.runs(&first) == 1 && world.runs(&second) == 1
+        });
+        release(&world, &first);
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_restart_of_the_daemon_keeps_the_wait_of_a_task_for_its_agent() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second."]));
+        world.status_where("the second task to wait", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+
+        world.restart();
+
+        let status = world.status_where("the second task to wait after the restart", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        release(&world, &first);
+        eventually("the second task to start after the restart", || {
+            world.runs(&second) == 1
+        });
+        release(&world, &second);
+    }
+
+    #[test]
+    fn an_old_state_with_two_runs_of_one_agent_going_loads_and_both_finish() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        configure(&world, "\n[limits]\nruns_per_agent = 0\n");
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second."]));
+        world.status_where("both tasks to run in the state before the limit", |status| {
+            line_of(status, &first).contains("running") && line_of(status, &second).contains("running")
+        });
+
+        let config_path = world.home.join("agents.toml");
+        let without_zero = std::fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("\n[limits]\nruns_per_agent = 0\n", "");
+        std::fs::write(&config_path, without_zero).unwrap();
+        world.restart();
+
+        let status = world.status_where(
+            "the first task to run and the second to wait under the new default limit",
+            |status| {
+                line_of(status, &first).contains("running")
+                    && line_of(status, &second).contains("queued, waits for claude-1, running in team-")
+            },
+        );
+        assert!(!status.contains("failed"), "{status}");
+
+        release(&world, &first);
+        world.status_where("the first task to finish its run and the second to run", |status| {
+            line_of(status, &first).contains("waiting") && line_of(status, &second).contains("running")
+        });
+        release(&world, &second);
+        world.status_where("both runs of the old state to finish", |status| {
+            line_of(status, &first).contains("waiting") && line_of(status, &second).contains("waiting")
+        });
+        assert_eq!(world.runs(&first), 2);
+        assert_eq!(world.runs(&second), 2);
+    }
+
+    #[test]
+    fn a_resumed_task_of_an_older_team_starts_after_an_already_waiting_queued_task() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let a = solo_task(&world.agent(&["run", "claude-1", "Task A."]));
+        world.status_where("task A to run", |status| line_of(status, &a).contains("running"));
+        release(&world, &a);
+        world.status_where("task A to finish its first run", |status| {
+            line_of(status, &a).contains("waiting")
+        });
+        std::fs::remove_file(world.home.join("worktrees/example").join(&a).join(".fake-continue")).unwrap();
+
+        let b = solo_task(&world.agent(&["run", "claude-1", "Task B."]));
+        world.status_where("task B to run", |status| line_of(status, &b).contains("running"));
+
+        let c = solo_task(&world.agent(&["run", "claude-1", "Task C."]));
+        world.status_where("task C to wait for task B", |status| {
+            line_of(status, &c).contains("queued, waits for claude-1, running in team-")
+        });
+
+        let resume = world.agent(&["resume", &a]);
+        assert!(resume.status.success(), "{}", stderr(&resume));
+        world.status_where("task A to be queued behind task B", |status| {
+            line_of(status, &a).contains("queued, waits for claude-1, running in team-")
+        });
+
+        world.restart();
+        eventually("task B to resume after the restart", || world.runs(&b) == 2);
+
+        release(&world, &b);
+        eventually("task C to start before resumed task A", || world.runs(&c) == 1);
+        let status = world.status_where("task C to start before resumed task A", |status| {
+            line_of(status, &c).contains("running") && line_of(status, &a).contains("queued, waits for claude-1")
+        });
+        assert_eq!(world.runs(&c), 1, "{status}");
+        assert_eq!(world.runs(&a), 1, "{status}");
+
+        release(&world, &c);
+        eventually("task A to start after task C finishes", || world.runs(&a) == 2);
+        world.status_where("task A to start after task C finishes", |status| {
+            line_of(status, &a).contains("running")
+        });
+        release(&world, &a);
+    }
+
+    #[test]
+    fn a_local_round_without_github_names_the_busy_agent_and_team_in_status() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let first_run = world.agent(&["run", "claude-1", "First local solo."]);
+        let first_team = stdout(&first_run)
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        let first = solo_task(&first_run);
+        world.status_where("the first solo task to run", |status| {
+            line_of(status, &first).contains("running")
+        });
+
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second local solo."]));
+        let expected_round_wait = format!(
+            "waits for the queued run of its task to start, owed by the harness, after the run of claude-1 in {first_team}"
+        );
+        let status = world.status_where("the second round to name the busy agent and team", |status| {
+            status.contains(&expected_round_wait)
+        });
+        assert!(
+            !status.contains("waits for an answer of the human"),
+            "a local queued round must not say it waits for the human: {status}"
+        );
+
+        release(&world, &first);
+        eventually("the second solo task's run to start", || world.runs(&second) == 1);
+        world.status_where("the second solo task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        release(&world, &second);
     }
 }

@@ -591,7 +591,7 @@ read) and the connection goes on; a request over the limit is answered with `inv
 | `reply.kind` | Fields |
 |---|---|
 | `started` | `team`, `tasks` |
-| `teams` | `teams`: summaries — `id`, `repo`, `created_at`, `merge`, `items` (counts by status), `rounds` (the team's rounds, as in the state; absent = none), `members` (task, agent, role, status, `open_question?`: the number of the questions that wait, `new_sessions?`: how many new sessions the ladder started the task in; absent when none) |
+| `teams` | `teams`: summaries — `id`, `repo`, `created_at`, `merge`, `items` (counts by status), `rounds` (the team's rounds, as in the state; absent = none), `members` (task, agent, role, status, `open_question?`: the number of the questions that wait, `new_sessions?`: how many new sessions the ladder started the task in, `held_by?`, `returned?`, `waits_for?`: `{team, task}`, the run that holds the agent of a queued task at its limit of runs; absent when none) |
 | `overview` | what `status` answers instead of `teams` when the history ([`history.md`](history.md)) lost records or cannot be written: `teams`, as above, and `history` — `state` (`{"kind":"writing"}`, `{"kind":"disabled"}` or `{"kind":"unavailable","reason":"…"}`) and `lost`, the number of records handed to the history that are not in it. A history that is written and whole, or off, is not mentioned: the answer is `teams` |
 | `team` | `team`: the whole team record, as in the state |
 | `round` | `round`: `team`, `round` (as in the state), `item?` (`id`, `title`, `status`), `tasks` (`task`, `role`, `agent`, `worktree`, `branch`, `runs`: the runs that name the round), `pr?` and `waiting?` (the idle round's next action) and `review_passes` (each fix pass, then the pass that is going: `reviews`; the reviews of the pass that was approved are not kept once the item is done) |
@@ -822,3 +822,13 @@ flow and leaves the marker intact, so a restart or an unhelpful answer cannot ge
 same wait. Refreshing waits removes markers once staffing resolves them. A later wait can then ask again.
 Older teams omit both maps and load with empty maps; the pre-change fixture
 `crates/agent-core/tests/fixtures/team-before-tier-waits.json` remains readable. No schema migration is needed.
+
+### Per-agent run limits
+
+The run limit (`[limits] runs_per_agent` and `runs_per_worker`, default `1`) keeps state schema `14` unchanged. When
+queued tasks enter the queue in an order that differs from team-creation order (for example, when an older team's task
+is resumed while a newer team's task is already waiting), `state.json` carries the optional top-level `queued` array of
+task IDs in queue-entry order; when the order matches team-creation order, `queued` is omitted. A state written before
+the limit with an agent that has runs going in two teams loads unchanged: both tasks finish, and the limit holds from
+the next start. On the socket, `MemberSummary` carries the optional `waits_for` (`{team, task}`) when a queued task
+waits for its agent's run in another task, omitted when absent.

@@ -806,3 +806,7 @@ logs, their links, search entries and cursors. The previous schema is retained a
 History version 17 adds `step_judgements` ([above](#step_judgements)). The migration preserves existing
 records, round links, search entries and log cursors. The previous schema is retained as
 `crates/agent-runtime/tests/fixtures/history-before-step-judgements.sql` and tested on upgrade.
+
+History version 18 admits the `task_waits_for_agent` event of the daemon's log. Its migration (`018-wait-events.sql`)
+preserves existing daemon logs, their links, search entries and cursors. The previous schema is retained as
+`crates/agent-runtime/tests/fixtures/history-before-wait-events.sql` and tested on upgrade.
