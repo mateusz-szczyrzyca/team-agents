@@ -2,9 +2,7 @@
 //! itself, and completing the items of a pull request that is merged.
 
 use super::waiting::WaitingStep;
-use agent_core::decide::merge_refusal::{
-    AfterRefusal, ConflictBudget, Refusal, SplitPullStatus, after_refusal, recover_exhausted_split_round,
-};
+use agent_core::decide::merge_refusal::{AfterRefusal, ConflictBudget, Refusal, after_refusal};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TeamId};
 use agent_core::log::LogEvent;
@@ -236,18 +234,10 @@ impl Owner {
             now,
         };
         match remote.state {
-            PullState::Merged => {
-                let recovery = recover_exhausted_split_round(SplitPullStatus::Merged);
-                agent_runtime::history::log_decision(
-                    "recover_exhausted_split_round",
-                    &format!("pr={}, status=merged", pr.number),
-                    &format!("{recovery:?}"),
-                );
-                Ok(Merge::Merged {
-                    commit: remote.merge_commit_sha,
-                    url: remote.url,
-                })
-            }
+            PullState::Merged => Ok(Merge::Merged {
+                commit: remote.merge_commit_sha,
+                url: remote.url,
+            }),
             PullState::Closed => {
                 let team = site.team;
                 let items = self

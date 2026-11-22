@@ -47,6 +47,15 @@ enum Judgement {
     Tip(CommitId),
 }
 
+/// The origin of a merge conflict pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ConflictPassOrigin {
+    /// A fresh merge conflict pass initiated during normal round execution.
+    Fresh,
+    /// Recovered from an exhausted split round with valid gated work ready.
+    Recovered,
+}
+
 /// An approved pull request whose merge conflict pass or answered conflict question is in progress.
 struct ConflictPass {
     /// The pull request.
@@ -57,8 +66,8 @@ struct ConflictPass {
     at: Timestamp,
     /// The items of the pull request.
     items: Vec<ItemId>,
-    /// Whether the pass was recovered from an exhausted split round with valid gated work ready.
-    recovered: bool,
+    /// Origin of this conflict pass (fresh or recovered).
+    origin: ConflictPassOrigin,
 }
 
 /// Context for reporting a conflict publication failure.
@@ -164,17 +173,14 @@ impl Owner {
         Ok(())
     }
 
-    /// Looks at the merge conflict pass of `team`, when one is in progress: the lead is sent again when it was not run
-    /// since the pass began, the human is asked when it gave no result, and a result is gated, pushed and read.
-    ///
-    /// Checks whether the lead is ready to proceed with a conflict pass.
+    /// Checks whether the lead of `team` is ready to proceed with a conflict pass.
     fn check_lead_conflict_status(
         &mut self,
         lead: &Lead,
         pass: &ConflictPass,
         look: &mut Look,
     ) -> Result<bool, OwnerError> {
-        if pass.recovered {
+        if pass.origin == ConflictPassOrigin::Recovered {
             let member = self
                 .parts
                 .state
@@ -191,7 +197,8 @@ impl Owner {
         }
     }
 
-    /// Advances merge conflict passes for teams with conflicts.
+    /// Looks at the merge conflict pass of `team`, when one is in progress: the lead is sent again when it was not run
+    /// since the pass began, the human is asked when it gave no result, and a result is gated, pushed and read.
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
@@ -225,7 +232,7 @@ impl Owner {
         if !self.check_lead_conflict_status(&lead, &pass, look)? {
             return Ok(());
         }
-        if !pass.recovered && !lead.done {
+        if pass.origin != ConflictPassOrigin::Recovered && !lead.done {
             return self
                 .handle_undone_lead(team, &pass.items, pass.pr.number, &pass.approved_head, now, look)
                 .await;
@@ -271,14 +278,7 @@ impl Owner {
         let changed = match self.read_conflict_changes(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::GitCallFailed.as_str(),
-                    team = %team,
-                    pr = %pr.number,
-                    error = %error_chain(&error),
-                    "the changes of the pushed conflict pass cannot be read yet: they will be read again in a while"
-                );
-                return Ok(());
+                return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
         self.apply_lead_change(
@@ -562,20 +562,6 @@ impl Owner {
         self.each_item(team, items, |item| {
             item.reset_publish_tries();
             item.clear_publish_question();
-            let accounting = if item.conflict_accounted_head() == Some(approved_head) {
-                AccountingState::AlreadyRecorded
-            } else {
-                AccountingState::Unrecorded
-            };
-            let step = account_conflict_pass(ConflictPublishResult::Published, accounting);
-            log_decision(
-                "account_conflict_pass",
-                &format!("pr={pr}, result=published, accounting={accounting:?}"),
-                &format!("{step:?}"),
-            );
-            if step == ConflictAccountingStep::SpendPass {
-                item.record_published_conflict_pass();
-            }
             Ok(())
         })?;
         match decided {
@@ -649,7 +635,7 @@ impl Owner {
                         approved_head: approved_head.clone(),
                         at: *at,
                         items: items_of(found, pr.number),
-                        recovered: false,
+                        origin: ConflictPassOrigin::Fresh,
                     })
                 }
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
@@ -675,7 +661,7 @@ impl Owner {
                             approved_head,
                             at: answered_at,
                             items: items_of(found, pr.number),
-                            recovered: false,
+                            origin: ConflictPassOrigin::Fresh,
                         });
                     }
                     None
@@ -807,7 +793,7 @@ impl Owner {
                         approved_head,
                         at,
                         items,
-                        recovered: true,
+                        origin: ConflictPassOrigin::Recovered,
                     }))
                 }
             }
