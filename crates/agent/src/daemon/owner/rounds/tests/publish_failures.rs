@@ -121,6 +121,105 @@ async fn split_part_conflict_pass_publishes_gated_commit_to_part_pr_branch() {
 }
 
 #[tokio::test]
+async fn conflict_publication_failure_preserves_budget_and_recovers_after_restart_and_successful_merge() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,integrate,merge-base"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+    let lead = tasks[1].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge for conflict and move base:
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    move_base(&rig);
+
+    // Wait until conflict pass starts:
+    let state = rig
+        .state_where("part 1.1a is in conflict pass", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.merge_conflict().is_some() && item.merge_passes() == 1
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.merge_passes(), 1, "conflict pass initiation spends one merge pass");
+
+    // Install pre-receive hook in origin that rejects git push during conflict publication:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // Signal fake base ready in coordinator's worktree:
+    std::fs::write(rig.worktree(&coordinator).join(".fake-base-ready"), "").unwrap();
+
+    // Wait until lead merges base and gate passes, but conflict publication fails and pass is refunded:
+    let state = rig
+        .state_where("conflict publication fails and pass is refunded", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.publish_tries() > 0 && item.merge_passes() == 0
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.merge_passes(), 0, "failed publication must not consume merge conflict pass");
+
+    // Stop daemon (restart between lead completion and publication):
+    rig.stop().await.unwrap();
+
+    // Remove the blocking hook so push can succeed:
+    std::fs::remove_file(&hook).unwrap();
+
+    // Restart daemon:
+    rig.start().await;
+
+    // Allow merge:
+    rig.github.answer_merges(MergeAnswer::Allow);
+
+    // Wait until part 1.1a PR merges and advances:
+    let state = rig
+        .state_where("part 1.1a PR merged after restart and successful publication", |state| {
+            let team = state.team(&team_id).unwrap();
+            team.rounds().len() >= 2 && !team.rounds()[0].is_open()
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
+    let pr = team.rounds()[0].part_pull_request().unwrap();
+    assert_eq!(pr.number.get().get(), 1);
+}
+
+#[tokio::test]
 async fn publish_with_checked_out_worktree_publishes_without_forcing() {
     let mut rig = Rig::new(
         &[
