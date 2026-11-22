@@ -1793,3 +1793,72 @@ async fn split_part_with_outside_replacement_reuses_stopped_members_task() {
     assert_eq!(team.rounds()[1].part().unwrap().to_string(), "b");
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn later_split_part_accepts_the_parent_task_branch_for_external_delivery() {
+    let mut rig = Rig::new(
+        &[
+            investigator(
+                "inv-lead",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,sleep",
+            ),
+            normal("claude-1", "clean-done:already delivered,clean-done:already delivered"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let branch_task = format!("agents/claude-1/{}-1.1", tasks[1]);
+    let branch_part_b = format!("agents/claude-1/{}-1.1b", tasks[1]);
+    super::rig::git(&rig.origin, &["branch", &branch_task, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_b, "main"]);
+    let pr1 = rig.github.foreign_pull(&branch_task);
+    let pr2 = rig.github.foreign_pull(&branch_task);
+    assert_eq!(pr1, 1);
+    assert_eq!(pr2, 2);
+    rig.github.merged_by_a_human(1);
+    rig.github.merged_by_a_human(2);
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.state_where("round 1 closed", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().first().is_some_and(|r| !r.is_open())
+    })
+    .await;
+    let state = rig
+        .state_where("team done after last part", |state| {
+            let team = state.team(&team_id).unwrap();
+            matches!(
+                team.item("1.1".parse().unwrap()).unwrap().phase(),
+                ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds().len(), 2);
+    assert_eq!(team.rounds()[0].delivered_by().unwrap().number.get().get(), 1);
+    assert_eq!(team.rounds()[0].part().unwrap().to_string(), "a");
+    assert_eq!(team.rounds()[1].delivered_by().unwrap().number.get().get(), 2);
+    assert_eq!(team.rounds()[1].part().unwrap().to_string(), "b");
+    assert!(team.rounds().iter().all(|round| !round.is_open()));
+    rig.stop().await.unwrap();
+}
