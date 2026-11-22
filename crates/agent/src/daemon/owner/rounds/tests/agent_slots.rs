@@ -591,3 +591,147 @@ async fn a_reviewer_is_not_handed_over_for_a_busy_wait() {
         "inv-codex"
     );
 }
+
+/// Reads the messages an agent of a team sees, without moving its bus read cursor.
+fn history_of(home: &agent_runtime::store::Home, agent: &str, team: &agent_core::ids::TeamId, task: &TaskId) -> String {
+    use std::io::Write as _;
+
+    let mut child = std::process::Command::new(super::super::fixture::agentbus_binary())
+        .arg("serve")
+        .arg("--agent")
+        .arg(agent)
+        .arg("--task")
+        .arg(task.as_str())
+        .arg("--team")
+        .arg(team.as_str())
+        .arg("--dir")
+        .arg(home.root().join("bus"))
+        .arg("--home")
+        .arg(home.root())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    writeln!(
+        child.stdin.take().unwrap(),
+        "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"read_messages\",\"arguments\":{{\"history\":50}}}}}}"
+    )
+    .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    String::from_utf8(output.stdout).unwrap()
+}
+
+#[tokio::test]
+async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
+    use super::super::fixture::Daemon;
+    use agent_core::decide::ladder::Trouble;
+    use agent_core::state::{ItemPhase, Participant};
+
+    let mut state = crate::fixtures::team_state();
+    let team = crate::fixtures::team_id(0);
+    let task = crate::fixtures::task(2);
+    let at = crate::fixtures::at(1);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        found
+            .open_round(
+                "round-20261111-153101-q1w1".parse().unwrap(),
+                Some("1.1".parse().unwrap()),
+                at,
+            )
+            .unwrap();
+        found
+            .advance_item(
+                "1.1".parse().unwrap(),
+                ItemPhase::InProgress {
+                    assignee: "claude-1".parse().unwrap(),
+                    branch: "agents/claude-1/1.1".parse().unwrap(),
+                },
+            )
+            .unwrap();
+    }
+    let holder: agent_core::ids::AgentName = "inv-1".parse().unwrap();
+    state
+        .hand_over_task(&task, Participant::Investigator("inv-1".parse().unwrap()), at)
+        .unwrap();
+    state
+        .team_mut(&team)
+        .unwrap()
+        .item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .reassign(holder, "agents/claude-1/1.1".parse().unwrap())
+        .unwrap();
+    assert!(state.begin_holder_session(&task, Trouble::Busy, at).unwrap());
+    state.owe_busy_notice(&task).unwrap();
+
+    let flaky = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
+    let daemon = Daemon::new(&state, Some(&flaky));
+    std::fs::write(
+        daemon.home.root().join("real-agentbus"),
+        super::super::fixture::agentbus_binary().to_str().unwrap(),
+    )
+    .unwrap();
+    let down = daemon.home.root().join("flaky-bus-down");
+    std::fs::write(&down, "").unwrap();
+
+    let (mut first, _sinks) = daemon.bare_owner().await;
+    first.look_at_every_team();
+    first.team_life().await.unwrap();
+
+    let refused = daemon.home.root().join("flaky-bus-refused");
+    let calls = std::fs::read_to_string(&refused).unwrap();
+    assert!(
+        calls.contains("send"),
+        "the recovery did not try the owed send: {calls}"
+    );
+    assert!(first.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
+    drop(first);
+
+    std::fs::remove_file(&down).unwrap();
+    let (mut recovered, _sinks) = daemon.bare_owner().await;
+    recovered.look_at_every_team();
+    recovered.team_life().await.unwrap();
+
+    assert!(
+        !recovered
+            .parts
+            .state
+            .find_task(&task)
+            .unwrap()
+            .member
+            .busy_notice_owed()
+    );
+    assert_eq!(
+        recovered
+            .parts
+            .state
+            .find_task(&task)
+            .unwrap()
+            .member
+            .past_holders()
+            .len(),
+        1,
+        "recovery delivers the notice without another hand-over"
+    );
+    let messages = std::fs::read_to_string(daemon.home.root().join("bus/messages.jsonl")).unwrap();
+    let notice = messages
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|message| {
+            message["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("is held by inv-1 now: claude-1 is busy in another team"))
+        });
+    let Some(notice) = notice else {
+        panic!("the team notice is missing: {messages}");
+    };
+    assert_eq!(notice["to"].as_str(), Some(format!("team:{team}").as_str()));
+    assert_eq!(
+        history_of(&daemon.home, "inv-opus", &team, &crate::fixtures::task(1),)
+            .contains("is held by inv-1 now: claude-1 is busy in another team"),
+        true,
+        "the coordinator did not receive the holder-change notice"
+    );
+}
