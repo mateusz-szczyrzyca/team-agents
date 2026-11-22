@@ -64,7 +64,8 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
         | PublishError::Asking(_)
         | PublishError::Replacing(_)
         | PublishError::Refused { .. }
-        | PublishError::Lost => Outlook::WillNotPass,
+        | PublishError::Lost
+        | PublishError::Owner(_) => Outlook::WillNotPass,
     }
 }
 
