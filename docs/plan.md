@@ -191,6 +191,17 @@ handed its item over); until then its steps for the other items are not a fault.
 `state.json` with the task ([`state.md`](state.md)), and so is the reason of a send-back until the next run starts: a
 restart of the daemon loses neither.
 
+**A failed step check.** A run that ends done while a step it marked done fails its check (a `mismatch`, see above) is
+sent back with that step: the correction names the step, its title, its check, the reason and the last lines of the
+check's output (at most 40). It counts against `[plan] bounces` like any other send-back. When a plan fault and a
+mismatch come together, the run is sent back for the plan fault: one reason per send-back, and the mismatch is judged
+again by the next run, which may send it back again. A run that ends another way, a role outside `[plan] roles` and a
+task created before plans are never sent back for a mismatch.
+
+**A refused gate command.** A step whose check is `[plan] check_refuse` (the gate) stays `declared`, and the next run is
+told once, in its prompt, that the gate is never a step's check. The notice is kept in the task's plan in
+`state.json` until a run starts with it; a run that is started after a restart gets it only if it was not yet started.
+
 **The human, after the limit.** A run that ends done against its plan once more is not sent back: the daemon writes
 the task's next questions file itself, quoting what the agent was told the last time, and the human is told as for any
 questions. Two answers: `a)` (or `ok`) goes on as it is — the plan is released and the task is never sent back for it
