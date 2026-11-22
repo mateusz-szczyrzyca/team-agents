@@ -840,7 +840,6 @@ impl Owner {
     fn note_agent_wait(&mut self, task: &TaskId, holder: &Going) -> Result<(), OwnerError> {
         if self.agent_waits.insert(task.clone()) {
             let located = self.locate(task)?;
-            eprintln!("DEBUGNOTE {} enabled={}", located.team, tracing::enabled!(tracing::Level::INFO));
             // The team and the task are fields of the event itself: the history keeps them with the record.
             tracing::info!(
                 event = LogEvent::TaskWaitsForAgent.as_str(),
