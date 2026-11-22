@@ -74,9 +74,12 @@ fn a_request_names_a_step_that_can_be_sent() {
     }
 }
 
-#[test]
-fn every_missing_or_wrong_piece_is_refused_with_its_own_outcome() {
-    let rows: Vec<(&str, fn(&mut Request), Rejection)> = vec![
+/// A row of the table of refusals: its name, how it spoils a complete request, and the rejection it must get.
+type Row = (&'static str, fn(&mut Request), Rejection);
+
+/// Every missing or wrong piece of a request, one row each.
+fn refusal_rows() -> Vec<Row> {
+    vec![
         ("", |r: &mut Request| r.named.step.clear(), Rejection::MissingStep),
         (
             "not a step",
@@ -173,8 +176,12 @@ fn every_missing_or_wrong_piece_is_refused_with_its_own_outcome() {
             |r: &mut Request| r.named.doing = "  \n ".to_owned(),
             Rejection::MissingDo,
         ),
-    ];
-    for (name, change, expected) in rows {
+    ]
+}
+
+#[test]
+fn every_missing_or_wrong_piece_is_refused_with_its_own_outcome() {
+    for (name, change, expected) in refusal_rows() {
         let mut request = complete();
         change(&mut request);
         assert_eq!(refused(&request), expected, "{name}");
