@@ -144,7 +144,7 @@ not checked again. Steps to do, in hand or given up are never judged.
 | no `Check:` line | `declared` |
 | `reviewer` | `declared`; a later item will connect a reviewer's verdict to a step |
 | `exists PATH` | `confirmed` when a file or directory resolves inside the task's worktree; `mismatch` when absent, inaccessible, or resolving outside it |
-| a command | `declared`; in the daemon, commands remain declared pending durable owner lifecycle |
+| a command | `confirmed` when the command exits with `0` within `[plan] check_seconds`; `mismatch` when it exits non-zero, is ended by a signal, runs past `check_seconds`, or cannot be started; `declared` when `check_seconds = 0` or the command matches a prefix in `[plan] check_refuse` |
 
 Existence checks use asynchronous filesystem operations and follow symlinks only to targets inside the worktree.
 The runtime provides `execute_command_check` for executing command checks in the task's worktree with agent environment
@@ -152,12 +152,14 @@ variables, closed stdin, complete output logs saved to `tasks/<task>/checks/<run
 lines lossy-decoded as UTF-8 for diagnostic notices), and a timeout set by `[plan] check_seconds` (default 120; `0` disables
 commands and keeps them declared; commands matching prefixes in `[plan] check_refuse` are refused and declared). In the
 running daemon, the command of a done step runs in the background when its run ends: one batch per run, the commands of a
-batch one after another, with the agent's environment (its secrets, `PATH`, `AGENTS_HOME` and commit identity; the
+batch one after another, with the agent's environment (its secrets, `PATH`, `AGENTS_HOME`, `CARGO_INCREMENTAL` from `[build]`, and commit identity; the
 notification secrets are not given, nor the CLI's own variables or the commit guard hooks). While a batch runs the
 daemon serves its requests; the run is finished with the plan's decision when the batch ends. The process group of the
 running command is recorded in `tasks/<task>/checks/running` and removed when it ends: a daemon that stops ends it, and
-a daemon that starts after a crash ends the group the record names. A restarted run's checks are judged at the end of the
-next run, not at the start of the daemon.
+a daemon that starts after a crash ends the group the record names. While command checks or plan settlement run for a
+finished CLI run, `state.json` keeps the unsettled finished run in the task's plan (`running_check`): a daemon that
+restarts ends any leftover check process group first, re-runs any check not yet judged in `history.db` for that run, and
+settles the finished run once without starting a second CLI run or writing a duplicate judgement.
 Each judgement records the task, run, step ID, check, state, reason, output path, and duration in
 [`history.db`](history.md#step_judgements).
 Judgements are acknowledged by the history writer before run settlement continues.
