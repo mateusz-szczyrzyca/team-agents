@@ -600,9 +600,9 @@ impl Plan {
     }
 }
 
-/// `[workers]`: what the harness does with the result of a worker that served a request.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
+/// `[workers]`: what the harness does with the result of a worker that served a request. It is built only from a
+/// loaded configuration ([`RawWorkerSettings`] is checked first), so `tries` is never `0`.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerSettings {
     /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
     tries: u32,
@@ -629,6 +629,26 @@ impl Default for WorkerSettings {
         Self {
             tries: DEFAULT_WORKERS_TRIES,
             seconds: 0,
+        }
+    }
+}
+
+/// `[workers]` as the file spells it, before [`check_workers`] refuses `tries = 0`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawWorkerSettings {
+    /// See [`WorkerSettings::tries`]; not checked yet.
+    tries: u32,
+    /// See [`WorkerSettings::seconds`].
+    seconds: u64,
+}
+
+impl Default for RawWorkerSettings {
+    fn default() -> Self {
+        let defaults = WorkerSettings::default();
+        Self {
+            tries: defaults.tries,
+            seconds: defaults.seconds,
         }
     }
 }
@@ -940,7 +960,7 @@ struct RawConfig {
     questions: Questions,
     /// See [`Config::workers`].
     #[serde(default)]
-    workers: WorkerSettings,
+    workers: RawWorkerSettings,
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
@@ -1000,7 +1020,7 @@ impl RawConfig {
             repos,
         } = self;
         check_plan(&plan)?;
-        check_workers(&worker_settings)?;
+        let worker_settings = check_workers(worker_settings)?;
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &worker_names, &agents)?;
@@ -1046,11 +1066,14 @@ impl RawConfig {
 }
 
 /// Checks that `[workers] tries` asks for at least one try: a request with none is never served.
-fn check_workers(workers: &WorkerSettings) -> Result<(), ConfigError> {
+fn check_workers(workers: RawWorkerSettings) -> Result<WorkerSettings, ConfigError> {
     if workers.tries == 0 {
         return Err(ConfigError::WorkersTriesZero);
     }
-    Ok(())
+    Ok(WorkerSettings {
+        tries: workers.tries,
+        seconds: workers.seconds,
+    })
 }
 
 /// Checks that `[plan] roles` names no role that keeps no plan and no role twice, in the order the file gives.
