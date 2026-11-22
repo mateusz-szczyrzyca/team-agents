@@ -384,3 +384,19 @@ fn replacement_run_keeps_earlier_history_but_only_resumes_its_own_session() {
     assert_eq!(member.session_runs().len(), 1);
     assert_eq!(member.last_session().map(|s| s.as_str()), Some("replacement-session"));
 }
+
+#[test]
+fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_debt() {
+    let mut state = old_state();
+    state
+        .owe_lead(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert!(
+        !member.owes_lead(),
+        "a replacement owns the work instead of leaving it owed to the lead"
+    );
+    assert_eq!(member.renewals().map(crate::state::Renewals::used), Some(0));
+}
