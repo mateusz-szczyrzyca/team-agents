@@ -102,8 +102,10 @@ impl Owner {
             }
             Ok(None) => {}
             Err(error) => {
-                tracing::warn!(event = LogEvent::BusDown.as_str(), task = %task,
-                    error = %error_chain(&error), "the bus cannot be read at the start of a lead's run");
+                // An unreadable log of the bus is told once, as `bus_down`, by the wake-ups (`wakes`): the run goes on
+                // without a mark, and its returns have no reason (the fixed text), never an older one.
+                tracing::debug!(task = %task, error = %error_chain(&error),
+                    "the bus cannot be read at the start of a lead's run");
             }
         }
     }
