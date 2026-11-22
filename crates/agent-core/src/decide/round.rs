@@ -625,6 +625,14 @@ pub struct CommitsLeft {
     pub refused_now: usize,
 }
 
+impl CommitsLeft {
+    /// What is left when `to_ask` findings about a commit wait for the human.
+    #[must_use]
+    pub const fn asking(to_ask: usize) -> Self {
+        Self { to_ask, refused_now: 0 }
+    }
+}
+
 impl Checking {
     /// What the `issues` of the round and its findings about commits come to, as [`Self::conclude`] says for the issues:
     /// a finding about a commit is one that only the human may allow, and no finding the human has answered holds the
