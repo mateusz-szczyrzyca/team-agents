@@ -1224,7 +1224,7 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
             .member
             .questions()
             .last()
-            .is_some_and(|q| q.answered().is_some())
+            .is_some_and(|q| !q.is_open())
     })
     .await;
 
