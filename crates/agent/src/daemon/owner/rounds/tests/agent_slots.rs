@@ -922,3 +922,83 @@ async fn an_unrenderable_notice_settles_the_obligation_and_lets_later_jobs_run()
     assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
     assert!(!owner.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
 }
+
+/// A reviewer that never gives a verdict: it ends its turn and waits.
+const SILENT: &str = "sleep";
+
+#[tokio::test]
+async fn a_member_whose_item_waits_for_a_review_is_not_handed_over_while_a_free_candidate_exists() {
+    use agent_core::state::ItemPhase;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "hold"),
+            normal("claude-2", "work"),
+            normal("claude-3", "work"),
+            investigator("inv-r1", SILENT),
+            investigator("inv-r2", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config_text + "\n[replacement]\nagents = [\"claude-3\"]\nbusy_after = 3600\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    // The item of claude-2 is done and waits for its review: the reviewers never give a verdict.
+    let (review_team, review_tasks) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let reviewed = review_tasks[0].clone();
+    let item_id = "1.1".parse().unwrap();
+    rig.state_where("the item of claude-2 to wait for its review", |state| {
+        state
+            .team(&review_team)
+            .and_then(|team| team.item(item_id))
+            .is_some_and(|progress| matches!(progress.phase(), ItemPhase::InReview { .. }))
+    })
+    .await;
+
+    // The positive control: a second task waits for claude-1, which a run of its own holds, and goes to claude-3.
+    let (_, holder) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&holder[0], TaskStatus::Running).await;
+    let (_, waiting) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let waiting = waiting[0].clone();
+    rig.state_where("the second task to wait for claude-1", |state| {
+        state
+            .find_task(&waiting)
+            .is_some_and(|found| found.member.waiting_since().is_some())
+    })
+    .await;
+    rig.advance_history_days(1);
+    let state = rig
+        .state_where("the waiting task to be handed over to claude-3", |state| {
+            state
+                .find_task(&waiting)
+                .is_some_and(|found| found.member.agent().name() == "claude-3")
+        })
+        .await;
+
+    let reviewed_member = state.find_task(&reviewed).unwrap().member;
+    assert_eq!(reviewed_member.agent().name(), "claude-2");
+    assert!(
+        reviewed_member.past_holders().is_empty(),
+        "the reviewed item keeps its holder"
+    );
+    assert!(
+        matches!(
+            state
+                .team(&review_team)
+                .and_then(|team| team.item(item_id))
+                .map(|progress| progress.phase().clone()),
+            Some(ItemPhase::InReview { .. })
+        ),
+        "the item still waits for its review"
+    );
+
+    std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
+    rig.stop().await.unwrap();
+}
