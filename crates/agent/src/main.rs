@@ -847,14 +847,16 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
     }
 }
 
-/// Where `agent status` reads the requests for workers of the tasks it shows: the bus of `home`, or why it cannot be
-/// known when the home's configuration does not load (the status is shown all the same).
+/// Where `agent status` reads the requests for workers of the tasks it shows: the bus of `home`; nothing for a home
+/// without a configuration file, which names no bus to ask (as the line of the disk takes the default then); or why it
+/// cannot be known when the configuration does not load (the status is shown all the same).
 async fn requests_source(home: &Home) -> RequestsSource {
     match Settings::load(home).await {
         Ok(settings) => RequestsSource::Bus(AgentBus::new(
             settings.config.binaries().agentbus.clone(),
             home.absolute_root().clone(),
         )),
+        Err(SettingsError::MissingConfig { .. }) => RequestsSource::Unread,
         Err(error) => RequestsSource::Unknown(error_chain(&error)),
     }
 }
