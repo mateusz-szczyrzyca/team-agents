@@ -790,7 +790,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         world.status_where("the first task to finish its run and the second to run", |status| {
             line_of(status, &first).contains("waiting") && line_of(status, &second).contains("running")
         });
-        eventually("the second solo task's resumed run to start", || {
+        world.status_where("the second solo task's resumed run to start", |_| {
             world.runs(&second) == 2
         });
         release(&world, &second);
