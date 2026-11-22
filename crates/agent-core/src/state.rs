@@ -369,6 +369,26 @@ impl State {
         self.queued = self.effective_queued();
     }
 
+    /// The task IDs currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in queue-entry order.
+    #[must_use]
+    pub fn queued_order(&self) -> Vec<TaskId> {
+        self.effective_queued()
+    }
+
+    /// Places tasks that were interrupted from [`TaskStatus::Running`](crate::status::TaskStatus::Running) into
+    /// [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) (in team order) ahead of the tasks in `waiting` that
+    /// were already queued before the interruption (in their `waiting` order).
+    pub fn place_waiting_after_interrupted(&mut self, waiting: &[TaskId]) {
+        let natural = self.natural_queued();
+        let mut order: Vec<TaskId> = natural.iter().filter(|task| !waiting.contains(task)).cloned().collect();
+        for task in waiting {
+            if natural.contains(task) && !order.contains(task) {
+                order.push(task.clone());
+            }
+        }
+        self.queued = order;
+    }
+
     /// The queued tasks in the order they entered the queue, oldest first.
     pub fn queued_tasks(&mut self) -> Vec<crate::decide::slot::Queued> {
         self.sync_queued();

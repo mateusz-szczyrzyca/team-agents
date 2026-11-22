@@ -1854,9 +1854,15 @@ impl Owner {
 
     /// Waits for the runs, which are stopping because the shutdown is cancelled, and records how each ended.
     async fn stop_runs(&mut self) -> Result<(), OwnerError> {
+        let waiting = self.parts.state.queued_order();
+        let had_runs = !self.runs.is_empty();
         self.shutdown.cancel();
         while let Some(joined) = self.runs.join_next_with_id().await {
             self.settle_joined(joined).await?;
+        }
+        if had_runs {
+            self.parts.state.place_waiting_after_interrupted(&waiting);
+            self.save().await?;
         }
         Ok(())
     }

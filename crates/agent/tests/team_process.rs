@@ -825,8 +825,10 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
 
         world.restart();
+        eventually("task B to resume after the restart", || world.runs(&b) == 2);
 
         release(&world, &b);
+        eventually("task C to start before resumed task A", || world.runs(&c) == 1);
         let status = world.status_where("task C to start before resumed task A", |status| {
             line_of(status, &c).contains("running") && line_of(status, &a).contains("queued, waits for claude-1")
         });
@@ -834,6 +836,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&a), 1, "{status}");
 
         release(&world, &c);
+        eventually("task A to start after task C finishes", || world.runs(&a) == 2);
         world.status_where("task A to start after task C finishes", |status| {
             line_of(status, &a).contains("running")
         });
@@ -871,6 +874,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         );
 
         release(&world, &first);
+        eventually("the second solo task's run to start", || world.runs(&second) == 1);
         world.status_where("the second solo task to run", |status| {
             line_of(status, &second).contains("running")
         });

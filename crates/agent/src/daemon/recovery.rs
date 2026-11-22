@@ -68,6 +68,7 @@ pub(crate) enum RecoveryError {
 /// # Errors
 /// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.
 pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
+    let waiting = state.queued_order();
     let mut recovery = Recovery::default();
     for task in all_tasks(state) {
         let role = state
@@ -124,6 +125,9 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         {
             recovery.wakes.push((wake, task));
         }
+    }
+    if !recovery.interrupted.is_empty() {
+        state.place_waiting_after_interrupted(&waiting);
     }
     Ok(recovery)
 }
