@@ -1,6 +1,7 @@
 //! Dependency decisions for a validated split, without opening rounds or performing I/O.
 
 pub mod approval;
+pub mod submission;
 
 use std::collections::BTreeSet;
 
