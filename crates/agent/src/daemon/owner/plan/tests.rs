@@ -2274,3 +2274,99 @@ async fn async_recover_leftover_checks_ends_recorded_group_on_blocking_pool() {
         "recover_leftover_checks must end leftover check process groups and remove checks/running on the blocking pool"
     );
 }
+
+/// A plan of task 1 whose only step is done and checks `exists absent.txt`: its check fails until the file is there.
+const MISSING_FILE_PLAN: &str = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists absent.txt\n";
+
+/// Waits until the state of task 1 has `count` send-backs of its plan, on the daemon that runs.
+async fn sent_back_count(daemon: &Daemon, count: u32) {
+    daemon
+        .state_where(&format!("{count} send-backs of the plan"), |state| {
+            state
+                .find_task(&task(1))
+                .and_then(|found| found.member.plan().map(|keeping| keeping.sent_back() == count))
+                .unwrap_or(false)
+        })
+        .await;
+}
+
+#[tokio::test]
+async fn a_mismatch_of_a_done_run_sends_it_back_and_the_repaired_step_settles() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
+    daemon.start().await;
+
+    sent_back_count(&daemon, 1).await;
+    // The agent repairs what the check looks for before its next run ends.
+    std::fs::write(dir.join("absent.txt"), "now here").unwrap();
+    let state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(
+        prompt.contains("the check of step 1.1 (`exists absent.txt`) failed"),
+        "{prompt}"
+    );
+    let keeping = state.find_task(&task(1)).unwrap().member.plan().unwrap().clone();
+    assert_eq!(keeping.sent_back(), 1);
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_mismatch_that_stays_uses_the_bounces_and_asks_the_human_about_the_step_and_its_check() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
+    daemon.start().await;
+
+    wait_for_questions(&daemon).await;
+    let text = std::fs::read_to_string(daemon.questions_file(1, 1)).unwrap();
+    daemon.stop().await.unwrap();
+
+    assert!(text.contains("1.1") && text.contains("exists absent.txt"), "{text}");
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(
+        prompt.contains("the check of step 1.1 (`exists absent.txt`) failed"),
+        "{prompt}"
+    );
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    assert_eq!(
+        reader.latest_judgements(&task(1)).unwrap()[&"1.1".parse::<ItemId>().unwrap()].state,
+        agent_core::plan::judge::JudgementState::Mismatch
+    );
+}
+
+#[tokio::test]
+async fn a_refused_gate_check_is_told_to_the_next_run_once_and_not_after_a_restart_of_the_daemon() {
+    let plan = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: make gate\n[ ] 1.2 Later\n";
+    let mut daemon = running_with_plan(&solo_state(), 1, Some(plan)).await;
+
+    sent_back_count(&daemon, 1).await;
+    daemon.stop().await.unwrap();
+    daemon.start().await;
+    // The plan still has step 1.2 to do after the second run: the human is asked, with the limit reached.
+    wait_for_questions(&daemon).await;
+    daemon.stop().await.unwrap();
+
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert_eq!(prompt.matches("## Step 1.1 check was refused").count(), 1, "{prompt}");
+    assert_eq!(
+        judgement_of(&daemon, "1.1").reason.as_deref(),
+        Some("refused gate command")
+    );
+}
+
+/// Waits until the questions file of task 1, number 1, is written.
+async fn wait_for_questions(daemon: &Daemon) {
+    let questions = daemon.questions_file(1, 1);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !questions.exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
