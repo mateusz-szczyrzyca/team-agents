@@ -1006,6 +1006,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                holder_after_run: None,
             };
             member.sync_plan_judging();
             check_member(&member)?;
