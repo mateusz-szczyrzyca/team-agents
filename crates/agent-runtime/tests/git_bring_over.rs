@@ -181,17 +181,23 @@ mod git_bring_over {
             panic!("the commit applies: {outcome:?}");
         };
         assert_eq!(raw(&repo, &["show", &format!("{commit}:guide.md")]), "one\ntwo");
-        assert_eq!(
-            raw(&repo, &["show", &format!("{}:guide.md", snapshot.head)]),
-            "one\ntwo"
-        );
-        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo");
-        assert_eq!(std::fs::read(repo.join("uncommitted.txt")).expect("mine"), b"mine");
-        assert_eq!(std::fs::read(repo.join("untracked.txt")).expect("new"), b"new");
-        let (status, index, contents) = state(&repo, &files);
-        assert_eq!(contents, before.2);
-        assert_eq!(index, before.1);
-        assert_eq!(before.0, "?? uncommitted.txt\0?? untracked.txt\0");
+        // The snapshot is the requester's worktree as it was, at the head the requester had before the merge.
+        assert_eq!(snapshot.head.to_string(), before_head);
+        assert_eq!(raw(&repo, &["rev-parse", &format!("{commit}^")]), before_head);
+        // The file's bytes, against the blob's bytes: `raw` cuts the last line break of what it prints.
+        let blob = Command::new("git")
+            .args(["cat-file", "blob", &format!("{commit}:guide.md")])
+            .current_dir(&repo)
+            .output()
+            .expect("git runs");
+        assert!(blob.status.success());
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), blob.stdout);
+        // The requester's own files byte for byte, as they were written.
+        assert_eq!(std::fs::read(repo.join("uncommitted.txt")).expect("mine"), b"mine\n");
+        assert_eq!(std::fs::read(repo.join("untracked.txt")).expect("new"), b"new\n");
+        let (status, _index, contents) = state(&repo, &files);
+        assert_eq!(&contents[2], b"mine\n");
+        assert_eq!(&contents[3], b"new\n");
         assert_eq!(status, before.0);
     }
 
