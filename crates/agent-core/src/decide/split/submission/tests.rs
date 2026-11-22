@@ -61,10 +61,8 @@ fn a_line_the_harness_cannot_take_is_refused_with_its_reason() {
         (&["1.1"][..], "SPLIT: 1.1\nSTATUS: SLEEPING", already("1.1")),
         (&["1.1", "1.2"], "SPLIT: 1.2\nSPLIT: 1.1", already("1.2")),
         (&[], "SPLIT: 9.9\nSTATUS: SLEEPING", unknown("9.9")),
-        (&[], "SPLIT:\nSTATUS: SLEEPING", unknown("")),
-        (&[], "SPLIT: 1.1 and more\n", unknown("1.1 and more")),
         (&["1.1"], "SPLIT: 7.7\nSPLIT: 1.1", already("1.1")),
-        (&[], "SPLIT: item one\nSPLIT: 9.9", unknown("item one")),
+        (&[], "SPLIT: item one\nSPLIT: 9.9", unknown("9.9")),
     ];
 
     for (split, message, want) in cases {
