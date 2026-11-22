@@ -634,7 +634,7 @@ impl Default for WorkerSettings {
 }
 
 /// `[workers]` as the file spells it, before [`check_workers`] refuses `tries = 0`.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Copy, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 struct RawWorkerSettings {
     /// See [`WorkerSettings::tries`]; not checked yet.
