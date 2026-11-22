@@ -825,4 +825,195 @@ Integrate the guide.
         assert_eq!(world.git_output(member, &["rev-parse", "HEAD"]), head);
         assert_eq!(world.file(member, "docs/guide.md"), "the requester's text\n");
     }
+
+    impl World {
+        /// The ID of the team the daemon formed.
+        fn team_id(&self) -> String {
+            let text = std::fs::read_to_string(self.home.join("state.json")).unwrap();
+            let state: serde_json::Value = serde_json::from_str(&text).unwrap();
+            state["teams"][0]["id"].as_str().unwrap().to_owned()
+        }
+
+        /// Runs `agentbus` with `args` on the bus of the home.
+        fn bus_cli(&self, args: &[&str]) {
+            let output = Command::new(agentbus_binary())
+                .arg(args[0])
+                .arg("--dir")
+                .arg(self.home.join("bus"))
+                .args(&args[1..])
+                .env("AGENTS_HOME", &self.home)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "agentbus {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+
+        /// What the daemon would have written when the worker `worker` of `requester` ended request 1 and went down
+        /// before the next stage: the worker commits as its script says, the requester's request is on the bus as running,
+        /// and the file of the stage `stage` is in the worker's task directory.
+        fn worker_ended_and_daemon_down(&self, requester: &str, worker: &str, stage: serde_json::Value, request: &str) {
+            let worktree = self.worktree(worker);
+            let base = self.git_output(worker, &["rev-parse", "HEAD"]);
+            let status = Command::new("bash")
+                .arg(self.home.join("fake-scripts/guide.sh"))
+                .current_dir(&worktree)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+            let head = self.git_output(worker, &["rev-parse", "HEAD"]);
+            std::fs::create_dir_all(self.worktree(requester).join(".agent")).unwrap();
+            std::fs::write(self.worktree(requester).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+            let got = answers(&self.delegate_as(requester, request));
+            assert!(!got[0].0, "{got:?}");
+            self.bus_cli(&["helper-set", "--id", "1", "--status", "running", "--task", worker]);
+            let mut stage = stage;
+            let head_text = serde_json::Value::String(head);
+            if let Some(object) = stage.as_object_mut() {
+                if object.contains_key("head") {
+                    object.insert("head".to_owned(), head_text);
+                }
+            }
+            let pending = serde_json::json!({
+                "request": 1,
+                "team": self.team_id(),
+                "requester": "claude-1",
+                "requester_task": requester,
+                "worker": "glm-1",
+                "worker_task": worker,
+                "summary": "Result: done.",
+                "run_seconds": 1,
+                "base": base,
+                "stage": stage,
+            });
+            std::fs::write(
+                self.home.join("tasks").join(worker).join("worker-request-1.json"),
+                serde_json::to_string(&pending).unwrap(),
+            )
+            .unwrap();
+        }
+
+        /// The commits of the worktree of `task` that brought a worker's commit over.
+        fn brought_over(&self, task: &str) -> usize {
+            self.git_output(task, &["log", "--format=%H", "--grep", "Brought over from"])
+                .lines()
+                .count()
+        }
+    }
+
+    /// The request of the member whose check counts its runs, in the worker's worktree.
+    fn counting_request() -> String {
+        let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        request["check"] =
+            serde_json::Value::String("echo run >> .fake-check-count && test -s docs/guide.md".to_owned());
+        request.to_string()
+    }
+
+    /// A world with a member and a worker, the daemon up and down again, ready for a request the worker has served.
+    fn world_with_a_served_request() -> (World, String, String) {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "sleep"),
+            ("glm-1", "worker", "sleep"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
+        let (member, worker) = (task(&tasks, "claude-1").to_owned(), task(&tasks, "glm-1").to_owned());
+        for name in ["claude-1", "inv-opus", "glm-1"] {
+            world.ended(task(&tasks, name), 1);
+        }
+        world.sleeps_on_the_bus("glm-1");
+        world.stop();
+        (world, member, worker)
+    }
+
+    #[test]
+    fn a_daemon_that_went_down_after_the_workers_end_runs_the_check_once_and_brings_the_commit_over_once() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(
+            &member,
+            &worker,
+            serde_json::json!({"stage": "ended"}),
+            &counting_request(),
+        );
+
+        world.start();
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.file(&worker, ".fake-check-count"), "run\n", "the check ran once");
+        assert_eq!(world.brought_over(&member), 1);
+        let answers = world
+            .messages_to("claude-1")
+            .iter()
+            .filter(|text| text.contains("did step 1.1 of your plan"))
+            .count();
+        assert_eq!(answers, 1);
+    }
+
+    #[test]
+    fn a_daemon_that_went_down_after_the_check_does_not_run_it_again() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let checked = serde_json::json!({"stage": "checked", "step": "1.1", "files": ["docs/guide.md"], "head": null,
+            "committed": true, "outside": [],
+            "found": {"outcome": "passed", "line": "echo run >> .fake-check-count && test -s docs/guide.md",
+                      "tail": "", "reason": null, "duration_ms": 1, "output": null}});
+        world.worker_ended_and_daemon_down(&member, &worker, checked, &counting_request());
+
+        world.start();
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
+        assert!(
+            !world.worktree(&worker).join(".fake-check-count").exists(),
+            "the check that was run before the daemon went down is not run again"
+        );
+        assert_eq!(world.brought_over(&member), 1);
+    }
+
+    #[test]
+    fn a_daemon_that_went_down_after_the_bringing_over_does_not_bring_the_commit_over_again() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let checked = serde_json::json!({"stage": "checked", "step": "1.1", "files": ["docs/guide.md"], "head": null,
+            "committed": true, "outside": [],
+            "found": {"outcome": "passed", "line": "exists docs/guide.md",
+                      "tail": "", "reason": null, "duration_ms": 1, "output": null}});
+        world.worker_ended_and_daemon_down(&member, &worker, checked.clone(), MEMBER_REQUEST);
+        world.start();
+        world.request_is("1", "done");
+        assert_eq!(world.brought_over(&member), 1);
+        // The daemon is told to go down in the other order: the commit is on the branch, but the file of the request still
+        // names the stage before the bringing over.
+        world.stop();
+        let pending = serde_json::json!({
+            "request": 1, "team": world.team_id(), "requester": "claude-1", "requester_task": member,
+            "worker": "glm-1", "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
+            "stage": {"stage": "checked", "step": "1.1", "files": ["docs/guide.md"],
+                      "head": world.git_output(&worker, &["rev-parse", "HEAD"]), "committed": true, "outside": [],
+                      "found": {"outcome": "passed", "line": "exists docs/guide.md", "tail": "", "reason": null,
+                                "duration_ms": 1, "output": null}},
+        });
+        std::fs::write(
+            world.home.join("tasks").join(&worker).join("worker-request-1.json"),
+            serde_json::to_string(&pending).unwrap(),
+        )
+        .unwrap();
+
+        world.start();
+
+        eventually("the file of the request to be settled", || {
+            !world
+                .home
+                .join("tasks")
+                .join(&worker)
+                .join("worker-request-1.json")
+                .exists()
+        });
+        assert_eq!(world.brought_over(&member), 1, "the commit is on the branch once");
+    }
 }
