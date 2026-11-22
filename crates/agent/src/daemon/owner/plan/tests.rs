@@ -2295,7 +2295,7 @@ async fn sent_back_count(daemon: &Daemon, count: u32) {
 #[tokio::test]
 async fn a_mismatch_of_a_done_run_sends_it_back_and_the_repaired_step_settles() {
     let mut daemon = with_bounces(&solo_state(), 1);
-    let dir = daemon.scenario(1, "done");
+    let dir = daemon.scenario(1, "done-on-resume-after absent.txt");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     std::fs::write(dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
     daemon.start().await;
@@ -2386,6 +2386,12 @@ async fn wait_for_run_with_notice(daemon: &Daemon) {
     {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert!(
+        daemon
+            .recorded(1, ".fake-args")
+            .contains("## Step 1.1 check was refused"),
+        "timed out waiting for refused gate notice in prompt"
+    );
 }
 
 /// Waits until the questions file of task 1, number 1, is written.
@@ -2395,6 +2401,7 @@ async fn wait_for_questions(daemon: &Daemon) {
     while !questions.exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert!(questions.exists(), "timed out waiting for {}", questions.display());
 }
 
 #[test]
@@ -2434,7 +2441,7 @@ fn refused_gates_lists_only_the_refused_commands_in_order() {
 #[tokio::test]
 async fn mismatch_and_fault_bounce_once_with_40_line_tail_and_human_answers_work() {
     let mut daemon = with_bounces(&solo_state(), 1);
-    let dir = daemon.scenario(1, "done");
+    let dir = daemon.scenario(1, "done-on-resume-after run2-go.txt");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     let plan_with_unfinished_and_failing_cmd = concat!(
         "Finish it.\n\n1. Work\n",
@@ -2448,7 +2455,7 @@ async fn mismatch_and_fault_bounce_once_with_40_line_tail_and_human_answers_work
     // Run 1 ends DONE with both an unfinished step (1.2) and a command check mismatch (1.1).
     // It counts as one bounce and Run 2's prompt names both reasons and at most 40 lines of output.
     sent_back_count(&daemon, 1).await;
-    // Before Run 2 finishes, mark step 1.2 done so Run 2 only fails on step 1.1 and reaches the human question.
+    // Run 2 waits on run2-go.txt. Mark step 1.2 done and release Run 2 so it only fails on step 1.1.
     let plan_only_mismatch = concat!(
         "Finish it.\n\n1. Work\n",
         "[x] 1.1 Run command\n",
@@ -2456,6 +2463,7 @@ async fn mismatch_and_fault_bounce_once_with_40_line_tail_and_human_answers_work
         "[x] 1.2 Finish later\n",
     );
     std::fs::write(dir.join(".agent/plan.md"), plan_only_mismatch).unwrap();
+    std::fs::write(dir.join("run2-go.txt"), "go").unwrap();
     let _state_at_q1 = daemon.status_is(1, TaskStatus::Questions).await;
 
     let run2_prompt = daemon.recorded(1, ".fake-args");
@@ -2485,6 +2493,10 @@ async fn mismatch_and_fault_bounce_once_with_40_line_tail_and_human_answers_work
     while !daemon.questions_file(1, 2).exists() && std::time::Instant::now() < deadline {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+    assert!(
+        daemon.questions_file(1, 2).exists(),
+        "timed out waiting for questions-2.md"
+    );
     let state_at_q2 = daemon.status_is(1, TaskStatus::Questions).await;
     let keeping_at_q2 = keeping(&state_at_q2);
     assert_eq!(

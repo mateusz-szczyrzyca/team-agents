@@ -4,7 +4,7 @@ use crate::ids::ItemId;
 use crate::ids::TaskId;
 use crate::kinds::Role;
 use crate::plan::{Plan, parse_plan};
-use crate::state::{Member, Participant, PlanKeeping, PlanReason, PlanStage, RunEnd};
+use crate::state::{Member, Participant, PlanFault, PlanKeeping, PlanReason, PlanStage, RunEnd, StepMismatch};
 use crate::status::RunOutcome;
 
 /// The end of a run of the agent that reports `outcome`.
@@ -700,9 +700,17 @@ fn decide_plan_with_mismatch_table() {
     let done = ended(RunOutcome::Done);
     let sleeping = ended(RunOutcome::Sleeping);
     let failed = ended(RunOutcome::Failed);
-    let combined = |fault| PlanReason::FaultAndMismatch {
-        fault: Box::new(fault),
-        mismatch: Box::new(mismatch()),
+    let combined = |fault| {
+        PlanReason::fault_and_mismatch(
+            fault,
+            StepMismatch {
+                step: item("1.1"),
+                title: "Write it".to_owned(),
+                check: Some("cargo test".to_owned()),
+                reason: Some("check failed with exit code 1".to_owned()),
+                tail: "failures:\n    test_it".to_owned(),
+            },
+        )
     };
     let facts = |role, end, read, earlier, keeping, policy| PlanFacts {
         role,
@@ -757,14 +765,14 @@ fn decide_plan_with_mismatch_table() {
         (
             "mismatch with unfinished step (one bounce, both named)",
             facts(Role::Member, &done, &unfinished, &[], Some(&k0), &def_policy),
-            PlanVerdict::SendBack(combined(PlanReason::Unfinished {
+            PlanVerdict::SendBack(combined(PlanFault::Unfinished {
                 steps: vec![item("1.2")],
             })),
         ),
         (
             "mismatch with lost step at bounce limit (both named)",
             facts(Role::Coordinator, &done, &lost, &prev_1_3, Some(&k3), &def_policy),
-            PlanVerdict::AskHuman(combined(PlanReason::LostStep {
+            PlanVerdict::AskHuman(combined(PlanFault::LostStep {
                 steps: vec![item("1.3")],
             })),
         ),

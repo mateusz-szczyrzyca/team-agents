@@ -163,16 +163,20 @@ fn fault_and_mismatch_rejects_meaningless_fault_and_legacy_member_persists_refus
     use crate::state::Member;
     use crate::state::fixtures::{normal, task};
 
-    let bad_fault =
-        r#"{"kind":"fault_and_mismatch","fault":{"kind":"mismatch","step":"1.1"},"mismatch":{"step":"1.1"}}"#;
+    let bad_fault = r#"{"kind":"fault_and_mismatch","fault":{"kind":"mismatch","step":"1.1"},"mismatch":{"kind":"mismatch","step":"1.1"}}"#;
     assert!(
         serde_json::from_str::<PlanReason>(bad_fault).is_err(),
         "FaultAndMismatch must refuse a mismatch inside fault"
     );
-    let bad_nested = r#"{"kind":"fault_and_mismatch","fault":{"kind":"fault_and_mismatch","fault":{"kind":"unfinished","steps":["1.2"]},"mismatch":{"step":"1.1"}},"mismatch":{"step":"1.1"}}"#;
+    let bad_nested = r#"{"kind":"fault_and_mismatch","fault":{"kind":"fault_and_mismatch","fault":{"kind":"unfinished","steps":["1.2"]},"mismatch":{"kind":"mismatch","step":"1.1"}},"mismatch":{"kind":"mismatch","step":"1.1"}}"#;
     assert!(
         serde_json::from_str::<PlanReason>(bad_nested).is_err(),
         "FaultAndMismatch must refuse nesting itself"
+    );
+    let valid = r#"{"kind":"fault_and_mismatch","fault":{"kind":"unfinished","steps":["1.2"]},"mismatch":{"step":"1.1","title":"Build","check":"cargo test","reason":"exit 1","tail":"err"}}"#;
+    assert!(
+        serde_json::from_str::<PlanReason>(valid).is_ok(),
+        "FaultAndMismatch must accept a valid PlanFault and StepMismatch"
     );
 
     let step1 = ItemId::from_str("1.1").unwrap();
