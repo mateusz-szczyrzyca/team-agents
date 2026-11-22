@@ -1060,24 +1060,25 @@ Integrate the guide.
         ]);
         world.script("guide", &commit_script("the walkthrough", &[]));
         let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
-        request["check"] = serde_json::Value::String("sleep 6 && test -s docs/guide.md".to_owned());
+        request["check"] = serde_json::Value::String(HELD_CHECK.to_owned());
         let tasks = answered_request(&mut world, &request.to_string());
-        let member = task(&tasks, "claude-1");
+        let (member, worker) = (task(&tasks, "claude-1"), task(&tasks, "glm-1"));
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
-        eventually("the worker's run to end", || world.runs(task(&tasks, "glm-1")) >= 2);
-        std::thread::sleep(Duration::from_millis(1500));
+        let started = world.worktree(worker).join(".fake-check-started");
+        eventually("the check to start", || started.exists());
 
-        let started = Instant::now();
+        // The check holds until the test lets it go: a daemon that waited for it would answer after it gave up, and the
+        // request would have failed.
         let output = world.agent(&["status"]);
 
         assert!(output.status.success());
-        assert!(
-            started.elapsed() < Duration::from_secs(3),
-            "the daemon answered after {:?}: the check stopped it",
-            started.elapsed()
-        );
+        std::fs::write(world.worktree(worker).join(".fake-check-go"), "").unwrap();
         world.request_is("1", "done");
     }
+
+    /// A check that says it started and holds until the test says it may end (it gives up after thirty seconds), in the
+    /// worker's worktree.
+    const HELD_CHECK: &str = "touch .fake-check-started && for i in $(seq 1 300); do test -e .fake-check-go && break; sleep 0.1; done && test -e .fake-check-go && test -s docs/guide.md";
 
     #[test]
     fn a_worker_that_leaves_a_requested_file_uncommitted_has_the_step_returned() {
@@ -1158,13 +1159,11 @@ Integrate the guide.
         world.told("claude-1", "is back with you");
         world.stop();
         world.start();
-        std::thread::sleep(Duration::from_millis(500));
-        let told = world
-            .messages_to("claude-1")
-            .iter()
-            .filter(|text| text.contains("is back with you"))
-            .count();
-        assert_eq!(told, 1);
+        world.after_a_look(&member, &worker);
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
     }
 
     #[test]
@@ -1278,12 +1277,8 @@ Integrate the guide.
 
         world.stop();
         world.start();
-        std::thread::sleep(Duration::from_millis(500));
-        let told = world
-            .messages_to("claude-1")
-            .iter()
-            .filter(|text| text.contains("Your request H1 to the workers is back with you"))
-            .count();
+        world.after_a_look(&member, &worker);
+        let told = world.count_told("claude-1", "Your request H1 to the workers is back with you");
         assert_eq!(told, 1, "a restart does not settle the damaged file again");
         assert_eq!(kept_aside(&world, &worker).len(), 1);
     }
@@ -1339,6 +1334,67 @@ Integrate the guide.
             output_of(&world.agent(&["status"])).contains("claude-1"),
             "the daemon still answers"
         );
+    }
+
+    impl World {
+        /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
+        fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
+            serde_json::json!({
+                "request": number, "team": self.team_id(), "requester": "claude-1", "requester_task": member,
+                "worker": "glm-2", "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
+                "stage": settled_returned(),
+            })
+        }
+
+        /// How many messages to `name` hold `needle`.
+        fn count_told(&self, name: &str, needle: &str) -> usize {
+            self.messages_to(name)
+                .iter()
+                .filter(|text| text.contains(needle))
+                .count()
+        }
+
+        /// Puts one more request of `member` on the bus as running with `worker` (a worker whose task directory the test
+        /// may write to) and returns its number; the bus does not take a request while a result of the member is unrated.
+        fn one_more_request(&self, member: &str, worker: &str) -> u64 {
+            let number = u64::try_from(self.requests().len()).unwrap() + 1;
+            let answer = answers(&self.delegate_as(member, MEMBER_REQUEST));
+            assert!(!answer[0].0, "{answer:?}");
+            self.bus_cli(&[
+                "helper-set",
+                "--id",
+                &number.to_string(),
+                "--status",
+                "running",
+                "--task",
+                worker,
+            ]);
+            number
+        }
+
+        /// Gives the daemon the request `number` of `member` to settle, as ended by `worker`, and waits until the requester
+        /// is told: the daemon has looked at the team once more after everything the test did before, without a pause to
+        /// guess the time of.
+        fn settle_as_a_look(&self, number: u64, member: &str, worker: &str) {
+            std::fs::write(
+                self.home
+                    .join("tasks")
+                    .join(worker)
+                    .join(format!("worker-request-{number}.json")),
+                self.settled_file(number, member, worker).to_string(),
+            )
+            .unwrap();
+            self.told(
+                "claude-1",
+                &format!("Your request H{number} to the workers is back with you"),
+            );
+        }
+
+        /// [`World::one_more_request`] and [`World::settle_as_a_look`] in one.
+        fn after_a_look(&self, member: &str, worker: &str) {
+            let number = self.one_more_request(member, worker);
+            self.settle_as_a_look(number, member, worker);
+        }
     }
 
     #[test]
