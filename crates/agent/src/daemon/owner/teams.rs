@@ -22,7 +22,7 @@ use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, TaskStatus};
 use agent_runtime::agentbus::{
-    AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
+    AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Outgoing, Recipient, RequestId, Woken,
 };
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
@@ -419,6 +419,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
         self.brief_leads().await;
+        self.queue_busy_handover_notices();
         self.flush_outbox().await?;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
@@ -495,9 +496,19 @@ impl Owner {
                         self.parts.state.lead_told(&work.task)?;
                         self.save().await?;
                     }
+                    if let BusJob::BusyHandOver { task, .. } = &next.job {
+                        let more = self
+                            .outbox
+                            .iter()
+                            .any(|other| matches!(&other.job, BusJob::BusyHandOver { task: same, .. } if same == task));
+                        if !more {
+                            self.parts.state.busy_notice_told(task)?;
+                            self.save().await?;
+                        }
+                    }
                 }
                 // What the bus refuses for good would block everything behind it for ever: it is dropped, once told.
-                Err(error) if !is_transient(&error) => {
+                Err(error) if !is_transient(&error) && !matches!(&next.job, BusJob::BusyHandOver { .. }) => {
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         team = %next.team,
@@ -533,6 +544,12 @@ impl Owner {
                     team: outbound.team.clone(),
                 };
                 bus.send(&from, &to, &message).await.map(drop)
+            }
+            BusJob::BusyHandOver { task, item } => {
+                let text = self.busy_handover_text(task, *item)?;
+                let from: AgentName = BUS_SENDER.parse()?;
+                let to = Recipient::Team(outbound.team.clone());
+                bus.send(&from, &to, &Outgoing::Chat { text }).await.map(drop)
             }
             BusJob::Answer { request, update } => bus.helper_set(*request, update).await,
             BusJob::Finish => bus.team_done(&outbound.team).await,

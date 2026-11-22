@@ -152,6 +152,9 @@ pub(crate) enum OwnerError {
     /// The permanent finding numbers have been used up.
     #[error("cannot number review findings")]
     FindingNumbers(#[from] agent_core::state::FindingNumbersExhausted),
+    /// A team notice of a busy hand-over cannot be constructed.
+    #[error(transparent)]
+    BusyNotice(#[from] takeover::BusyNoticeError),
     /// The state refuses to give a task whose runs went bad to the agent `[replacement]` chose.
     #[error("task {task} cannot be handed to another agent")]
     HandOver {
@@ -706,6 +709,7 @@ impl Owner {
         // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
         // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
         self.brief_leads().await;
+        self.queue_busy_handover_notices();
         if let Err(error) = self.flush_outbox().await {
             tracing::warn!(
                 event = LogEvent::BusDown.as_str(),

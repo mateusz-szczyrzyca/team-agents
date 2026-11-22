@@ -13,6 +13,52 @@ use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 
 use super::{Owner, OwnerError};
+use crate::daemon::team::BusJob;
+
+/// Why a busy hand-over notice of one item cannot be rendered; the owed notice stays queued for diagnosis.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum BusyNoticeError {
+    /// The task disappeared from the state before its notice was sent.
+    #[error("task {task} for the busy hand-over notice is not in the state")]
+    MissingTask {
+        /// The task whose hand-over was to be announced.
+        task: TaskId,
+    },
+    /// The item disappeared from its team before its notice was sent.
+    #[error("item {item} for the busy hand-over notice is not in the task's team")]
+    MissingItem {
+        /// The item whose hand-over was to be announced.
+        item: ItemId,
+    },
+    /// An item in the phase carries no branch to name in the message.
+    #[error("item {item} has no branch for its busy hand-over notice")]
+    MissingBranch {
+        /// The item whose branch cannot be told.
+        item: ItemId,
+    },
+    /// The task has no former holder to name in the message.
+    #[error("task {task} has no previous holder for its busy hand-over notice")]
+    MissingPreviousHolder {
+        /// The task whose previous holder was to be announced.
+        task: TaskId,
+    },
+    /// The prompt variables cannot be built.
+    #[error("cannot make the variables of item {item}'s busy hand-over notice")]
+    Variables {
+        /// The item whose text was being built.
+        item: ItemId,
+        /// The invalid name or value.
+        source: agent_core::prompt::VariablesError,
+    },
+    /// The prompt cannot be rendered.
+    #[error("cannot render item {item}'s busy hand-over notice")]
+    Render {
+        /// The item whose text was being rendered.
+        item: ItemId,
+        /// The renderer's reason, kept as the cause.
+        source: agent_runtime::team_prompts::RenderTeamTextError,
+    },
+}
 
 /// Who carries on a task whose new sessions went bad too.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -294,82 +340,120 @@ impl Owner {
             reason = "busy",
             "a task that waited too long for its busy agent is handed over to a free agent"
         );
+        if self
+            .parts
+            .state
+            .team(&team)
+            .is_some_and(|found| found.crew().coordinator().is_some())
+        {
+            self.parts.state.owe_busy_notice(task)?;
+        }
         self.save().await?;
-        self.tell_team_busy_handover(&team, task, &held, &name).await;
         Ok(true)
     }
 
-    /// Tells the team on the bus who holds each reassigned item of `task` now after `from` was busy in another team.
-    async fn tell_team_busy_handover(
-        &self,
-        team_id: &agent_core::ids::TeamId,
-        task: &TaskId,
-        from: &Participant,
-        to: &AgentName,
-    ) {
-        let Some(team) = self.parts.state.team(team_id) else {
-            return;
-        };
-        if team.crew().coordinator().is_none() {
-            return;
-        }
-        let Some(found) = self.parts.state.find_task(task) else {
-            return;
-        };
-        let bus_agent = found.member.bus_agent().agent_name();
-        let items: Vec<(ItemId, agent_core::ids::BranchName)> = team
-            .items()
+    /// Queues every still-owed team notice once; recovery rebuilds the outbox from the same persisted obligations.
+    pub(super) fn queue_busy_handover_notices(&mut self) {
+        let pending: Vec<(agent_core::ids::TeamId, TaskId)> = self
+            .parts
+            .state
+            .teams()
             .iter()
-            .filter_map(|progress| match progress.phase() {
-                ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. } => {
-                    (assignee == to).then(|| (progress.id(), branch.clone()))
-                }
-                ItemPhase::Pending
-                | ItemPhase::InReview { .. }
-                | ItemPhase::Approved { .. }
-                | ItemPhase::Done { .. } => None,
+            .flat_map(|team| {
+                let team_id = team.id().clone();
+                team.crew()
+                    .roster()
+                    .into_iter()
+                    .filter(|(_, member)| member.busy_notice_owed())
+                    .map(move |(_, member)| (team_id.clone(), member.task().clone()))
             })
             .collect();
-        let Ok(sender) = "agentbus".parse::<AgentName>() else {
-            return;
-        };
-        for (item, branch) in items {
-            let Ok(values) = agent_core::prompt::Variables::new()
-                .with("item", item.to_string())
-                .and_then(|v| v.with("from", from.name()))
-                .and_then(|v| v.with("to", to.as_str()))
-                .and_then(|v| v.with("task", task.as_str()))
-                .and_then(|v| v.with("branch", branch.as_str()))
-            else {
+        for (team_id, task) in pending {
+            let Some(found) = self.parts.state.find_task(&task) else {
                 continue;
             };
-            let Ok(text) = self
-                .parts
-                .team_texts
-                .render(agent_core::prompt::TeamPrompt::ItemHandedOver, &values)
-            else {
-                continue;
-            };
-            let recipient = agent_runtime::agentbus::Recipient::Member {
-                agent: bus_agent.clone(),
-                team: team_id.clone(),
-            };
-            if let Err(error) = self
-                .parts
-                .bus
-                .send(&sender, &recipient, &agent_runtime::agentbus::Outgoing::Chat { text })
-                .await
-            {
-                tracing::warn!(
-                    event = agent_core::log::LogEvent::BusDown.as_str(),
-                    team = %team_id,
-                    task = %task,
-                    item = %item,
-                    error = %agent_runtime::process::error_chain(&error),
-                    "cannot tell the team on the bus who holds the handed-over item now"
-                );
+            let linked: std::collections::BTreeSet<ItemId> = found
+                .member
+                .runs()
+                .iter()
+                .flat_map(|run| run.rounds())
+                .filter_map(|round| found.team.round(round))
+                .filter_map(agent_core::state::Round::item)
+                .collect();
+            let current = found.member.agent().name();
+            let items: Vec<ItemId> = found
+                .team
+                .items()
+                .iter()
+                .filter(|progress| match progress.phase() {
+                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
+                        assignee.as_str() == current || linked.contains(&progress.id())
+                    }
+                    ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
+                        linked.contains(&progress.id())
+                    }
+                    ItemPhase::Pending => false,
+                })
+                .map(agent_core::state::ItemProgress::id)
+                .collect();
+            for item in items {
+                let queued = self.outbox.iter().any(|outbound| {
+                    outbound.team == team_id
+                        && matches!(
+                            &outbound.job,
+                            BusJob::BusyHandOver { task: pending_task, item: pending_item }
+                                if *pending_task == task && *pending_item == item
+                        )
+                });
+                if !queued {
+                    self.tell_bus(
+                        &team_id,
+                        BusJob::BusyHandOver {
+                            task: task.clone(),
+                            item,
+                        },
+                    );
+                }
             }
         }
+    }
+
+    /// The text of the team notice of `task`'s `item`, rendered only when the outbox is ready to send it.
+    pub(super) fn busy_handover_text(&self, task: &TaskId, item: ItemId) -> Result<String, BusyNoticeError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| BusyNoticeError::MissingTask { task: task.clone() })?;
+        let progress = found.team.item(item).ok_or(BusyNoticeError::MissingItem { item })?;
+        let branch = match progress.phase() {
+            ItemPhase::InProgress { branch, .. } | ItemPhase::Fixing { branch, .. } => branch,
+            ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => &pr.branch,
+            ItemPhase::Done {
+                completion: agent_core::state::Completion::Merged { pr, .. },
+            } => &pr.branch,
+            ItemPhase::Pending
+            | ItemPhase::Done {
+                completion: agent_core::state::Completion::Listed,
+            } => return Err(BusyNoticeError::MissingBranch { item }),
+        };
+        let from = found
+            .member
+            .past_holders()
+            .last()
+            .map(|holding| holding.agent.name())
+            .ok_or_else(|| BusyNoticeError::MissingPreviousHolder { task: task.clone() })?;
+        let values = agent_core::prompt::Variables::new()
+            .with("item", item.to_string())
+            .and_then(|values| values.with("from", from))
+            .and_then(|values| values.with("to", found.member.agent().name()))
+            .and_then(|values| values.with("task", task.as_str()))
+            .and_then(|values| values.with("branch", branch.as_str()))
+            .map_err(|source| BusyNoticeError::Variables { item, source })?;
+        self.parts
+            .team_texts
+            .render(agent_core::prompt::TeamPrompt::ItemHandedOver, &values)
+            .map_err(|source| BusyNoticeError::Render { item, source })
     }
 
     /// The free agent that takes the waiting `task` over now, and the participant that holds it now; `None` when the task
