@@ -491,15 +491,9 @@ pub enum RejectionError {
     },
 }
 
-/// An item's progress: its phase, the fix passes behind it and its last gate result.
-///
-/// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
-///
-/// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
-/// a fix pass, and that every fix pass was asked for by reviews that fit it.
 /// The mutually exclusive conflict pass accounting state for an item.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum ConflictPassHead {
+enum ConflictPassHead {
     /// A conflict head for which a provisional pass is currently reserved.
     Provisional(CommitId),
     /// A conflict head for which the pass was refunded.
@@ -508,7 +502,12 @@ pub(super) enum ConflictPassHead {
     Accounted(CommitId),
 }
 
-/// An item's progress inside a team.
+/// An item's progress: its phase, the fix passes behind it and its last gate result.
+///
+/// The phase changes only through [`ItemProgress::advance`], which follows [`PhaseKind::successors`].
+///
+/// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
+/// a fix pass, and that every fix pass was asked for by reviews that fit it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemProgress {
     /// The item's number in the task list.
@@ -542,34 +541,50 @@ pub struct ItemProgress {
     rejections: Option<Vec<Rejection>>,
 }
 
+/// Borrowed reference adapter for serializing [`ItemProgress`] into wire/storage format.
 #[derive(Serialize)]
 struct ItemProgressWireRef<'a> {
+    /// The item's number in the task list.
     id: ItemId,
+    /// Where the item is.
     phase: &'a ItemPhase,
+    /// The fix passes so far, oldest first.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     fix_passes: &'a Vec<FixPass>,
+    /// The last gate result for this item, if the gate has run.
     #[serde(skip_serializing_if = "Option::is_none")]
     gate: Option<&'a GateResult>,
+    /// The numbered protocol, absent for rounds opened by an earlier daemon.
     #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<&'a Findings>,
+    /// The lead passes spent on merge conflicts so far.
     #[serde(skip_serializing_if = "is_zero")]
     merge_passes: u32,
+    /// How many times the review of this item was reopened after a merge conflict resolution.
     #[serde(skip_serializing_if = "is_zero")]
     conflict_verifications: u32,
+    /// The approved head GitHub refused to merge before the current conflict pass or question.
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_approved_head: Option<&'a CommitId>,
+    /// The conflict head for which the pass was refunded, if refunded.
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_refunded_head: Option<&'a CommitId>,
+    /// The conflict head for which the pass was recorded as published, if accounted.
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_accounted_head: Option<&'a CommitId>,
+    /// The conflict head for which a provisional pass is currently reserved, if provisional.
     #[serde(skip_serializing_if = "Option::is_none")]
     conflict_provisional_head: Option<&'a CommitId>,
+    /// The merge conflict pass in progress, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     merge_conflict: Option<&'a MergeConflict>,
+    /// How many times publication of this item was tried.
     #[serde(skip_serializing_if = "is_zero")]
     publish_tries: u32,
+    /// Complete ownership of the publication question, absent while none is open.
     #[serde(skip_serializing_if = "Option::is_none")]
     publish_question: Option<&'a PublishQuestion>,
+    /// The rejections the lead made since the agent that held the item last had none.
     #[serde(skip_serializing_if = "Option::is_none")]
     rejections: Option<&'a Vec<Rejection>>,
 }
@@ -1503,8 +1518,8 @@ impl ItemProgress {
             }
             if self.conflict_provisional_head() == Some(head) {
                 self.merge_passes = self.merge_passes.saturating_sub(1);
+                self.conflict_head = Some(ConflictPassHead::Refunded(head.clone()));
             }
-            self.conflict_head = Some(ConflictPassHead::Refunded(head.clone()));
         }
         self.merge_passes
     }
@@ -1550,7 +1565,7 @@ impl ItemProgress {
     pub fn conflict_accounted_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Accounted(head)) => Some(head),
-            _ => None,
+            Some(ConflictPassHead::Provisional(_)) | Some(ConflictPassHead::Refunded(_)) | None => None,
         }
     }
 
@@ -1559,7 +1574,7 @@ impl ItemProgress {
     pub fn conflict_refunded_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Refunded(head)) => Some(head),
-            _ => None,
+            Some(ConflictPassHead::Provisional(_)) | Some(ConflictPassHead::Accounted(_)) | None => None,
         }
     }
 
@@ -1568,7 +1583,7 @@ impl ItemProgress {
     pub fn conflict_provisional_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Provisional(head)) => Some(head),
-            _ => None,
+            Some(ConflictPassHead::Refunded(_)) | Some(ConflictPassHead::Accounted(_)) | None => None,
         }
     }
 
