@@ -123,10 +123,13 @@ mod git_bring_over {
             ],
             "base",
         );
+        // The worker's commit is on a branch of its own: the files it changes are those since the requester's head.
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
         raw(&repo, &["mv", "before.txt", "after.txt"]);
         std::fs::remove_file(repo.join("gone.txt")).expect("the deletion");
         write(&repo, "new.txt", b"new\n");
         let worker = commit(&repo, &[], "the worker's step");
+        raw(&repo, &["switch", "-q", "main"]);
 
         let changed = handle(&repo)
             .changed_in(&worker)
@@ -139,11 +142,14 @@ mod git_bring_over {
     #[tokio::test]
     async fn a_commit_of_two_files_of_which_one_is_outside_the_request_names_it() {
         let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"before\n")], "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
         let worker = commit(
             &repo,
             &[("guide.md", b"after\n"), ("notes.md", b"after\n")],
             "the worker's step",
         );
+        raw(&repo, &["switch", "-q", "main"]);
 
         let outside = handle(&repo)
             .outside(&worker, &paths(&["guide.md"]))
