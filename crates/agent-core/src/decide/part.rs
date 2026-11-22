@@ -32,9 +32,11 @@ impl<'a> Candidate<'a> {
 
     /// Whether this candidate is legally capable of taking on the part.
     #[must_use]
-    pub const fn can_take(&self, required: Tier) -> bool {
-        let _ = required;
-        false
+    pub fn can_take(&self, required: Tier) -> bool {
+        !self.busy
+            && !self.handed_over
+            && matches!(self.status, TaskStatus::Queued | TaskStatus::Waiting)
+            && self.agent.tier() >= required
     }
 }
 
@@ -61,7 +63,15 @@ pub fn who_gets_part<'a>(
     replacements: &[Candidate<'a>],
     lead: Option<Candidate<'a>>,
 ) -> PartChoice<'a> {
-    let _ = (required, previous, replacements, lead);
+    if let Some(prev) = previous.filter(|cand| cand.can_take(required)) {
+        return PartChoice::PreviousMember(prev.agent);
+    }
+    if let Some(replacement) = replacements.iter().find(|cand| cand.can_take(required)) {
+        return PartChoice::Replacement(replacement.agent);
+    }
+    if let Some(coord) = lead.filter(|cand| cand.can_take(required)) {
+        return PartChoice::Lead(coord.agent);
+    }
     PartChoice::Nobody
 }
 
