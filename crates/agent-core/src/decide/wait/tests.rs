@@ -141,7 +141,10 @@ fn the_wait_line_names_the_owner_and_since_when() {
 #[test]
 fn a_queued_run_behind_another_names_its_agent_and_team() {
     assert_eq!(
-        super::behind_run("codex-1", "team-20261122-140915-aaaa"),
+        super::behind_run(
+            &"codex-1".parse().unwrap(),
+            &"team-20261122-140915-aaaa".parse().unwrap(),
+        ),
         ", after the run of codex-1 in team-20261122-140915-aaaa"
     );
 }

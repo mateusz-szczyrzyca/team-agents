@@ -839,4 +839,41 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
         release(&world, &a);
     }
+
+    #[test]
+    fn a_local_round_without_github_names_the_busy_agent_and_team_in_status() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let first_run = world.agent(&["run", "claude-1", "First local solo."]);
+        let first_team = stdout(&first_run)
+            .lines()
+            .next()
+            .unwrap()
+            .split_whitespace()
+            .nth(1)
+            .unwrap()
+            .to_owned();
+        let first = solo_task(&first_run);
+        world.status_where("the first solo task to run", |status| {
+            line_of(status, &first).contains("running")
+        });
+
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second local solo."]));
+        let expected_round_wait = format!(
+            "waits for the queued run of its task to start, owed by the harness, after the run of claude-1 in {first_team}"
+        );
+        let status = world.status_where("the second round to name the busy agent and team", |status| {
+            status.contains(&expected_round_wait)
+        });
+        assert!(
+            !status.contains("waits for an answer of the human"),
+            "a local queued round must not say it waits for the human: {status}"
+        );
+
+        release(&world, &first);
+        world.status_where("the second solo task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        release(&world, &second);
+    }
 }

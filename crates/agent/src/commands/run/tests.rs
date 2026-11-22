@@ -642,3 +642,58 @@ async fn an_agent_that_is_in_another_open_team_too_is_named_after_what_started()
     );
     assert_eq!(String::from_utf8(out).unwrap(), expected);
 }
+
+#[tokio::test]
+async fn an_agent_in_another_open_team_with_unlimited_runs_omits_the_wait_clause() {
+    let dir = tempfile::tempdir().unwrap();
+    let local_home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    std::fs::write(
+        local_home.config_file(),
+        "[agents.claude-1]\ncli = \"claude\"\n[agents.codex-1]\ncli = \"codex\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+         [limits]\nruns_per_agent = 0\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let (_work, repo) = checkout(Some("https://example.com/org/team-agents.git"));
+    let daemon = FakeDaemon::serve(&dir.path().join("agent.sock"), |request| {
+        let reply = match &request.command {
+            Command::Run(_) => Reply::Started {
+                team: team_id(0),
+                tasks: vec![task(1), task(2), task(3)],
+                shared: vec![SharedAgent {
+                    agent: "codex-1".parse().unwrap(),
+                    team: team_id(5),
+                    task: task(7),
+                }],
+            },
+            Command::Show(_) => Reply::Team {
+                team: Box::new(sample_team()),
+            },
+            other => panic!("{other:?}"),
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    run(
+        &mut connection,
+        &local_home,
+        &repo,
+        input(&["claude-1", "codex-1", "Fix the typo."], None),
+        &mut out,
+    )
+    .await
+    .unwrap();
+
+    let expected = format!(
+        "{}  codex-1 is also in the open team {} (task {}): its messages there do not reach this team\n",
+        render_started(&local_home, &sample_team()),
+        team_id(5),
+        task(7)
+    );
+    assert_eq!(String::from_utf8(out).unwrap(), expected);
+}

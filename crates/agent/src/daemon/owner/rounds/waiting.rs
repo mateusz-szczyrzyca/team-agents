@@ -272,10 +272,7 @@ impl Owner {
             .filter(|member| member.status() == TaskStatus::Queued)
             .find_map(|member| self.run_holding(member.agent()));
         Some(match holder {
-            Some(run) => format!(
-                "{line}{}",
-                agent_core::decide::wait::behind_run(run.agent.as_str(), run.team.as_str())
-            ),
+            Some(run) => format!("{line}{}", agent_core::decide::wait::behind_run(&run.agent, &run.team)),
             None => line,
         })
     }

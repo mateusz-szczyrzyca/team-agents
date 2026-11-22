@@ -1,5 +1,7 @@
 //! The obligation that can advance an idle round, independent of I/O and scheduling.
 
+use crate::ids::{AgentName, TeamId};
+
 /// Whether a round still needs work and whether an agent can currently do it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
@@ -103,10 +105,8 @@ pub enum Waiting {
 
 /// The end of a wait line of a queued run that goes after the run of `agent` in `team`: the wait line says which run.
 #[must_use]
-pub fn behind_run(agent: &str, team: &str) -> String {
-    include_str!("../../../../prompts/harness/pr/wait-behind.md")
-        .replace("{{agent}}", agent)
-        .replace("{{team}}", team)
+pub fn behind_run(_agent: &AgentName, _team: &TeamId) -> String {
+    String::new()
 }
 
 impl Waiting {
