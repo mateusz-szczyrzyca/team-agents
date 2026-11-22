@@ -880,4 +880,108 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
         release(&world, &second);
     }
+
+    /// The prompt of the first run of `task`, which the stand-in CLI keeps in the worktree of the task.
+    fn first_prompt(world: &World, task: &str) -> String {
+        std::fs::read_to_string(world.home.join("worktrees/example").join(task).join(".fake-prompt-1")).unwrap_or_default()
+    }
+
+    /// Starts `first` (held by `agent` until released) and `second` for the same agent, which waits for it.
+    fn busy_agent_with_a_second_task(world: &World, agent: &str) -> (String, String) {
+        let first = solo_task(&world.agent(&["run", agent, "First."]));
+        world.status_where("the first run to go", |status| line_of(status, &first).contains("running"));
+        let second = solo_task(&world.agent(&["run", agent, "Second."]));
+        world.status_where("the second task to wait", |status| {
+            line_of(status, &second).contains(&format!("waits for {agent}"))
+        });
+        (first, second)
+    }
+
+    #[test]
+    fn a_task_that_waits_too_long_for_its_busy_agent_is_handed_over_to_a_free_agent() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        let status = world.status_where("the second task to be handed over and done", |status| {
+            line_of(status, &second).contains("claude-2") && line_of(status, &second).contains("done")
+        });
+        assert!(line_of(&status, &second).contains("for claude-1"), "{status}");
+        assert_eq!(world.runs(&second), 1, "{status}");
+        let prompt = first_prompt(&world, &second);
+        assert!(prompt.contains("busy"), "the briefing says why: {prompt}");
+        assert!(
+            world.home.join("worktrees/example").join(&second).join(".fake-runs").is_file(),
+            "the new holder ran in the worktree of the task"
+        );
+        assert_eq!(world.runs(&first), 1);
+
+        // The first holder is not woken for the task when it becomes free.
+        release(&world, &first);
+        std::thread::sleep(Duration::from_secs(2));
+        assert_eq!(world.runs(&second), 1, "{}", world.status());
+    }
+
+    #[test]
+    fn a_task_waits_for_its_busy_agent_when_no_agent_of_the_replacement_list_fits() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        configure(&world, "\n[replacement]\nagents = []\nbusy_after = 1\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        std::thread::sleep(Duration::from_secs(2));
+        let status = world.status();
+        assert!(line_of(&status, &second).contains("waits for claude-1"), "{status}");
+        assert_eq!(world.runs(&second), 0, "{status}");
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || world.runs(&second) == 1);
+        let status = world.status_where("the second task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        assert!(!line_of(&status, &second).contains("for "), "{status}");
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_zero_busy_after_never_hands_a_task_over() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 0\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        std::thread::sleep(Duration::from_secs(2));
+        let status = world.status();
+        assert!(line_of(&status, &second).contains("waits for claude-1"), "{status}");
+        assert_eq!(world.runs(&second), 0, "{status}");
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || world.runs(&second) == 1);
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_restart_during_the_wait_keeps_the_time_the_task_has_waited() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 3\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        world.restart();
+
+        world.status_where("the second task to be handed over after the restart", |status| {
+            line_of(status, &second).contains("for claude-1") && line_of(status, &second).contains("done")
+        });
+        assert_eq!(world.runs(&second), 1);
+        release(&world, &first);
+    }
 }
