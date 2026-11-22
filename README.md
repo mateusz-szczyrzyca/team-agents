@@ -560,7 +560,9 @@ A merge GitHub refuses because the pull request conflicts with its base does not
 is sent to merge the base into its branch (at most `[merge] conflict_passes` times per round, default 3). Its change is
 gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. When
 the passes are used up, or the lead gives no result, the lead asks you once in its questions file. Set
-`conflict_passes = 0` to be told at once, as before.
+`conflict_passes = 0` to be told at once, as before. A conflict pass that fails during publication does not consume
+a pass from the budget; successful publication accounts for the pass once, surviving daemon restarts. Exhausted
+split rounds whose resolutions were never published resume merge attempts automatically once gated work is ready.
 
 When a branch cannot be published to GitHub (push failure or pull request error), the harness retries with backoff below
 `[publish] tries` (default 3), tells the lead once when the limit is reached so it can fix the issue, and

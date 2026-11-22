@@ -646,7 +646,9 @@ the human is asked. A reviewer that cannot give its review is replaced (above), 
   when they are not (a verification review of what changed since the approval), and the lead is asked to put the question
   in its questions file (`harness/pr/merge-conflict-ask.md`) when the passes are spent or it gives no result. The pass is
   read from the state, so a restart goes on from it; a pull request closed
-  without a merge is told once. An approved pull request that waits is read again every 30 seconds.
+  without a merge is told once. Failed publication of a conflict pass does not consume a pass from the budget, and
+  successful publication records the pass once, idempotently across restarts. An exhausted split round resumes merge attempts
+  if its conflict pass was never published to the remote pull request branch and valid gated work is ready. An approved pull request that waits is read again every 30 seconds.
 - **`--no-merge`.** Nothing is merged: the human is told once that the pull request is approved. The next item of the feature
   starts at the approval; what depends on the pull request waits until it is merged, which the daemon finds when it reads it.
 - **Fix pass.** It goes to the lead, which has the integrated branch: it is woken with the open numbered findings and
