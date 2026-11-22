@@ -1013,4 +1013,187 @@ Integrate the guide.
         });
         assert_eq!(world.brought_over(&member), 1, "the commit is on the branch once");
     }
+
+    /// The request of the member for the step 1.1 with the file `docs/other.md`.
+    const OTHER_REQUEST: &str = r#"{"goal":"another file","workdir":"/tmp","steps":"write the file","returns":"the path","for":"1.1","files":"docs/other.md","check":"exists docs/other.md","do":"Write the other file."}"#;
+
+    #[test]
+    fn a_second_request_of_a_worker_does_not_bring_over_the_rejected_result_of_its_first() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide,script:other"),
+        ]);
+        world.script("guide", &commit_script("wrong text", &[]));
+        world.script(
+            "other",
+            "mkdir -p docs\nprintf 'other\\n' > docs/other.md\ngit add docs/other.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the other file'\n",
+        );
+        let mut first: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        first["check"] = serde_json::Value::String("grep -q walkthrough docs/guide.md".to_owned());
+        let tasks = answered_request(&mut world, &first.to_string());
+        let member = task(&tasks, "claude-1");
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+        world.request_is("1", "failed");
+        world.sleeps_on_the_bus("glm-1");
+
+        let got = answers(&world.delegate_as(member, OTHER_REQUEST));
+        assert!(!got[0].0, "{got:?}");
+
+        world.request_is("2", "done");
+        assert_eq!(world.file(member, "docs/other.md"), "other\n");
+        assert!(
+            !world.worktree(member).join("docs/guide.md").exists(),
+            "the rejected result of the first request is not brought over with the second"
+        );
+    }
+
+    #[test]
+    fn a_check_that_takes_long_does_not_stop_the_daemon_from_answering() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        request["check"] = serde_json::Value::String("sleep 6 && test -s docs/guide.md".to_owned());
+        let tasks = answered_request(&mut world, &request.to_string());
+        let member = task(&tasks, "claude-1");
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+        eventually("the worker's run to end", || world.runs(task(&tasks, "glm-1")) >= 2);
+        std::thread::sleep(Duration::from_millis(1500));
+
+        let started = Instant::now();
+        let output = world.agent(&["status"]);
+
+        assert!(output.status.success());
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "the daemon answered after {:?}: the check stopped it",
+            started.elapsed()
+        );
+        world.request_is("1", "done");
+    }
+
+    #[test]
+    fn a_worker_that_leaves_a_requested_file_uncommitted_has_the_step_returned() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script(
+            "guide",
+            &format!(
+                "{}printf 'three\\n' > docs/count.txt\n",
+                commit_script("the walkthrough", &[])
+            ),
+        );
+        let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        request["files"] = serde_json::Value::String("docs/guide.md, docs/count.txt".to_owned());
+        request["check"] = serde_json::Value::String("exists docs/count.txt".to_owned());
+        let tasks = answered_request(&mut world, &request.to_string());
+        let member = task(&tasks, "claude-1");
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        let told = world.told("claude-1", "is back with you");
+        assert!(told.contains("uncommitted"), "{told}");
+        assert!(told.contains("docs/count.txt"), "{told}");
+        assert!(!world.worktree(member).join("docs/guide.md").exists());
+    }
+
+    /// The file of the request `1`, as the test wrote it.
+    fn pending_file(world: &World, worker: &str) -> PathBuf {
+        world.home.join("tasks").join(worker).join("worker-request-1.json")
+    }
+
+    #[test]
+    fn a_result_whose_base_or_files_cannot_be_read_is_returned_and_not_brought_over() {
+        for base in [None, Some("0000000000000000000000000000000000000001")] {
+            let (mut world, member, worker) = world_with_a_served_request();
+            world.worker_ended_and_daemon_down(&member, &worker, serde_json::json!({"stage": "ended"}), MEMBER_REQUEST);
+            let path = pending_file(&world, &worker);
+            let mut pending: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+            match base {
+                None => drop(pending.as_object_mut().unwrap().remove("base")),
+                Some(base) => pending["base"] = serde_json::Value::String(base.to_owned()),
+            }
+            std::fs::write(&path, pending.to_string()).unwrap();
+
+            world.start();
+
+            world.request_is("1", "failed");
+            world.told("claude-1", "is back with you");
+            assert!(!world.worktree(&member).join("docs/guide.md").exists(), "base {base:?}");
+            assert_eq!(world.brought_over(&member), 0, "base {base:?}");
+        }
+    }
+
+    /// The stage file of a result settled as returned, as the daemon writes it before it tells the requester.
+    fn settled_returned() -> serde_json::Value {
+        serde_json::json!({"stage": "settled",
+            "checked": {"step": "1.1", "files": ["docs/guide.md"], "head": null, "committed": true, "outside": [],
+                        "found": null},
+            "settlement": {"settled": "returned", "reasons": ["the check failed"]}})
+    }
+
+    #[test]
+    fn a_daemon_that_went_down_after_the_settling_tells_the_requester_once_and_removes_the_file() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+
+        world.start();
+
+        world.request_is("1", "failed");
+        eventually("the file of the request to be removed", || {
+            !pending_file(&world, &worker).exists()
+        });
+        world.told("claude-1", "is back with you");
+        world.stop();
+        world.start();
+        std::thread::sleep(Duration::from_millis(500));
+        let told = world
+            .messages_to("claude-1")
+            .iter()
+            .filter(|text| text.contains("is back with you"))
+            .count();
+        assert_eq!(told, 1);
+    }
+
+    #[test]
+    fn a_damaged_file_of_a_request_does_not_stop_the_daemon_nor_the_requests_beside_it() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+        std::fs::write(
+            world.home.join("tasks").join(&worker).join("worker-request-7.json"),
+            "not json",
+        )
+        .unwrap();
+
+        world.start();
+
+        world.request_is("1", "failed");
+        let output = world.agent(&["status"]);
+        assert!(output.status.success(), "the daemon still answers");
+    }
+
+    #[test]
+    fn a_request_the_bus_no_longer_has_has_its_file_dropped() {
+        let (mut world, _member, worker) = world_with_a_served_request();
+        let pending = serde_json::json!({
+            "request": 99, "team": world.team_id(), "requester": "claude-1",
+            "requester_task": "task-20261122-120000-aaaa", "worker": "glm-1", "worker_task": worker,
+            "summary": "Result: done.", "run_seconds": 1, "stage": {"stage": "ended"},
+        });
+        let path = world.home.join("tasks").join(&worker).join("worker-request-99.json");
+        std::fs::write(&path, pending.to_string()).unwrap();
+
+        world.start();
+
+        eventually("the file of the unknown request to be dropped", || !path.exists());
+    }
 }
