@@ -516,6 +516,14 @@ impl Git {
             return Ok(Written::InTheWay { files });
         }
         self.read_tree_update(&head_text, &applied_text).await?;
+        self.move_branch(head, applied).await?;
+        Ok(Written::Done)
+    }
+
+    /// Moves the branch from `head` to the merge `applied`, whose tree is already in the worktree and the index; when
+    /// the branch cannot be moved, the files are put back.
+    async fn move_branch(&self, head: &CommitId, applied: &CommitId) -> Result<(), GitError> {
+        let (head_text, applied_text) = (head.to_string(), applied.to_string());
         let message = format!("Bring over the worker's change {applied_text}");
         let moved = self
             .run_ok(
@@ -537,7 +545,7 @@ impl Git {
             self.read_tree_update(&applied_text, &head_text).await?;
             return Err(error);
         }
-        Ok(Written::Done)
+        Ok(())
     }
 
     /// The files the merge `applied` writes over `head` that the requester has changed or has untracked in its worktree.
