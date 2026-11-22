@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 
 use super::{Going, RunLimit, busy_run, limit_for};
 use crate::config::Limits;
-use crate::ids::{AgentName, TaskId, TeamId};
+use crate::ids::AgentName;
 use crate::kinds::Tier;
 
 /// The agent named `name`.
@@ -73,7 +73,8 @@ fn an_agent_at_its_limit_is_held_by_its_first_run_whatever_the_team() {
         run("codex-1", "team-20261122-140915-cccc", "task-20261122-140915-c1c1"),
     ];
     assert_eq!(busy_run(&agent("codex-1"), at_most(1), &going), Some(&going[0]));
-    assert_eq!(busy_run(&agent("codex-1"), at_most(2), &going), None);
+    assert_eq!(busy_run(&agent("codex-1"), at_most(2), &going), Some(&going[0]));
+    assert_eq!(busy_run(&agent("codex-1"), at_most(3), &going), None);
 }
 
 #[test]
