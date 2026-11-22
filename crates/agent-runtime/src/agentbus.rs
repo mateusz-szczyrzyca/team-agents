@@ -26,6 +26,7 @@ use std::time::Duration;
 use agent_core::config::{AbsolutePath, Program, RepoName};
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
+use agent_core::repo_path::RepoPath;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -807,6 +808,25 @@ pub struct TaskRequest {
     pub status: DelegationStatus,
 }
 
+/// What a request for a worker asks, as the harness checks its result: the step of the requester's plan, the paths the
+/// worker may write, the check that shows the result right and what to do. Every field is absent on a request in the old
+/// form.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+pub struct RequestWork {
+    /// The step of the requester's plan it is for.
+    #[serde(default)]
+    pub step: Option<ItemId>,
+    /// The paths the worker may write; none for a request that asks for facts only.
+    #[serde(default)]
+    pub files: Vec<RepoPath>,
+    /// What shows the result is right: a command or `exists PATH`; `None` when the request has no check.
+    #[serde(default)]
+    pub check: Option<String>,
+    /// What to do, in the requester's words.
+    #[serde(default)]
+    pub doing: Option<String>,
+}
+
 /// Changes to a request for a worker; what is `None` stays as it is.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DelegationUpdate {
@@ -1214,6 +1234,18 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for a request that does not exist.
     pub async fn helper_get(&self, request: RequestId) -> Result<DelegationRequest, AgentBusError> {
+        let command = BusCommand::HelperGet;
+        let output = self
+            .run(command, Args::new().flag("--id", request.number().to_string()), None)
+            .await?;
+        decode_json(command, &output)
+    }
+
+    /// What the request `request` asks, for the check of its result.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] for a request that does not exist.
+    pub async fn helper_work(&self, request: RequestId) -> Result<RequestWork, AgentBusError> {
         let command = BusCommand::HelperGet;
         let output = self
             .run(command, Args::new().flag("--id", request.number().to_string()), None)
@@ -2131,5 +2163,26 @@ mod tests {
             ),
             "{error:?}"
         );
+    }
+
+    #[test]
+    fn a_request_reads_its_step_files_check_and_to_do_and_an_old_one_reads_without() {
+        let served = r#"{"id":5,"from":"claude-1","from_task":"task-a","step":"2.1","files":["docs/guide.md","docs/count.txt"],
+            "check":"test -s docs/count.txt","doing":"Count the headings.","worker":"glm-1","status":"running"}"#;
+        let old = r#"{"id":6,"from":"claude-1","from_task":"task-a","request":"look it up","status":"queued"}"#;
+
+        let read: RequestWork = decode_json(BusCommand::HelperGet, served).unwrap();
+        let none: RequestWork = decode_json(BusCommand::HelperGet, old).unwrap();
+
+        assert_eq!(read.step, Some("2.1".parse().unwrap()));
+        assert_eq!(
+            read.files,
+            ["docs/guide.md", "docs/count.txt"]
+                .map(|path| path.parse::<RepoPath>().expect("a repository path"))
+                .to_vec()
+        );
+        assert_eq!(read.check.as_deref(), Some("test -s docs/count.txt"));
+        assert_eq!(read.doing.as_deref(), Some("Count the headings."));
+        assert_eq!(none, RequestWork::default());
     }
 }

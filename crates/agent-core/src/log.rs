@@ -137,7 +137,9 @@ pub enum LogEvent {
     QuestionsFileInvalid,
     /// An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`.
     ConfigurationNameMissing,
-    /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it.
+    /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it; it also covers a
+    /// worker's request file that cannot be used (damaged, unreadable, a stage that cannot be written) and the answer to
+    /// such a request. A name of its own for those is planned for the part of the worker harness that settles a request twice.
     RestartCorrected,
     /// A snapshot of a task's worktree cannot be taken; the daemon goes on without it.
     SnapshotFailed,

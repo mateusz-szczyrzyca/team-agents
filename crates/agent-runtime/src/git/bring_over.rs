@@ -37,6 +37,10 @@ const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
 /// The bytes of the output of a listing of a whole tree that are kept: 64 MiB, which is a tree of about 600,000 files.
 const TREE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// What the line of the message of a commit brought over starts with, before the worker's commit: how
+/// [`Git::brought_over`] finds it again.
+const BROUGHT_OVER_FROM: &str = "Brought over from";
+
 /// The ID of the tree with no file, which every repository knows without holding it: the base of a merge of two
 /// histories with no commit in common.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -157,6 +161,117 @@ impl Git {
         Ok(paths)
     }
 
+    /// The files that differ between the commits `from` and `to`, each path once: what a worker changed in its own
+    /// worktree between two of its commits.
+    ///
+    /// # Errors
+    /// The errors of [`Git::changed_in`].
+    pub async fn changed_between(&self, from: &CommitId, to: &CommitId) -> Result<Vec<RepoPath>, GitError> {
+        self.names_between(&from.to_string(), &to.to_string()).await
+    }
+
+    /// The paths that differ between the trees `from` and `to`, sorted, each once.
+    async fn names_between(&self, from: &str, to: &str) -> Result<Vec<RepoPath>, GitError> {
+        let operation = GitOperation::DiffTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("diff-tree"),
+                    arg("--name-only"),
+                    arg("--no-renames"),
+                    arg("-r"),
+                    arg("-z"),
+                    arg(from),
+                    arg(to),
+                ],
+            )
+            .await?;
+        let listed = whole(operation, &captured.stdout, self.limits)?;
+        let mut paths = Vec::new();
+        for name in listed.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
+            paths.push(repo_path(operation, name)?);
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+
+    /// The commit on the current branch that brought the worker's `commit` over, if there is one: the merge commit
+    /// [`Git::bring_over`] writes names the worker's commit in a line of its message.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::NotACommit`].
+    pub async fn brought_over(&self, commit: &CommitId) -> Result<Option<CommitId>, GitError> {
+        let operation = GitOperation::Log;
+        let line = format!("{BROUGHT_OVER_FROM} {commit} ");
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("log"),
+                    arg("-1"),
+                    arg("--fixed-strings"),
+                    arg("--format=%H"),
+                    arg("--grep"),
+                    arg(&line),
+                ],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        let found = printed.trim();
+        if found.is_empty() {
+            return Ok(None);
+        }
+        found
+            .parse()
+            .map(Some)
+            .map_err(|source| GitError::NotACommit { operation, source })
+    }
+
+    /// The files of the worktree that are changed, staged or untracked and not ignored: what a commit does not hold.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::Unexpected`] and
+    /// [`GitError::NotARepoPath`].
+    pub async fn uncommitted_files(&self) -> Result<Vec<RepoPath>, GitError> {
+        let operation = GitOperation::Status;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("status"),
+                    arg("--porcelain=v1"),
+                    arg("-z"),
+                    arg("--untracked-files=all"),
+                ],
+            )
+            .await?;
+        let status = whole(operation, &captured.stdout, self.limits)?;
+        let mut files = BTreeSet::new();
+        let mut fields = status.split(|byte| *byte == 0).filter(|field| !field.is_empty());
+        while let Some(field) = fields.next() {
+            let Some(path) = field.get(3..) else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(field),
+                });
+            };
+            files.insert(repo_path(operation, path)?);
+            // A rename or a copy is followed by the path it came from, which is changed too.
+            if (matches!(field.first(), Some(b'R' | b'C')) || matches!(field.get(1), Some(b'R' | b'C')))
+                && let Some(origin) = fields.next()
+            {
+                files.insert(repo_path(operation, origin)?);
+            }
+        }
+        Ok(files.into_iter().collect())
+    }
+
     /// The files `commit` changes that `allowed` does not name: a path the request did not give the worker.
     ///
     /// # Errors
@@ -183,8 +298,26 @@ impl Git {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Merged, GitError> {
+        self.merge_since_into_scratch(head, None, commit, round, task).await
+    }
+
+    /// As [`Git::merge_into_scratch`], but what is merged is what `commit` changed since `since`; `None` is since the merge
+    /// base with `head`.
+    ///
+    /// # Errors
+    /// The errors of [`Git::merge_into_scratch`].
+    pub async fn merge_since_into_scratch(
+        &self,
+        head: &CommitId,
+        since: Option<&CommitId>,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Merged, GitError> {
         let scratch = make_scratch().await?;
-        let merged = self.write_merge(scratch.path(), head, commit, round, task).await;
+        let merged = self
+            .write_merge(scratch.path(), (head, since), commit, round, task)
+            .await;
         close_scratch(scratch).await;
         merged
     }
@@ -194,7 +327,7 @@ impl Git {
     async fn write_merge(
         &self,
         scratch: &std::path::Path,
-        head: &CommitId,
+        (head, since): (&CommitId, Option<&CommitId>),
         commit: &CommitId,
         round: &RoundId,
         task: &TaskId,
@@ -229,7 +362,7 @@ impl Git {
         // The tree is settled from the objects alone: `merge-recursive` reads the worktree and a file the requester
         // changed uncommitted, or a directory where one side has a file, makes it refuse before it writes. What it
         // would have written is exactly what the two sides' trees say, and the requester's files play no part in it.
-        match handle.settle_tree(&overrides, head, commit).await? {
+        match handle.settle_tree(&overrides, (head, since), commit).await? {
             Settled::Clean(tree) => handle.commit_tree(&overrides, &tree, head, commit, round, task).await,
             Settled::Conflicts(conflicts) => Ok(Merged::Conflicts(conflicts)),
         }
@@ -273,7 +406,7 @@ impl Git {
             .with_env(env_name("GIT_AUTHOR_EMAIL")?, email)
             .with_env(env_name("GIT_AUTHOR_DATE")?, date);
         let message = format!(
-            "{}\n\nBrought over from {worker} for {task} in round {round}",
+            "{}\n\n{BROUGHT_OVER_FROM} {worker} for {task} in round {round}",
             message.trim_end()
         );
         Ok((handle, message))
@@ -326,17 +459,20 @@ impl Git {
     async fn settle_tree(
         &self,
         overrides: &[OsString],
-        head: &CommitId,
+        (head, since): (&CommitId, Option<&CommitId>),
         worker: &CommitId,
     ) -> Result<Settled, GitError> {
-        let base = match self
-            .merge_base(&Revision::Commit(head.clone()), &Revision::Commit(worker.clone()))
-            .await
-        {
-            Ok(base) => base.to_string(),
-            // No common ancestor: the worker's commit adds a history of its own, and the empty tree is its base.
-            Err(GitError::NoMergeBase { .. }) => EMPTY_TREE.to_owned(),
-            Err(error) => return Err(error),
+        let base = match since {
+            Some(since) => since.to_string(),
+            None => match self
+                .merge_base(&Revision::Commit(head.clone()), &Revision::Commit(worker.clone()))
+                .await
+            {
+                Ok(base) => base.to_string(),
+                // No common ancestor: the worker's commit adds a history of its own, and the empty tree is its base.
+                Err(GitError::NoMergeBase { .. }) => EMPTY_TREE.to_owned(),
+                Err(error) => return Err(error),
+            },
         };
         let base = self.tree_entries(overrides, &base).await?;
         let ours = self.tree_entries(overrides, &head.to_string()).await?;
@@ -473,6 +609,22 @@ impl Git {
         Err(failed(operation, &captured))
     }
 
+    /// Brings what the worker committed since `base`, the commit its worktree was at when the request was given to it, to
+    /// the requester's branch, as [`Git::bring_over`] does: the commits before `base` — the rejected result of an earlier
+    /// request of the same worker, or one that was brought over already — are not part of it.
+    ///
+    /// # Errors
+    /// The errors of [`Git::bring_over`].
+    pub async fn bring_over_since(
+        &self,
+        base: &CommitId,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<BringOver, GitError> {
+        self.bring_over_from(Some(base), commit, round, task).await
+    }
+
     /// Brings `commit` to the requester's branch after a snapshot of the requester's worktree: the snapshot is taken
     /// first, the merge is settled in a scratch directory, and only a merge that applies is written, to the worktree
     /// and then to the branch, so the head moves to the merge commit and `git status` shows nothing of it.
@@ -483,6 +635,18 @@ impl Git {
     /// the merge was made. Files of the merge that the requester changed or has untracked are an answer, not an error:
     /// [`BringOver::InTheWay`]. Whatever the outcome, an error leaves the worktree and the branch as they were.
     pub async fn bring_over(&self, commit: &CommitId, round: &RoundId, task: &TaskId) -> Result<BringOver, GitError> {
+        self.bring_over_from(None, commit, round, task).await
+    }
+
+    /// [`Git::bring_over`] and [`Git::bring_over_since`]: what is merged is what `commit` changed since `since`, or since
+    /// the merge base with the requester's head.
+    async fn bring_over_from(
+        &self,
+        since: Option<&CommitId>,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<BringOver, GitError> {
         // The snapshot lists every file of the worktree: a big repository needs more bytes than a command may print.
         let snapshot = self
             .clone()
@@ -492,7 +656,10 @@ impl Git {
             })
             .snapshot(round, task)
             .await?;
-        match self.merge_into_scratch(&snapshot.head, commit, round, task).await? {
+        match self
+            .merge_since_into_scratch(&snapshot.head, since, commit, round, task)
+            .await?
+        {
             Merged::Conflicts(files) => Ok(BringOver::Conflicted {
                 snapshot,
                 worker: commit.clone(),

@@ -303,7 +303,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `state_save_failed` | `error` | The daemon's state file cannot be saved. |
 | `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
-| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
+| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it; also a problem with a worker's request: a file that cannot be used (cut short, an unknown field, another request than its name says, unreadable, or a stage that cannot be written), set aside as `<name>.damaged` while its request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the removal of a file, the output of a check or the wording of an answer that fails. A name of its own for these comes with the next part of the worker harness. |
 | `snapshot_failed` | `warn` | A snapshot of a task's worktree cannot be taken; the daemon goes on without it. |
 | `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
 | `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused; also a `SPLIT:` line of a coordinator that the daemon refuses, with `team`, `task`, `item`, `refused` (how many times in a row), `told` and the `reason`. |

@@ -705,4 +705,154 @@ mod git_bring_over {
             b"my ignored file\n"
         );
     }
+
+    #[tokio::test]
+    async fn the_files_between_two_commits_of_a_worker_are_named_once() {
+        let (_tmp, repo) = repository();
+        let first = commit(&repo, &[("guide.md", b"one\n"), ("keep.txt", b"keep\n")], "base");
+        let second = commit(
+            &repo,
+            &[("guide.md", b"one\ntwo\n"), ("notes.md", b"notes\n")],
+            "the step",
+        );
+        raw(&repo, &["rm", "-q", "keep.txt"]);
+        let third = commit(&repo, &[("notes.md", b"notes\nmore\n")], "the next step");
+
+        let git = handle(&repo);
+
+        assert_eq!(
+            git.changed_between(&first, &second).await.expect("the files"),
+            paths(&["guide.md", "notes.md"])
+        );
+        assert_eq!(
+            git.changed_between(&first, &third).await.expect("the files"),
+            paths(&["guide.md", "keep.txt", "notes.md"])
+        );
+        assert_eq!(
+            git.changed_between(&third, &third).await.expect("the files"),
+            paths(&[])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_was_brought_over_is_found_and_one_that_was_not_is_not() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        });
+        let other = with_worker_commit_elsewhere(&repo);
+        let git = handle(&repo);
+        assert_eq!(git.brought_over(&worker).await.expect("a search"), None);
+
+        let outcome = git
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        let BringOver::Applied { commit, .. } = outcome else {
+            panic!("the commit applies: {outcome:?}");
+        };
+        assert_eq!(git.brought_over(&worker).await.expect("a search"), Some(commit));
+        assert_eq!(git.brought_over(&other).await.expect("a search"), None);
+    }
+
+    /// A commit of another history that was never brought over.
+    fn with_worker_commit_elsewhere(repo: &Path) -> CommitId {
+        raw(repo, &["switch", "-q", "--orphan", "elsewhere"]);
+        let other = commit(repo, &[("elsewhere.md", b"x\n")], "another history");
+        raw(repo, &["switch", "-q", "main"]);
+        other
+    }
+
+    #[tokio::test]
+    async fn the_commits_of_a_worker_before_the_base_of_its_request_are_not_brought_over() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n")], "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
+        // The rejected result of an earlier request stays on the worker's branch.
+        commit(&repo, &[("rejected.md", b"rejected\n")], "the earlier request's result");
+        let base: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        let worker = commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        raw(&repo, &["switch", "-q", "main"]);
+
+        let outcome = handle(&repo)
+            .bring_over_since(&base, &worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
+        assert!(
+            !repo.join("rejected.md").exists(),
+            "the earlier result is not brought over"
+        );
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn a_commit_brought_over_before_does_not_conflict_with_the_requesters_later_edit_of_that_file() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n"), ("other.txt", b"other\n")], "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
+        commit(&repo, &[("guide.md", b"one\ntwo\n")], "the first request's result");
+        let base: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        let worker = commit(&repo, &[("other.txt", b"other\nmore\n")], "the second request's result");
+        raw(&repo, &["switch", "-q", "main"]);
+        // The first result was brought over, and the requester has edited that file since.
+        commit(
+            &repo,
+            &[("guide.md", b"one\ntwo\nthe requester's edit\n")],
+            "the requester's own step",
+        );
+
+        let outcome = handle(&repo)
+            .bring_over_since(&base, &worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(
+            std::fs::read(repo.join("other.txt")).expect("the file"),
+            b"other\nmore\n"
+        );
+        assert_eq!(
+            std::fs::read(repo.join("guide.md")).expect("the file"),
+            b"one\ntwo\nthe requester's edit\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_uncommitted_files_of_a_worktree_are_named_and_ignored_and_committed_ones_are_not() {
+        let (_tmp, repo) = repository();
+        commit(
+            &repo,
+            &[
+                ("guide.md", b"one\n"),
+                ("staged.txt", b"s\n"),
+                ("old-name.txt", b"renamed\n"),
+            ],
+            "base",
+        );
+        let git = handle(&repo);
+        assert_eq!(git.uncommitted_files().await.expect("a clean worktree"), paths(&[]));
+        std::fs::write(repo.join(".git").join("info").join("exclude"), "ignored.txt\n").expect("the exclude file");
+        write(&repo, "guide.md", b"one\nedited\n");
+        write(&repo, "staged.txt", b"staged edit\n");
+        raw(&repo, &["add", "staged.txt"]);
+        raw(&repo, &["mv", "old-name.txt", "new-name.txt"]);
+        write(&repo, "untracked.txt", b"new\n");
+        write(&repo, "ignored.txt", b"ignored\n");
+
+        let found = git.uncommitted_files().await.expect("the uncommitted files");
+
+        assert_eq!(
+            found,
+            paths(&[
+                "guide.md",
+                "new-name.txt",
+                "old-name.txt",
+                "staged.txt",
+                "untracked.txt"
+            ])
+        );
+    }
 }

@@ -8,15 +8,23 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.70.0 — 22.11.2026 — PR #187
 
 ### New features
-- [agent] [agent-core] A queued task that waits longer than `[replacement] busy_after` (default `300` seconds; `0` never hands it over) for an agent running in another team is handed over to a free agent from `[replacement] agents` of the same or a higher tier outside its team, choosing the one whose CLI has the fewest runs going at that moment; an empty `[replacement] agents` list performs no hand-over for a busy agent and the task keeps waiting for its own agent. The new holder starts from a briefing in the same worktree and on the same branch, the team is told on the bus, and the log records `task_handed_over` with `reason = "busy"`.
-- [agent] `agent status` shows how many runs each configured CLI has going when at least one run is active, for example `runs: claude 1, codex 2, gemini 0`.
-- [agent] `agent run` that starts a task for an agent already in another open team says that its task here waits while its run there goes on, or goes to another agent when `[replacement] agents` is non-empty and `busy_after` is above `0`.
+- [agent] [agent-runtime] A worker's result is checked before it reaches your branch: when a worker's run ends `STATUS: DONE`, the request's check runs in the worker's worktree, and only when it passes is the worker's commit brought to the requester's branch, after a snapshot of the requester's worktree; the requester's uncommitted and untracked files stay as they were.
+- [agent] The requester is told what became of the result: the step, the commit, the files and the end of the check's output when the commit is on its branch; the files in conflict, or in the way, when it is not applied; the reasons when the result is wrong (the check failed or ran past its limit, a file outside the request's `files` was changed, nothing was committed, the run lasted past `[workers] seconds`). A request answered that way ends `failed`, and `agent status` shows `request H1  step 1.1  worker glm-1  failed`.
+- [agent] When a commit is brought over, the step of the requester's plan is recorded `confirmed` in the history, with the worker's name and the commit.
+- [agent] [agent-runtime] A daemon that stops while a worker's result is being settled goes on from the stage it reached: the check runs once and a commit is brought over once. The stage is kept in `tasks/<worker task>/worker-request-<n>.json`.
 
-### Enhancements
-- [agent] [agent-core] The time a queued task has waited for its busy agent is kept in `state.json` (`waiting_since`) and survives a restart of the daemon; when the task is handed over before its first run, the first holder is not woken for it when its other run finishes.
+### Bug fixes
+- [agent] [agent-runtime] Only what the worker committed since its request is brought over, not the commits its branch already had from earlier requests.
+- [agent] A result the daemon cannot judge (the starting commit or the worker's files cannot be read, a requested file was left uncommitted) is returned to the requester and never brought over.
+- [agent] [agent-runtime] A worker whose result is being checked is no longer given the next request in the same worktree; it is busy until its result is settled.
+- [agent] A request is answered once: a file of a request the bus has answered already, one that holds another request than its name says, or one that cannot be written back is no longer settled again at every look, and the answer of the bus is not overwritten.
+- [agent] A long check no longer stops the daemon from serving other tasks: it runs in the background.
+- [agent] [agent-runtime] A worker's request file that is cut short, has an unknown field, holds another request than its name says, cannot be read or cannot be written no longer stops the daemon: the file is kept aside as `worker-request-<n>.json.damaged`, logged as `restart_corrected` with its name, the requester is told that the result could not be judged, and the other requests go on; a restart does not meet the file again.
+- [agent] A request the bus no longer knows has its file removed; an answer the bus cannot take now is tried again at the next look.
+- [agent] A result of a worker for a request that names files and a check is no longer given to the requester unchecked as `done`; a worker that commits nothing for such a request has its step returned.
 
 ### Configuration
-- [agent-core] new: `[replacement] busy_after` (default `300`) — seconds a queued task waits for its busy agent before a free agent of `[replacement] agents` of the same or a higher tier outside the team takes it over; `0` never hands a task over for this reason, and an empty `[replacement] agents` list performs no hand-over for a busy agent.
+- [agent-core] changed: `[workers] seconds` (default `0`, no limit) is applied now: a worker's run that lasts longer is a wrong result and the step is returned to the requester. `tries` is applied with the second try of a request, in the next version.
 
 ## 0.69.0 — 22.11.2026 — PR #185
 
