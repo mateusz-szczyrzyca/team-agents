@@ -1574,6 +1574,9 @@ func helpersOfTask(st *State, task string) []*Helper {
 // helperDumpTask checks the --task of helper-dump: a request recorded without a task has an empty one, so an empty
 // --task would list those instead of a task's.
 func helperDumpTask(task string) *CmdHelperDumpError {
+	if strings.TrimSpace(task) == "" {
+		return opErr(CmdHelperDumpMissingTask, "%s", missing("--task"))
+	}
 	return nil
 }
 
@@ -1584,6 +1587,7 @@ func cmdHelperDump(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	task := fs.String("task", "", "the task whose requests are listed")
 	parseFlags(fs, args)
+	exitOn(helperDumpTask(*task).asError())
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdHelperDumpStorage, func(st *State) *CmdHelperDumpError {
 		helpers := helpersOfTask(st, *task)
