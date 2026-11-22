@@ -232,6 +232,7 @@ mod git_bring_over {
             panic!("the commit conflicts: {outcome:?}");
         };
         assert_eq!(returned, worker);
+        assert_eq!(snapshot.head.to_string(), before_head);
         assert_eq!(conflicts, paths(&["guide.md"]));
         assert_eq!(state(&repo, &files), before);
         assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
