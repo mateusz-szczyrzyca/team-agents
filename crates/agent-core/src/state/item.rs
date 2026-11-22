@@ -2459,6 +2459,43 @@ mod tests {
     }
 
     #[test]
+    fn contradictory_conflict_pass_heads_are_rejected_on_deserialization() {
+        let base = serde_json::to_value(&progress_in(PhaseKind::Approved)).unwrap();
+        let head1 = "1111111111111111111111111111111111111111";
+        let head2 = "2222222222222222222222222222222222222222";
+        let head3 = "3333333333333333333333333333333333333333";
+
+        // Case 1: Provisional and accounted:
+        let mut c1 = base.clone();
+        c1["conflict_provisional_head"] = serde_json::json!(head1);
+        c1["conflict_accounted_head"] = serde_json::json!(head2);
+
+        // Case 2: Provisional and refunded:
+        let mut c2 = base.clone();
+        c2["conflict_provisional_head"] = serde_json::json!(head1);
+        c2["conflict_refunded_head"] = serde_json::json!(head2);
+
+        // Case 3: Refunded and accounted:
+        let mut c3 = base.clone();
+        c3["conflict_refunded_head"] = serde_json::json!(head1);
+        c3["conflict_accounted_head"] = serde_json::json!(head2);
+
+        // Case 4: All three:
+        let mut c4 = base.clone();
+        c4["conflict_provisional_head"] = serde_json::json!(head1);
+        c4["conflict_refunded_head"] = serde_json::json!(head2);
+        c4["conflict_accounted_head"] = serde_json::json!(head3);
+
+        for case in [c1, c2, c3, c4] {
+            let res: Result<ItemProgress, _> = serde_json::from_value(case.clone());
+            assert!(
+                res.is_err(),
+                "contradictory conflict heads must be rejected during deserialization, but parsed: {case}"
+            );
+        }
+    }
+
+    #[test]
     fn asking_human_without_provisional_pass_never_refunds_passes_and_protects_legacy_counts() {
         let mut item = progress_in(PhaseKind::Approved);
         item.spend_merge_pass();
