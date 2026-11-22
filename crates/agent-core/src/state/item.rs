@@ -2293,4 +2293,22 @@ mod tests {
         ])));
         serde_json::from_value::<ItemProgress>(fixing(&json!([review_json("inv-opus", 5, &changes)]))).unwrap();
     }
+    #[test]
+    fn legacy_publication_question_requires_complete_identity() {
+        let original = serde_json::to_value(progress_in(PhaseKind::InProgress)).unwrap();
+        for complete in [false, true] {
+            let mut value = original.clone();
+            value["publish_question"] = serde_json::to_value(at(100)).unwrap();
+            if complete {
+                value["publish_question_task"] = serde_json::json!("task-20261111-153001-k3x9");
+                value["publish_question_number"] = serde_json::json!(3);
+            }
+            let item: ItemProgress = serde_json::from_value(value).unwrap();
+            assert_eq!(item.publish_question(), complete.then_some(at(100)));
+            assert_eq!(
+                item.publish_question_number(),
+                complete.then_some(NonZeroU32::new(3).unwrap())
+            );
+        }
+    }
 }
