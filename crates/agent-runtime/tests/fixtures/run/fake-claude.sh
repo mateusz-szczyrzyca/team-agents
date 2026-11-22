@@ -198,5 +198,17 @@ case $scenario in
     printf '%s\n' "${AGENTS_HOME:-unset}" > .fake-home
     finish_done
     ;;
+  done-on-resume-after\ *)
+    path=${scenario#done-on-resume-after }
+    init
+    if [[ $resumed == yes ]]; then
+      while [[ ! -f $path ]]; do
+        say "working"
+        sleep 0.02
+      done
+    fi
+    say "working"
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
   *) echo "unknown scenario: $scenario" >&2; exit 64 ;;
 esac

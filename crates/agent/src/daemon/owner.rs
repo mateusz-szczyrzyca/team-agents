@@ -931,7 +931,12 @@ impl Owner {
             let reason = member.take_plan_reason();
             let answers = member.take_unread_plan_answers();
             if reason.is_some() || answers.is_some() {
-                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+                tracing::debug!(
+                    task = %task,
+                    ?reason,
+                    ?answers,
+                    "the run is told what waited for it of its plan"
+                );
             }
         }
         events.push(EventKind::RunStarted {
