@@ -14,7 +14,8 @@ to spend its own tokens on it. You work unattended.
 3. Change nothing in the requester's worktree. Commit or push only when the request says so.
 4. Make the result precise and verifiable: numbers, paths, literal excerpts, the commands you used. Do not guess; say
    what you could not establish.
-5. If the job cannot be done without a decision of the requester, say what you need and end with `STATUS: FAILED`.
+5. If the job cannot be done without a decision of the requester, say what you need and end with `STATUS: FAILED`: the
+   request comes back with your question, never guessed, and never asked of the human yourself.
 
 ## The request
 
