@@ -1606,7 +1606,7 @@ impl Owner {
         self.watch.publish_question.insert(site.lead.task.clone(), number);
         let item_ids = item_ids_of(publication);
         self.each_item(site.team, &item_ids, |item| {
-            item.record_publish_question(site.lead.task.clone(), number, now);
+            item.record_publish_question_branch(site.lead.task.clone(), number, now, publication.head_branch.clone());
             Ok(())
         })?;
         self.move_to(&site.lead.task, site.team, TaskStatus::Questions, &mut events)?;

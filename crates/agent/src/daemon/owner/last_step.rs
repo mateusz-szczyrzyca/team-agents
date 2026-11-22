@@ -204,11 +204,7 @@ impl Owner {
                 team.items()
                     .iter()
                     .filter(|item| {
-                        item.publish_question().is_some()
-                            && (item.publish_question_task() == Some(task) || item.publish_question_task().is_none())
-                            && (item.publish_question_number() == Some(number)
-                                || (item.publish_question_number().is_none()
-                                    && self.watch.publish_question.get(task) == Some(&number)))
+                        item.publish_question_task() == Some(task) && item.publish_question_number() == Some(number)
                     })
                     .map(agent_core::state::ItemProgress::id)
                     .collect()
@@ -218,20 +214,26 @@ impl Owner {
             self.watch.publish_question.remove(task);
             let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
             log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
-            let matching_branches: std::collections::HashSet<agent_core::ids::BranchName> = self
-                .parts
-                .state
-                .team(&located.team)
-                .into_iter()
-                .flat_map(|team| {
-                    matching_items.iter().filter_map(|id| {
-                        team.item(*id).and_then(|item| match item.phase() {
-                            agent_core::state::ItemPhase::InProgress { branch, .. } => Some(branch.clone()),
-                            _ => None,
+            let matching_branches: std::collections::HashSet<agent_core::ids::BranchName> =
+                self.parts
+                    .state
+                    .team(&located.team)
+                    .into_iter()
+                    .flat_map(|team| {
+                        matching_items.iter().filter_map(|id| {
+                            team.item(*id).and_then(|item| {
+                                item.publish_question_branch().cloned().or_else(|| match item.phase() {
+                                    agent_core::state::ItemPhase::InProgress { branch, .. } => Some(branch.clone()),
+                                    agent_core::state::ItemPhase::InReview { pr, .. }
+                                    | agent_core::state::ItemPhase::Approved { pr, .. }
+                                    | agent_core::state::ItemPhase::Fixing { pr, .. } => Some(pr.branch.clone()),
+                                    agent_core::state::ItemPhase::Pending
+                                    | agent_core::state::ItemPhase::Done { .. } => None,
+                                })
+                            })
                         })
                     })
-                })
-                .collect();
+                    .collect();
             let mut team_mut = self
                 .parts
                 .state
