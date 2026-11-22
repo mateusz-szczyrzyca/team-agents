@@ -1709,3 +1709,81 @@ async fn split_part_restart_between_prior_merge_and_next_opening() {
     .await;
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn split_part_with_outside_replacement_reuses_stopped_members_task() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate"),
+            normal("claude-1", "work,sleep"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    cfg.push_str("\n[replacement]\nagents = [\"claude-2\"]\n");
+    std::fs::write(rig.home.config_file(), cfg).unwrap();
+    rig.start().await;
+    let (team_id, tasks) = rig.run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part A approves:
+    rig.wait_for("part a approved", || {
+        let wire: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(rig.home.state_file()).unwrap()).unwrap();
+        wire["teams"][0]["items"][0]["phase"]["phase"] == "approved"
+    })
+    .await;
+
+    // Stop claude-1 before part A merges:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(tasks[1].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+
+    // Part A merges:
+    rig.github.merged_by_a_human(1);
+
+    // Part B opens for claude-2:
+    rig.wait_for("part b opened for replacement member claude-2", || {
+        let state = rig.state();
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 2
+            && team.rounds()[1].is_open()
+            && match team.item("1.1".parse().unwrap()).unwrap().phase() {
+                ItemPhase::InProgress { assignee, .. } => assignee.as_str() == "claude-2",
+                _ => false,
+            }
+    })
+    .await;
+    let state = rig.state();
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds()[1].part().unwrap().to_string(), "b");
+    rig.stop().await.unwrap();
+}
