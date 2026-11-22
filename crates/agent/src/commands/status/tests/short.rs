@@ -73,7 +73,7 @@ fn each_status_is_counted_in_its_own_word_in_a_fixed_order() {
 
     assert_eq!(
         short(&[team]),
-        format!("{HEADER}\n  tasks: 1 running, 1 waiting, 1 done, 1 paused\n")
+        format!("{HEADER}\n  tasks: 1 running, 1 waiting, 1 paused, 1 done\n")
     );
 }
 
@@ -87,7 +87,7 @@ fn the_failed_and_stopped_tasks_are_counted_as_such() {
 
     assert_eq!(
         short(&[team]),
-        format!("{HEADER}\n  tasks: 1 failed, 2 queued, 1 stopped\n")
+        format!("{HEADER}\n  tasks: 2 queued, 1 stopped, 1 failed\n")
     );
 }
 
