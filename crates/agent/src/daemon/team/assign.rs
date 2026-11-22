@@ -123,7 +123,7 @@ pub(in crate::daemon) fn assignable_with_candidates(
                 .map(|(_, task)| *task)
                 .or_else(|| {
                     // Share dispatch's choice of the preceding holder's durable task.
-                    reusable_split_member(team, item).map(|member| member.task())
+                    reusable_split_member(team, item).map(agent_core::state::Member::task)
                 })
                 .ok_or_else(|| AssignmentError::UnknownMember { member: member.clone() })?;
             let branch = match team.next_part(item) {
