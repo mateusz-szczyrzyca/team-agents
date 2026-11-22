@@ -101,6 +101,14 @@ pub enum Waiting {
     Defect,
 }
 
+/// The end of a wait line of a queued run that goes after the run of `agent` in `team`: the wait line says which run.
+#[must_use]
+pub fn behind_run(agent: &str, team: &str) -> String {
+    include_str!("../../../../prompts/harness/pr/wait-behind.md")
+        .replace("{{agent}}", agent)
+        .replace("{{team}}", team)
+}
+
 impl Waiting {
     /// The short status text, shared with the harness's prompt catalog.
     #[must_use]

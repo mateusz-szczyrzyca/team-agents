@@ -48,8 +48,8 @@ use agent_core::protocol::{
     TeamSummary, mark_runs_elsewhere,
 };
 use agent_core::state::{
-    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Question, QuestionError, RunEnd, RunError, SessionId,
-    State, StateOpenRoundError, Team, Timestamp,
+    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Participant, Question, QuestionError, RunEnd, RunError,
+    SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
@@ -826,10 +826,14 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        let agent = found.member.agent();
+        Ok(self.run_holding(found.member.agent()))
+    }
+
+    /// The run that holds `agent` at its limit of runs over all teams, `None` when `agent` may run another task now.
+    pub(super) fn run_holding(&self, agent: &Participant) -> Option<Going> {
         let limit = limit_for(self.parts.settings.config.limits(), agent.tier());
         let going = runs_going(self.parts.state.teams());
-        Ok(busy_run(&agent.agent_name(), limit, &going).cloned())
+        busy_run(&agent.agent_name(), limit, &going).cloned()
     }
 
     /// Notes that the queued `task` waits for the run `holder`; the log says so once, not at every look of the loop.
