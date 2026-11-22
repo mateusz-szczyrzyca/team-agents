@@ -151,10 +151,12 @@ impl Owner {
                 Variables::new().with("item", item.to_string()),
                 Some(*item),
             ),
+            // A line has the form of an item number or it is no submission (`judge_submission`): the number reads, though the
+            // team has no such item.
             Refusal::UnknownItem { text } => (
                 TeamPrompt::SplitRefusedUnknown,
                 Variables::new().with("text", text.as_str()),
-                None,
+                text.parse::<ItemId>().ok(),
             ),
         };
         let text = self
@@ -163,15 +165,23 @@ impl Owner {
             .render(id, &values.map_err(ProposalError::Variables)?)
             .map_err(ProposalError::Render)?;
         let reason = text.trim().to_owned();
+        let told = refused <= limit;
         agent_runtime::history::log_decision(
             "split_proposal",
             &serde_json::json!({"task": task, "item": item.map(|item| item.to_string()), "corrections": refused}),
-            &serde_json::json!({"decision": SplitDecision::Corrected, "reason": reason, "told": refused <= limit}),
+            &serde_json::json!({"decision": SplitDecision::Corrected, "reason": reason, "told": told}),
         );
-        if refused > limit {
-            tracing::warn!(%task, refused, limit, "a coordinator repeats a refused SPLIT line: it is not told again, its status decides");
-            return Ok(None);
-        }
+        // Every refusal is in the log at the default level, also one that is not told again.
+        tracing::warn!(
+            event = LogEvent::RequestRefused.as_str(),
+            team = %located.team,
+            %task,
+            item = item.map(|item| item.to_string()).unwrap_or_default(),
+            refused,
+            told,
+            reason = %reason,
+            "a SPLIT line of a coordinator is refused"
+        );
         if let Some(item) = item {
             self.record_event(
                 &located.team,
@@ -185,6 +195,9 @@ impl Owner {
                     reason,
                 },
             );
+        }
+        if !told {
+            return Ok(None);
         }
         let to = self.recipient_of(task)?;
         let from = "agentbus".parse()?;
