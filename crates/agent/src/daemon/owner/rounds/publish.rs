@@ -1398,13 +1398,13 @@ impl Owner {
         }
         let reason = error_chain(error);
         let item_ids = item_ids_of(publication);
-        if let Some(team) = self.parts.state.team(site.team) {
-            let has_open_question = item_ids
-                .iter()
-                .any(|id| team.item(*id).is_some_and(|item| item.publish_question().is_some()));
-            if has_open_question {
-                return Ok(());
-            }
+        if self
+            .parts
+            .state
+            .find_task(&site.lead.task)
+            .is_some_and(|found| found.member.open_question().is_some())
+        {
+            return Ok(());
         }
         let mut max_tries = 0;
         self.each_item(site.team, &item_ids, |item| {
