@@ -5,10 +5,10 @@ use agent_core::protocol::Versions;
 /// The versions of this build, each of its four crates as its manifest gave it at build time.
 #[must_use]
 pub(crate) fn of_this_build() -> Versions {
-    Versions::new(
-        env!("CARGO_PKG_VERSION"),
-        agent_core::VERSION,
-        agent_runtime::VERSION,
-        agent_web::VERSION,
-    )
+    Versions {
+        agent: String::from(env!("CARGO_PKG_VERSION")),
+        agent_core: String::from(agent_core::VERSION),
+        agent_runtime: String::from(agent_runtime::VERSION),
+        agent_web: String::from(agent_web::VERSION),
+    }
 }

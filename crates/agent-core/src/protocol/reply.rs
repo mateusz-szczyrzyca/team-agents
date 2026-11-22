@@ -50,19 +50,6 @@ pub struct Versions {
     pub agent_web: String,
 }
 
-impl Versions {
-    /// The versions of the four crates, as their manifests give them.
-    #[must_use]
-    pub fn new(agent: &str, agent_core: &str, agent_runtime: &str, agent_web: &str) -> Self {
-        Self {
-            agent: agent.to_owned(),
-            agent_core: agent_core.to_owned(),
-            agent_runtime: agent_runtime.to_owned(),
-            agent_web: agent_web.to_owned(),
-        }
-    }
-}
-
 /// What came of a request.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "status", rename_all = "snake_case", deny_unknown_fields)]
