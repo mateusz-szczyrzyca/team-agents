@@ -8,6 +8,10 @@
 
 use std::num::NonZeroU32;
 
+mod found;
+
+pub use found::{Found, read_return};
+
 use crate::ids::ItemId;
 use crate::state::{RunEnd, RunState};
 
@@ -424,6 +428,8 @@ mod answered_tests;
 mod before_tests;
 #[cfg(test)]
 mod facts_tests;
+#[cfg(test)]
+mod found_tests;
 #[cfg(test)]
 mod round_runs_tests;
 #[cfg(test)]
