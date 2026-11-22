@@ -819,4 +819,40 @@ mod git_bring_over {
             b"one\ntwo\nthe requester's edit\n"
         );
     }
+
+    #[tokio::test]
+    async fn the_uncommitted_files_of_a_worktree_are_named_and_ignored_and_committed_ones_are_not() {
+        let (_tmp, repo) = repository();
+        commit(
+            &repo,
+            &[
+                ("guide.md", b"one\n"),
+                ("staged.txt", b"s\n"),
+                ("old-name.txt", b"renamed\n"),
+            ],
+            "base",
+        );
+        let git = handle(&repo);
+        assert_eq!(git.uncommitted_files().await.expect("a clean worktree"), paths(&[]));
+        std::fs::write(repo.join(".git").join("info").join("exclude"), "ignored.txt\n").expect("the exclude file");
+        write(&repo, "guide.md", b"one\nedited\n");
+        write(&repo, "staged.txt", b"staged edit\n");
+        raw(&repo, &["add", "staged.txt"]);
+        raw(&repo, &["mv", "old-name.txt", "new-name.txt"]);
+        write(&repo, "untracked.txt", b"new\n");
+        write(&repo, "ignored.txt", b"ignored\n");
+
+        let found = git.uncommitted_files().await.expect("the uncommitted files");
+
+        assert_eq!(
+            found,
+            paths(&[
+                "guide.md",
+                "new-name.txt",
+                "old-name.txt",
+                "staged.txt",
+                "untracked.txt"
+            ])
+        );
+    }
 }

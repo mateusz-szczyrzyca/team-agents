@@ -175,3 +175,27 @@ fn every_settlement_has_its_word_for_the_log() {
 
     assert_eq!(words, vec!["brought", "conflict", "returned", "report"]);
 }
+
+#[tokio::test]
+async fn a_file_that_is_not_a_request_does_not_hide_the_requests_beside_it() {
+    let dir = tempfile::tempdir().expect("a directory");
+    write_pending(dir.path(), &pending(4, Stage::Ended)).expect("write");
+    std::fs::write(pending_path(dir.path(), request(6)), "not json").expect("a damaged file");
+    write_pending(dir.path(), &pending(9, Stage::Ended)).expect("write");
+
+    let read = read_pending_each(dir.path()).await.expect("the directory is listed");
+
+    assert_eq!(read.len(), 3);
+    assert!(
+        matches!(&read[0], Ok(pending) if pending.request == request(4)),
+        "{read:?}"
+    );
+    assert!(
+        matches!(&read[1], Err(PendingError::Parse { path, .. }) if *path == pending_path(dir.path(), request(6))),
+        "{read:?}"
+    );
+    assert!(
+        matches!(&read[2], Ok(pending) if pending.request == request(9)),
+        "{read:?}"
+    );
+}

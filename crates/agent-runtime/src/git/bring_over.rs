@@ -232,6 +232,15 @@ impl Git {
             .map_err(|source| GitError::NotACommit { operation, source })
     }
 
+    /// The files of the worktree that are changed, staged or untracked and not ignored: what a commit does not hold.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::Unexpected`] and
+    /// [`GitError::NotARepoPath`].
+    pub async fn uncommitted_files(&self) -> Result<Vec<RepoPath>, GitError> {
+        Ok(Vec::new())
+    }
+
     /// The files `commit` changes that `allowed` does not name: a path the request did not give the worker.
     ///
     /// # Errors

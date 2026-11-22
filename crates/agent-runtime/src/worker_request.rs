@@ -191,6 +191,16 @@ pub fn write_pending(task_dir: &Path, pending: &Pending) -> Result<(), PendingEr
     std::fs::rename(&temporary, &path).map_err(|source| PendingError::Write { path, source })
 }
 
+/// The files of the requests kept in the task directory `task_dir`, each read on its own, oldest first by name: a file that
+/// cannot be read or is not a request is an error of its own and does not hide the others.
+///
+/// # Errors
+/// [`PendingError::List`] when the directory cannot be listed.
+pub async fn read_pending_each(task_dir: &Path) -> Result<Vec<Result<Pending, PendingError>>, PendingError> {
+    let _ = task_dir;
+    Ok(Vec::new())
+}
+
 /// The requests kept in the task directory `task_dir`, oldest first.
 ///
 /// # Errors
