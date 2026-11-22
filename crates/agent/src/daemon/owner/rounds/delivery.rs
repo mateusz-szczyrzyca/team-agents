@@ -19,7 +19,7 @@ use agent_runtime::process::error_chain;
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
 use super::{PublishError, Pulls};
-use crate::daemon::team::Why;
+use crate::daemon::team::{Why, agent_name, item_branch};
 
 /// Why a checked delivery cannot be retained or its correction rendered.
 #[derive(Debug, thiserror::Error)]
@@ -89,6 +89,12 @@ enum ClaimError {
     /// The PR branch does not match the item's or part's branch.
     #[error("the delivering pull request does not use the task's or part's branch")]
     ForeignBranch,
+    /// A persisted holder name cannot identify a branch.
+    #[error("cannot identify the original delivery holder")]
+    HolderName(#[from] agent_core::ids::InvalidName),
+    /// A persisted item cannot identify a branch.
+    #[error("cannot identify the delivery branch")]
+    BranchName(#[from] agent_core::ids::InvalidBranchName),
     /// The clock produced an invalid timestamp.
     #[error(transparent)]
     Clock(#[from] agent_core::state::InvalidTimestamp),
@@ -188,11 +194,25 @@ impl Owner {
         let ItemPhase::InProgress { assignee, branch } = progress.phase().clone() else {
             return Err(ClaimError::Member);
         };
-        let derived_part_branch = team
-            .round(&round)
-            .and_then(|r| expected_part_branch(r, branch.as_str()));
         let repo = team.repo().clone();
         let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;
+        let original = team.find(&member).ok_or(ClaimError::Member)?.1;
+        let parent_branch = if is_part {
+            item_branch(&agent_name(original.bus_agent())?, &member, progress.id())?
+        } else {
+            branch.clone()
+        };
+        let derived_part_branch = team
+            .round(&round)
+            .and_then(agent_core::state::Round::part)
+            .map(|part| {
+                if branch == parent_branch {
+                    format!("{parent_branch}{part}").parse::<BranchName>()
+                } else {
+                    Ok(branch.clone())
+                }
+            })
+            .transpose()?;
         let git = self.worktree_git(&repo, &member, &assignee)?;
         let item = branch.clone();
         let base = self.base_branch(&repo)?;
@@ -203,8 +223,8 @@ impl Owner {
         check_remote_claim(
             is_part,
             &remote,
-            branch.as_str(),
-            derived_part_branch.as_deref(),
+            parent_branch.as_str(),
+            derived_part_branch.as_ref().map(BranchName::as_str),
             recorded_pr.as_ref(),
             number,
         )?;
@@ -216,10 +236,13 @@ impl Owner {
         let base = Revision::RemoteBranch(base);
         git.verify_delivery(&item, &remote.head_branch, &base).await?;
         verify_published_tip(&git, &item, &base, &remote.head).await?;
+        if parent_branch != item {
+            verify_published_tip(&git, &parent_branch, &base, &remote.head).await?;
+        }
 
         let pr = if let Some(pr) = recorded_pr.filter(|p| {
             if is_part {
-                derived_part_branch.as_deref() == Some(p.branch.as_str())
+                derived_part_branch.as_ref() == Some(&p.branch)
             } else {
                 true
             }
@@ -540,15 +563,4 @@ fn check_remote_claim(
         }
         Ok(())
     }
-}
-
-fn expected_part_branch(round: &agent_core::state::Round, branch: &str) -> Option<String> {
-    round.part().map(|p| {
-        let p_str = p.to_string();
-        if branch.ends_with(&p_str) {
-            branch.to_owned()
-        } else {
-            format!("{branch}{p_str}")
-        }
-    })
 }
