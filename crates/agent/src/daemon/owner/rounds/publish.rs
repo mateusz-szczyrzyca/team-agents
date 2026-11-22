@@ -377,6 +377,9 @@ impl Owner {
                 team: team_id,
                 lead: &lead,
             };
+            if self.recover_publish_question(site, &publication, now).await? {
+                continue;
+            }
             let items = items_of(&publication);
             let rounds = self.publication_rounds(team_id, &items);
             for round in &rounds {
@@ -1438,6 +1441,68 @@ impl Owner {
         Ok(())
     }
 
+    /// Registers a question file left between atomic creation and the state commit.
+    async fn recover_publish_question(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        now: Timestamp,
+    ) -> Result<bool, OwnerError> {
+        let Some(team) = self.parts.state.team(site.team) else {
+            return Ok(false);
+        };
+        let Some(found) = self.parts.state.find_task(&site.lead.task) else {
+            return Ok(false);
+        };
+        if !matches!(found.member.status(), TaskStatus::Waiting | TaskStatus::Failed)
+            || found.member.open_question().is_some()
+        {
+            return Ok(false);
+        }
+        let tries = item_ids_of(publication).iter().try_fold(0, |largest, id| {
+            let item = team.item(*id).ok_or_else(|| OwnerError::LostItem {
+                team: site.team.clone(),
+                item: *id,
+            })?;
+            Ok::<_, OwnerError>(largest.max(item.publish_tries()))
+        })?;
+        let limit = self.parts.settings.config.publish().tries;
+        if agent_core::decide::publish::publish_tries_step(tries, limit)
+            != agent_core::decide::publish::PublishTriesStep::AskHuman
+        {
+            return Ok(false);
+        }
+        let number = super::super::start::next_number(found.member).ok_or_else(|| OwnerError::QuestionNumbers {
+            task: site.lead.task.clone(),
+        })?;
+        let path = self.parts.store.home().questions_file(&site.lead.task, number);
+        match crate::daemon::questions::read(&path).await {
+            Ok(_) => {}
+            Err(crate::daemon::questions::QuestionsProblem::Read { source, .. })
+                if source.kind() == std::io::ErrorKind::NotFound =>
+            {
+                return Ok(false);
+            }
+            Err(source) => {
+                return Err(PublishQuestionError::Read {
+                    task: site.lead.task.clone(),
+                    path,
+                    source,
+                }
+                .into());
+            }
+        }
+        self.ask_human_publish_failed(
+            site,
+            publication,
+            "recovering an interrupted publication question",
+            (tries, limit),
+            now,
+        )
+        .await?;
+        Ok(true)
+    }
+
     /// Retries publication later, telling the human once if not yet announced.
     fn retry_publish(
         &mut self,
@@ -1611,7 +1676,13 @@ impl Owner {
         })?;
         self.move_to(&site.lead.task, site.team, TaskStatus::Questions, &mut events)?;
         self.watch_task(&site.lead.task);
-        self.commit(&site.lead.task, &located, now, events, Some(notice)).await
+        self.commit(&site.lead.task, &located, now, events, Some(notice))
+            .await?;
+        self.file_saved(crate::daemon::questions::watch::Saved {
+            task: site.lead.task.clone(),
+            number,
+        })
+        .await
     }
 }
 
