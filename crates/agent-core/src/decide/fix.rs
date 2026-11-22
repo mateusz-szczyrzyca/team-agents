@@ -81,6 +81,17 @@ pub struct LeadRun {
     pub ended: Timestamp,
 }
 
+impl LeadRun {
+    /// A run that started at `started`; that is all that decides whether it can answer a pass.
+    #[must_use]
+    pub const fn started_at(started: Timestamp) -> Self {
+        Self {
+            started,
+            ended: started,
+        }
+    }
+}
+
 /// Whether a lead's run can be the response to the findings of a fix pass.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Response {
