@@ -7,7 +7,12 @@ use super::versions::block;
 
 /// The versions of a build, the first crate of which is `agent` 0.9.1.
 fn build() -> Versions {
-    Versions::new("0.9.1", "0.9.2", "0.9.3", "0.9.4")
+    Versions {
+        agent: String::from("0.9.1"),
+        agent_core: String::from("0.9.2"),
+        agent_runtime: String::from("0.9.3"),
+        agent_web: String::from("0.9.4"),
+    }
 }
 
 #[test]
@@ -40,7 +45,12 @@ fn a_daemon_that_differs_in_one_crate_says_its_versions_and_that_they_differ() {
 
 #[test]
 fn a_daemon_that_differs_in_every_crate_is_told_in_full() {
-    let daemon = Versions::new("0.7.1", "0.7.2", "0.7.3", "0.7.4");
+    let daemon = Versions {
+        agent: String::from("0.7.1"),
+        agent_core: String::from("0.7.2"),
+        agent_runtime: String::from("0.7.3"),
+        agent_web: String::from("0.7.4"),
+    };
 
     assert_eq!(
         block(&build(), Some(&daemon)),
@@ -61,9 +71,24 @@ fn a_daemon_that_does_not_tell_its_versions_is_version_unknown() {
 
 #[test]
 fn versions_table_covers_all_equal_one_different_and_daemon_equal_different_or_unknown() {
-    let equal = Versions::new("0.9.0", "0.9.0", "0.9.0", "0.9.0");
-    let one_diff = Versions::new("0.9.0", "0.9.1", "0.9.0", "0.9.0");
-    let other_daemon = Versions::new("0.8.0", "0.8.0", "0.8.0", "0.8.0");
+    let equal = Versions {
+        agent: String::from("0.9.0"),
+        agent_core: String::from("0.9.0"),
+        agent_runtime: String::from("0.9.0"),
+        agent_web: String::from("0.9.0"),
+    };
+    let one_diff = Versions {
+        agent: String::from("0.9.0"),
+        agent_core: String::from("0.9.1"),
+        agent_runtime: String::from("0.9.0"),
+        agent_web: String::from("0.9.0"),
+    };
+    let other_daemon = Versions {
+        agent: String::from("0.8.0"),
+        agent_core: String::from("0.8.0"),
+        agent_runtime: String::from("0.8.0"),
+        agent_web: String::from("0.8.0"),
+    };
     let cases = [
         (
             "all equal and daemon equal",
