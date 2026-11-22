@@ -297,12 +297,18 @@ fails before the lead is told tells it at the next turn after all; the item of t
 back instead of taking it, it says so in its final message with a line `RETURNED: <item>` beside `STATUS:` (the
 coordinator's role text prescribes it). The line is a claim; the daemon counts it only where its own facts agree
 (`classify`, a pure decision with a table test): the lead's run ended `SLEEPING` or `DONE`, the item is in progress or
-being fixed and held by a member's task, the last run of that member that started before the lead's run began ended
-`DONE`, no run of it started in between, and no earlier return of the same hand-over waits for the member's next run. A
+being fixed and held by a member's task, the last run of that member for the item's open round that started before the
+lead's run began ended `DONE` (the member's runs for items it held before are left out), no run of it started in
+between, and that run was not sent back before (the rejection keeps the run, `of_run`, so a repeated line counts once). A
+line `RETURNED: 1.1a` names part `a` of a split item and counts for the part whose round is open; every part has its own
+count. A
 message that only answers the member's question, a forwarded answer of the human, a bounce of the plan, a refused gate and
 the checks before a review carry no such line and have counters of their own; a lead of an older prompt that writes no
-line is never counted by guess. The return is recorded in the item's `rejections` with the lead's last message to the
-member as its reason (read from the bus log, `AgentBus::last_message_from`); it counts once the member is started again
+line is never counted by guess. The return is recorded in the item's `rejections` with what the lead told the
+member directly after the bus notice that the member finished this item, whole, as its reason
+(`AgentBus::said_since_finished`; a broadcast, a message before the notice or none gives a fixed text that says so); it is
+recorded before the lead's run is saved as ended, so that a restart keeps both or neither. It counts once the member is
+started again
 for the item — at once when the lead's message started the member during the lead's run, otherwise when the member's next
 run begins (`Owner::confirm_returns`). `agent status` shows the count as `returned 3 of 5` on the member's line and on the
 round's line when one more return reaches `[replacement] rejections`. What happens at the limit is the next part of the
