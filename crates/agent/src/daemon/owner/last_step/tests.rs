@@ -13,6 +13,25 @@ fn nz(n: u32) -> NonZeroU32 {
     NonZeroU32::new(n).unwrap()
 }
 
+/// Restores a legacy question without exposing branchless construction in production.
+fn with_legacy_publish_question(
+    team: Team,
+    item: agent_core::ids::ItemId,
+    task: agent_core::ids::TaskId,
+    number: NonZeroU32,
+    at: agent_core::state::Timestamp,
+) -> Team {
+    let mut fixture = serde_json::to_value(team).unwrap();
+    let progress = fixture["items"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|progress| progress["id"] == serde_json::to_value(item).unwrap())
+        .unwrap();
+    progress["publish_question"] = serde_json::json!({ "task": task, "number": number, "at": at });
+    serde_json::from_value(fixture).unwrap()
+}
+
 #[tokio::test]
 async fn after_answer_ignores_unrelated_member_and_wrong_question_number() {
     let item_id = "1.1".parse().unwrap();
@@ -46,8 +65,7 @@ async fn after_answer_ignores_unrelated_member_and_wrong_question_number() {
     )
     .unwrap();
 
-    let mut progress = team.item_mut(item_id).unwrap();
-    progress.record_publish_question(task_lead.clone(), nz(2), at(100));
+    team = with_legacy_publish_question(team, item_id, task_lead.clone(), nz(2), at(100));
 
     let mut state = State::new();
     state.insert_team(team).unwrap();
@@ -137,8 +155,7 @@ async fn after_answer_clears_retry_timers_only_for_matching_branches() {
     )
     .unwrap();
 
-    let mut progress = team.item_mut(item_id).unwrap();
-    progress.record_publish_question(task_lead.clone(), nz(1), at(100));
+    team = with_legacy_publish_question(team, item_id, task_lead.clone(), nz(1), at(100));
 
     let mut state = State::new();
     state.insert_team(team).unwrap();
