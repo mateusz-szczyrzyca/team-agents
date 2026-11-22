@@ -17,7 +17,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::publish::Own;
+use super::publish::{Own, Site};
 use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
 use crate::daemon::pr::{Joining, Publication, Publish};
@@ -136,6 +136,9 @@ impl Owner {
         else {
             return self.wake_unasked_conflict_lead(team, look).await;
         };
+        if self.conflict_publication_delayed(team, &pr, now) {
+            return Ok(());
+        }
         let lead = self.lead_of(team)?;
         let member = self
             .parts
@@ -163,6 +166,26 @@ impl Owner {
                 .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
+        let publication = Publication {
+            head_branch: pr.branch.clone(),
+            publish: Publish::Open {
+                items: items
+                    .iter()
+                    .map(|id| Joining {
+                        item: *id,
+                        branch: pr.branch.clone(),
+                    })
+                    .collect(),
+            },
+        };
+        let site = Site {
+            pulls,
+            lead: &lead,
+            team,
+        };
+        if self.recover_publish_question(site, &publication, now).await? {
+            return Ok(());
+        }
         let judged = match self.judge_tip(&lead, &approved_head).await {
             Ok(judged) => judged,
             Err(error) => {
@@ -188,19 +211,7 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                let publication = Publication {
-                    head_branch: pr.branch.clone(),
-                    publish: Publish::Open {
-                        items: items
-                            .iter()
-                            .map(|id| Joining {
-                                item: *id,
-                                branch: pr.branch.clone(),
-                            })
-                            .collect(),
-                    },
-                };
-                return self.publish_failed(pulls, team, &lead, &publication, &error, now);
+                return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
         self.record_event_at(
@@ -214,6 +225,14 @@ impl Owner {
         );
         self.apply_lead_change(team, &items, pr.number, &approved_head, changed, now, look)
             .await
+    }
+
+    /// Holds a rejected conflict publication until its shared retry backoff has elapsed.
+    fn conflict_publication_delayed(&self, team: &TeamId, pr: &PullRequest, now: Timestamp) -> bool {
+        self.watch
+            .retry_at
+            .get(&(team.clone(), pr.branch.clone()))
+            .is_some_and(|retry| *retry > now)
     }
 
     /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since, or
@@ -285,6 +304,11 @@ impl Owner {
         let end = LeadEnd::Result { changed };
         let decided = after_lead(&end, &allowances);
         log_decision("after_lead", &format!("pr={pr}, end={end:?}"), &format!("{decided:?}"));
+        self.each_item(team, items, |item| {
+            item.reset_publish_tries();
+            item.clear_publish_question();
+            Ok(())
+        })?;
         match decided {
             AfterLead::RetryMerge => {
                 self.end_pass(team, items, pr)?;
@@ -507,7 +531,7 @@ impl Owner {
     }
 
     /// Changes each of `items` of `team` with `change`.
-    fn each_item(
+    pub(super) fn each_item(
         &mut self,
         team: &TeamId,
         items: &[ItemId],

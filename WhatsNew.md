@@ -5,14 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.58.0 — 22.11.2026 — PR (number assigned at opening)
+## 0.56.0 — 22.11.2026 — PR #173
 
-### New features
-- [agent] [agent-core] `agent status` and `agent status --running` print each team with its rounds and a count of its tasks by what they do: `tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`. A task that waits for the human's answer is named with the number of its questions file.
-- [agent] [agent-core] [agent-runtime] Every list of `agent status` starts with the versions of the four crates, `agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`. When the daemon runs another build, a second line shows its versions and says that they differ; a daemon that tells none is shown as `daemon: version unknown`.
-- [agent] `agent status --task` (and `agent status --running --task`) prints the task lines, their plans and their parts, as `agent status` printed them before.
-- [agent] **Action:** a script that reads the text of `agent status` or `agent status --running` for the task lines must add `--task`; `agent status --json` is unchanged.
-- [agent] `agent status --task` is refused with a team, a task or a round, which already show their tasks, and with `--investigators`; with `--json` it is accepted and changes nothing.
+### Bug fixes
+- [agent] [agent-core] Rejected publication no longer retries forever without an explanation: after `[publish] tries` failures (default 3), the lead gets one correction pass, then the human gets a question to retry or stop. Conflict publication now observes the same retry backoff.
+- [agent] [agent-core] Publication questions notify the human and enter the questions status directly, without recording a run that never happened. Another failed publication waits while the lead already has a question open.
+- [agent] [agent-core] [agent-runtime] A restart no longer loses publication retry counts or question identity. Interrupted question creation preserves existing questions and answers, adopts an answer already saved, and clears retry backoff only for the publication that was answered.
 
 ## 0.55.0 — 22.11.2026 — PR #172
 

@@ -554,6 +554,15 @@ gated and pushed, and the merge is tried again; a change to files the task does 
 the passes are used up, or the lead gives no result, the lead asks you once in its questions file. Set
 `conflict_passes = 0` to be told at once, as before.
 
+When a branch cannot be published to GitHub (push failure or pull request error), the harness retries with backoff below
+`[publish] tries` (default 3), tells the lead once when the limit is reached so it can fix the issue, and
+asks you once in a questions file if publication still fails, with the normal notification and history entry.
+Both ordinary and conflict publication respect backoff and wait for a running lead or an existing question.
+A retry answer starts another paid run of the lead; a stop answer stops the task. After a daemon restart, a saved
+answer is adopted even if the interruption happened before question registration. Old states and histories still
+load, including complete question identities in the former flat format; incomplete markers never authorize an
+unrelated answer. Set `tries = 0` to be asked at once.
+
 `agent run --no-merge` stops before the merge and tells you; after `[review] fix_passes` rounds of "changes
 requested" a question reaches you like any other. Answering grants another `[review] fix_passes` allowance.
 The notice names the allowance and open blocking findings. How it works, and its limits, are in

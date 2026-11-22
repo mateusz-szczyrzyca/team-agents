@@ -20,7 +20,7 @@ use agent_runtime::text_file::{TextFileError, read_text_file};
 
 /// Why a questions file cannot be put to the human.
 #[derive(Debug, thiserror::Error)]
-pub(super) enum QuestionsProblem {
+pub(crate) enum QuestionsProblem {
     /// The file cannot be read: most likely the agent did not write it.
     #[error("the questions file {path:?} cannot be read: the agent has to write it before it ends its turn")]
     Read {

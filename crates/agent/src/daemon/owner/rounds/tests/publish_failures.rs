@@ -6,7 +6,7 @@ use agent_core::status::TaskStatus;
 
 use super::fake_github::MergeAnswer;
 use super::publish::{Attempt, OwnGate, Site};
-use super::rig::{ONE, Rig, git, investigator, normal};
+use super::rig::{ONE, PATIENCE, Rig, git, investigator, normal};
 use crate::client::Connection;
 use crate::daemon::owner::Owner;
 use crate::daemon::owner::fixture::{Daemon, Sinks, answers, n};
@@ -984,4 +984,702 @@ async fn try_publish_while_own_gate_running_does_not_load_stale_or_invalid_gate_
         ),
         "try_publish after gate completion must read updated gate record and return SentBack with NoCommit at tip"
     );
+}
+
+#[tokio::test]
+async fn publish_failure_retries_tells_lead_and_asks_human() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Set [publish] tries = 1 so the first failure tells the lead and the second asks the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // First publication failure tells lead, waking it for run 2:
+    rig.wait_for("first run ended and lead woken for retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
+
+    // Verify run 2 was given the publish failure prompt and that notice was delivered:
+    let prompt2 = rig.prompt(&task, 2).await;
+    assert!(
+        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
+        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
+    );
+    assert!(
+        prompt2.contains("The harness could not publish your branch"),
+        "run 2 prompt must contain the publication failure explanation"
+    );
+
+    // After bounded retries and telling lead, human is asked via questions file:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let qfile = rig.home.questions_file(&task, n(1));
+    assert!(qfile.exists(), "questions file should be written");
+    let text = std::fs::read_to_string(&qfile).unwrap();
+    assert!(text.contains("could not be published"), "{text}");
+
+    // Answering 'b' stops the task:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "b")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.status_is(&task, TaskStatus::Stopped).await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn publish_failure_restart_recovers_question_and_answer_retries_and_succeeds() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Set [publish] tries = 1 so the first failure tells the lead and the second asks the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // First publication failure tells lead, waking it for run 2:
+    rig.wait_for("first run ended and lead woken for retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
+
+    // Verify run 2 was given the publish failure prompt and that notice was delivered:
+    let prompt2 = rig.prompt(&task, 2).await;
+    assert!(
+        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
+        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
+    );
+    assert!(
+        prompt2.contains("The harness could not publish your branch"),
+        "run 2 prompt must contain the publication failure explanation"
+    );
+
+    // After bounded retries and telling lead, human is asked via questions file:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let qfile = rig.home.questions_file(&task, n(1));
+    assert!(qfile.exists(), "questions file should be written");
+
+    // Restart daemon while the publication question is open:
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    // Remove the rejecting hook so that git push can succeed:
+    std::fs::remove_file(&hook).unwrap();
+
+    // Answering 'a' (retry) resumes the task and publication succeeds:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "a")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn publish_failure_question_creation_interrupted_before_commit_recovers_without_replacing_existing_file_or_answer()
+ {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Set [publish] tries = 0 so publication immediately escalates to asking the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    rig.start().await;
+
+    let (team_id, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Publication failure escalates to human question:
+    rig.status_is(&task, TaskStatus::Questions).await;
+
+    let qfile = rig.home.questions_file(&task, n(1));
+    assert!(qfile.exists(), "questions file should be written");
+
+    // Simulate crash before question commit: human writes answer to file, state still shows task queued/running without question:
+    rig.stop().await.unwrap();
+    let custom_answer_text = "# Questions\n\n## 1. Action?\n**Verdict:** a\n\n**ANSWERED**\n";
+    std::fs::write(&qfile, custom_answer_text).unwrap();
+
+    // Restore exact interrupted state before question commit in state.json:
+    // Human has written the answer into the questions file on disk, but state.json still shows
+    // the task waiting from its completed run, with no questions registered yet.
+    let state_file = rig.home.state_file();
+    let mut state_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(0);
+    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
+    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("waiting");
+    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
+
+    // Assert pre-commit state before restart:
+    let pre_state = rig.state();
+    let pre_team = pre_state.team(&team_id).unwrap();
+    let pre_item = pre_team.item("1.1".parse().unwrap()).unwrap();
+    let pre_member = &pre_state.find_task(&task).unwrap().member;
+    assert_eq!(pre_member.status(), TaskStatus::Waiting);
+    assert_eq!(pre_member.questions(), []);
+    assert!(pre_item.publish_question().is_none());
+    assert!(pre_item.publish_question_task().is_none());
+    assert!(pre_item.publish_question_number().is_none());
+    assert_eq!(pre_item.publish_tries(), 0);
+
+    std::fs::remove_file(&hook).unwrap();
+    rig.start().await;
+
+    // After re-evaluating publication failure, the daemon must NOT overwrite existing human answer:
+    rig.wait_for("saved publication answer adopted", || {
+        rig.state()
+            .find_task(&task)
+            .unwrap()
+            .member
+            .questions()
+            .last()
+            .is_some_and(|q| !q.is_open())
+    })
+    .await;
+
+    let file_content_after_restart = std::fs::read_to_string(&qfile).unwrap();
+    assert!(
+        file_content_after_restart.contains("**Verdict:** a"),
+        "restart must NOT replace existing question file or erase human answer, got: {file_content_after_restart}"
+    );
+
+    // Active question identity in state must match question 1:
+    let active_q = rig
+        .state()
+        .find_task(&task)
+        .unwrap()
+        .member
+        .questions()
+        .last()
+        .unwrap()
+        .clone();
+    assert_eq!(active_q.number(), n(1));
+    assert_eq!(active_q.file().as_path(), qfile.as_path());
+
+    // Duplicate questions-2.md must not be created:
+    assert!(
+        !rig.home.questions_file(&task, n(2)).exists(),
+        "duplicate questions-2.md must not be created"
+    );
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_escalates_to_human() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // Start with default tries=3 so first failure enters durable retry-only backoff:
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Synchronize on durable first publication failure entering retry-only backoff:
+    rig.state_where(
+        "first publication rejection persists retry-only state with publish_tries=1",
+        |state| {
+            state
+                .teams()
+                .iter()
+                .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
+        },
+    )
+    .await;
+
+    // Stop daemon safely while idle in backoff:
+    rig.stop().await.unwrap();
+
+    // While stopped:
+    // 1. Configure tries = 1 so the retry attempt becomes the lead-exhaustion attempt:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // 2. Establish exact interrupted queued fixture in state.json:
+    // Lead was released for corrective run, publish_tries is 1, and no questions have been created yet:
+    let state_file = rig.home.state_file();
+    let mut state_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(1);
+    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
+    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    if let Some(runs) = state_json["teams"][0]["crew"]["member"]["runs"].as_array_mut() {
+        runs.truncate(1);
+    }
+    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
+
+    let pre_state = rig.state();
+
+    // Restart daemon: the queued corrective run executes:
+    rig.start().await;
+    rig.wait_for("lead executes run 2 retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
+
+    // After run 2 completes and publication fails again (tries=2 > limit=1),
+    // it escalates to asking the human with question 1:
+    rig.status_is(&task, TaskStatus::Questions).await;
+    assert_interrupted_lead_recovery_state(&pre_state, &task, &rig.state());
+
+    // Remove rejecting hook and answer 'a' to retry publication:
+    std::fs::remove_file(&hook).unwrap();
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "a")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
+
+fn assert_interrupted_lead_recovery_state(
+    pre_state: &agent_core::state::State,
+    task: &agent_core::ids::TaskId,
+    post_state: &agent_core::state::State,
+) {
+    let member = &pre_state.find_task(task).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Queued);
+    assert_eq!(member.runs().len(), 1);
+    assert_eq!(member.questions(), []);
+    assert_eq!(pre_state.teams()[0].items()[0].publish_tries(), 1);
+    assert_eq!(pre_state.teams()[0].items()[0].publish_question(), None);
+
+    let post_member = &post_state.find_task(task).unwrap().member;
+    assert_eq!(post_member.runs().len(), 2, "exactly one retry run should execute");
+    let q = post_member.open_question().unwrap().clone();
+    assert_eq!(q.number(), n(1));
+    assert_eq!(post_state.teams()[0].items()[0].publish_tries(), 2);
+}
+
+fn assert_publish_write_error(
+    stop_err: crate::daemon::DaemonError,
+    expected_task: &agent_core::ids::TaskId,
+    expected_path: &std::path::Path,
+) {
+    let crate::daemon::DaemonError::Owner(crate::daemon::owner::OwnerError::PublishQuestion(
+        crate::daemon::owner::rounds::PublishQuestionError::Write {
+            task: err_task,
+            path: err_path,
+            ..
+        },
+    )) = stop_err
+    else {
+        panic!("unexpected daemon error: {stop_err:?}");
+    };
+    assert_eq!(&err_task, expected_task);
+    assert_eq!(&err_path, expected_path);
+}
+
+#[tokio::test]
+async fn publish_failure_question_write_failure_recovers_when_storage_restored() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+
+    // Hook in origin that rejects git push:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // Start with default tries=3: first publication rejection enters a retry-only backoff state:
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+
+    // Synchronize on durable first publication failure entering retry-only backoff state:
+    rig.state_where(
+        "first publication rejection persists retry-only state with publish_tries=1",
+        |state| {
+            state
+                .teams()
+                .iter()
+                .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
+        },
+    )
+    .await;
+
+    // Stop daemon safely while idle in backoff (no live race condition):
+    rig.stop().await.unwrap();
+
+    // Now establish failure conditions before restarting:
+    // 1. Set [publish] tries = 0 so next attempt immediately escalates to asking the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // 2. Simulate storage failure: make task directory read-only so question file cannot be written:
+    let task_dir = rig.home.task_dir(&task);
+    std::fs::set_permissions(
+        &task_dir,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o555),
+    )
+    .unwrap();
+
+    // Restart daemon with failure conditions established:
+    rig.start().await;
+
+    // Wait deterministically for daemon to attempt question creation, fail with write error, and stop:
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        if Connection::connect(&rig.home.socket_file()).await.is_err() {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for daemon to stop on write failure"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // Assert exact error and context from owner:
+    let stop_err = rig
+        .stop()
+        .await
+        .expect_err("owner should record write failure when directory is unwritable");
+    assert_publish_write_error(stop_err, &task, &rig.home.questions_file(&task, n(1)));
+
+    // State before recovery must remain in Waiting without orphaned question:
+    let pre_state = rig.state();
+    let member = &pre_state.find_task(&task).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Waiting);
+    assert_eq!(member.open_question(), None);
+
+    // Restore permissions so writing can succeed:
+    std::fs::set_permissions(
+        &task_dir,
+        <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o755),
+    )
+    .unwrap();
+
+    // Restart daemon: pending escalation recovers cleanly, creates question file and transitions task to Questions:
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Questions).await;
+    let q = rig
+        .state()
+        .find_task(&task)
+        .unwrap()
+        .member
+        .open_question()
+        .unwrap()
+        .clone();
+    assert_eq!(q.number(), n(1));
+
+    // Remove rejecting hook and answer 'a' to complete publication:
+    std::fs::remove_file(&hook).unwrap();
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: n(1),
+                answers: answers(&[(1, "a")]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.wait_for("publication succeeds and pull request is opened", || {
+        !rig.github.pulls().is_empty()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn publication_default_three_attempts_back_off_and_never_interrupt_a_running_lead() {
+    for conflict in [false, true] {
+        let scenario = if conflict {
+            "work,merge-base,script:hold-publication"
+        } else {
+            "work,script:hold-publication"
+        };
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", scenario),
+                investigator("inv-r1", APPROVING),
+                investigator("inv-r2", APPROVING),
+            ],
+            5,
+            false,
+        )
+        .await;
+        let scripts = rig.home.root().join("fake-scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(
+            scripts.join("hold-publication.sh"),
+            "set -eu\ntouch .fake-publication-running\nfor attempt in $(seq 300); do if [[ -e .fake-publication-release ]]; then exit 0; fi; sleep 0.1; done\nexit 1\n",
+        )
+        .unwrap();
+        let hook = rig.origin.join("hooks/pre-receive");
+        if conflict {
+            rig.github.answer_merges(MergeAnswer::Refuse(405));
+        } else {
+            std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+            std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
+        let layer = agent_runtime::history::HistoryLayer::deferred(
+            agent_core::log::LogLevel::Info,
+            rig.history_test_clock(),
+            agent_core::config::Secrets::default(),
+        );
+        rig.start_with_log_layer(layer).await;
+        let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+        let task = tasks[0].clone();
+        if conflict {
+            rig.state_where("merge conflict pass", |state| {
+                state.teams()[0].items()[0].merge_conflict().is_some()
+            })
+            .await;
+            move_base(&rig);
+            std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+            std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+        }
+        rig.wait_for("corrective publication run is held", || {
+            rig.worktree(&task).join(".fake-publication-running").exists()
+        })
+        .await;
+        let state = rig.state();
+        assert_eq!(state.teams()[0].items()[0].publish_tries(), 3);
+        assert_eq!(state.find_task(&task).unwrap().member.status(), TaskStatus::Running);
+        assert_eq!(state.find_task(&task).unwrap().member.open_question(), None);
+        let reader = agent_runtime::history::Reader::open(&rig.home.history_file()).unwrap();
+        let logs = reader.daemon_logs().unwrap();
+        let attempts: Vec<_> = logs
+            .iter()
+            .filter(|entry| entry.event() == agent_core::log::LogEvent::GithubCallFailed)
+            .filter(|entry| entry.fields().contains_key("tries"))
+            .collect();
+        assert_eq!(attempts.len(), 2, "only attempts below the default limit are retried");
+        assert_eq!(attempts[0].fields().get("tries"), Some(&serde_json::json!(1)));
+        assert_eq!(attempts[1].fields().get("tries"), Some(&serde_json::json!(2)));
+        let gap = attempts[1].first_at().as_utc() - attempts[0].first_at().as_utc();
+        assert!(
+            gap.whole_seconds() >= 50,
+            "conflict={conflict}: retry must honor a minute's backoff: {gap}"
+        );
+        rig.advance_history_days(1);
+        rig.state_where("running lead remains undisturbed after backoff", |state| {
+            state.find_task(&task).unwrap().member.status() == TaskStatus::Running
+        })
+        .await;
+        assert_eq!(rig.state().teams()[0].items()[0].publish_tries(), 3);
+        assert!(!rig.home.questions_file(&task, n(1)).exists());
+        std::fs::write(rig.worktree(&task).join(".fake-publication-release"), "").unwrap();
+        rig.status_is(&task, TaskStatus::Questions).await;
+        assert_eq!(rig.state().teams()[0].items()[0].publish_tries(), 4);
+        assert!(!rig.home.questions_file(&task, n(2)).exists());
+        rig.stop().await.unwrap();
+    }
+}
+
+#[tokio::test]
+async fn conflict_publication_adopts_an_answer_saved_before_question_registration_after_restart() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = rig.home.config_file();
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(config, text).unwrap();
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("conflict pass requested", |state| {
+        state.team(&team).unwrap().items()[0].merge_conflict().is_some()
+    })
+    .await;
+    move_base(&rig);
+    let hook = rig.origin.join("hooks/pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    let file = rig.home.questions_file(&task, n(1));
+    let answer = "# Questions\n\n## 1. Retry?\n**Verdict:** a\n\n**ANSWERED**\n";
+    std::fs::write(&file, answer).unwrap();
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.state_file()).unwrap()).unwrap();
+    state["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(0);
+    state["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    state["teams"][0]["crew"]["member"]["status"] = serde_json::json!("waiting");
+    std::fs::write(rig.home.state_file(), serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    std::fs::remove_file(hook).unwrap();
+    rig.github.answer_merges(MergeAnswer::Allow);
+    rig.start().await;
+    rig.state_where("saved conflict answer adopted", |state| {
+        state
+            .find_task(&task)
+            .unwrap()
+            .member
+            .questions()
+            .last()
+            .is_some_and(|q| !q.is_open())
+    })
+    .await;
+    let state = rig.state();
+    let question = state.find_task(&task).unwrap().member.questions().last().unwrap();
+    assert_eq!(question.number(), n(1));
+    assert_eq!(question.file().as_path(), file.as_path());
+    assert_eq!(std::fs::read_to_string(file).unwrap(), answer);
+    assert!(!rig.home.questions_file(&task, n(2)).exists());
+    rig.item_where(
+        "1.1",
+        "conflict publication merges after automatic answer adoption",
+        |phase| matches!(phase, ItemPhase::Done { .. }),
+    )
+    .await;
+    rig.stop().await.unwrap();
 }
