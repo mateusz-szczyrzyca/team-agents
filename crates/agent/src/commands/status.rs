@@ -896,6 +896,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
 mod members;
+mod requests;
 mod returned;
 mod reviewer;
 mod rounds;
