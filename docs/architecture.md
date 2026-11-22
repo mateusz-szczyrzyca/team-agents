@@ -940,12 +940,19 @@ refuses a commit that takes lines out of one of them unless its subject starts w
 `git diff-index --cached` (against `HEAD`, or against its parent for an amend, which the command finds by looking for
 `--amend` in the command lines of its ancestors in `/proc`) and decides; a commit that a merge, a cherry-pick, a revert or a
 rebase makes is `Judged::NotAuthored`. It writes nothing. The daemon gives every run a hooks directory in the run's directory
-(`commit_guard::hooks::install_hooks`): the repository's hooks linked in and a `commit-msg` that runs
-`agent guard-commit "$1"`, stops the commit on the guard's exit status 1 only, and then runs the repository's own `commit-msg`.
-The directory reaches git as `core.hooksPath` in `GIT_CONFIG_*` of the run's environment, next to the signing configuration. A
-checkout that cannot be given hooks is run without them (a `git_call_failed` warning). The command judges only the worktree of a
-task of its home, for a repository with a checks table; it loads the texts of `prompts/harness/run/commit-refused*.md` from the
-home and fails open where it cannot judge. The checks before the review stay the second look.
+(`commit_guard::hooks::install_hooks`) with a hook for each hook git runs: it runs the repository's own hook of that name
+(the repository's `core.hooksPath` followed; the configuration of the environment — `GIT_CONFIG_COUNT`, and
+`GIT_CONFIG_PARAMETERS` for `git -c` — is taken away when git is asked where that is, because the hooks path of an outer run
+is not the repository's own), and the `commit-msg` hook runs `agent guard-commit "$1"` first. A hook acts for the repository it
+was made for (the common git directory it records); in another repository it runs that repository's own hook of the name and
+never itself. The commit is stopped on the guard's status `COMMIT_REFUSED_STATUS` (86) only, so a missing or crashing program,
+or a general failure of `agent` (status 1), lets it through. The directory reaches git as `core.hooksPath` in `GIT_CONFIG_*` of the
+run's environment, next to the signing configuration. A checkout that cannot be given hooks is run without them (a
+`git_call_failed` warning). The command judges only the worktree of a task of its home, for a repository with a checks table and
+`commit_guard` not `false`; it loads the texts of `prompts/harness/run/commit-refused*.md` from the home and fails open where it
+cannot judge. An amend is found by reading the command lines of its ancestors in `/proc` as git reads them (`--amend` and its
+abbreviation `--am`, values of options skipped); an alias that hides `--amend` is not seen. The checks before the review stay the
+second look.
 
 **Findings about commits** (`agent_core::decide::checks::commits`). The only finding that names a commit is the edit of a
 frozen test, and the team cannot repair it: the commit is in the branch for good and published history is never rewritten.

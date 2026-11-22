@@ -300,6 +300,7 @@ names a repository or its layout: these three lists are all it has.
 | `test_paths` | `[]` | the test files. A round may add lines to one; changing one that exists other than by added lines (its mode too), removing it or renaming it is for the human to allow |
 | `code_paths` | `[]` | the production code. A round that changes it has to add a line to a test file (or say in a commit `Test-First: not possible — <reason>`) |
 | `protected_paths` | `[]` | the files that judge a round: the gate's scripts, lint and CI configuration, the repository's rules. Changing one is for the human to allow |
+| `commit_guard` | `true` | `false` turns off the early refusal of a commit that changes a frozen test (below); the checks before a review stay on |
 
 Each list is an array of at most 256 path patterns. A **path pattern** is a glob over paths relative to the root of the
 repository, written with `/`:
@@ -319,8 +320,9 @@ The same lists drive the **early refusal of a commit** (`agent guard-commit`): t
 `commit-msg` hook through its environment (`core.hooksPath` in `GIT_CONFIG_*`; nothing is written into the repository), which
 refuses a commit that takes lines out of a test its `RED:` commit froze unless it is a `TEST-FIX:` commit of test files only,
 and tells the agent to make that commit. The hook runs the repository's own hook of the same name afterwards and keeps its
-other hooks. It judges the files of `test_paths` only: without the table, or with `test_paths = []`, every commit is allowed
-(there is no separate switch; this also turns the checks before a review off for that repository).
+other hooks, and acts for the repository it was made for only. It judges the files of `test_paths` only: without the table,
+with `test_paths = []` or with `commit_guard = false`, every commit is allowed. Its refusal has the exit status 86 of
+`agent guard-commit`; any other status lets the commit through.
 
 ### `[disk]`
 
