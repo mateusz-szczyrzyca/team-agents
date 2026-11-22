@@ -660,7 +660,7 @@ impl Git {
             .map(|path| path.to_vec())
             .collect();
         for path in added {
-            if let Some(obstacle) = self.obstacle_in_worktree(head, path, &touched, &changes).await? {
+            if let Some(obstacle) = self.obstacle_in_worktree(head, path).await? {
                 files.insert(obstacle);
             }
         }
@@ -676,13 +676,7 @@ impl Git {
     /// whatever form, or the first file in the place of one of its directories. A tracked file the merge replaces by a
     /// directory, and a directory of tracked files it replaces by a file, are the merge's to clear (when they are clean;
     /// the status of the paths the merge writes says when they are not). `None` when the way is free.
-    async fn obstacle_in_worktree(
-        &self,
-        head: &str,
-        path: &[u8],
-        touched: &BTreeSet<&[u8]>,
-        changes: &[&[u8]],
-    ) -> Result<Option<Vec<u8>>, GitError> {
+    async fn obstacle_in_worktree(&self, head: &str, path: &[u8]) -> Result<Option<Vec<u8>>, GitError> {
         let root = self.dir.as_path();
         let mut prefix = Vec::new();
         for (n, part) in path.split(|byte| *byte == b'/').enumerate() {
@@ -706,20 +700,78 @@ impl Git {
             };
             if metadata.is_dir() {
                 if last {
-                    // A directory where the merge adds a file: in the way only if it holds something the merge does not
-                    // write over or remove, which is what is untracked in it.
-                    let mut under = prefix.clone();
-                    under.push(b'/');
-                    let holds_more = touched
-                        .iter()
-                        .any(|touched| touched.starts_with(&under) && !changes.contains(touched));
-                    return Ok(holds_more.then_some(prefix));
+                    // A directory where the merge adds a file: in the way if it holds anything the head does not track,
+                    // ignored or not, for the merge removes only what is tracked.
+                    return Ok(self.holds_untracked(head, &prefix).await?.then_some(prefix));
                 }
             } else {
                 return self.unless_tracked(head, prefix).await;
             }
         }
         Ok(None)
+    }
+
+    /// Whether the worktree directory `directory` holds a file or a link that `head` does not track, whether git
+    /// ignores it or not.
+    async fn holds_untracked(&self, head: &str, directory: &[u8]) -> Result<bool, GitError> {
+        let operation = GitOperation::LsTree;
+        let mut under = directory.to_vec();
+        under.push(b'/');
+        let listed = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("ls-tree"),
+                    arg("-r"),
+                    arg("-z"),
+                    arg("--name-only"),
+                    arg(head),
+                    arg("--"),
+                    OsStr::from_bytes(&under),
+                ],
+            )
+            .await?;
+        let tracked: BTreeSet<&[u8]> = whole(operation, &listed.stdout, self.limits)?
+            .split(|byte| *byte == 0)
+            .filter(|path| !path.is_empty())
+            .collect();
+        let root = self.dir.as_path();
+        let mut pending = vec![directory.to_vec()];
+        while let Some(current) = pending.pop() {
+            let mut entries = match tokio::fs::read_dir(root.join(OsStr::from_bytes(&current))).await {
+                Ok(entries) => entries,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(source) => {
+                    return Err(GitError::Scratch {
+                        source: ScratchError::Make(source),
+                    });
+                }
+            };
+            loop {
+                let entry = match entries.next_entry().await {
+                    Ok(Some(entry)) => entry,
+                    Ok(None) => break,
+                    Err(source) => {
+                        return Err(GitError::Scratch {
+                            source: ScratchError::Make(source),
+                        });
+                    }
+                };
+                let mut path = current.clone();
+                path.push(b'/');
+                path.extend_from_slice(entry.file_name().as_bytes());
+                let kind = entry.file_type().await.map_err(|source| GitError::Scratch {
+                    source: ScratchError::Make(source),
+                })?;
+                if kind.is_dir() {
+                    pending.push(path);
+                } else if !tracked.contains(path.as_slice()) {
+                    return Ok(true);
+                }
+            }
+        }
+        Ok(false)
     }
 
     /// `path` as an obstacle, unless the head tracks it: then the merge removes or replaces it.
