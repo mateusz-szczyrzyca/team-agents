@@ -102,7 +102,10 @@ fn target_of(word: &str) -> Option<ReturnTarget> {
 /// before it.
 #[must_use]
 pub fn runs_of_round(runs: &[crate::state::Run], round: &crate::ids::RoundId) -> Vec<crate::state::Run> {
-    runs.iter().filter(|run| run.rounds().contains(round)).cloned().collect()
+    runs.iter()
+        .filter(|run| run.rounds().contains(round))
+        .cloned()
+        .collect()
 }
 
 /// The run of `runs` that the member's last hand-over was made after: the last one that ended `DONE`.

@@ -1233,6 +1233,15 @@ impl Owner {
             self.read_fix_responses(&pulls, &located.team, &mut look).await?;
             events.extend(look.events);
         }
+        // The returns of a lead are recorded before its run is saved as ended: a restart cannot keep the one and lose the other.
+        if located.role == Role::Coordinator
+            && let RunEnd::Reported {
+                outcome: outcome @ (RunOutcome::Sleeping | RunOutcome::Done),
+            } = &end
+            && let Some(message) = run.final_message.as_deref()
+        {
+            self.read_returns(task, &located, *outcome, message).await?;
+        }
         self.commit(task, &located, now, events, notice).await?;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
@@ -1259,14 +1268,6 @@ impl Owner {
             && let Some(message) = message
         {
             self.read_delivery_claim(task, &located.team, message).await?;
-        }
-        if located.role == Role::Coordinator
-            && let RunEnd::Reported {
-                outcome: outcome @ (RunOutcome::Sleeping | RunOutcome::Done),
-            } = end
-            && let Some(message) = message
-        {
-            self.read_returns(task, located, *outcome, message).await?;
         }
         if located.role == Role::Reviewer
             && held == plan::PlanHeld::No
