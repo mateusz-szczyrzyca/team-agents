@@ -197,8 +197,59 @@ pub fn write_pending(task_dir: &Path, pending: &Pending) -> Result<(), PendingEr
 /// # Errors
 /// [`PendingError::List`] when the directory cannot be listed.
 pub async fn read_pending_each(task_dir: &Path) -> Result<Vec<Result<Pending, PendingError>>, PendingError> {
-    let _ = task_dir;
-    Ok(Vec::new())
+    let mut entries = match tokio::fs::read_dir(task_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(PendingError::List {
+                path: task_dir.to_owned(),
+                source,
+            });
+        }
+    };
+    let mut paths = Vec::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(source) => {
+                return Err(PendingError::List {
+                    path: task_dir.to_owned(),
+                    source,
+                });
+            }
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if name.starts_with(FILE_PREFIX) && Path::new(name).extension().is_some_and(|extension| extension == "json") {
+            paths.push(entry.path());
+        }
+    }
+    // The number of a request is in its file's name; `10` sorts before `9` as text, so the files are sorted by the number.
+    let number = |path: &Path| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.strip_prefix(FILE_PREFIX))
+            .and_then(|digits| digits.parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
+    };
+    paths.sort_by_key(|path| number(path));
+    let mut read = Vec::new();
+    for path in paths {
+        let text = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|source| PendingError::Read {
+                path: path.clone(),
+                source,
+            });
+        read.push(text.and_then(|text| {
+            serde_json::from_str::<Pending>(&text).map_err(|source| PendingError::Parse {
+                path: path.clone(),
+                source,
+            })
+        }));
+    }
+    Ok(read)
 }
 
 /// The requests kept in the task directory `task_dir`, oldest first.

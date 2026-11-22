@@ -238,7 +238,38 @@ impl Git {
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::Unexpected`] and
     /// [`GitError::NotARepoPath`].
     pub async fn uncommitted_files(&self) -> Result<Vec<RepoPath>, GitError> {
-        Ok(Vec::new())
+        let operation = GitOperation::Status;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("status"),
+                    arg("--porcelain=v1"),
+                    arg("-z"),
+                    arg("--untracked-files=all"),
+                ],
+            )
+            .await?;
+        let status = whole(operation, &captured.stdout, self.limits)?;
+        let mut files = BTreeSet::new();
+        let mut fields = status.split(|byte| *byte == 0).filter(|field| !field.is_empty());
+        while let Some(field) = fields.next() {
+            let Some(path) = field.get(3..) else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(field),
+                });
+            };
+            files.insert(repo_path(operation, path)?);
+            // A rename or a copy is followed by the path it came from, which is changed too.
+            if (matches!(field.first(), Some(b'R' | b'C')) || matches!(field.get(1), Some(b'R' | b'C')))
+                && let Some(origin) = fields.next()
+            {
+                files.insert(repo_path(operation, origin)?);
+            }
+        }
+        Ok(files.into_iter().collect())
     }
 
     /// The files `commit` changes that `allowed` does not name: a path the request did not give the worker.
