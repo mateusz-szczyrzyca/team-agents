@@ -54,12 +54,26 @@ pub(crate) struct Activity {
     home: Home,
     /// The zone the times are written in.
     zone: Zone,
+    /// Where the requests for workers of the tasks shown are read.
+    requests: requests::Source,
 }
 
 impl Activity {
     /// The activity of the tasks of `home`, told in the local time `zone` gives.
     pub(crate) const fn new(home: Home, zone: Zone) -> Self {
-        Self { home, zone }
+        Self {
+            home,
+            zone,
+            requests: requests::Source::Unread,
+        }
+    }
+
+    /// The same, with the requests for workers of the tasks shown read from `source`.
+    pub(crate) fn with_requests(self, source: requests::Source) -> Self {
+        Self {
+            requests: source,
+            ..self
+        }
     }
 
     /// What the line of the running task `task` says of its last activity: the time the output of its runs last changed,
@@ -266,12 +280,14 @@ async fn listing_text(
     let detail = if target.is_some() { Detail::Tasks } else { detail };
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
-    let text = render_in(
+    let requests = requests_of(activity, &listing.teams, detail).await;
+    let text = render_with_requests(
         &listing.teams,
         View::Full,
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
+        &|task| requests.of(task).to_vec(),
         activity.zone,
     );
     Ok(Shown {
@@ -300,12 +316,14 @@ async fn running_text(
         NO_OPEN_ROUNDS.to_owned()
     } else {
         let told = rounds::told(connection, activity, &listed).await?;
-        let text = render_in(
+        let requests = requests_of(activity, &listed, detail).await;
+        let text = render_with_requests(
             &listed,
             View::Running,
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
+            &|task| requests.of(task).to_vec(),
             activity.zone,
         );
         format!("{text}{}", told.unread())
@@ -315,6 +333,23 @@ async fn running_text(
         daemon: listing.daemon,
         history: listing.history,
     })
+}
+
+/// The requests for workers of the tasks of `teams` that a view in `detail` shows: those of every task when the tasks
+/// are shown with their plans, none in the short view.
+async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail) -> requests::Told {
+    match detail {
+        Detail::Short => requests::Told::default(),
+        Detail::Tasks => {
+            requests::told(
+                &activity.requests,
+                teams
+                    .iter()
+                    .flat_map(|team| team.members.iter().map(|member| &member.task)),
+            )
+            .await
+        }
+    }
 }
 
 /// Writes `prefix`, then what `shown` says, then the line about low disk space if any and the line about the history when
@@ -570,6 +605,19 @@ fn render_in(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
+    render_with_requests(teams, view, detail, activity, rounds, &|_| Vec::new(), zone)
+}
+
+/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
+fn render_with_requests(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    requests: &dyn Fn(&TaskId) -> Vec<String>,
+    zone: Zone,
+) -> String {
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -639,6 +687,7 @@ fn render_in(
                     lines.push(render_plan_step(step));
                 }
             }
+            lines.extend(requests(&member.task));
         }
     }
     let mut text = lines.join("\n");
@@ -896,7 +945,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
 mod members;
-mod requests;
+pub(crate) mod requests;
 mod returned;
 mod reviewer;
 mod rounds;

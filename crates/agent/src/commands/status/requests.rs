@@ -51,8 +51,14 @@ pub(crate) async fn told(source: &Source, tasks: impl IntoIterator<Item = &TaskI
 
 /// The line of one request under its task: its number, its step, its worker and its state.
 pub(crate) fn request_line(request: &TaskRequest) -> String {
-    let _ = request;
-    String::new()
+    let step = request
+        .step
+        .map_or_else(|| "no step".to_owned(), |step| format!("step {step}"));
+    let worker = request
+        .worker
+        .as_ref()
+        .map_or_else(|| "no worker yet".to_owned(), |worker| format!("worker {worker}"));
+    format!("    request {}  {step}  {worker}  {}", request.id, request.status)
 }
 
 /// The line that says why the requests of a task cannot be told.
