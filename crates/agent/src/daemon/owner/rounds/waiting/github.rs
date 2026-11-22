@@ -42,6 +42,7 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
         }
         PublishError::Git(_)
         | PublishError::Findings(_)
+        | PublishError::Commit(_)
         | PublishError::Path { .. }
         | PublishError::Description { .. }
         | PublishError::Origin(_)

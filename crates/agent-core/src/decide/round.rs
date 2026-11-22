@@ -614,6 +614,58 @@ impl Checking {
     }
 }
 
+/// What the findings about commits add to what the checks decide: they cannot be repaired by the team, so what the human
+/// refused about one leaves nothing to ask and holds nothing back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct CommitsLeft {
+    /// How many findings about a commit nobody has answered: only the human may allow them, so they are asked at once
+    /// and spend no pass of the team.
+    pub to_ask: usize,
+}
+
+impl CommitsLeft {
+    /// What is left when `to_ask` findings about a commit wait for the human.
+    #[must_use]
+    pub const fn asking(to_ask: usize) -> Self {
+        Self { to_ask }
+    }
+}
+
+impl Checking {
+    /// What the `issues` of the round and its findings about commits come to, as [`Self::conclude`] says for the issues:
+    /// a finding about a commit is one that only the human may allow, and no finding the human has answered holds the
+    /// round: the team cannot undo a commit, so not even a refusal sends the round back.
+    #[must_use]
+    pub fn conclude_with_commits(
+        &self,
+        issues: &[Issue],
+        refused: &[Subject],
+        commits: CommitsLeft,
+        policy: ChecksPolicy,
+    ) -> ChecksStep {
+        if issues.is_empty() && commits.to_ask == 0 {
+            return ChecksStep::StartReviews;
+        }
+        let back = ChecksStep::BackToTeam {
+            pass: NonZeroU32::MIN.saturating_add(self.passes),
+        };
+        if issues.iter().any(|issue| refused.contains(&issue.subject())) {
+            return back;
+        }
+        let team_can_fix = issues.iter().any(|issue| issue.judge() == Judge::Team);
+        let human_has_a_part = commits.to_ask > 0 || issues.iter().any(|issue| issue.judge() == Judge::Human);
+        match (team_can_fix, self.passes < policy.check_passes, human_has_a_part) {
+            (true, true, false) => back,
+            (true, false, _) => ChecksStep::AskHuman {
+                reason: AskReason::PassesUsed,
+            },
+            (true, true, true) | (false, _, _) => ChecksStep::AskHuman {
+                reason: AskReason::OnlyTheHumanMayAllow,
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use strum::IntoEnumIterator;

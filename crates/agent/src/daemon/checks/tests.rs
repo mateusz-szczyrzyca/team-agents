@@ -762,3 +762,196 @@ async fn grouped_decisions_reject_invalid_verdicts_and_legacy_decisions_stay_com
         }
     );
 }
+
+// ---- findings about commits ---------------------------------------------------------------------------------------
+
+fn note(digit: char, path_text: &str, lines: agent_core::decide::checks::Lines) -> CommitNote {
+    CommitNote {
+        finding: agent_core::decide::checks::commits::CommitFinding {
+            commit: id(digit),
+            path: path(path_text),
+            red: id('1'),
+        },
+        subject: format!("Tidy the case {digit}"),
+        author: "Ada Author".to_owned(),
+        lines,
+    }
+}
+
+fn commit_subject(digit: char, path_text: &str) -> Subject {
+    Subject::Commit {
+        commit: id(digit),
+        path: path(path_text),
+    }
+}
+
+fn text_lines(added: u32, removed: u32) -> agent_core::decide::checks::Lines {
+    agent_core::decide::checks::Lines::Text { added, removed }
+}
+
+// Rule: all the commits of a round are one question, which shows each commit by its subject, its author and the lines it
+// added to and took out of the test, and offers only the two words that apply to a commit.
+#[tokio::test]
+async fn the_commits_a_team_cannot_repair_are_one_question_that_shows_each() {
+    let texts = texts().await;
+    let commits = CommitQuestion {
+        notes: vec![
+            note('a', "tests/a.rs", text_lines(2, 5)),
+            note('b', "tests/b.rs", agent_core::decide::checks::Lines::Binary),
+        ],
+        before: Vec::new(),
+    };
+
+    let asked = questions_with_commits(
+        &texts,
+        &team(),
+        &task(),
+        &[],
+        &commits,
+        AskReason::OnlyTheHumanMayAllow,
+        0,
+    )
+    .unwrap();
+
+    assert_eq!(
+        asked.subjects,
+        [commit_subject('a', "tests/a.rs"), commit_subject('b', "tests/b.rs")]
+    );
+    assert_eq!(asked.file.entries().len(), 1);
+    let entry = &asked.file.entries()[0];
+    assert_eq!(entry.title(), "Commits that changed frozen tests: 2");
+    assert_eq!(
+        entry.body(),
+        "Only you may allow what the checks found here; the team cannot, whatever it tries.\n\n\
+         These commits are in the branch for good and the team cannot undo them: only a rewrite of the published history could, and that is never done. A test is frozen from its `RED:` commit on; it changes later only in a `TEST-FIX:` commit of its own that touches test files only.\n\n\
+         - commit aaaaaaa \"Tidy the case a\" by Ada Author changed `tests/a.rs`, a test frozen by the `RED:` commit 1111111: 2 lines added, 5 lines taken out\n\
+         - commit bbbbbbb \"Tidy the case b\" by Ada Author replaced `tests/b.rs`, a binary test frozen by the `RED:` commit 1111111\n\n\
+         Write `allow` to let the round go to its review with these commits as they are: the harness records each commit and path for the item and does not ask about them again, through fix passes, merges of the base, a split into parts and restarts of the daemon. A new commit that changes a frozen test is a new question. Write `refuse` to record that you refused them: nothing is sent back to the team, which cannot undo a commit that is in the branch; the refusal is kept as well and is not asked again. Use an explicit verdict."
+    );
+    assert!(entry.recommendation().is_some());
+}
+
+// Rule: what the human said about the item before is told in the question about a new commit.
+#[tokio::test]
+async fn a_question_about_a_new_commit_says_what_was_allowed_before() {
+    let texts = texts().await;
+    let commits = CommitQuestion {
+        notes: vec![note('c', "tests/a.rs", text_lines(0, 1))],
+        before: vec![commit_subject('a', "tests/a.rs"), file("tests/old.rs")],
+    };
+
+    let asked = questions_with_commits(
+        &texts,
+        &team(),
+        &task(),
+        &[],
+        &commits,
+        AskReason::OnlyTheHumanMayAllow,
+        0,
+    )
+    .unwrap();
+
+    let body = asked.file.entries()[0].body().to_owned();
+    assert!(
+        body.contains(
+            "Already settled for this item and not asked again:\n- commit aaaaaaa in `tests/a.rs`\n- `tests/old.rs`\n"
+        ),
+        "{body}"
+    );
+    assert_eq!(asked.subjects, [commit_subject('c', "tests/a.rs")]);
+}
+
+// Rule: the question about commits follows those of the other issues, and each subject is in its own question.
+#[tokio::test]
+async fn the_question_about_commits_follows_the_questions_about_the_other_issues() {
+    let texts = texts().await;
+    let commits = CommitQuestion {
+        notes: vec![note('a', "tests/a.rs", text_lines(1, 1))],
+        before: Vec::new(),
+    };
+
+    let asked = questions_with_commits(
+        &texts,
+        &team(),
+        &task(),
+        &[Issue::NoTests, edited("tests/x.rs", 1)],
+        &commits,
+        AskReason::PassesUsed,
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(asked.file.entries().len(), 3);
+    assert_eq!(
+        asked.subjects,
+        [Subject::NoTests, file("tests/x.rs"), commit_subject('a', "tests/a.rs")]
+    );
+    assert_eq!(asked.file.entries()[2].number(), number(3));
+    assert!(asked.file.entries()[2].body().contains("2 time(s)"));
+    let rendered = asked.file.render();
+    assert_eq!(
+        agent_core::questions::QuestionsFile::parse(&rendered).unwrap(),
+        asked.file
+    );
+}
+
+// Rule: `allow` allows every commit of the question and `refuse` refuses every one; a commit is told from another by
+// its commit and its path.
+#[tokio::test]
+async fn the_verdict_of_the_commit_question_reaches_each_commit_and_path() {
+    let texts = texts().await;
+    let commits = CommitQuestion {
+        notes: vec![
+            note('a', "tests/a.rs", text_lines(1, 1)),
+            note('b', "tests/a.rs", text_lines(1, 1)),
+        ],
+        before: Vec::new(),
+    };
+    let asked = questions_with_commits(
+        &texts,
+        &team(),
+        &task(),
+        &[],
+        &commits,
+        AskReason::OnlyTheHumanMayAllow,
+        0,
+    )
+    .unwrap();
+    for (word, allowed, refused) in [
+        ("allow", asked.subjects.clone(), Vec::new()),
+        ("refuse", Vec::new(), asked.subjects.clone()),
+    ] {
+        let mut answered = asked.file.clone();
+        answered
+            .set_verdict(number(1), Verdict::from_text(word).unwrap())
+            .unwrap();
+
+        let decided = grouped_decisions(&asked.subjects, &answered).unwrap();
+
+        assert_eq!(decided, Decisions { allowed, refused }, "{word}");
+    }
+}
+
+// Rule: a subject that is a commit is named by its first digits and its path in a list.
+#[tokio::test]
+async fn a_commit_is_named_by_its_first_digits_and_its_path() {
+    let texts = texts().await;
+
+    assert_eq!(
+        named(&texts, &commit_subject('a', "tests/a.rs")).unwrap(),
+        "commit aaaaaaa in `tests/a.rs`"
+    );
+}
+
+// Rule (review finding 5): what the human refused about a commit asks nothing of the lead, which cannot undo it.
+#[tokio::test]
+async fn the_lead_is_told_that_a_refusal_about_a_commit_asks_nothing_of_it() {
+    let texts = texts().await;
+
+    let text = answered(&texts).unwrap();
+
+    assert!(
+        text.contains("A commit that is already in the branch cannot be undone: where the human refused one, change nothing for it"),
+        "{text}"
+    );
+}

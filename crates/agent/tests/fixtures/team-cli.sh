@@ -45,6 +45,9 @@
 #                   the number of the run): a message can reach the agent while its run works
 #   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
 #   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
+#   checks-lead     what a coordinator does under the checks before a review: puts the question the prompt says the harness wrote
+#                   (ends with STATUS: QUESTIONS and writes no file), ends at once when the prompt says the human answered, and
+#                   otherwise integrates like `integrate`
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -639,6 +642,20 @@ case $action in
     mkdir -p "$(dirname "$file")"
     printf '# Questions — fake\n\n## 1. What should the team do about the pull request?\na) one more fix pass — the reviewers are asked again\nb) leave it to me — I merge or close it\n\n**Recommended:** a) — a finding was not fixed (fake)\n\n**Verdict:**\n' > "$file"
     result 'I have to ask.\nSTATUS: QUESTIONS'
+    ;;
+  checks-lead)
+    if grep -q "THE ROUND WAITS FOR THE HUMAN'S WORD" <<< "$prompt"; then
+      result 'I put the question.\nSTATUS: QUESTIONS'
+    elif grep -q 'THE HUMAN ANSWERED THE QUESTIONS OF THE ROUND CHECKS' <<< "$prompt"; then
+      result 'Nothing to change.\nSTATUS: DONE'
+    else
+      current=$(git rev-parse --abbrev-ref HEAD)
+      for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+        [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+      done
+      record_gate
+      result 'Integrated.\nSTATUS: DONE'
+    fi
     ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)
