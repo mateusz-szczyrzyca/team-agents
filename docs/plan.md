@@ -167,8 +167,7 @@ Judgements are acknowledged by the history writer before run settlement continue
 `agent status <task>` and `agent status <round>` show the plan's step marks and the settlement of done steps,
 for example `[x] 1.1 Write the guide (confirmed)` or `[x] 1.2 Add images (mismatch: …)`.
 The daemon serves cached snapshots so status requests do not read plans or SQLite. A task without a readable
-plan keeps its previous status format. Mismatches are recorded and displayed in this part; they do not send a run
-back and do not consume the plan's bounce budget. The existing rules below still apply to unfinished plans.
+plan keeps its previous status format.
 
 ## Enforcing the plan
 
@@ -193,10 +192,10 @@ restart of the daemon loses neither.
 
 **A failed step check.** A run that ends done while a step it marked done fails its check (a `mismatch`, see above) is
 sent back with that step: the correction names the step, its title, its check, the reason and the last lines of the
-check's output (at most 40). It counts against `[plan] bounces` like any other send-back. When a plan fault and a
-mismatch come together, the run is sent back for the plan fault: one reason per send-back, and the mismatch is judged
-again by the next run, which may send it back again. A run that ends another way, a role outside `[plan] roles` and a
-task created before plans are never sent back for a mismatch.
+check's output (at most 40). It counts against `[plan] bounces` like any other send-back. When an unfinished or lost-step
+plan fault and a mismatch come together, the run goes back once with both corrections (consuming one bounce of
+`[plan] bounces`). A run that ends another way, a role outside `[plan] roles` and a task created before plans are never
+sent back for a mismatch.
 
 **A refused gate command.** A step whose check is `[plan] check_refuse` (the gate) stays `declared`, and the next run is
 told once, in its prompt, that the gate is never a step's check. The notice is kept in the task's plan in
