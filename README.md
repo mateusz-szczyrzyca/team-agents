@@ -937,8 +937,13 @@ check runs beside the daemon, which goes on with the other tasks meanwhile. A go
 the commit, the files and the end of the check's output, and the step is recorded `confirmed` in the history with the
 worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.json` before the next starts, so that a
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
-A file that cannot be read or written is logged and left alone (it does not stop the daemon or the requests beside it); a
-request the bus no longer has has its file removed.
+A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
+`worker-request-<n>.json` that is cut short, has a field this version does not know, cannot be read, or a stage that cannot
+be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
+as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
+the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
+cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
+log line to learn what happened to the worker's work: nothing was brought over.
 A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
 returned steps, come with the next version.
 

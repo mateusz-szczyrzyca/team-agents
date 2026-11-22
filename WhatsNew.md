@@ -17,7 +17,8 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-runtime] Only what the worker committed since its request is brought over, not the commits its branch already had from earlier requests.
 - [agent] A result the daemon cannot judge (the starting commit or the worker's files cannot be read, a requested file was left uncommitted) is returned to the requester and never brought over.
 - [agent] A long check no longer stops the daemon from serving other tasks: it runs in the background.
-- [agent] A damaged or unreadable request file, a request the bus no longer knows, or a failed write of a stage no longer stops the daemon or the requests beside it; an answer the bus cannot take now is tried again at the next look.
+- [agent] [agent-runtime] A worker's request file that is cut short, has an unknown field, cannot be read or cannot be written no longer stops the daemon: the file is kept aside as `worker-request-<n>.json.damaged`, logged as `restart_corrected` with its name, the requester is told that the result could not be judged, and the other requests go on; a restart does not meet the file again.
+- [agent] A request the bus no longer knows has its file removed; an answer the bus cannot take now is tried again at the next look.
 - [agent] A result of a worker for a request that names files and a check is no longer given to the requester unchecked as `done`; a worker that commits nothing for such a request has its step returned.
 
 ### Configuration
