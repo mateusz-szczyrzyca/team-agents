@@ -217,8 +217,7 @@ impl PlanKeeping {
 
     /// Sets or clears the record of a finished run whose command checks or plan settlement are in progress.
     pub(super) fn set_running_check(&mut self, check: Option<RunningPlanCheck>) {
-        self.running_check = None;
-        drop(check);
+        self.running_check = check;
     }
 }
 

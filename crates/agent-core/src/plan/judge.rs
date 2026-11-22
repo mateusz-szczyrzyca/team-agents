@@ -142,6 +142,8 @@ pub fn steps_to_run<'a>(
     check_seconds: u64,
     refused: &[String],
 ) -> Vec<(ItemId, CheckRun<'a>)> {
-    drop((current, last_plan, last_state, check_seconds, refused));
-    Vec::new()
+    steps_to_judge(current, last_plan, last_state)
+        .into_iter()
+        .map(|step| (step.id, check_run(step.check.as_ref(), check_seconds, refused)))
+        .collect()
 }
