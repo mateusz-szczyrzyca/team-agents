@@ -322,8 +322,21 @@ pub fn check_environment(
     home: &Path,
     identity: &CommitIdentity,
 ) -> Result<Vec<(String, String)>, RunError> {
-    let _ = (secrets, agent_binary_dir, agent_path, home, identity);
-    Ok(Vec::new())
+    let mut env = BTreeMap::new();
+    for (name, secret) in secrets.agent_env() {
+        env.insert(name.as_str().to_owned(), secret.expose().to_owned());
+    }
+    let directories = agent_path_directories(agent_binary_dir.as_path(), agent_path);
+    let path = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
+    let path = path
+        .into_string()
+        .map_err(|path| RunError::PathNotUtf8 { path: path.into() })?;
+    env.insert(PATH_VARIABLE.to_owned(), path);
+    env.insert(HOME_VARIABLE.to_owned(), utf8(home)?.to_owned());
+    for (name, value) in identity_env(identity, None)? {
+        env.insert(name.to_owned(), value);
+    }
+    Ok(env.into_iter().collect())
 }
 
 #[cfg(test)]
