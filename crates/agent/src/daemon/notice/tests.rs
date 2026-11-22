@@ -1,3 +1,5 @@
+//! Unit tests for notification layout and rendering, expecting `Time:` headers in `YYYY-MM-DD HH:MM <zone>`.
+
 use std::path::Path;
 
 use agent_core::config::Language;

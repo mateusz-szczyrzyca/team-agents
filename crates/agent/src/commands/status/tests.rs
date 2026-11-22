@@ -1,3 +1,5 @@
+//! Unit tests for `agent status`, expecting local timestamps in the single zoned form `YYYY-MM-DD HH:MM:SS <zone>`.
+
 use std::num::NonZeroU32;
 use time::UtcOffset;
 

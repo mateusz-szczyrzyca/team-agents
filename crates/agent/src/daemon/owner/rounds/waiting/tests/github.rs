@@ -1,6 +1,7 @@
 //! The steps of the owner that call GitHub or git, and what a failure of theirs does: it waits, and ends nothing. The
 //! evidence of 20.11.2026 is the second opinion of a pull request whose read of GitHub timed out three times and
 //! stopped the whole daemon for the night, and the schema below is what the places of the owner must keep doing.
+//! Retry `next try` timestamps are formatted in `YYYY-MM-DD HH:MM <zone>`.
 use std::num::NonZeroU32;
 
 use agent_core::ids::TeamId;

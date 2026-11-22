@@ -1,3 +1,5 @@
+//! Unit tests for round status lines, expecting `started` and `since` timestamps in `YYYY-MM-DD HH:MM <zone>`.
+
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::str::FromStr;

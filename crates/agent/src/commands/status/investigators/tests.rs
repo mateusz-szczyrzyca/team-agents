@@ -1,5 +1,5 @@
 //! What `agent status --investigators` says of each configured investigator: the last two activities in the teams that are
-//! not closed, newest first, or that it is free.
+//! not closed, newest first, or that it is free, with activity timestamps in `YYYY-MM-DD HH:MM:SS <zone>`.
 
 use std::num::NonZeroU32;
 use time::UtcOffset;

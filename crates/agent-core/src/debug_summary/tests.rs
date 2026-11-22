@@ -1,3 +1,5 @@
+//! Unit tests for `SUMMARY.md` rendering, expecting timestamps in the single zoned form `YYYY-MM-DD HH:MM:SS <zone>`.
+
 use crate::local_time::Zone;
 use std::path::PathBuf;
 use time::UtcOffset;

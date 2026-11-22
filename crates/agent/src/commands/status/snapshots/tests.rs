@@ -1,3 +1,5 @@
+//! Unit tests for round snapshot lines, expecting snapshot timestamps in `YYYY-MM-DD HH:MM:SS <zone>`.
+
 use agent_core::local_time::Zone;
 use std::str::FromStr;
 
