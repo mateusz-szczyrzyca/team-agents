@@ -1022,6 +1022,17 @@ async fn publish_failure_retries_tells_lead_and_asks_human() {
     })
     .await;
 
+    // Verify run 2 was given the publish failure prompt and that notice was delivered:
+    let prompt2 = rig.prompt(&task, 2).await;
+    assert!(
+        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
+        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
+    );
+    assert!(
+        prompt2.contains("The harness could not publish your branch"),
+        "run 2 prompt must contain the publication failure explanation"
+    );
+
     // After bounded retries and telling lead, human is asked via questions file:
     rig.status_is(&task, TaskStatus::Questions).await;
 
@@ -1084,6 +1095,17 @@ async fn publish_failure_restart_recovers_question_and_answer_retries_and_succee
         rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
     })
     .await;
+
+    // Verify run 2 was given the publish failure prompt and that notice was delivered:
+    let prompt2 = rig.prompt(&task, 2).await;
+    assert!(
+        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
+        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
+    );
+    assert!(
+        prompt2.contains("The harness could not publish your branch"),
+        "run 2 prompt must contain the publication failure explanation"
+    );
 
     // After bounded retries and telling lead, human is asked via questions file:
     rig.status_is(&task, TaskStatus::Questions).await;
@@ -1259,33 +1281,40 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     )
     .await;
 
-    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
-    config_text.push_str("\n[publish]\ntries = 1\n");
-    std::fs::write(rig.home.config_file(), config_text).unwrap();
-
     let hook_dir = rig.origin.join("hooks");
     std::fs::create_dir_all(&hook_dir).unwrap();
     let hook = hook_dir.join("pre-receive");
     std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
     std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
+    // Start with default tries=3 so first failure enters durable retry-only backoff:
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
-    // Wait for first run to end and lead to transition to waiting:
-    rig.wait_for("first run ended and waiting", || {
-        rig.state()
-            .find_task(&task)
-            .is_some_and(|f| f.member.status() == TaskStatus::Waiting && f.member.runs().len() == 1)
-    })
+    // Synchronize on durable first publication failure entering retry-only backoff:
+    rig.state_where(
+        "first publication rejection persists retry-only state with publish_tries=1",
+        |state| {
+            state
+                .teams()
+                .iter()
+                .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
+        },
+    )
     .await;
 
-    // Stop daemon to simulate interruption before the lead finishes its corrective run:
+    // Stop daemon safely while idle in backoff:
     rig.stop().await.unwrap();
 
-    // Establish exact interrupted state fixture in state.json:
+    // While stopped:
+    // 1. Configure tries = 1 so the retry attempt becomes the lead-exhaustion attempt:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 1\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // 2. Establish exact interrupted queued fixture in state.json:
     // Lead was released for corrective run, publish_tries is 1, and no questions have been created yet:
     let state_file = rig.home.state_file();
     let mut state_json: serde_json::Value =
