@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.70.0 — 22.11.2026 — PR #187
+
+### New features
+- [agent] [agent-core] A queued task that waits too long for its busy agent is handed over to a free agent of `[replacement] agents`, of the same or a higher place, outside its team. It works in the same worktree and on the same branch, and its first run is briefed with the reason `busy`. `agent status` shows the agent that took it over, and `for claude-1` next to it.
+- [agent-core] `[replacement] busy_after` says how many seconds a task waits before that hand-over (default `300`); `0` never hands a task over this way. Of the free agents the one whose CLI runs the fewest runs is taken.
+
+**Action:** the default is a hand-over after five minutes of waiting. An installation that wants its queued tasks to keep waiting for their own agent sets `busy_after = 0` under `[replacement]` in `agents.toml`, and an installation without `[replacement] agents` is not affected: nothing is handed over.
+
 ## 0.69.0 — 22.11.2026 — PR #185
 
 ### New features

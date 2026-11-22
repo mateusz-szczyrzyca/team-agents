@@ -224,6 +224,14 @@ and a member are started anew; a worker and a reviewer are not.
 | `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
+| `busy_after` | `300` | seconds a queued task waits for its agent, which runs another task at its `[limits] runs_per_agent` limit, before a free agent of `agents` takes it over; `0` never hands a task over for this reason. The moment the wait began is kept in the state, so a restart of the daemon keeps the time waited |
+
+A busy hand-over uses the same list, rules and `replacements` count as above: the agent taken must be of the same or a higher
+place than the one it replaces, not in the task's team, not in a run, not with a queued task of its own and not paused for a
+quota. Of the agents that fit, the one whose CLI runs the fewest runs now is taken, and among equals the first of `agents`.
+The task keeps its worktree and branch, its new holder's first run is briefed with the reason `busy`, and the first holder
+is not woken for it. A reviewer's task and a coordinator's while one of its members runs are never handed over this way; with
+no agent that fits, the task waits for its own agent as before.
 
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
 the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator

@@ -147,6 +147,9 @@ engine relies on:
   (`claude-code`, `codex`, `antigravity`, `ide`). A server that is not in the request is not configured.
 - The error tail is the CLI's stderr followed by the lines of the stream that report an error: the classifier of run
   outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
+- A queued task that waits `[replacement] busy_after` seconds for its busy agent is handed over through the takeover path
+  (`decide/busy.rs` decides, `owner/takeover.rs` hands over). The moment its wait began is `waiting_since` in the state,
+  so a restart keeps the time waited.
 - An agent's runs are limited by `[limits] runs_per_agent` and `runs_per_worker` (default `1`, `0` no limit): a queued
   task whose agent holds its limit over all teams waits, queued, for that run. The decision is
   `decide/slot.rs`; the daemon asks it in `start_queued`, and `agent status` reads the run from the team summaries
