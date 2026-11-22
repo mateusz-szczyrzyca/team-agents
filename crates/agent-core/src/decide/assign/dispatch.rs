@@ -48,23 +48,23 @@ pub fn dispatch_in_mode(team: &Team, mode: crate::decide::replacement::Replaceme
     dispatch_in_policy(team, mode, &[])
 }
 
-/// Chooses split replacements using configured tiers and availability supplied by the caller.
-#[must_use]
-pub fn dispatch_with_candidates(
-    team: &Team,
-    mode: crate::decide::replacement::ReplacementMode,
-    configured_replacements: &[AgentName],
-    _outside: &[crate::decide::part::Candidate<'_>],
-) -> Dispatch {
-    dispatch_in_policy(team, mode, configured_replacements)
-}
-
 /// Chooses available participants under a specified replacement policy and configured replacement ordering.
 #[must_use]
 pub fn dispatch_in_policy(
     team: &Team,
     mode: crate::decide::replacement::ReplacementMode,
     configured_replacements: &[AgentName],
+) -> Dispatch {
+    dispatch_with_candidates(team, mode, configured_replacements, &[])
+}
+
+/// Chooses split replacements using configured tiers and availability supplied by the caller.
+#[must_use]
+pub fn dispatch_with_candidates(
+    team: &Team,
+    mode: crate::decide::replacement::ReplacementMode,
+    configured_replacements: &[AgentName],
+    outside: &[crate::decide::part::Candidate<'_>],
 ) -> Dispatch {
     let sets = super::ItemSets::of(team.items());
     let features = team.task_list().list().features();
@@ -80,15 +80,6 @@ pub fn dispatch_in_policy(
         .collect();
     let mut reserved = std::collections::HashSet::new();
     let mut result = Dispatch::default();
-    let outside_participants: Vec<Participant> = configured_replacements
-        .iter()
-        .filter(|name| {
-            !members.iter().any(|m| m.agent().name() == name.as_str())
-                && !roster.iter().any(|(_, m)| m.agent().name() == name.as_str())
-        })
-        .map(|name| Participant::Normal(name.clone()))
-        .collect();
-
     for item in ready {
         let required = required_tier(team, item);
         let available = |member: &Member| {
@@ -104,7 +95,7 @@ pub fn dispatch_in_policy(
                 members: &members,
                 mode,
                 configured_replacements,
-                outside_participants: &outside_participants,
+                outside_participants: outside,
             };
             match dispatch_split_item(&ctx, item, required) {
                 Ok(agent) => {
@@ -158,7 +149,7 @@ struct SplitDispatchContext<'a> {
     members: &'a [&'a Member],
     mode: crate::decide::replacement::ReplacementMode,
     configured_replacements: &'a [AgentName],
-    outside_participants: &'a [Participant],
+    outside_participants: &'a [crate::decide::part::Candidate<'a>],
 }
 
 fn fitting_split_crew(
@@ -277,12 +268,16 @@ fn dispatch_split_item<'a>(
                     if prev_member.is_none_or(|p| p.task() != m.task()) {
                         reps.push(candidate_of(m));
                     }
-                } else if let Some(p) = ctx.outside_participants.iter().find(|p| p.name() == rep_name.as_str()) {
+                } else if let Some(p) = ctx
+                    .outside_participants
+                    .iter()
+                    .find(|p| p.agent.name() == rep_name.as_str())
+                {
                     reps.push(crate::decide::part::Candidate {
-                        agent: p,
-                        status: TaskStatus::Waiting,
-                        handed_over: false,
-                        busy: ctx.reserved.contains(p.name()),
+                        agent: p.agent,
+                        status: p.status,
+                        handed_over: p.handed_over,
+                        busy: p.busy || ctx.reserved.contains(p.agent.name()),
                     });
                 }
             }
