@@ -79,7 +79,12 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
             .ok_or_else(|| RecoveryError::Missing { task: task.clone() })?;
         if member.plan_running_check().is_some() && member.current_run().is_some() {
             // The CLI run already finished and is waiting for its plan command checks or settlement: the owner
-            // resumes that settlement on startup instead of marking the CLI run interrupted.
+            // resumes that settlement on startup instead of marking the CLI run interrupted, while preserving any
+            // prior consecutive hang strikes of the session.
+            let hangs = trailing_hangs(member.session_runs());
+            if hangs > 0 {
+                recovery.hangs.push((task.clone(), hangs));
+            }
             continue;
         }
         let was_going = member.current_run().is_some();

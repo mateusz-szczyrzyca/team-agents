@@ -238,7 +238,8 @@ pub(crate) enum PlanJudgementsError {
         /// The task whose judgements were being read.
         task: TaskId,
         /// The underlying history reader failure.
-        cause: ReadError,
+        #[source]
+        source: ReadError,
     },
     /// Joining the blocking history reader task failed.
     #[error("cannot join step judgements reader task for {task}")]
@@ -246,7 +247,8 @@ pub(crate) enum PlanJudgementsError {
         /// The task whose judgements were being read.
         task: TaskId,
         /// The underlying blocking task join failure.
-        cause: tokio::task::JoinError,
+        #[source]
+        source: tokio::task::JoinError,
     },
 }
 
@@ -387,14 +389,12 @@ pub(super) struct CheckJob {
     history: History,
     /// The clock used to stamp each command check's judgement.
     clock: SharedClock,
-    /// When the batch was created, used if a later clock read fails.
-    started_at: Timestamp,
 }
 
 /// The results of a command check batch, one per command, in the order of the commands.
 pub(super) struct CheckBatch {
-    /// The judgement record of each command, already persisted when history is writing.
-    records: Vec<JudgementRecord>,
+    /// The judgement record of each command, or the clock error that prevented stamping a judgement.
+    records: Result<Vec<JudgementRecord>, agent_core::state::InvalidTimestamp>,
 }
 
 /// Runs the commands of `job` one after another, in the background, persisting each command's judgement before
@@ -417,7 +417,12 @@ async fn run_command_checks(job: CheckJob) -> CheckBatch {
                 format!("cannot run check: {}", error_chain(&error)),
             ),
         };
-        let at = Timestamp::now(&job.clock).unwrap_or(job.started_at);
+        let at = match Timestamp::now(&job.clock) {
+            Ok(at) => at,
+            Err(error) => {
+                return CheckBatch { records: Err(error) };
+            }
+        };
         let record = judged.into_record(job.task.clone(), job.team.clone(), job.run.clone(), at, step.id());
         log_decision(
             "plan_check",
@@ -441,7 +446,7 @@ async fn run_command_checks(job: CheckJob) -> CheckBatch {
         }
         records.push(record);
     }
-    CheckBatch { records }
+    CheckBatch { records: Ok(records) }
 }
 
 /// A judgement of a step that failed, with the check it failed on, if any, and why.
@@ -883,7 +888,6 @@ impl Owner {
                     commands,
                     history: self.history.clone(),
                     clock: self.parts.clock.clone(),
-                    started_at: Timestamp::now(&self.parts.clock)?,
                 });
                 Ok(Judged::Waiting {
                     inline_records,
@@ -955,6 +959,7 @@ impl Owner {
             return Ok(());
         };
         self.checking.remove(&parked.abort.id());
+        self.aborted_checks.insert(parked.abort.id());
         parked.abort.abort();
         let task_dir = self.parts.store.home().task_dir(task);
         recover_checks(&task_dir).map_err(|source| PlanCheckCleanupError::Recover {
@@ -1005,11 +1010,12 @@ impl Owner {
             Err(error) => (error.id(), Err(error)),
         };
         let Some(task) = self.checking.remove(&id) else {
-            if outcome.as_ref().is_err_and(tokio::task::JoinError::is_cancelled) {
+            if self.aborted_checks.remove(&id) || outcome.as_ref().is_err_and(tokio::task::JoinError::is_cancelled) {
                 return Ok(());
             }
             return Err(OwnerError::UnknownCheck { id });
         };
+        self.aborted_checks.remove(&id);
         let parked = self
             .parked
             .remove(&task)
@@ -1028,7 +1034,7 @@ impl Owner {
         }
         match outcome {
             Ok(batch) => {
-                for record in batch.records {
+                for record in batch.records? {
                     latest.insert(record.step, record);
                 }
             }
@@ -1155,6 +1161,7 @@ impl Owner {
                 }
             }
         }
+        self.aborted_checks.clear();
         self.parked.clear();
         if let Some(error) = first_error {
             return Err(error.into());
@@ -1328,10 +1335,10 @@ impl Owner {
         match looked {
             Ok(Ok(map)) => Ok(map),
             Ok(Err(ReadError::Empty { .. })) => Ok(HashMap::new()),
-            Ok(Err(cause)) => {
+            Ok(Err(source)) => {
                 let error = PlanJudgementsError::Read {
                     task: task.clone(),
-                    cause,
+                    source,
                 };
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
@@ -1341,10 +1348,10 @@ impl Owner {
                 );
                 Err(OwnerError::PlanJudgementsRead(error))
             }
-            Err(cause) => {
+            Err(source) => {
                 let error = PlanJudgementsError::Join {
                     task: task.clone(),
-                    cause,
+                    source,
                 };
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),

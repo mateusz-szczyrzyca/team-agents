@@ -525,6 +525,8 @@ pub(super) struct Owner {
     checks: JoinSet<plan::CheckBatch>,
     /// The task whose run each batch of command checks judges, by the batch's task ID in the runtime.
     checking: HashMap<tokio::task::Id, TaskId>,
+    /// Background command check batches aborted by `halt_parked_check`, ignored if they had already completed.
+    aborted_checks: HashSet<tokio::task::Id>,
     /// The finished runs whose end waits for their command checks, by task: each is finished when its batch ends.
     parked: HashMap<TaskId, plan::Parked>,
 }
@@ -589,6 +591,7 @@ impl Owner {
             task_plans: HashMap::new(),
             checks: JoinSet::new(),
             checking: HashMap::new(),
+            aborted_checks: HashSet::new(),
             parked: HashMap::new(),
         }
     }
@@ -1202,18 +1205,25 @@ impl Owner {
                             .find_task(task)
                             .and_then(|found| found.member.current_run().map(|current| current.id().clone()))
                     });
-                    if let Some(run_id) = run_id
-                        && let Some((_, mut member)) = self.parts.state.find_task_mut(task)
-                    {
-                        member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
-                            run: run_id,
-                            end: run.classified.end.clone(),
-                            pause: run.classified.pause.clone(),
-                            made_progress: run.progress == Progress::Made,
-                            final_message: run.final_message.clone(),
-                            ended_at: None,
-                        }));
-                        self.save().await?;
+                    if let Some(run_id) = run_id {
+                        let ended_at = self
+                            .parts
+                            .state
+                            .find_task(task)
+                            .and_then(|found| found.member.plan_running_check())
+                            .and_then(|check| check.ended_at)
+                            .map_or_else(|| Timestamp::now(&self.parts.clock), Ok)?;
+                        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+                            member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
+                                run: run_id,
+                                end: run.classified.end.clone(),
+                                pause: run.classified.pause.clone(),
+                                made_progress: run.progress == Progress::Made,
+                                final_message: run.final_message.clone(),
+                                ended_at: Some(ended_at),
+                            }));
+                            self.save().await?;
+                        }
                     }
                     let abort = self.start_command_checks(task, *job);
                     self.parked.insert(
@@ -1242,7 +1252,16 @@ impl Owner {
         settled: Settled,
         held: plan::PlanHeld,
     ) -> Result<(), OwnerError> {
-        let now = Timestamp::now(&self.parts.clock)?;
+        let now = match self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.plan_running_check())
+            .and_then(|check| check.ended_at)
+        {
+            Some(at) => at,
+            None => Timestamp::now(&self.parts.clock)?,
+        };
         let mut events = Vec::new();
         let settle_span = self.settle_span_of(task, &located.team);
         {

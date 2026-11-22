@@ -30,7 +30,7 @@ pub struct RunningPlanCheck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_message: Option<String>,
     /// When the CLI run ended, before its plan command checks started.
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ended_at: Option<super::Timestamp>,
 }
 
