@@ -136,12 +136,7 @@ impl Owner {
         else {
             return self.wake_unasked_conflict_lead(team, look).await;
         };
-        if self
-            .watch
-            .retry_at
-            .get(&(team.clone(), pr.branch.clone()))
-            .is_some_and(|retry| *retry > now)
-        {
+        if self.conflict_publication_delayed(team, &pr, now) {
             return Ok(());
         }
         let lead = self.lead_of(team)?;
@@ -230,6 +225,14 @@ impl Owner {
         );
         self.apply_lead_change(team, &items, pr.number, &approved_head, changed, now, look)
             .await
+    }
+
+    /// Holds a rejected conflict publication until its shared retry backoff has elapsed.
+    fn conflict_publication_delayed(&self, team: &TeamId, pr: &PullRequest, now: Timestamp) -> bool {
+        self.watch
+            .retry_at
+            .get(&(team.clone(), pr.branch.clone()))
+            .is_some_and(|retry| *retry > now)
     }
 
     /// Wakes the lead of `team` once when a merge conflict pass needs the human and the lead has not run since, or
