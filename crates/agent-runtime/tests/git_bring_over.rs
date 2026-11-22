@@ -160,11 +160,14 @@ mod git_bring_over {
         write(&repo, "uncommitted.txt", b"mine\n");
         write(&repo, "untracked.txt", b"new\n");
         let files = ["guide.md", "other.txt", "uncommitted.txt", "untracked.txt"];
-        let before = state(&repo, &files);
-        // The worker's commit, made on a branch of the same repository from the same base.
-        raw(&repo, &["switch", "-q", "-c", "worker", "main"]);
+        // The worker's commit, made on a branch of the same repository from the base the requester is at.
+        let base = raw(&repo, &["rev-parse", "HEAD"]);
+        raw(&repo, &["switch", "-q", "-c", "worker", &base]);
         commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
         let worker: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        raw(&repo, &["switch", "-q", "main"]);
+        // The requester's state, as a bringing over must leave it: its files, its index and its untracked files.
+        let before = state(&repo, &files);
 
         let outcome = handle(&repo)
             .bring_over(&worker, &round(), &task())
@@ -182,12 +185,11 @@ mod git_bring_over {
         assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo");
         assert_eq!(std::fs::read(repo.join("uncommitted.txt")).expect("mine"), b"mine");
         assert_eq!(std::fs::read(repo.join("untracked.txt")).expect("new"), b"new");
-        let (status, _index, contents) = state(&repo, &files);
-        assert!(status.contains("uncommitted.txt"), "{status}");
-        assert!(status.contains("untracked.txt"), "{status}");
-        assert_eq!(&contents[2], b"mine");
-        assert_eq!(&contents[3], b"new");
-        assert_eq!(before.2[0], b"one\n");
+        let (status, index, contents) = state(&repo, &files);
+        assert_eq!(contents, before.2);
+        assert_eq!(index, before.1);
+        assert_eq!(before.0, "?? uncommitted.txt\0?? untracked.txt\0");
+        assert_eq!(status, before.0);
     }
 
     #[tokio::test]
@@ -196,13 +198,16 @@ mod git_bring_over {
         commit(&repo, &[("guide.md", b"one\n")], "base");
         write(&repo, "uncommitted.txt", b"mine\n");
         let files = ["guide.md", "uncommitted.txt"];
-        let before = state(&repo, &files);
-        raw(&repo, &["switch", "-q", "-c", "worker", "main"]);
+        // The worker's commit, from the base the requester is at, which the requester's own step then moves.
+        let base = raw(&repo, &["rev-parse", "HEAD"]);
+        raw(&repo, &["switch", "-q", "-c", "worker", &base]);
         commit(&repo, &[("guide.md", b"worker\n")], "the worker's step");
         let worker: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
         raw(&repo, &["switch", "-q", "main"]);
         commit(&repo, &[("guide.md", b"requester\n")], "the requester's own step");
         let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+        // The requester's state, as a conflict must leave it: its files, its index and its uncommitted file.
+        let before = state(&repo, &files);
 
         let outcome = handle(&repo)
             .bring_over(&worker, &round(), &task())
