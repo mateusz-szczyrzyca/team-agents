@@ -11,7 +11,7 @@ use std::io::{self, Write};
 use std::path::Path;
 use std::str::FromStr;
 
-use agent_core::config::{AbsolutePath, RepoName};
+use agent_core::config::{AbsolutePath, CommitGuard, RepoName};
 use agent_core::decide::commit_guard::Verdict;
 use agent_runtime::commit_guard::text::{RefusalTextError, refusal_text};
 use agent_runtime::commit_guard::{CommitKind, GuardError, Judged, judge_staged};
@@ -223,7 +223,11 @@ async fn judge(environment: &Environment, message_file: &Path) -> Result<Option<
     let Some(repo) = settings.config.repo(&repository) else {
         return Err(Unjudged::Repository { repository });
     };
-    let Some(rules) = repo.checks.as_ref() else {
+    let Some(rules) = repo
+        .checks
+        .as_ref()
+        .filter(|_| repo.commit_guard == CommitGuard::Enabled)
+    else {
         return Ok(None);
     };
     let message = tokio::fs::read_to_string(message_file)
