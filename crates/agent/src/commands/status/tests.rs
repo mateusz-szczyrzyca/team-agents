@@ -1641,3 +1641,41 @@ fn the_bus_item_handed_over_text_names_the_item_branch_task_and_both_holders() {
         "Item 1.2 on branch `agents/claude-1/task-20261122-140915-d3lh-1.2` (task task-20261122-140915-d3lh) is held by codex-1 now: claude-1 is busy in another team.\n"
     );
 }
+
+#[tokio::test]
+async fn the_status_reads_cli_runs_and_reports_config_read_and_parse_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let abs = agent_core::config::AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&abs);
+    let activity = Activity::new(home.clone(), Zone::Fixed(UtcOffset::UTC));
+    let config = "[agents.claude-1]\ncli = \"claude\"\n[agents.codex-1]\ncli = \"codex\"\n\
+                 [investigators.inv-opus]\ncli = \"claude\"\n[investigators.inv-codex]\ncli = \"codex\"\n\
+                 [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+                 [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n";
+    std::fs::write(home.config_file(), config).unwrap();
+    let mut teams = sample();
+    teams[0].members[0].status = TaskStatus::Running;
+    teams[0].members[1].status = TaskStatus::Running;
+
+    assert_eq!(
+        activity.cli_runs_line(&teams).await.unwrap(),
+        Some("runs: claude 2, codex 0\n".to_owned())
+    );
+
+    std::fs::write(home.config_file(), "[agents.claude-1\n").unwrap();
+    let parsed = activity.cli_runs_line(&teams).await.unwrap_err();
+    assert!(matches!(
+        parsed,
+        StatusError::ConfigParse { ref path, .. } if *path == home.config_file()
+    ));
+
+    std::fs::remove_file(home.config_file()).unwrap();
+    assert_eq!(activity.cli_runs_line(&teams).await.unwrap(), None);
+
+    std::fs::create_dir(home.config_file()).unwrap();
+    let unreadable = activity.cli_runs_line(&teams).await.unwrap_err();
+    assert!(matches!(
+        unreadable,
+        StatusError::ConfigRead { ref path, .. } if *path == home.config_file()
+    ));
+}

@@ -2,6 +2,7 @@
 //! item, the tasks that worked for it, its pull request and its review passes.
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use agent_core::history::HistoryHealth;
@@ -39,6 +40,22 @@ pub(crate) enum StatusError {
     /// The settings of the home, which name the investigators, cannot be read.
     #[error("cannot read the settings of the home")]
     Settings(#[source] SettingsError),
+    /// The configuration file cannot be read.
+    #[error("cannot read the configuration file {path:?}")]
+    ConfigRead {
+        /// The file whose configuration could not be read.
+        path: PathBuf,
+        /// The I/O failure, kept as the cause.
+        source: io::Error,
+    },
+    /// The configuration file is not valid.
+    #[error("cannot parse the configuration file {path:?}")]
+    ConfigParse {
+        /// The file whose configuration could not be parsed.
+        path: PathBuf,
+        /// The parsed configuration's reason, kept as the cause.
+        source: agent_core::config::ConfigError,
+    },
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
@@ -129,16 +146,8 @@ impl Activity {
 
     /// The line counting the runs going per configured CLI across `teams`, when at least one run is going and the
     /// configuration file can be read.
-    pub(crate) fn cli_runs_line(&self, teams: &[TeamSummary]) -> Option<String> {
-        // An absent or unreadable `agents.toml` is already reported by `disk_line`; status tests without a
-        // configuration file omit the per-CLI run count.
-        match std::fs::read_to_string(self.home.config_file()) {
-            Ok(text) => match agent_core::config::Config::from_toml_str(&text) {
-                Ok(config) => cli_runs_line(&config, teams),
-                Err(_) => None,
-            },
-            Err(_) => None,
-        }
+    pub(crate) async fn cli_runs_line(&self, _teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        Ok(None)
     }
 }
 
@@ -297,7 +306,7 @@ async fn listing_text(
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
-    let cli_runs = activity.cli_runs_line(&listing.teams);
+    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     let text = render_with_requests(
         &listing.teams,
         View::Full,
@@ -323,7 +332,7 @@ async fn running_text(
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
-    let cli_runs = activity.cli_runs_line(&listing.teams);
+    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
