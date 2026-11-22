@@ -57,3 +57,30 @@ fn a_command_line_amends_when_one_argument_is_amend() {
         assert_eq!(is_amend(cmdline), want, "{cmdline:?}");
     }
 }
+
+// Rule: git takes an unambiguous abbreviation of `--amend`, and a word that is the value of an option (`-m --amend`) is no
+// option: a command line amends only when an option of it is `--amend` or `--am`/`--ame`.
+#[test]
+fn a_command_line_amends_only_when_git_reads_an_amend_option_in_it() {
+    let cases: [(&[u8], bool); 15] = [
+        (b"git\0commit\0--ame\0", true),
+        (b"git\0commit\0--am\0-m\0x\0", true),
+        (b"git\0commit\0--a\0", false),
+        (b"git\0ci\0--amend\0", true),
+        (b"git\0commit\0-m\0--amend\0", false),
+        (b"git\0commit\0--message\0--amend\0", false),
+        (b"git\0commit\0-F\0--amend\0", false),
+        (b"git\0commit\0-am\0--amend\0", false),
+        (b"git\0commit\0-amend\0", false),
+        (b"git\0commit\0-m\0one\0--amend\0", true),
+        (b"git\0commit\0-F\0--amend\0--amend\0", true),
+        (b"git\0commit\0--\0--amend\0", false),
+        (b"git\0commit\0--amend=x\0", false),
+        (b"git\0commit\0-mmessage\0--amend\0", true),
+        (b"git\0amend\0", false),
+    ];
+
+    for (cmdline, want) in cases {
+        assert_eq!(is_amend(cmdline), want, "{cmdline:?}");
+    }
+}
