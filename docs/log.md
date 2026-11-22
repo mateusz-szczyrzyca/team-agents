@@ -319,6 +319,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `task_status_changed` | `info` | A task's status changes. |
 | `run_started` | `info` | A model CLI run starts. A run that the bus's wake-up starts also has `why` (`wake_up`), `message_id`, `from` and `wake_ups` (the number of this wake-up for that message). |
 | `run_ended` | `info` | A model CLI run ends. |
+| `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
 | `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
 | `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
 | `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
