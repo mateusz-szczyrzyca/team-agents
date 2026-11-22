@@ -262,7 +262,6 @@ impl Owner {
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
         let waiting = self.waiting_for(team, round)?;
-        let since = Self::wait_since(team, round, waiting);
         // A queued run whose agent runs another task at its limit goes after that run: the line names it.
         let holder = (waiting == Waiting::For(Obligation::QueuedRun))
             .then(|| {
@@ -272,7 +271,13 @@ impl Owner {
                     .find_map(|member| self.run_holding(member.agent()))
             })
             .flatten();
-        Some(waiting.line_with_holder(since.as_deref(), holder.as_ref().map(|run| (&run.agent, &run.team))))
+        Some(match holder {
+            Some(run) => waiting.line_with_holder(
+                Self::wait_since(team, round, waiting).as_deref(),
+                Some((&run.agent, &run.team)),
+            ),
+            None => Self::wait_text(team, round, waiting),
+        })
     }
 
     /// `waiting` as a line that names who owes it and since when.
@@ -280,7 +285,7 @@ impl Owner {
     /// The wait starts when the question was put, for the human's, and otherwise when the round last went idle: the end of
     /// the latest run that worked for it. A round whose tasks have not run, or whose run goes on, has no start to name.
     pub(in crate::daemon::owner) fn wait_text(team: &Team, round: &Round, waiting: Waiting) -> String {
-        waiting.line(Self::wait_since(team, round, waiting).as_deref())
+        waiting.line_with_holder(Self::wait_since(team, round, waiting).as_deref(), None)
     }
 
     /// The UTC timestamp string from which `round` has owed `waiting`, or `None` when the round has not run yet.
