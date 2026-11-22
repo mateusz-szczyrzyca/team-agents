@@ -1,5 +1,9 @@
 //! State written before conflict accounting loads cleanly and preserves spent passes and conflict state.
 
+use agent_core::decide::merge_refusal::{
+    recover_exhausted_split_round, ConflictBudget, ConflictPublication, ExhaustedRoundRecovery, GatingStatus,
+    SplitPullStatus,
+};
 use agent_core::state::{ItemPhase, MergeConflict, State};
 
 #[test]
@@ -11,4 +15,14 @@ fn state_before_conflict_accounting_loads_with_exact_passes_and_conflict() {
     assert!(matches!(item.phase(), ItemPhase::Approved { .. }));
     assert_eq!(item.merge_passes(), 2);
     assert!(matches!(item.merge_conflict(), Some(MergeConflict::MergingBase { .. })));
+
+    let recovery = recover_exhausted_split_round(SplitPullStatus::Open {
+        gating: GatingStatus::Gated,
+        budget: ConflictBudget {
+            spent: item.merge_passes(),
+            limit: 2,
+        },
+        conflict: ConflictPublication::Unpublished,
+    });
+    assert_eq!(recovery, ExhaustedRoundRecovery::ResumeMerge);
 }
