@@ -385,8 +385,14 @@ pub fn try_path(task_dir: &Path, request: RequestId) -> PathBuf {
 /// # Errors
 /// [`PendingError::Write`] or [`PendingError::Encode`].
 pub fn write_try(task_dir: &Path, request: RequestId, tried: &Try) -> Result<(), PendingError> {
-    let _ = (task_dir, request, tried);
-    Ok(())
+    let path = try_path(task_dir, request);
+    let text = serde_json::to_string_pretty(tried).map_err(PendingError::Encode)?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text).map_err(|source| PendingError::Write {
+        path: temporary.clone(),
+        source,
+    })?;
+    std::fs::rename(&temporary, &path).map_err(|source| PendingError::Write { path, source })
 }
 
 /// The try of `request` kept in `task_dir`; the first try when none is kept.
@@ -394,8 +400,13 @@ pub fn write_try(task_dir: &Path, request: RequestId, tried: &Try) -> Result<(),
 /// # Errors
 /// [`PendingError::Read`] or [`PendingError::Parse`] when the file is there and cannot be used.
 pub fn read_try(task_dir: &Path, request: RequestId) -> Result<Try, PendingError> {
-    let _ = (task_dir, request);
-    Ok(Try::first())
+    let path = try_path(task_dir, request);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Try::first()),
+        Err(source) => return Err(PendingError::Read { path, source }),
+    };
+    serde_json::from_str(&text).map_err(|source| PendingError::Parse { path, source })
 }
 
 /// Whether the task directory `task_dir` holds a file of a request that is not settled yet, one of those in `answered`
@@ -405,22 +416,23 @@ pub fn has_pending_except<S: std::hash::BuildHasher>(
     task_dir: &Path,
     answered: &std::collections::HashSet<RequestId, S>,
 ) -> bool {
-    let _ = answered;
-    has_pending(task_dir)
+    std::fs::read_dir(task_dir).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            let name = entry.file_name();
+            let path = entry.path();
+            name.to_str().is_some_and(|name| {
+                name.starts_with(FILE_PREFIX)
+                    && Path::new(name).extension().is_some_and(|extension| extension == "json")
+            }) && request_of_file(&path).is_none_or(|request| !answered.contains(&request))
+        })
+    })
 }
 
 /// Whether the task directory `task_dir` holds a file of a request that is not settled yet: a worker with one is busy.
 /// A directory that cannot be listed holds none.
 #[must_use]
 pub fn has_pending(task_dir: &Path) -> bool {
-    std::fs::read_dir(task_dir).is_ok_and(|entries| {
-        entries.filter_map(Result::ok).any(|entry| {
-            entry.file_name().to_str().is_some_and(|name| {
-                name.starts_with(FILE_PREFIX)
-                    && Path::new(name).extension().is_some_and(|extension| extension == "json")
-            })
-        })
-    })
+    has_pending_except(task_dir, &std::collections::HashSet::new())
 }
 
 #[cfg(test)]

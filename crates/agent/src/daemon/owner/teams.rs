@@ -1042,7 +1042,8 @@ impl Owner {
                         if let Err(error) = self.keep_worker_result(&located.team, &served, task, summary.clone()) {
                             // Without its file the result cannot be settled: the requester gets the worker's report, as
                             // before, rather than nothing.
-                            tracing::error!(
+                            tracing::warn!(
+                                event = LogEvent::WorkerRequestDamaged.as_str(),
                                 request = %served.request,
                                 error = %error_chain(&error),
                                 "the result of a worker cannot be kept: the requester is given the worker's report unchecked"

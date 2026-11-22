@@ -255,7 +255,7 @@ impl Owner {
             Err(failure) => {
                 self.tell_unreadable_once(&error);
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     file = ?path,
                     error = %error_chain(&failure),
                     "the damaged file of a worker's request cannot be set aside: it is left as it is"
@@ -264,7 +264,7 @@ impl Owner {
             }
         };
         tracing::warn!(
-            event = LogEvent::RestartCorrected.as_str(),
+            event = LogEvent::WorkerRequestDamaged.as_str(),
             team = %team,
             task = %worker_task,
             file = ?path,
@@ -310,7 +310,7 @@ impl Owner {
     fn tell_unreadable_once(&mut self, error: &PendingError) {
         if self.unreadable_requests.insert(error.to_string()) {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 error = %error_chain(error),
                 "the file of a worker's request cannot be read: it is left as it is and the daemon goes on without it"
             );
@@ -334,6 +334,7 @@ impl Owner {
                     Gathered::Later => return Ok(()),
                     Gathered::Gone => {
                         tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
                             request = %pending.request,
                             "the bus has no such request any more: the result of the worker is dropped"
                         );
@@ -387,7 +388,7 @@ impl Owner {
             Err(PendingError::Write { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => None,
             Err(failure) => {
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     file = ?path,
                     error = %error_chain(&failure),
                     "the file of a worker's request cannot be set aside"
@@ -396,7 +397,7 @@ impl Owner {
             }
         };
         tracing::warn!(
-            event = LogEvent::RestartCorrected.as_str(),
+            event = LogEvent::WorkerRequestDamaged.as_str(),
             team = %pending.team,
             task = %pending.worker_task,
             file = ?path,
@@ -443,7 +444,7 @@ impl Owner {
             Ok(known) if is_running_for(&known, &pending.worker_task, &pending.worker) => true,
             Ok(known) => {
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     request = %pending.request,
                     status = ?known.status,
                     "the bus does not have a request running for the worker whose file holds its result: the file is dropped"
@@ -471,7 +472,7 @@ impl Owner {
             && self.unreadable_requests.insert(format!("remove {}", path.display()))
         {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 path = ?path,
                 error = %error,
                 "the file of a settled request cannot be removed"
@@ -486,7 +487,7 @@ impl Owner {
             && error.kind() != std::io::ErrorKind::NotFound
         {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 path = ?path,
                 error = %error,
                 "the file of a settled request cannot be removed"
@@ -741,7 +742,7 @@ impl Owner {
             Err(error) => {
                 // The catalog's texts are checked by a test: this is a bug, and the requester is told what it can be told.
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     error = %error_chain(&error),
                     "the answer to a request cannot be worded"
                 );
@@ -762,6 +763,7 @@ impl Owner {
             }
         };
         tracing::info!(
+            event = LogEvent::RequestDelegated.as_str(),
             request = %pending.request,
             worker = %pending.worker,
             requester = %pending.requester,
@@ -794,6 +796,7 @@ impl Owner {
                 // What the bus refuses for good would be asked for ever: it is told and let go.
                 Err(error) if !is_transient(&error) => {
                     tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
                         request = %pending.request,
                         error = %error_chain(&error),
                         "the bus refuses the answer to a request for good: it is dropped"
@@ -1002,7 +1005,7 @@ async fn run_request_check(job: RequestCheck) -> Found {
                     Ok(tail) => tail,
                     Err(error) => {
                         tracing::warn!(
-                            event = LogEvent::RestartCorrected.as_str(),
+                            event = LogEvent::WorkerRequestDamaged.as_str(),
                             path = ?path,
                             error = %error_chain(&error),
                             "the output of a request's check cannot be read: the requester is told without its end"

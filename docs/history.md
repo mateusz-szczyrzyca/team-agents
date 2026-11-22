@@ -810,3 +810,8 @@ records, round links, search entries and log cursors. The previous schema is ret
 History version 18 admits the `task_waits_for_agent` event of the daemon's log. Its migration (`018-wait-events.sql`)
 preserves existing daemon logs, their links, search entries and cursors. The previous schema is retained as
 `crates/agent-runtime/tests/fixtures/history-before-wait-events.sql` and tested on upgrade.
+
+History version 19 admits the `worker_request_damaged` event of the daemon's log (a warning). Its migration
+(`019-worker-request-damaged.sql`) preserves existing daemon logs, their links, search entries and cursors. The previous schema
+is retained as `crates/agent-runtime/tests/fixtures/history-before-worker-request-damaged.sql` (the version-17 dump with migration
+18 applied) and tested on upgrade.
