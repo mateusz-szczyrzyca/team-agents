@@ -609,13 +609,6 @@ impl State {
         Ok(())
     }
 
-    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
-    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
-    /// that the state it leaves loads again.
-    ///
-    /// # Errors
-    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
-    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
     /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
     /// `None` when the task is not in the state.
     pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {
@@ -623,7 +616,13 @@ impl State {
         Some(member.start_waiting(at))
     }
 
-    /// Hands the task over (see the docs of the stub above).
+    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
+    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
+    /// that the state it leaves loads again.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
