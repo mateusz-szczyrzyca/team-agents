@@ -2048,6 +2048,44 @@ mod tests {
     }
 
     #[test]
+    fn conflict_pass_refund_and_publish_are_scoped_to_conflict_head_and_preserve_prior_budget() {
+        let mut item = progress_in(PhaseKind::Approved);
+        let head1: CommitId = "1111111111111111111111111111111111111111".parse().unwrap();
+        let head2: CommitId = "2222222222222222222222222222222222222222".parse().unwrap();
+
+        // Pass 1 is published and ended:
+        item.begin_merge_conflict(head1.clone(), at(10));
+        assert_eq!(item.record_published_conflict_pass(), 1);
+        item.end_merge_conflict();
+        assert_eq!(item.merge_passes(), 1);
+
+        // Pass 2 begins:
+        item.begin_merge_conflict(head2.clone(), at(20));
+        assert_eq!(item.merge_passes(), 2);
+
+        // First refund restores count to 1:
+        assert_eq!(item.refund_conflict_pass(), 1);
+        assert_eq!(item.merge_passes(), 1);
+
+        // Second refund for same conflict pass is idempotent and does NOT erase pass 1:
+        assert_eq!(item.refund_conflict_pass(), 1);
+        assert_eq!(item.merge_passes(), 1);
+
+        // Publication records pass 2:
+        assert_eq!(item.record_published_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+
+        // Repeated publication recording is idempotent:
+        assert_eq!(item.record_published_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+
+        // Survives serialization and deserialization:
+        let text = serde_json::to_string(&item).unwrap();
+        let back: ItemProgress = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.merge_passes(), 2);
+    }
+
+    #[test]
     fn completed_review_passes_counts_both_fix_passes_and_merge_conflict_passes() {
         let mut item = progress_in(PhaseKind::Fixing);
         assert_eq!(item.completed_review_passes(), 1);
