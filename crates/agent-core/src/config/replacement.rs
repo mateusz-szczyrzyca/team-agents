@@ -47,6 +47,12 @@ impl Replacement {
     pub const fn replacements(&self) -> replacements::Limit {
         self.replacements
     }
+
+    /// How many times the lead may return an item before the agent that holds it is replaced; `0` never replaces it.
+    #[must_use]
+    pub const fn rejections(&self) -> rejections::Limit {
+        rejections::Limit::of(0)
+    }
 }
 
 /// The numbers of `[replacement]`.
@@ -109,6 +115,27 @@ pub(super) mod replacements {
     }
 }
 
+/// `[replacement] rejections`: how many times the lead may return an item before the agent that holds it is replaced.
+pub(super) mod rejections {
+    /// The rejections after which an agent is replaced.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct Limit(u32);
+
+    impl Limit {
+        /// A limit of `value` rejections, without checking it.
+        #[must_use]
+        pub const fn of(value: u32) -> Self {
+            Self(value)
+        }
+
+        /// The number of rejections this limit allows.
+        #[must_use]
+        pub const fn get(self) -> u32 {
+            self.0
+        }
+    }
+}
+
 /// Checks that `[replacement] agents` names only configured agents, each once, in the order the file gives.
 ///
 /// # Errors
@@ -132,5 +159,7 @@ pub(super) fn check(
     Ok(())
 }
 
+#[cfg(test)]
+mod rejections_tests;
 #[cfg(test)]
 mod tests;
