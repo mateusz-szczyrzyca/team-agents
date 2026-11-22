@@ -1,8 +1,7 @@
 package main
 
-// Tests of the plan a run keeps: `agentbus serve --plan` gives a run its plan's path, the bus's subcommand
-// `helper-next` and `helper-get` carry the request's step, and a bus state written before the step field existed
-// still loads.
+// Tests of the plan a run keeps: the bus's subcommands `helper-next` and `helper-get` carry the request's step, and a
+// bus state written before the step field existed still loads with no step.
 
 import (
 	_ "embed"
@@ -24,17 +23,6 @@ func TestHelperStateBeforePlanStepLoads(t *testing.T) {
 			t.Fatalf("the request written before a step existed should load unchanged: %+v", h)
 		}
 	})
-}
-
-func TestServeTakesThePlanOfTheRun(t *testing.T) {
-	fs := newFlagSet("serve")
-	fs.String("agent", "", "")
-	if err := fs.Parse([]string{"--agent", "n1", "--plan", "/w/.agent/plan.md"}); err != nil {
-		t.Fatal(err)
-	}
-	if *plan != "/w/.agent/plan.md" {
-		t.Fatalf("serve should take --plan, got %q", *plan)
-	}
 }
 
 func TestHelperNextCarriesTheStepOfARequest(t *testing.T) {

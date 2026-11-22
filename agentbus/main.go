@@ -1240,6 +1240,7 @@ func cmdServe(args []string) {
 	team := fs.String("team", "", "team ID (team mode)")
 	tier := fs.String("tier", "normal", "normal | worker")
 	agentCmd := fs.String("agent-cmd", "", "path to the agent script (worker requests)")
+	plan := fs.String("plan", "", "path to the requester's plan file: a run whose role keeps a plan, whose delegate requests must name a step")
 	home := fs.String("home", agentsHome(), "AGENTS_HOME")
 	relay := fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead")
 	member := fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>")
@@ -1273,7 +1274,7 @@ func cmdServe(args []string) {
 		info:  Presence{Agent: *agent, Task: *task, Repo: *repo, Branch: *branch, Worktree: *worktree},
 		peers: strings.Split(*peers, ","),
 		role:  r, queueMax: *queueMax, tasksDir: *tasksDir, team: *team,
-		tier: tr, agentCmd: *agentCmd, home: *home,
+		tier: tr, agentCmd: *agentCmd, home: *home, plan: *plan,
 	}
 	invSlots = *slots
 	if s.tasksDir == "" {
