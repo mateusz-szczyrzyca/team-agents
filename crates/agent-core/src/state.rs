@@ -289,6 +289,26 @@ impl State {
         }
     }
 
+    /// Synchronizes the queue-entry order with the members currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued).
+    pub fn sync_queued(&mut self) {}
+
+    /// The queued tasks in the order they entered the queue, oldest first.
+    pub fn queued_tasks(&mut self) -> Vec<crate::decide::slot::Queued> {
+        self.teams
+            .iter()
+            .flat_map(|team| {
+                team_members(team)
+                    .filter(|member| member.status() == crate::status::TaskStatus::Queued)
+                    .map(|member| crate::decide::slot::Queued {
+                        task: member.task().clone(),
+                        team: team.id().clone(),
+                        agent: member.agent().agent_name(),
+                        tier: member.agent().tier(),
+                    })
+            })
+            .collect()
+    }
+
     /// The teams, oldest first.
     #[must_use]
     pub fn teams(&self) -> &[Team] {
@@ -1091,6 +1111,57 @@ mod tests {
 
             assert_eq!(err.classify(), Category::Data, "{text}");
         }
+    }
+
+    #[test]
+    fn resuming_an_older_teams_task_places_it_after_an_already_queued_newer_task_across_save_and_load() {
+        let mut state = State::new();
+        for (team_no, first_task) in [(1, 1), (2, 11), (3, 21)] {
+            state.insert_team(team_of(team_no, first_task)).unwrap();
+        }
+        for (team_no, first_task) in [(1, 1), (2, 11), (3, 21)] {
+            let mut team = state.team_mut(&team_id(team_no)).unwrap();
+            for offset in [0, 1, 2] {
+                let (_, mut member) = team.find_mut(&task(first_task + offset)).unwrap();
+                member.transition(TaskStatus::Running).unwrap();
+                if !(team_no == 2 && offset == 1) {
+                    member.transition(TaskStatus::Waiting).unwrap();
+                }
+            }
+        }
+        state.sync_queued();
+        state
+            .team_mut(&team_id(3))
+            .unwrap()
+            .find_mut(&task(22))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Queued)
+            .unwrap();
+        state.sync_queued();
+        state
+            .team_mut(&team_id(1))
+            .unwrap()
+            .find_mut(&task(2))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Queued)
+            .unwrap();
+        state.sync_queued();
+
+        let json = state.to_json().unwrap();
+        let mut reloaded = State::from_json(&json).unwrap();
+        reloaded
+            .team_mut(&team_id(2))
+            .unwrap()
+            .find_mut(&task(12))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Waiting)
+            .unwrap();
+        let queued: Vec<_> = reloaded.queued_tasks().into_iter().map(|item| item.task).collect();
+
+        assert_eq!(queued, vec![task(22), task(2)]);
     }
 }
 

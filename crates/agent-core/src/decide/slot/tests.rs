@@ -217,6 +217,23 @@ fn plan_starts_table_covers_every_limit_and_queue_outcome() {
                 (task_id(k_2), Slot::Wait(run("codex-1", t_a, k_1))),
             ],
         ),
+        (
+            "a worker waits at runs_per_worker = 1",
+            vec![queued("worker-1", Tier::Worker, t_b, k_2)],
+            vec![run("worker-1", t_a, k_1)],
+            Limits::default(),
+            vec![(task_id(k_2), Slot::Wait(run("worker-1", t_a, k_1)))],
+        ),
+        (
+            "a worker starts at runs_per_worker = 0",
+            vec![queued("worker-1", Tier::Worker, t_b, k_2)],
+            vec![run("worker-1", t_a, k_1)],
+            Limits {
+                runs_per_worker: 0,
+                ..Limits::default()
+            },
+            vec![(task_id(k_2), Slot::Start)],
+        ),
     ];
 
     for (name, queue, going, limits, expected) in cases {

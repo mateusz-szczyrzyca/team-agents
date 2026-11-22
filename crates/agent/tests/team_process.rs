@@ -797,4 +797,46 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&first), 2);
         assert_eq!(world.runs(&second), 2);
     }
+
+    #[test]
+    fn a_resumed_task_of_an_older_team_starts_after_an_already_waiting_queued_task() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        world.start();
+        let a = solo_task(&world.agent(&["run", "claude-1", "Task A."]));
+        world.status_where("task A to run", |status| line_of(status, &a).contains("running"));
+        release(&world, &a);
+        world.status_where("task A to finish its first run", |status| {
+            line_of(status, &a).contains("waiting")
+        });
+        std::fs::remove_file(world.home.join("worktrees/example").join(&a).join(".fake-continue")).unwrap();
+
+        let b = solo_task(&world.agent(&["run", "claude-1", "Task B."]));
+        world.status_where("task B to run", |status| line_of(status, &b).contains("running"));
+
+        let c = solo_task(&world.agent(&["run", "claude-1", "Task C."]));
+        world.status_where("task C to wait for task B", |status| {
+            line_of(status, &c).contains("queued, waits for claude-1, running in team-")
+        });
+
+        let resume = world.agent(&["resume", &a]);
+        assert!(resume.status.success(), "{}", stderr(&resume));
+        world.status_where("task A to be queued behind task B", |status| {
+            line_of(status, &a).contains("queued, waits for claude-1, running in team-")
+        });
+
+        world.restart();
+
+        release(&world, &b);
+        let status = world.status_where("task C to start before resumed task A", |status| {
+            line_of(status, &c).contains("running") && line_of(status, &a).contains("queued, waits for claude-1")
+        });
+        assert_eq!(world.runs(&c), 1, "{status}");
+        assert_eq!(world.runs(&a), 1, "{status}");
+
+        release(&world, &c);
+        world.status_where("task A to start after task C finishes", |status| {
+            line_of(status, &a).contains("running")
+        });
+        release(&world, &a);
+    }
 }
