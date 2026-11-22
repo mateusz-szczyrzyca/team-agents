@@ -4,6 +4,9 @@
 //! Everything here does I/O on behalf of the daemon; the decisions it carries out live in `agent-core`.
 #![forbid(unsafe_code)]
 
+/// The version of this crate, taken from its manifest at build time; `agent status` shows it with the other crates.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod agentbus;
 pub mod autopilot_prompts;
 pub mod checks_prompts;

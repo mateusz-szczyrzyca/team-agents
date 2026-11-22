@@ -74,6 +74,7 @@ async fn status_prints_the_teams_the_daemon_lists() {
         Command::Status(StatusArgs {
             target: None,
             running: false,
+            task: false,
             investigators: false,
             json: false,
         }),
@@ -112,6 +113,7 @@ async fn investigators_prints_the_configured_investigators_and_not_the_teams() {
         Command::Status(StatusArgs {
             target: None,
             running: false,
+            task: false,
             investigators: true,
             json: false,
         }),

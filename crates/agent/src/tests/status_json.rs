@@ -83,6 +83,7 @@ async fn the_command_prints_what_the_daemon_lists_as_json() {
         Command::Status(StatusArgs {
             target: None,
             running: false,
+            task: false,
             investigators: false,
             json: true,
         }),

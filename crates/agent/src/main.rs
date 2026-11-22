@@ -374,6 +374,10 @@ struct StatusArgs {
     /// Only the teams that have a round that goes on, with those rounds: what is being worked on now.
     #[arg(long, conflicts_with = "target")]
     running: bool,
+    /// With the teams, also the lines of their tasks, with their plans and parts, as `agent status` printed them before
+    /// the short view.
+    #[arg(long, conflicts_with_all = ["investigators", "json"])]
+    task: bool,
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
     #[arg(long, conflicts_with = "target")]
     investigators: bool,
