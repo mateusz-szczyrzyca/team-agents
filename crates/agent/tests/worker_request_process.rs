@@ -948,6 +948,7 @@ Integrate the guide.
         assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
         assert_eq!(world.file(&worker, ".fake-check-count"), "run\n", "the check ran once");
         assert_eq!(world.brought_over(&member), 1);
+        world.told("claude-1", "did step 1.1 of your plan");
         let answers = world
             .messages_to("claude-1")
             .iter()
