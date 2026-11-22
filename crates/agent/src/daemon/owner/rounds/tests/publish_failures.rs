@@ -1213,10 +1213,20 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
     assert!(pre_item.publish_question_number().is_none());
     assert_eq!(pre_item.publish_tries(), 0);
 
+    std::fs::remove_file(&hook).unwrap();
     rig.start().await;
 
     // After re-evaluating publication failure, the daemon must NOT overwrite existing human answer:
-    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.wait_for("saved publication answer adopted", || {
+        rig.state()
+            .find_task(&task)
+            .unwrap()
+            .member
+            .questions()
+            .last()
+            .is_some_and(|q| q.answered().is_some())
+    })
+    .await;
 
     let file_content_after_restart = std::fs::read_to_string(&qfile).unwrap();
     assert!(
@@ -1230,7 +1240,8 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
         .find_task(&task)
         .unwrap()
         .member
-        .open_question()
+        .questions()
+        .last()
         .unwrap()
         .clone();
     assert_eq!(active_q.number(), n(1));
@@ -1241,24 +1252,6 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
         !rig.home.questions_file(&task, n(2)).exists(),
         "duplicate questions-2.md must not be created"
     );
-
-    // Remove rejecting hook so retry publication can succeed:
-    std::fs::remove_file(&hook).unwrap();
-
-    // Answering question 1 resumes publication and opens PR:
-    Connection::connect(&rig.home.socket_file())
-        .await
-        .unwrap()
-        .request(
-            Client::Cli,
-            Command::Answer(AnswerRequest {
-                task: task.clone(),
-                number: n(1),
-                answers: answers(&[(1, "a")]),
-            }),
-        )
-        .await
-        .unwrap();
 
     rig.wait_for("publication succeeds and pull request is opened", || {
         !rig.github.pulls().is_empty()
