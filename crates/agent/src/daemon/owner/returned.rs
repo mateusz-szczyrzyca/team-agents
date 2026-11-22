@@ -9,15 +9,12 @@
 
 use std::num::NonZeroU32;
 
-use agent_core::decide::rejection::{
-    Answered, Facts, Held, LeadEnd, Rejection, ReturnLine, ReturnTarget, classify, handed_over_run, returned_targets,
-    run_number, run_started_since, runs_of_round,
-};
+use agent_core::decide::rejection::{Rejection, ReturnLine, classify, read_return, returned_targets, run_number};
 use agent_core::ids::{AgentName, ItemId, RunId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::state::split::PartKey;
-use agent_core::state::{ItemPhase, Member, RoundLife, Team, Timestamp};
+use agent_core::state::{ItemPhase, Timestamp};
 use agent_core::status::RunOutcome;
 use agent_runtime::agentbus::{Finished, Reader};
 use agent_runtime::history::log_decision;
@@ -28,21 +25,6 @@ use super::{Located, Owner, OwnerError};
 /// What the lead's rejection says when the bus holds no message of the lead for the member after the notice of the
 /// hand-over: the line is the only thing the lead said, and the member reads that it was returned from this.
 const NO_REASON_ON_THE_BUS: &str = "the lead returned the work and left no message for the member on the bus";
-
-/// What the daemon saw of an item the lead returned.
-struct Returned {
-    /// The member that holds the item: its task, its name on its team's bus and its agent name; `None` when no member
-    /// holds it.
-    member: Option<(TaskId, AgentName, String)>,
-    /// What the daemon saw of the item and the member.
-    facts: Facts,
-    /// The part of the item the work belongs to: the part of the round that is open for the item.
-    part: Option<PartKey>,
-    /// The run of the member that ended `DONE` and is sent back.
-    of_run: Option<RunId>,
-    /// The number of the member's last run when the member was started again since the lead's run began.
-    started_again: Option<NonZeroU32>,
-}
 
 impl Owner {
     /// Reads the `RETURNED:` lines of the final `message` of the lead `lead`, whose run ended `outcome`, and records, in
@@ -60,20 +42,41 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         for target in returned_targets(message) {
             let item = target.item();
-            let Some(returned) = self.returned(&located.team, lead, target, outcome) else {
+            let Some(lead_started_at) = self
+                .parts
+                .state
+                .find_task(lead)
+                .and_then(|found| found.member.runs().last().map(agent_core::state::Run::started_at))
+            else {
+                continue;
+            };
+            let found = self
+                .parts
+                .state
+                .team(&located.team)
+                .and_then(|team| read_return(team, target, lead_started_at, outcome));
+            let Some(found) = found else {
                 tracing::debug!(team = %located.team, %item, "the lead returned an item that is not in its team");
                 continue;
             };
-            match classify(&ReturnLine::returned(&item), returned.facts) {
+            match classify(&ReturnLine::returned(&item), found.facts()) {
                 Some(Rejection::Counted) => {
-                    let reason = match &returned.member {
+                    let who = found.member().map(|member| {
+                        (
+                            member.task().clone(),
+                            member.bus_agent().agent_name(),
+                            member.agent().name().to_owned(),
+                        )
+                    });
+                    let reason = match &who {
                         Some((member, bus_name, agent)) => {
                             self.reason_on_the_bus(lead, &located.team, item, (member, bus_name, agent))
                                 .await
                         }
                         None => NO_REASON_ON_THE_BUS.to_owned(),
                     };
-                    self.record_return(&located.team, item, reason, &returned)?;
+                    let (part, of_run, started_again) = (found.part(), found.of_run().cloned(), found.started_again());
+                    self.record_return(&located.team, item, reason, (part, of_run, started_again))?;
                 }
                 Some(Rejection::NotHandedOver | Rejection::AlreadyCounted) | None => {
                     // A return the facts do not support is no rejection and is never guessed into one.
@@ -87,74 +90,6 @@ impl Owner {
         }
         Ok(())
     }
-
-    /// The member that holds the item `target` names in `team` and the facts about it when the run of the lead `lead`
-    /// that ended `outcome` returned it; `None` when the team has no such item or the lead has no run.
-    fn returned(&self, team: &TeamId, lead: &TaskId, target: ReturnTarget, outcome: RunOutcome) -> Option<Returned> {
-        let lead_started_at = self.parts.state.find_task(lead)?.member.runs().last()?.started_at();
-        let team = self.parts.state.team(team)?;
-        let progress = team.item(target.item())?;
-        let round = team
-            .rounds()
-            .iter()
-            .find(|round| round.item() == Some(progress.id()) && matches!(round.life(), RoundLife::Open));
-        let part = round.and_then(agent_core::state::Round::part);
-        let assignee = match progress.phase() {
-            ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee.as_str()),
-            ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => {
-                None
-            }
-        };
-        // A line that names a part counts only for the part the item is at: the work of another part is not what is open.
-        let names_the_open_part = target.part().is_none() || target.part() == part;
-        let member = assignee
-            .and_then(|name| member_named(team, name))
-            .filter(|_| names_the_open_part && round.is_some());
-        // The runs of the item's own round: the member's runs for items it held before are no hand-over of this one.
-        let runs = match (member, round) {
-            (Some(member), Some(round)) => runs_of_round(member.runs(), round.id()),
-            _ => Vec::new(),
-        };
-        let of_run = handed_over_run(&runs).cloned();
-        let sent_back_already = of_run.as_ref().is_some_and(|run| progress.was_rejected(run))
-            || progress
-                .rejections()
-                .is_some_and(|recorded| recorded.iter().any(|rejection| rejection.counted_in().is_none()));
-        let answered = if sent_back_already { Answered::Yes } else { Answered::No };
-        let held = if member.is_some() {
-            Held::ByTheMember
-        } else {
-            Held::Nobody
-        };
-        let facts =
-            Facts::from_runs_before(held, answered, &runs, lead_started_at).with_lead(LeadEnd::Settled(outcome));
-        // The number is the position among all the runs of the member's task, as `confirm_returns` counts it.
-        let started_again = member
-            .and_then(|member| run_started_since(&runs, lead_started_at).map(|_| run_number(member.runs().len())));
-        let member = member.map(|member| {
-            (
-                member.task().clone(),
-                member.bus_agent().agent_name(),
-                member.agent().name().to_owned(),
-            )
-        });
-        Some(Returned {
-            member,
-            facts,
-            part,
-            of_run,
-            started_again,
-        })
-    }
-}
-
-/// The member of the crew of `team` whose agent is called `name`.
-fn member_named<'a>(team: &'a Team, name: &str) -> Option<&'a Member> {
-    team.crew()
-        .roster()
-        .into_iter()
-        .find(|(role, member)| *role == Role::Member && member.agent().name() == name)
-        .map(|(_, member)| member)
 }
 
 impl Owner {
@@ -217,7 +152,7 @@ impl Owner {
         team: &TeamId,
         item: ItemId,
         reason: String,
-        returned: &Returned,
+        (part, of_run, started_again): (Option<PartKey>, Option<RunId>, Option<NonZeroU32>),
     ) -> Result<(), OwnerError> {
         let at = Timestamp::now(&self.parts.clock)?;
         let mut progress = self
@@ -230,9 +165,9 @@ impl Owner {
             item,
         })?;
         progress
-            .record_rejection_of(reason, at, returned.part, returned.of_run.clone())
+            .record_rejection_of(reason, at, part, of_run)
             .map_err(|source| OwnerError::Rejection { item, source })?;
-        if let Some(run) = returned.started_again {
+        if let Some(run) = started_again {
             progress
                 .next_run_started(run, at)
                 .map_err(|source| OwnerError::Rejection { item, source })?;

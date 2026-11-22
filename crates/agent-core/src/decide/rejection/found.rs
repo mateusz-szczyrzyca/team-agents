@@ -3,10 +3,11 @@
 
 use std::num::NonZeroU32;
 
-use super::{Facts, Held, LastRun, MovedOn};
+use super::{Answered, Facts, Held, LeadEnd, handed_over_run, run_number, run_started_since, runs_of_round};
 use crate::ids::RunId;
+use crate::kinds::Role;
 use crate::state::split::PartKey;
-use crate::state::{Member, Team, Timestamp};
+use crate::state::{ItemPhase, Member, RoundLife, Team, Timestamp};
 use crate::status::RunOutcome;
 
 /// What was seen of one target of a lead's `RETURNED:` line.
@@ -59,6 +60,10 @@ impl<'a> Found<'a> {
 
 /// What the state of `team` shows of `target`, returned by a lead whose run that ended `outcome` began at
 /// `lead_started_at`; `None` when the team has no such item.
+///
+/// The member is the one that holds the item, when the line names the part whose round is open (or no part). Only its runs
+/// for that round are read, so the runs for items it held before are no hand-over of this one. The hand-over is the last
+/// `DONE` among the runs that began before the lead's run: a run that began after it is what the return started.
 #[must_use]
 pub fn read_return(
     team: &Team,
@@ -66,13 +71,58 @@ pub fn read_return(
     lead_started_at: Timestamp,
     outcome: RunOutcome,
 ) -> Option<Found<'_>> {
-    let _ = (team, target, lead_started_at, outcome);
-    let first = NonZeroU32::MIN;
+    let progress = team.item(target.item())?;
+    let round = team
+        .rounds()
+        .iter()
+        .find(|round| round.item() == Some(progress.id()) && matches!(round.life(), RoundLife::Open));
+    let part = round.and_then(crate::state::Round::part);
+    let assignee = match progress.phase() {
+        ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => Some(assignee.as_str()),
+        ItemPhase::Pending | ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. } => None,
+    };
+    // A line that names a part counts only for the part the item is at: the work of another part is not what is open.
+    let names_the_open_part = target.part().is_none() || target.part() == part;
+    let member = assignee
+        .and_then(|name| member_named(team, name))
+        .filter(|_| names_the_open_part && round.is_some());
+    let runs = match (member, round) {
+        (Some(member), Some(round)) => runs_of_round(member.runs(), round.id()),
+        _ => Vec::new(),
+    };
+    let before = runs.partition_point(|run| run.started_at() < lead_started_at);
+    let of_run = handed_over_run(runs.get(..before).unwrap_or(&runs)).cloned();
+    let pending = progress
+        .rejections()
+        .is_some_and(|recorded| recorded.iter().any(|rejection| rejection.counted_in().is_none()));
+    let answered = if pending || of_run.as_ref().is_some_and(|run| progress.was_rejected(run)) {
+        Answered::Yes
+    } else {
+        Answered::No
+    };
+    let held = if member.is_some() {
+        Held::ByTheMember
+    } else {
+        Held::Nobody
+    };
+    let facts = Facts::from_runs_before(held, answered, &runs, lead_started_at).with_lead(LeadEnd::Settled(outcome));
+    // The number is the position among all the runs of the member's task, as the daemon counts the runs it starts.
+    let started_again =
+        member.and_then(|member| run_started_since(&runs, lead_started_at).map(|_| run_number(member.runs().len())));
     Some(Found {
-        member: None,
-        facts: Facts::new(Held::Nobody, LastRun::Never, MovedOn::No, first, first),
-        part: None,
-        of_run: None,
-        started_again: None,
+        member,
+        facts,
+        part,
+        of_run,
+        started_again,
     })
+}
+
+/// The member of the crew of `team` whose agent is called `name`.
+fn member_named<'a>(team: &'a Team, name: &str) -> Option<&'a Member> {
+    team.crew()
+        .roster()
+        .into_iter()
+        .find(|(role, member)| *role == Role::Member && member.agent().name() == name)
+        .map(|(_, member)| member)
 }
