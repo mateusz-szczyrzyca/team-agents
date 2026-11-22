@@ -46,6 +46,9 @@ macro_rules! version_type {
     };
 }
 
+/// The version of this crate, taken from its manifest at build time; the daemon and the command tell it to each other.
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
 pub mod cli;
 pub mod commits;
 pub mod config;

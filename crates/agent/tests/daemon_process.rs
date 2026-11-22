@@ -141,7 +141,14 @@ mod daemon_process {
         let ended = finish(daemon);
 
         assert!(status.status.success(), "{status:?}");
-        assert_eq!(String::from_utf8(status.stdout).unwrap(), "no teams\n");
+        // The versions of the command come first, the daemon being the same build.
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            String::from_utf8(status.stdout).unwrap(),
+            format!(
+                "agent {version} · agent-core {version} · agent-runtime {version} · agent-web {version}\nno teams\n"
+            )
+        );
         assert_eq!(second.status.code(), Some(1), "{second:?}");
         assert!(String::from_utf8(second.stderr).unwrap().contains("already running"));
         assert!(ended.status.success(), "{ended:?}");
