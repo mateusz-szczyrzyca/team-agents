@@ -45,6 +45,11 @@ const FILES_PREFIX: &str = "Files:";
 /// The text that starts the line naming the check of a step.
 const CHECK_PREFIX: &str = "Check:";
 
+/// The line of a step's text that marks the step for a worker; it stays a line of the step's note, so it is written
+/// back with the plan. Only this line is the mark: any other line that starts with `By:` is a note like any other, so
+/// a plan written before the mark reads as it did.
+const WORKER_MARK: &str = "By: worker";
+
 /// The check that says a person judges the step done; it is never a command.
 const REVIEWER_CHECK: &str = "reviewer";
 
@@ -303,7 +308,11 @@ impl Step {
     /// Who does the step: its holder, or a worker the holder gives it to (`By: worker`).
     #[must_use]
     pub fn doer(&self) -> Doer {
-        Doer::Holder
+        if self.note.lines().any(|line| line.trim_end() == WORKER_MARK) {
+            Doer::Worker
+        } else {
+            Doer::Holder
+        }
     }
 
     /// The text of the step that is not its `Files:` or `Check:` line, dedented; for a step given up, why.
