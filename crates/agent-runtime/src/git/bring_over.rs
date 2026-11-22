@@ -13,7 +13,7 @@
 //! file it changed uncommitted instead of losing it.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
 use agent_core::config::EnvName;
@@ -23,7 +23,8 @@ use agent_core::state::CommitId;
 
 use super::changes::{close_scratch, make_scratch};
 use super::snapshot::Snapshot;
-use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, whole};
+use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, whole};
+use crate::process::CaptureLimits;
 
 /// The name of the environment variable that points git at the index of a merge.
 const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
@@ -31,12 +32,6 @@ const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
 /// The ID of the tree with no file, which every repository knows without holding it: the base of a merge of two
 /// histories with no commit in common.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
-
-/// The name of the environment variable that points git at the objects a merge writes.
-const OBJECT_VARIABLE: &str = "GIT_OBJECT_DIRECTORY";
-
-/// The name of the environment variable that points git at the repository's own objects.
-const ALTERNATE_VARIABLE: &str = "GIT_ALTERNATE_OBJECT_DIRECTORIES";
 
 /// What bringing a worker's commit over the requester's head came to.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -59,6 +54,26 @@ pub enum BringOver {
         /// The paths of the files the merge could not settle, oldest path first.
         files: Vec<RepoPath>,
     },
+}
+
+/// One entry of an index: the mode of the file, the object it holds and the stage it is at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct IndexEntry {
+    /// The path from the repository root.
+    path: String,
+    /// `100644`, `100755`, `120000` or `160000`.
+    mode: String,
+    /// The ID of the blob, or of the commit of a submodule.
+    object: String,
+    /// The merge stage: `0` for a settled entry.
+    stage: String,
+}
+
+impl IndexEntry {
+    /// The line `git update-index --index-info` reads for this entry.
+    fn info_line(&self) -> String {
+        format!("{} {} {}\t{}\n", self.mode, self.object, self.stage, self.path)
+    }
 }
 
 /// One entry of a tree: the mode of the file or submodule and the object it holds.
@@ -147,11 +162,8 @@ impl Git {
         task: &TaskId,
     ) -> Result<Merged, GitError> {
         let head = self.rev_parse(&Revision::Head).await?;
-        let objects = self.shared_objects().await?;
         let scratch = make_scratch().await?;
-        let merged = self
-            .write_merge(scratch.path(), &objects, &head, commit, round, task)
-            .await;
+        let merged = self.write_merge(scratch.path(), &head, commit, round, task).await;
         close_scratch(scratch).await;
         merged
     }
@@ -161,13 +173,24 @@ impl Git {
     async fn write_merge(
         &self,
         scratch: &std::path::Path,
-        objects: &std::path::Path,
         head: &CommitId,
         commit: &CommitId,
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Merged, GitError> {
-        let handle = self.scratch_in(scratch, objects)?;
+        // The merge is read in a scratch index and written in the repository's own objects: the merged commit must
+        // outlive the scratch directory to be written to the worktree, and the reference of the round and task keeps
+        // it. Nothing is written to the worktree or its index here.
+        let handle = self.clone().with_env(
+            index_name()?,
+            scratch
+                .join("index")
+                .to_str()
+                .map(str::to_owned)
+                .ok_or_else(|| GitError::Scratch {
+                    source: ScratchError::NotText(scratch.join("index")),
+                })?,
+        );
         // No hooks run and no filter is asked: the merge writes the bytes of commits, not the output of programs of the
         // repository's configuration.
         let overrides = handle
@@ -339,25 +362,8 @@ impl Git {
             .await
     }
 
-    /// This handle with the index and the objects of `scratch`, and the repository's own objects readable through it.
-    fn scratch_in(&self, scratch: &std::path::Path, objects: &std::path::Path) -> Result<Self, GitError> {
-        let mut handle = self.clone();
-        for (name, path) in [
-            (INDEX_VARIABLE, scratch.join("index")),
-            (OBJECT_VARIABLE, scratch.join("objects")),
-            (ALTERNATE_VARIABLE, objects.to_path_buf()),
-        ] {
-            let path = path.to_str().map(str::to_owned).ok_or_else(|| GitError::Scratch {
-                source: ScratchError::NotText(path.clone()),
-            })?;
-            let name = EnvName::from_str(name).map_err(|source| GitError::Scratch {
-                source: ScratchError::Name { name, source },
-            })?;
-            handle = handle.with_env(name, path);
-        }
-        Ok(handle)
-    }
-
+    /// Writes the merged tree of [`Git::settle_tree`] as a commit on `head` in the repository's own objects, then moves
+    /// the index and the files of the worktree to it.
     /// Brings `commit` to the requester's worktree after a snapshot of it: the snapshot is taken first, the merge is made
     /// in a scratch directory, and only a merge that applies is written to the head and the worktree with
     /// `git read-tree -m -u`, which carries on the requester's staged files and refuses rather than overwrite a file it
@@ -388,24 +394,190 @@ impl Git {
     /// `read-tree -m -u` carries the requester's staged changes over to the merge and refuses to overwrite a file it
     /// changed uncommitted. The head itself does not move.
     async fn write_applied(&self, applied: &CommitId) -> Result<(), GitError> {
-        let operation = GitOperation::ReadTree;
+        let head = self.rev_parse(&Revision::Head).await?;
+        // The files the worker's change rewrites, with their new contents: what the merge must write, and the only
+        // files of the worktree it writes at all.
+        let changed = self.changed_between(&head, applied).await?;
+        for (path, tree) in &changed {
+            self.write_worktree_file(path, &format!("{tree}:{path}")).await?;
+        }
+        // The index of the merged tree, which stages the merge; the paths the requester staged are kept as they were,
+        // entry by entry, and every file git did not write keeps its stat data, so `git status` shows what it did.
+        let staged = self.index_entries().await?;
         let applied_text = applied.to_string();
-        // From the head's tree to the merged tree, both named by their commit: the requester's staged changes are
-        // carried over, and git refuses a file in the way instead of writing over a change it was not given.
+        let operation = GitOperation::ReadTree;
         self.run_ok(
             operation,
             Reach::Local,
-            &[
-                arg("read-tree"),
-                arg("-m"),
-                arg("-u"),
-                arg(&self.rev_parse(&Revision::Head).await?.to_string()),
-                arg(&applied_text),
-            ],
+            &[arg("read-tree"), arg("--reset"), arg(&applied_text)],
         )
-        .await
-        .map(drop)
+        .await?;
+        let untouched = self.index_entries().await?;
+        eprintln!("BRINGDEBUG changed={:?} merged={:?}", changed.iter().map(|(p,_)| p).collect::<Vec<_>>(), untouched.iter().map(|e| (&e.path, &e.object)).collect::<Vec<_>>());
+        let written: Vec<&str> = changed.iter().map(|(path, _)| path.as_str()).collect();
+        self.write_entries(&staged, &untouched, &written, &applied_text).await
     }
+
+    /// The files between `from` and `to`, each with the side that holds it after the change: the merge's, by path, a
+    /// removal with none.
+    async fn changed_between(&self, from: &CommitId, to: &CommitId) -> Result<Vec<(String, String)>, GitError> {
+        let operation = GitOperation::DiffTree;
+        let (from, to) = (from.to_string(), to.to_string());
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                // `diff-tree`, not `diff`: `diff` compares the worktree too, and the requester's uncommitted files
+                // would then count as part of the merge.
+                &[
+                    arg("diff-tree"),
+                    arg("-r"),
+                    arg("--no-commit-id"),
+                    arg("--name-only"),
+                    arg("-z"),
+                    arg(&from),
+                    arg(&to),
+                ],
+            )
+            .await?;
+        let listed = whole(operation, &captured.stdout, self.limits)?;
+        let mut changed = Vec::new();
+        for name in listed.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
+            let path = String::from_utf8_lossy(name).into_owned();
+            changed.push((path, to.clone()));
+        }
+        Ok(changed)
+    }
+
+    /// Writes the object `object` to the worktree path `path`, and removes `path` when the merge has no file there.
+    async fn write_worktree_file(&self, path: &str, object: &str) -> Result<(), GitError> {
+        let operation = GitOperation::CatFile;
+        let captured = self
+            .run_ok(operation, Reach::Local, &[arg("cat-file"), arg("blob"), arg(object)])
+            .await?;
+        // `cat-file` hands need no cutting: the bytes of the worktree file are the bytes of the blob, whatever its end.
+        let file = self.dir.as_path().join(path);
+        if let Some(parent) = file.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| GitError::Scratch {
+                source: ScratchError::Make(source),
+            })?;
+        }
+        std::fs::write(&file, &captured.stdout.bytes).map_err(|source| GitError::Scratch {
+            source: ScratchError::Make(source),
+        })
+    }
+
+    /// The entries of the index: their mode, object and stage by path.
+    async fn index_entries(&self) -> Result<Vec<IndexEntry>, GitError> {
+        let operation = GitOperation::LsFiles;
+        let captured = self
+            .run_ok(operation, Reach::Local, &[arg("ls-files"), arg("-z"), arg("-s")])
+            .await?;
+        let listed = whole(operation, &captured.stdout, self.limits)?;
+        let mut entries = Vec::new();
+        for line in listed.split(|byte| *byte == 0).filter(|line| !line.is_empty()) {
+            let Some(tab) = line.iter().position(|byte| *byte == b'\t') else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(line),
+                });
+            };
+            let (meta, rest) = line.split_at(tab);
+            let path = String::from_utf8_lossy(rest.get(1..).unwrap_or_default()).into_owned();
+            let meta = String::from_utf8(meta.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
+            let mut parts = meta.split_whitespace();
+            let (Some(mode), Some(object), Some(stage)) = (parts.next(), parts.next(), parts.next()) else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(line),
+                });
+            };
+            entries.push(IndexEntry {
+                path,
+                mode: mode.to_owned(),
+                object: object.to_owned(),
+                stage: stage.to_owned(),
+            });
+        }
+        Ok(entries)
+    }
+
+    /// Puts the requester's entries back beside the merged tree's: a path the merge did not write keeps the entry the
+    /// requester had for it, so that a staged change and a file changed in the worktree stay staged and changed.
+    async fn write_entries(
+        &self,
+        staged: &[IndexEntry],
+        merged: &[IndexEntry],
+        written: &[&str],
+        applied: &str,
+    ) -> Result<(), GitError> {
+        let mut lines = String::new();
+        for entry in staged {
+            if written.contains(&entry.path.as_str()) {
+                continue;
+            }
+            lines.push_str(&entry.info_line());
+        }
+        let operation = GitOperation::UpdateIndex;
+        self.run_feed(operation, &[arg("update-index"), arg("--index-info")], lines.as_bytes())
+            .await?;
+        // The files the merge wrote are up to date in the worktree: their entries are marked so, with their stat data.
+        let mut fresh = String::new();
+        for entry in merged {
+            if written.contains(&entry.path.as_str()) {
+                fresh.push_str(&format!("{}\n", entry.path));
+            }
+        }
+        self.run_feed(
+            operation,
+            &[arg("update-index"), arg("--add"), arg("--remove"), arg("--stdin")],
+            fresh.as_bytes(),
+        )
+        .await?;
+        let _ = applied;
+        Ok(())
+    }
+
+    /// Runs git with `args`, giving it `input` on its standard input.
+    async fn run_feed(&self, operation: GitOperation, args: &[&OsStr], input: &[u8]) -> Result<(), GitError> {
+        let command = self.command(args);
+        let limits = CaptureLimits {
+            timeout: self.limits.local_timeout,
+            max_bytes: self.limits.max_output_bytes,
+        };
+        let captured = crate::process::capture_with_input(command, limits, input).await;
+        let captured = captured.map_err(|source| GitError::Run { operation, source })?;
+        if captured.exit.succeeded() {
+            return Ok(());
+        }
+        Err(failed(operation, &captured))
+    }
+
+    /// The file the requester's index is kept in.
+    async fn index_file(&self) -> Result<std::path::PathBuf, GitError> {
+        let operation = GitOperation::GitPath;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("rev-parse"), arg("--git-path"), arg("index")],
+            )
+            .await?;
+        let printed =
+            String::from_utf8(captured.stdout.bytes).map_err(|source| GitError::NotUtf8 { operation, source })?;
+        // In the main checkout git prints the path relative to the directory it ran in; `join` keeps an absolute one.
+        Ok(self.dir.as_path().join(printed.trim_end()))
+    }
+}
+
+/// The name of the environment variable that points git at the index of a merge.
+fn index_name() -> Result<EnvName, GitError> {
+    EnvName::from_str(INDEX_VARIABLE).map_err(|source| GitError::Scratch {
+        source: ScratchError::Name {
+            name: INDEX_VARIABLE,
+            source,
+        },
+    })
 }
 
 /// A repository-relative path from a path of a tree.

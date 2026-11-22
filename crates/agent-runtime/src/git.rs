@@ -288,9 +288,9 @@ pub enum GitOperation {
     /// `git commit`, of a change the harness makes itself.
     #[strum(serialize = "commit")]
     Commit,
-    /// `git merge-recursive`, which merges the worker's commit into the requester's head in a scratch index.
-    #[strum(serialize = "merge-recursive")]
-    MergeRecursive,
+    /// `git cat-file`, to read a blob of the merge before writing it to the worktree.
+    #[strum(serialize = "cat-file")]
+    CatFile,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
