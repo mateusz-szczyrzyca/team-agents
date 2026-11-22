@@ -1281,8 +1281,11 @@ what to add, or `NO-PLAN` for an agent without a plan (the old form, for look-up
 `CheckRefused`, `MissingDo`, `PlanUnreadable`) and a harness that cannot answer to `CheckFailed`; a refused request
 queues nothing and starts no worker, and the accepted text is what the worker's prompt holds. In the transaction that
 would queue it, a request of a member of a team is refused (`NoFreeWorker`) when `freeWorkers` — the team's workers
-that can run and serve no request, less the team's requests still queued — leaves none: the requester does the step
-itself instead of leaving it to a worker that comes later.
+asleep on the bus (the daemon gives a request only to a worker whose task waits) that serve no request of the team,
+less the team's requests still queued — leaves none: the requester does the step itself instead of leaving it to a
+worker that comes later. An agent may be in several teams, so a request belongs to the team of its requester's task and
+a worker serves in the task the request was given to. The harness is asked before the four pieces are required: its
+`NO-PLAN` makes the request an old-form one, with no step.
 
 ## Plan-step judgements
 
