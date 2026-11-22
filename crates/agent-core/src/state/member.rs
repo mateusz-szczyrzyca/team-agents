@@ -88,6 +88,9 @@ pub struct Member {
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<PlanKeeping>,
+    /// A finished run whose command checks or plan settlement are in progress; `None` when none is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    running_check: Option<RunningPlanCheck>,
     /// How many times the task was started in a new session again; `None` until it is, and for a task of a state
     /// written before renewals existed.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +128,9 @@ struct MemberWire {
     /// See [`Member`].
     #[serde(default)]
     plan: Option<PlanKeeping>,
+    /// See [`Member`].
+    #[serde(default)]
+    running_check: Option<RunningPlanCheck>,
     /// See [`Member`]; a member written before renewals existed has none.
     #[serde(default)]
     renewals: Option<renewal::Renewals>,
@@ -389,6 +395,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
+            running_check: None,
             renewals: None,
             past_holders: Vec::new(),
         }
@@ -404,6 +411,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: None,
+            running_check: None,
             renewals: None,
             past_holders: Vec::new(),
         }
@@ -543,13 +551,16 @@ impl Member {
     /// The finished run whose command checks or plan settlement are in progress, when one is.
     #[must_use]
     pub fn plan_running_check(&self) -> Option<&RunningPlanCheck> {
-        self.plan.as_ref().and_then(PlanKeeping::running_check)
+        self.running_check
+            .as_ref()
+            .or_else(|| self.plan.as_ref().and_then(PlanKeeping::running_check))
     }
 
     /// Sets or clears the record of a finished run whose command checks or plan settlement are in progress.
     pub fn set_plan_running_check(&mut self, check: Option<RunningPlanCheck>) {
+        self.running_check = check;
         if let Some(keeping) = &mut self.plan {
-            keeping.set_running_check(check);
+            keeping.set_running_check(None);
         }
     }
 
@@ -885,6 +896,9 @@ mod tests {
         /// See [`Member`].
         #[serde(default)]
         plan: Option<PlanKeeping>,
+        /// See [`Member`].
+        #[serde(default)]
+        running_check: Option<RunningPlanCheck>,
     }
 
     impl TryFrom<MemberWire> for Member {
@@ -898,6 +912,7 @@ mod tests {
                 runs: wire.runs,
                 questions: wire.questions,
                 plan: wire.plan,
+                running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
             };

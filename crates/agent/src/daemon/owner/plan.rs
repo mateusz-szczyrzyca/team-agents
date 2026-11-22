@@ -22,10 +22,11 @@ use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
 use agent_core::state::{RunEnd, RunState, Team, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
+use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::history::{
-    JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, ReadError, Reader, log_decision,
+    History, JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, ReadError, Reader, log_decision,
 };
 use agent_runtime::plan::check::{
     CheckContext, CheckError, JudgementResult, execute_command_check, execute_step_check, recover_checks,
@@ -228,19 +229,79 @@ pub(super) struct Found {
     text: Option<String>,
 }
 
+/// Why a leftover or stopping command check could not be cleaned up.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PlanCheckCleanupError {
+    /// The `tasks` directory cannot be read on startup.
+    #[error("cannot read the tasks directory {}", path.display())]
+    TasksDirRead {
+        /// The tasks directory.
+        path: PathBuf,
+        /// The OS error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// An entry of the `tasks` directory cannot be read on startup.
+    #[error("cannot read an entry of the tasks directory {}", path.display())]
+    TasksDirEntry {
+        /// The tasks directory.
+        path: PathBuf,
+        /// The OS error.
+        #[source]
+        source: std::io::Error,
+    },
+    /// An entry of the `tasks` directory is not a valid task directory name.
+    #[error("invalid task directory entry {}", path.display())]
+    InvalidTaskEntry {
+        /// The invalid entry path.
+        path: PathBuf,
+    },
+    /// A running check record could not be recovered or its process group could not be ended.
+    #[error("cannot end the running command check of task {task}")]
+    Recover {
+        /// The task.
+        task: TaskId,
+        /// The underlying recovery error.
+        #[source]
+        source: CheckError,
+    },
+}
+
+/// Why the environment of a command check cannot be prepared.
+#[derive(Debug, thiserror::Error)]
+enum CheckEnvError {
+    /// The agent's name in the state is not a valid [`AgentName`].
+    #[error("invalid agent name {name:?}")]
+    AgentName {
+        /// The invalid name.
+        name: String,
+        /// What is wrong with it.
+        #[source]
+        source: InvalidName,
+    },
+    /// The directory of the daemon's `agent` binary cannot be resolved.
+    #[error("cannot resolve the agent binary directory")]
+    BinaryDir(#[from] crate::daemon::ExecutableError),
+    /// The command check's environment variables cannot be built.
+    #[error("cannot build the check environment")]
+    Environment(#[from] agent_runtime::run::RunError),
+}
+
 /// The judgement of the steps of a plan at the end of a run: either all known now, or waiting for the command checks.
 enum Judged {
     /// Every step is judged: the latest judgement of each step.
     Known(HashMap<ItemId, JudgementRecord>),
-    /// The steps that run no command are judged (`inline`); the command checks of the others (`commands`, by step with
-    /// the command) run in the background and the run waits for them.
+    /// The steps that run no command are judged (`inline_records`); the command checks of the others (`commands`, by
+    /// step with the command) are ready to run in the background (`job`) and the run waits for them.
     Waiting {
         /// The judgements that were made without a command.
-        inline: Vec<(ItemId, JudgementResult)>,
+        inline_records: Vec<JudgementRecord>,
         /// The run whose end the judgements belong to.
         run: Option<RunId>,
         /// The steps whose commands run, in the order of the plan, with their commands.
         commands: Vec<(ItemId, String)>,
+        /// The background job to spawn once `RunningPlanCheck` is durably saved.
+        job: Box<CheckJob>,
     },
 }
 
@@ -254,8 +315,8 @@ pub(super) struct PlanWait {
     pub(super) earlier: Vec<Plan>,
     /// The run whose end is judged.
     pub(super) run: Option<RunId>,
-    /// The judgements made without a command.
-    pub(super) inline: Vec<(ItemId, JudgementResult)>,
+    /// The judgements made without a command, kept in memory so status snapshots keep them even without history.
+    pub(super) inline_records: Vec<JudgementRecord>,
     /// The steps whose commands run in the background, in the order of the plan, with their commands.
     pub(super) commands: Vec<(ItemId, String)>,
 }
@@ -264,8 +325,8 @@ pub(super) struct PlanWait {
 pub(super) enum PlanStep {
     /// The run's end is settled with this status and plan outcome.
     Done(Settled, PlanHeld),
-    /// The run's end waits for its command checks, which run in the background.
-    Waiting(Box<PlanWait>),
+    /// The run's end waits for its command checks, which are spawned after persisting `RunningPlanCheck`.
+    Waiting(Box<PlanWait>, Box<CheckJob>),
 }
 
 /// A finished run whose end waits for its command checks, held by the owner until the checks end.
@@ -276,11 +337,17 @@ pub(super) struct Parked {
     pub(super) run: FinishedRun,
     /// What the end of the run waits to decide with.
     pub(super) wait: PlanWait,
+    /// What aborts the background command check batch if the human stops or pauses the task.
+    pub(super) abort: tokio::task::AbortHandle,
 }
 
 /// What a command check batch runs: the commands of one run, with what each needs, owned so that it runs in the
-/// background. The batch runs them one after another.
+/// background. The batch runs them one after another and persists each judgement before starting the next command.
 pub(super) struct CheckJob {
+    /// The task whose steps are judged.
+    task: TaskId,
+    /// The task's team.
+    team: TeamId,
     /// The task's worktree: where the commands run.
     worktree: PathBuf,
     /// The task's directory in the store: where the output and the record of the checks are kept.
@@ -295,17 +362,24 @@ pub(super) struct CheckJob {
     envs: Vec<(String, String)>,
     /// The steps to run, in the order of the plan, with their commands.
     commands: Vec<(Step, String)>,
+    /// The history handle used to persist each command check's judgement as soon as it finishes.
+    history: History,
+    /// The clock used to stamp each command check's judgement.
+    clock: SharedClock,
+    /// When the batch was created, used if a later clock read fails.
+    started_at: Timestamp,
 }
 
 /// The results of a command check batch, one per command, in the order of the commands.
 pub(super) struct CheckBatch {
-    /// The result of each command, by its step.
-    results: Vec<(ItemId, Result<JudgementResult, CheckError>)>,
+    /// The judgement record of each command, already persisted when history is writing.
+    records: Vec<JudgementRecord>,
 }
 
-/// Runs the commands of `job` one after another, in the background, and returns their results.
+/// Runs the commands of `job` one after another, in the background, persisting each command's judgement before
+/// starting the next command, and returns their records.
 async fn run_command_checks(job: CheckJob) -> CheckBatch {
-    let mut results = Vec::with_capacity(job.commands.len());
+    let mut records = Vec::with_capacity(job.commands.len());
     for (step, command) in &job.commands {
         let context = CheckContext {
             worktree: &job.worktree,
@@ -315,10 +389,38 @@ async fn run_command_checks(job: CheckJob) -> CheckBatch {
             check_refuse: &job.refuse,
             envs: &job.envs,
         };
-        let result = execute_command_check(&context, step, command).await;
-        results.push((step.id(), result));
+        let judged = match execute_command_check(&context, step, command).await {
+            Ok(result) => result,
+            Err(error) => mismatch(
+                Some(command.clone()),
+                format!("cannot run check: {}", error_chain(&error)),
+            ),
+        };
+        let at = Timestamp::now(&job.clock).unwrap_or(job.started_at);
+        let record = judged.into_record(job.task.clone(), job.team.clone(), job.run.clone(), at, step.id());
+        log_decision(
+            "plan_check",
+            &format!("task={}, step={}", job.task, record.step),
+            &format!(
+                "state={}, reason={:?}, output={:?}",
+                record.state.as_str(),
+                record.reason,
+                record.output_path
+            ),
+        );
+        if job.history.is_writing()
+            && let Err(error) = job.history.persist_judgements(vec![record.clone()]).await
+        {
+            tracing::warn!(
+                event = LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %job.task,
+                error = %error_chain(&error),
+                "plan judgements remain only in memory because history could not keep them"
+            );
+        }
+        records.push(record);
     }
-    CheckBatch { results }
+    CheckBatch { records }
 }
 
 /// A judgement of a step that failed, with the check it failed on, if any, and why.
@@ -517,7 +619,15 @@ impl Owner {
         } else {
             (Vec::new(), HashMap::new())
         };
-        self.keep_plan(task, located, run.clone(), &found)?;
+        let already_keeping_check = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.plan_running_check())
+            .is_some_and(|check| Some(&check.run) == run.as_ref());
+        if !already_keeping_check {
+            self.keep_plan(task, located, run.clone(), &found)?;
+        }
         if let PlanRead::Parsed(_) = &found.read {
             let judged = self
                 .judge_steps_at_end(
@@ -535,15 +645,23 @@ impl Owner {
                         self.refresh_task_plan(task, plan, &latest);
                     }
                 }
-                Judged::Waiting { inline, run, commands } => {
-                    return Ok(PlanStep::Waiting(Box::new(PlanWait {
-                        settled,
-                        found,
-                        earlier,
-                        run,
-                        inline,
-                        commands,
-                    })));
+                Judged::Waiting {
+                    inline_records,
+                    run,
+                    commands,
+                    job,
+                } => {
+                    return Ok(PlanStep::Waiting(
+                        Box::new(PlanWait {
+                            settled,
+                            found,
+                            earlier,
+                            run,
+                            inline_records,
+                            commands,
+                        }),
+                        job,
+                    ));
                 }
             }
         } else {
@@ -570,7 +688,7 @@ impl Owner {
     ) -> Result<(Settled, PlanHeld), OwnerError> {
         match self.plan_step_at_end(task, located, end, settled).await? {
             PlanStep::Done(settled, held) => Ok((settled, held)),
-            PlanStep::Waiting(wait) => Ok((wait.settled, PlanHeld::Yes)),
+            PlanStep::Waiting(wait, _job) => Ok((wait.settled, PlanHeld::Yes)),
         }
     }
 
@@ -684,7 +802,7 @@ impl Owner {
         let PlanRead::Parsed(plan) = &found.read else {
             return Ok(Judged::Known(HashMap::new()));
         };
-        let previous = self.latest_judgements(task).await;
+        let previous = self.latest_judgements(task).await?;
         let to_judge = steps_for_run(plan, run, earlier, &previous);
         let config = self.parts.settings.config.plan();
         let check_seconds = config.check_seconds();
@@ -695,7 +813,7 @@ impl Owner {
             task_dir: &task_dir,
             run,
             check_seconds: 0,
-            check_refuse: &[],
+            check_refuse: &refuse,
             envs: &[],
         };
         let mut inline = Vec::new();
@@ -717,37 +835,44 @@ impl Owner {
         }
         if commands.is_empty() {
             let records = self.records_of(task, located, run, inline)?;
-            return Ok(Judged::Known(self.record_judgements(task, records).await));
+            return Ok(Judged::Known(self.record_judgements(task, records).await?));
         }
         match self.check_environment(located) {
             Ok(envs) => {
-                if !inline.is_empty() {
-                    let records = self.records_of(task, located, run, std::mem::take(&mut inline))?;
-                    drop(self.record_judgements(task, records).await);
-                }
+                let inline_records = if inline.is_empty() {
+                    Vec::new()
+                } else {
+                    let records = self.records_of(task, located, run, inline)?;
+                    drop(self.record_judgements(task, records.clone()).await?);
+                    records
+                };
                 let ids = commands
                     .iter()
                     .map(|(step, command)| (step.id(), command.clone()))
                     .collect();
-                self.start_command_checks(
-                    task,
-                    CheckJob {
-                        worktree: worktree.as_path().to_path_buf(),
-                        task_dir,
-                        run: run.cloned(),
-                        check_seconds,
-                        refuse,
-                        envs,
-                        commands,
-                    },
-                );
+                let job = Box::new(CheckJob {
+                    task: task.clone(),
+                    team: located.team.clone(),
+                    worktree: worktree.as_path().to_path_buf(),
+                    task_dir,
+                    run: run.cloned(),
+                    check_seconds,
+                    refuse,
+                    envs,
+                    commands,
+                    history: self.history.clone(),
+                    clock: self.parts.clock.clone(),
+                    started_at: Timestamp::now(&self.parts.clock)?,
+                });
                 Ok(Judged::Waiting {
-                    inline,
+                    inline_records,
                     run: run.cloned(),
                     commands: ids,
+                    job,
                 })
             }
-            Err(reason) => {
+            Err(error) => {
+                let reason = error_chain(&error);
                 for (step, command) in &commands {
                     inline.push((
                         step.id(),
@@ -758,7 +883,7 @@ impl Owner {
                     ));
                 }
                 let records = self.records_of(task, located, run, inline)?;
-                Ok(Judged::Known(self.record_judgements(task, records).await))
+                Ok(Judged::Known(self.record_judgements(task, records).await?))
             }
         }
     }
@@ -766,22 +891,21 @@ impl Owner {
     /// The environment command checks of the task of `located` run with: what a run of its agent gets from the daemon.
     ///
     /// # Errors
-    /// The reason the environment cannot be made: the agent's name, the daemon's executable, the `PATH` or the home.
-    fn check_environment(&self, located: &Located) -> Result<Vec<(String, String)>, String> {
-        let agent: AgentName = located
-            .agent
-            .parse()
-            .map_err(|error: InvalidName| error_chain(&error))?;
+    /// [`CheckEnvError`] when the agent's name, the daemon's executable, the `PATH` or the home cannot be resolved.
+    fn check_environment(&self, located: &Located) -> Result<Vec<(String, String)>, CheckEnvError> {
+        let agent: AgentName = located.agent.parse().map_err(|source| CheckEnvError::AgentName {
+            name: located.agent.clone(),
+            source,
+        })?;
         let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), &agent);
-        let binary_dir = crate::daemon::resolve_agent_binary_dir().map_err(|error| error_chain(&error))?;
+        let binary_dir = crate::daemon::resolve_agent_binary_dir()?;
         let mut envs = agent_runtime::run::check_environment(
             &self.parts.settings.secrets,
             &binary_dir,
             &self.parts.settings.config.binaries().agent_path,
             self.parts.store.home().root(),
             &identity,
-        )
-        .map_err(|error| error_chain(&error))?;
+        )?;
         let incremental = if self.parts.settings.config.build().incremental {
             "1"
         } else {
@@ -794,9 +918,56 @@ impl Owner {
 
     /// Starts the command checks of a run in the background: the owner goes on while they run, and their batch is
     /// taken by [`Owner::check_batch_done`] when it ends.
-    fn start_command_checks(&mut self, task: &TaskId, job: CheckJob) {
-        let id = self.checks.spawn(run_command_checks(job)).id();
-        self.checking.insert(id, task.clone());
+    pub(super) fn start_command_checks(&mut self, task: &TaskId, job: CheckJob) -> tokio::task::AbortHandle {
+        let abort = self.checks.spawn(run_command_checks(job));
+        self.checking.insert(abort.id(), task.clone());
+        abort
+    }
+
+    /// Ends the parked command check of `task` when the human stops or pauses the task, and settles the run with the
+    /// requested halt.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the check process group cannot be ended or the state cannot be saved.
+    pub(super) async fn halt_parked_check(&mut self, task: &TaskId) -> Result<(), OwnerError> {
+        let Some(parked) = self.parked.remove(task) else {
+            return Ok(());
+        };
+        self.checking.remove(&parked.abort.id());
+        parked.abort.abort();
+        let task_dir = self.parts.store.home().task_dir(task);
+        recover_checks(&task_dir).map_err(|source| PlanCheckCleanupError::Recover {
+            task: task.clone(),
+            source,
+        })?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        let mut events = Vec::new();
+        self.end_run(
+            task,
+            &parked.located.team,
+            now,
+            RunEnd::Stopped,
+            parked.run.final_message.as_deref(),
+            &mut events,
+        )?;
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            member.set_plan_running_check(None);
+        }
+        let status = self
+            .halts
+            .remove(task)
+            .map_or(TaskStatus::Stopped, crate::daemon::control::halted_status);
+        self.move_to(task, &parked.located.team, status, &mut events)?;
+        self.hangs.remove(task);
+        self.wakes.remove(task);
+        self.commit(task, &parked.located, now, events, None).await?;
+        self.release_run_worktree_targets(task);
+        self.after_run(
+            task,
+            &parked.located,
+            &RunEnd::Stopped,
+            parked.run.final_message.as_deref(),
+        )
     }
 
     /// Takes the command checks of a run that ended: their results are recorded, and the run is ended with its plan's
@@ -812,7 +983,12 @@ impl Owner {
             Ok((id, batch)) => (id, Ok(batch)),
             Err(error) => (error.id(), Err(error)),
         };
-        let task = self.checking.remove(&id).ok_or(OwnerError::UnknownCheck { id })?;
+        let Some(task) = self.checking.remove(&id) else {
+            if outcome.as_ref().is_err_and(tokio::task::JoinError::is_cancelled) {
+                return Ok(());
+            }
+            return Err(OwnerError::UnknownCheck { id });
+        };
         let parked = self
             .parked
             .remove(&task)
@@ -822,34 +998,32 @@ impl Owner {
             found,
             earlier,
             run,
-            inline,
+            inline_records,
             commands,
         } = parked.wait;
-        let mut results = inline;
+        let mut latest = self.latest_judgements(&task).await?;
+        for record in inline_records {
+            latest.insert(record.step, record);
+        }
         match outcome {
             Ok(batch) => {
-                for ((step, command), (_id, result)) in commands.iter().zip(batch.results) {
-                    let judged = match result {
-                        Ok(result) => result,
-                        Err(error) => mismatch(
-                            Some(command.clone()),
-                            format!("cannot run check: {}", error_chain(&error)),
-                        ),
-                    };
-                    results.push((*step, judged));
+                for record in batch.records {
+                    latest.insert(record.step, record);
                 }
             }
             Err(error) => {
                 // The batch ended without its results: every command of it is a mismatch, with the reason.
+                let mut failed = Vec::with_capacity(commands.len());
                 for (step, command) in &commands {
                     let reason = format!("the check did not finish: {}", error_chain(&error));
-                    results.push((*step, mismatch(Some(command.clone()), reason)));
+                    failed.push((*step, mismatch(Some(command.clone()), reason)));
+                }
+                let records = self.records_of(&task, &parked.located, run.as_ref(), failed)?;
+                for (step, record) in self.record_judgements(&task, records).await? {
+                    latest.insert(step, record);
                 }
             }
         }
-        let run_id = run;
-        let records = self.records_of(&task, &parked.located, run_id.as_ref(), results)?;
-        let latest = self.record_judgements(&task, records).await;
         if let PlanRead::Parsed(plan) = &found.read {
             self.refresh_task_plan(&task, plan, &latest);
         }
@@ -889,8 +1063,8 @@ impl Owner {
         &mut self,
         task: &TaskId,
         records: Vec<JudgementRecord>,
-    ) -> HashMap<ItemId, JudgementRecord> {
-        let mut latest = self.latest_judgements(task).await;
+    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+        let mut latest = self.latest_judgements(task).await?;
         for record in &records {
             log_decision(
                 "plan_check",
@@ -918,36 +1092,51 @@ impl Owner {
                 }
             }
         }
-        latest
+        Ok(latest)
     }
 
     /// Ends the command checks still running when the daemon stops: each is aborted, and the process group it started is
     /// ended from its record, so that no check outlives the daemon.
-    pub(super) async fn stop_checks(&mut self) {
+    ///
+    /// # Errors
+    /// [`OwnerError`] when a recorded command check process group cannot be ended.
+    pub(super) async fn stop_checks(&mut self) -> Result<(), OwnerError> {
         self.checks.abort_all();
         while let Some(joined) = self.checks.join_next_with_id().await {
             if let Err(error) = joined
                 && !error.is_cancelled()
             {
-                tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
                     error = %error_chain(&error),
                     "a command check ended with an error when the daemon stopped"
                 );
             }
         }
+        let mut first_error: Option<PlanCheckCleanupError> = None;
         for (_id, task) in self.checking.drain() {
             let task_dir = self.parts.store.home().task_dir(&task);
-            if let Err(error) = recover_checks(&task_dir) {
-                tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+            if let Err(source) = recover_checks(&task_dir) {
+                let error = PlanCheckCleanupError::Recover {
+                    task: task.clone(),
+                    source,
+                };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,
                     error = %error_chain(&error),
                     "the process of a command check could not be ended when the daemon stopped"
                 );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
         }
         self.parked.clear();
+        if let Some(error) = first_error {
+            return Err(error.into());
+        }
+        Ok(())
     }
 
     /// Ends the command checks that a daemon which died left running, from their records, before any run is looked at.
@@ -955,24 +1144,86 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the tasks directory cannot be read or a recorded check cannot be ended.
     pub(super) fn end_leftover_checks(&self) -> Result<(), OwnerError> {
-        let Ok(entries) = std::fs::read_dir(self.parts.store.home().tasks_dir()) else {
-            return Ok(());
+        let tasks_dir = self.parts.store.home().tasks_dir();
+        let entries = match std::fs::read_dir(&tasks_dir) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(source) => {
+                let error = PlanCheckCleanupError::TasksDirRead {
+                    path: tasks_dir,
+                    source,
+                };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot read the tasks directory to end leftover command checks"
+                );
+                return Err(error.into());
+            }
         };
-        for entry in entries.flatten() {
+        let mut first_error: Option<PlanCheckCleanupError> = None;
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(source) => {
+                    let error = PlanCheckCleanupError::TasksDirEntry {
+                        path: tasks_dir.clone(),
+                        source,
+                    };
+                    tracing::error!(
+                        event = LogEvent::DaemonTaskFailed.as_str(),
+                        error = %error_chain(&error),
+                        "cannot read an entry of the tasks directory for leftover command checks"
+                    );
+                    if first_error.is_none() {
+                        first_error = Some(error);
+                    }
+                    continue;
+                }
+            };
+            let path = entry.path();
             let Ok(name) = entry.file_name().into_string() else {
+                let error = PlanCheckCleanupError::InvalidTaskEntry { path };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    error = %error_chain(&error),
+                    "a task directory name is not valid UTF-8"
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
                 continue;
             };
             let Ok(task) = TaskId::from_str(&name) else {
+                let error = PlanCheckCleanupError::InvalidTaskEntry { path };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    error = %error_chain(&error),
+                    "a directory in tasks/ does not have a valid task ID"
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
                 continue;
             };
-            if let Err(error) = recover_checks(&self.parts.store.home().task_dir(&task)) {
-                tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+            if let Err(source) = recover_checks(&self.parts.store.home().task_dir(&task)) {
+                let error = PlanCheckCleanupError::Recover {
+                    task: task.clone(),
+                    source,
+                };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,
                     error = %error_chain(&error),
                     "a command check left by a dead daemon could not be ended"
                 );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
             }
+        }
+        if let Some(error) = first_error {
+            return Err(error.into());
         }
         Ok(())
     }
@@ -1000,7 +1251,6 @@ impl Owner {
         if pending.is_empty() {
             return Ok(());
         }
-        let now = Timestamp::now(&self.parts.clock)?;
         for (task, check) in pending {
             let has_current = self
                 .parts
@@ -1015,40 +1265,21 @@ impl Owner {
                 self.save().await?;
                 continue;
             }
-            let pause = match &check.end {
-                RunEnd::QuotaExhausted { .. } => {
-                    crate::daemon::settle::wake_time(&check.end, now, self.parts.settings.config.limits())
-                        .ok()
-                        .flatten()
-                        .map(|until| agent_core::decide::outcome::Pause {
-                            until,
-                            reason: agent_core::decide::outcome::PauseReason::Quota,
-                            evidence: String::new(),
-                        })
-                }
-                RunEnd::RateLimited => {
-                    crate::daemon::settle::wake_time(&check.end, now, self.parts.settings.config.limits())
-                        .ok()
-                        .flatten()
-                        .map(|until| agent_core::decide::outcome::Pause {
-                            until,
-                            reason: agent_core::decide::outcome::PauseReason::RateLimit,
-                            evidence: String::new(),
-                        })
-                }
-                RunEnd::Reported { .. }
-                | RunEnd::TurnLimit
-                | RunEnd::NoStatus { .. }
-                | RunEnd::Hung
-                | RunEnd::Stopped => None,
+            let progress = if check.made_progress {
+                agent_runtime::run::Progress::Made
+            } else {
+                agent_runtime::run::Progress::Nothing
             };
             let run = FinishedRun {
-                classified: agent_core::decide::outcome::Classified { end: check.end, pause },
+                classified: agent_core::decide::outcome::Classified {
+                    end: check.end,
+                    pause: check.pause,
+                },
                 finish: agent_core::decide::outcome::RunFinish {
                     exit: agent_core::decide::outcome::ExitStatus::Code(0),
                     stopped_by: agent_core::decide::outcome::StoppedBy::Nobody,
                 },
-                progress: agent_runtime::run::Progress::Made,
+                progress,
                 session: None,
                 final_message: check.final_message,
             };
@@ -1058,27 +1289,47 @@ impl Owner {
     }
 
     /// The latest judgements of steps of `task` kept in history, keyed by step ID.
-    async fn latest_judgements(&self, task: &TaskId) -> HashMap<ItemId, JudgementRecord> {
+    ///
+    /// # Errors
+    /// [`OwnerError::PlanJudgementsRead`] when an existing `history.db` cannot be read.
+    async fn latest_judgements(&self, task: &TaskId) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
         let path = self.parts.store.home().history_file();
+        if !path.exists() {
+            return Ok(HashMap::new());
+        }
         let task_id = task.clone();
         let looked = tokio::task::spawn_blocking(move || {
             Reader::open(&path).and_then(|reader| reader.latest_judgements(&task_id))
         })
         .await;
         match looked {
-            Ok(Ok(map)) => map,
+            Ok(Ok(map)) => Ok(map),
+            Ok(Err(ReadError::Empty { .. })) => Ok(HashMap::new()),
             Ok(Err(error)) => {
-                tracing::debug!(task = %task, error = %error_chain(&error), "no previous judgements could be read");
-                HashMap::new()
-            }
-            Err(error) => {
+                let reason = error_chain(&error);
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
-                    %error,
+                    %reason,
                     "the previous judgements could not be read"
                 );
-                HashMap::new()
+                Err(OwnerError::PlanJudgementsRead {
+                    task: task.clone(),
+                    reason,
+                })
+            }
+            Err(error) => {
+                let reason = error.to_string();
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    %reason,
+                    "the previous judgements could not be read"
+                );
+                Err(OwnerError::PlanJudgementsRead {
+                    task: task.clone(),
+                    reason,
+                })
             }
         }
     }

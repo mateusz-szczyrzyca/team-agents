@@ -342,6 +342,17 @@ pub(crate) enum OwnerError {
     /// The question about publication cannot be prepared or written.
     #[error(transparent)]
     PublishQuestion(#[from] rounds::PublishQuestionError),
+    /// A leftover or stopping command check could not be cleaned up.
+    #[error(transparent)]
+    PlanCheckCleanup(#[from] plan::PlanCheckCleanupError),
+    /// Existing step judgements in `history.db` could not be read.
+    #[error("cannot read existing step judgements of task {task}: {reason}")]
+    PlanJudgementsRead {
+        /// The task whose judgements could not be read.
+        task: TaskId,
+        /// What failed.
+        reason: String,
+    },
 }
 
 /// What the owner is made of.
@@ -648,7 +659,7 @@ impl Owner {
                 }
             }
         }
-        self.stop_checks().await;
+        let checks_stopped = self.stop_checks().await;
         let stopped = self.stop_runs().await;
         // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
         // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
@@ -665,6 +676,7 @@ impl Owner {
         while let Some(joined) = self.disk_jobs.join_next_with_id().await {
             self.disk_job_done(joined).await;
         }
+        checks_stopped?;
         stopped
     }
 
@@ -1010,7 +1022,6 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
-        self.release_deferred_target(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
         let result = match outcome {
@@ -1020,16 +1031,26 @@ impl Owner {
             },
             Outcome::Failed(reason) => self.failed(&task, reason).await,
         };
+        if !self.parked.contains_key(&task) {
+            self.release_run_worktree_targets(&task);
+        }
+        result
+    }
+
+    /// Releases any deferred round target removal or low-disk reviewer target removal once `task` has finished both its
+    /// CLI run and any parked plan command checks.
+    pub(super) fn release_run_worktree_targets(&mut self, task: &TaskId) {
+        self.release_deferred_target(task);
         let free_bytes = self.check_free_space();
-        match self.locate(&task) {
+        match self.locate(task) {
             Ok(located) if located.role == Role::Reviewer => {
                 let low_limit_bytes = self.parts.settings.config.disk().low_free_gb.saturating_mul(GIBIBYTE);
                 if let Some(free) = free_bytes
                     && free < low_limit_bytes
                     && let Some(team) = self.parts.state.team(&located.team)
                 {
-                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
-                    self.remove_target(&task, &worktree_dir);
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), task);
+                    self.remove_target(task, &worktree_dir);
                 }
             }
             Ok(_) => {}
@@ -1042,7 +1063,6 @@ impl Owner {
                 );
             }
         }
-        result
     }
 
     /// A run that could not be carried out: its task fails.
@@ -1178,26 +1198,35 @@ impl Owner {
                 .await?
             {
                 plan::PlanStep::Done(settled, held) => (settled, held),
-                plan::PlanStep::Waiting(wait) => {
-                    // The command checks run in the background: the owner goes on, and the run ends when they have.
-                    if let Some(run_id) = wait.run.clone()
+                plan::PlanStep::Waiting(wait, job) => {
+                    // Persist the unsettled finished run before spawning its background command checks, so a crash
+                    // while checks run never loses the finished run or re-runs the agent CLI.
+                    let run_id = wait.run.clone().or_else(|| {
+                        self.parts
+                            .state
+                            .find_task(task)
+                            .and_then(|found| found.member.current_run().map(|current| current.id().clone()))
+                    });
+                    if let Some(run_id) = run_id
                         && let Some((_, mut member)) = self.parts.state.find_task_mut(task)
                     {
                         member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
                             run: run_id,
                             end: run.classified.end.clone(),
-                            pause: None,
-                            made_progress: true,
+                            pause: run.classified.pause.clone(),
+                            made_progress: run.progress == Progress::Made,
                             final_message: run.final_message.clone(),
                         }));
                         self.save().await?;
                     }
+                    let abort = self.start_command_checks(task, *job);
                     self.parked.insert(
                         task.clone(),
                         plan::Parked {
                             located,
                             run,
                             wait: *wait,
+                            abort,
                         },
                     );
                     return Ok(());
@@ -1284,6 +1313,7 @@ impl Owner {
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
+        self.release_run_worktree_targets(task);
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
     }

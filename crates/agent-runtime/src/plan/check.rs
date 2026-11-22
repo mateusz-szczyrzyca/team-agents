@@ -106,6 +106,12 @@ enum CommandPreparationError {
         /// The non-UTF-8 path.
         path: PathBuf,
     },
+    /// The running record path is not valid UTF-8.
+    #[error("running check record path is not valid UTF-8: {}", path.display())]
+    NonUtf8RecordPath {
+        /// The non-UTF-8 path.
+        path: PathBuf,
+    },
     /// The worktree path cannot be parsed as an absolute path.
     #[error("invalid worktree path {}", path.display())]
     InvalidWorktreePath {
@@ -341,11 +347,60 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
     }
 }
 
+/// Reads the kernel start time (field 22 of `/proc/<pid>/stat`, in clock ticks since boot) of process `pid`.
+/// Returns `Ok(None)` when the process does not exist.
+fn process_start_ticks(pid: u32) -> io::Result<Option<u64>> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let Some((_, after_comm)) = stat.rsplit_once(')') else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("malformed /proc/{pid}/stat"),
+        ));
+    };
+    let Some(field) = after_comm.split_whitespace().nth(19) else {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("missing starttime in /proc/{pid}/stat"),
+        ));
+    };
+    let ticks = field
+        .parse::<u64>()
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    Ok(Some(ticks))
+}
+
+/// Writes the process group ID and kernel start time of `process` to `record`.
+async fn record_running_process(process: &RunningProcess, record: &Path) -> io::Result<()> {
+    let pid = process.id().get();
+    let ticks = process_start_ticks(pid)?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("process {pid} exited before its start time could be read"),
+        )
+    })?;
+    fs::write(record, format!("{pid} {ticks}\n")).await
+}
+
 /// Waits for `process`, which is recorded in `record` while it runs, and removes the record when it has ended.
 /// A process that cannot be recorded is ended at once: nothing runs that a restarted daemon could not find.
 async fn wait_recorded(process: RunningProcess, record: &Path, check_seconds: u64) -> (JudgementState, Option<String>) {
-    drop(fs::write(record, format!("{}\n", process.id())).await);
-    let (state, mut reason) = wait_child_outcome(process, check_seconds).await;
+    let (state, mut reason) = match record_running_process(&process, record).await {
+        Ok(()) => wait_child_outcome(process, check_seconds).await,
+        Err(error) => {
+            let cleanup = process.stop(Duration::ZERO).await.map(|_report| ());
+            (
+                JudgementState::Mismatch,
+                Some(with_cleanup_result(
+                    format!("cannot record the running check in {}: {error}", record.display()),
+                    cleanup,
+                )),
+            )
+        }
+    };
     // A record that was never written (the Err arm above) is absent: that is the expected state, not a failure.
     let removed = match fs::remove_file(record).await {
         Ok(()) => Ok(()),
@@ -384,9 +439,13 @@ async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path, reason: &
 }
 
 /// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
+/// The outer shell waits for `record` to become non-empty while checking that the spawning daemon process is alive,
+/// then `exec`s `/bin/sh -c` in the same process ID and process group so no unrecorded check command can run if the
+/// daemon dies between `spawn` and writing `record`.
 fn prepare_process_spec(
     context: &CheckContext<'_>,
     command_str: &str,
+    record: &Path,
     log_path: PathBuf,
 ) -> Result<ProcessSpec, CommandPreparationError> {
     let program = Program::posix_shell();
@@ -395,6 +454,11 @@ fn prepare_process_spec(
         .to_str()
         .ok_or_else(|| CommandPreparationError::NonUtf8WorktreePath {
             path: context.worktree.to_path_buf(),
+        })?;
+    let record_str = record
+        .to_str()
+        .ok_or_else(|| CommandPreparationError::NonUtf8RecordPath {
+            path: record.to_path_buf(),
         })?;
     let working_dir =
         AbsolutePath::from_str(worktree_str).map_err(|source| CommandPreparationError::InvalidWorktreePath {
@@ -409,9 +473,18 @@ fn prepare_process_spec(
         })?;
         env_map.insert(name, val.clone());
     }
+    let daemon_pid = std::process::id();
+    let gate_script =
+        format!("while [ ! -s \"$1\" ]; do kill -0 {daemon_pid} 2>/dev/null || exit 1; done; exec /bin/sh -c \"$2\"");
     Ok(ProcessSpec {
         program,
-        args: vec!["-c".to_owned(), command_str.to_owned()],
+        args: vec![
+            "-c".to_owned(),
+            gate_script,
+            "sh".to_owned(),
+            record_str.to_owned(),
+            command_str.to_owned(),
+        ],
         env: env_map,
         working_dir,
         stdout_file: log_path.clone(),
@@ -455,49 +528,37 @@ pub async fn execute_command_check(
     }
     let checks_dir = context.task_dir.join("checks");
     if let Err(error) = fs::create_dir_all(&checks_dir).await {
-        return Ok(JudgementResult {
-            state: JudgementState::Mismatch,
-            check_line: Some(command_str.to_owned()),
-            reason: Some(format!("cannot create checks directory: {error}")),
-            duration_ms: duration_millis(start.elapsed())?,
-            output_path: None,
-            tail: String::new(),
-            gate_refused: false,
-        });
+        return failure_without_output(command_str, format!("cannot create checks directory: {error}"), start);
+    }
+
+    let record = running_record_path(context.task_dir);
+    if let Err(error) = fs::write(&record, b"").await {
+        return failure_without_output(
+            command_str,
+            format!("cannot record the running check in {}: {error}", record.display()),
+            start,
+        );
     }
 
     let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, step.id()).await {
         Ok(paths) => paths,
         Err(error) => {
-            return Ok(JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot create check log path: {error}")),
-                duration_ms: duration_millis(start.elapsed())?,
-                output_path: None,
-                tail: String::new(),
-                gate_refused: false,
-            });
+            drop(fs::remove_file(&record).await);
+            return failure_without_output(command_str, format!("cannot create check log path: {error}"), start);
         }
     };
 
-    let spec = match prepare_process_spec(context, command_str, log_path.clone()) {
+    let spec = match prepare_process_spec(context, command_str, &record, log_path.clone()) {
         Ok(spec) => spec,
         Err(error) => {
-            return Ok(JudgementResult {
-                state: JudgementState::Mismatch,
-                check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot prepare check command: {error}")),
-                duration_ms: duration_millis(start.elapsed())?,
-                output_path: None,
-                tail: String::new(),
-                gate_refused: false,
-            });
+            drop(fs::remove_file(&record).await);
+            return failure_without_output(command_str, format!("cannot prepare check command: {error}"), start);
         }
     };
 
     // The supervisor appends output, so initialize this attempt's artifact before spawning.
     if let Err(error) = fs::write(&log_path, []).await {
+        drop(fs::remove_file(&record).await);
         return failure_without_output(command_str, format!("cannot create check output: {error}"), start);
     }
 
@@ -505,6 +566,7 @@ pub async fn execute_command_check(
     let process = match supervisor.spawn(&spec).await {
         Ok(proc) => proc,
         Err(error) => {
+            drop(fs::remove_file(&record).await);
             return Ok(JudgementResult {
                 state: JudgementState::Mismatch,
                 check_line: Some(command_str.to_owned()),
@@ -517,7 +579,6 @@ pub async fn execute_command_check(
         }
     };
 
-    let record = running_record_path(context.task_dir);
     let (state, mut reason) = wait_recorded(process, &record, context.check_seconds).await;
     let tail = resolve_mismatch_tail(state, &log_path, &mut reason).await;
     let duration_ms = duration_millis(start.elapsed())?;
@@ -594,25 +655,63 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
     }
 }
 
-/// Ends the process group of a command check that a daemon which died left running in `task_dir`, and removes its record.
+/// Ends the process group of a command check that a daemon which died left running in `task_dir`, when the recorded
+/// process start time still matches `/proc/<pid>/stat`, and removes its record.
 ///
 /// # Errors
-/// [`CheckError`] when the record cannot be read, is not a process ID, or its group cannot be ended.
+/// [`CheckError`] when the record cannot be read, does not hold `<pid> <start_ticks>`, or its group cannot be ended.
 pub fn recover_checks(task_dir: &Path) -> Result<Option<NonZeroU32>, CheckError> {
     let path = running_record_path(task_dir);
     let text = match std::fs::read_to_string(&path) {
         Ok(text) => text,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Some(NonZeroU32::MIN)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(source) => return Err(CheckError::RecordRead { path, source }),
     };
     let trimmed = text.trim();
-    let id = trimmed
+    if trimmed.is_empty() {
+        std::fs::remove_file(&path).map_err(|source| CheckError::RecordRemove { path, source })?;
+        return Ok(None);
+    }
+    let mut parts = trimmed.split_whitespace();
+    let pid_text = parts.next().unwrap_or("");
+    let id = pid_text
         .parse::<NonZeroU32>()
         .map_err(|source| CheckError::RecordInvalid {
             path: path.clone(),
             text: trimmed.to_owned(),
             source,
         })?;
+    let ticks_text = parts.next().unwrap_or("invalid");
+    let recorded_ticks = ticks_text.parse::<u64>().map_err(|source| CheckError::RecordInvalid {
+        path: path.clone(),
+        text: trimmed.to_owned(),
+        source,
+    })?;
+    if let Some(extra) = parts.next() {
+        let Err(source) = extra.parse::<u32>() else {
+            let Err(source) = "invalid".parse::<u32>() else {
+                return Ok(None);
+            };
+            return Err(CheckError::RecordInvalid {
+                path,
+                text: trimmed.to_owned(),
+                source,
+            });
+        };
+        return Err(CheckError::RecordInvalid {
+            path,
+            text: trimmed.to_owned(),
+            source,
+        });
+    }
+    let current_ticks = process_start_ticks(id.get()).map_err(|source| CheckError::RecordRead {
+        path: path.clone(),
+        source,
+    })?;
+    if current_ticks != Some(recorded_ticks) {
+        std::fs::remove_file(&path).map_err(|source| CheckError::RecordRemove { path, source })?;
+        return Ok(None);
+    }
     let raw = i32::try_from(id.get()).map_err(|source| CheckError::RecordOutOfRange { pid: id.get(), source })?;
     let group = rustix::process::Pid::from_raw(raw).ok_or(CheckError::RecordNotGroup { pid: id.get() })?;
     crate::process::signal_group(group, crate::process::GroupSignal::Kill).map_err(|source| CheckError::RecordEnd {
