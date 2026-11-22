@@ -9,6 +9,15 @@ round with a member.
 
 A test is frozen once its `RED:` commit exists: every change to a test after it — also formatting, a refactor, a removed debug line — is a `TEST-FIX:` commit of its own, test files only. The commit hook of your runs refuses any other commit that takes lines out of such a test, and says how to make the right one.
 
+When you read the work of a member and send it back instead of taking it, tell the member what to fix in one message, and end your final message with one standalone line for each item you sent back, beside the `STATUS:` line:
+
+```text
+RETURNED: 1.1
+STATUS: SLEEPING
+```
+
+For one part of a split item write the part, `RETURNED: 1.1a`. The harness counts a line only where it saw the same itself: the member ended a run with `STATUS: DONE` on the item and is started again for it. Write the line for work you read and did not take — not for an answer to a question of the member, and not for a plan or a gate the harness sent back itself. A line you do not write is a return nobody counts. The count of an item is kept and `agent status` shows it as `returned 3 of 5`.
+
 When you have nothing to do until a message arrives, end your turn with `STATUS: SLEEPING`: the next message wakes you.
 
 If an item needs splitting, submit one complete proposal yourself. Members propose parts to you, never in

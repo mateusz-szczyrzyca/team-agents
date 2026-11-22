@@ -5,6 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.61.0 — 22.11.2026 — PR #179
+
+### New features
+- [agent] [agent-core] [agent-runtime] The daemon counts how often a team's lead sends an item's work back to the member. The lead says so with a line `RETURNED: 1.1` beside `STATUS:` in its final message (its role text prescribes it); the daemon counts the line only when the member's last run on the item ended `DONE` and the member is started again for it, and keeps what the lead told the member after the hand-over, whole, as the reason. A part of a split item is returned as `RETURNED: 1.1a` and has its own count; a return is saved with the end of the lead's run. An answer to a question, a bounce of the plan, a refused gate and a lead that writes no such line are never counted.
+- [agent] [agent-core] `agent status` shows the count on the member's line, `claude-1  waiting, returned 3 of 5`, and on the round's line when one more return reaches the limit. The count survives a restart; a state written before it loads with none.
+- [agent] [agent-core] **Action:** `[replacement] rejections = 5` is the limit the count is shown against; `0` shows the count with no limit. This version only counts and shows: it does not yet replace the agent at the limit.
+
 ## 0.60.0 — 22.11.2026 — PR #178
 
 ### Enhancements

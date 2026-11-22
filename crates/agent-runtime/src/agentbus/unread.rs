@@ -126,6 +126,86 @@ impl AgentBus {
     }
 }
 
+/// A direct message a sender wrote to a session, with the whole text the sender wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// Its number on the bus.
+    pub id: NonZeroU64,
+    /// What it says, whole.
+    pub text: String,
+}
+
+impl AgentBus {
+    /// The number of the newest message of the bus; `None` when the bus holds none. A lead's run is marked with it when it
+    /// begins, so that what the lead says during the run can be told from what was said before.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn newest_message_id(&self) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
+        newest_message_id(&self.bus_dir()).await
+    }
+
+    /// What `sender` wrote directly to the session of `reader` after the message `after` (all of it when `None`), whole:
+    /// a lead's answer during the run that began at the mark `after`. Messages to everybody or to a team are not it.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn said_after(
+        &self,
+        reader: Reader<'_>,
+        sender: &str,
+        after: Option<NonZeroU64>,
+    ) -> Result<Vec<Said>, UnreadMessagesError> {
+        said_after(&self.bus_dir(), reader, sender, after).await
+    }
+}
+
+/// The lines of the log of the bus at `bus_dir`, oldest first; none when it has no log.
+async fn log_lines(bus_dir: &Path) -> Result<Vec<Line>, UnreadMessagesError> {
+    let path = bus_dir.join(LOG_FILE);
+    let Some(window) = read_window(&path).await? else {
+        return Ok(Vec::new());
+    };
+    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
+        path: path.clone(),
+        source,
+    })?;
+    text.lines()
+        .enumerate()
+        .filter(|(_, text)| !text.trim().is_empty())
+        .map(|(index, text)| {
+            serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
+                path: path.clone(),
+                line: index.saturating_add(1),
+                source,
+            })
+        })
+        .collect()
+}
+
+/// See [`AgentBus::newest_message_id`]; `bus_dir` is the directory of the bus.
+async fn newest_message_id(bus_dir: &Path) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
+    Ok(log_lines(bus_dir).await?.last().map(|line| line.id))
+}
+
+/// See [`AgentBus::said_after`]; `bus_dir` is the directory of the bus.
+async fn said_after(
+    bus_dir: &Path,
+    reader: Reader<'_>,
+    sender: &str,
+    after: Option<NonZeroU64>,
+) -> Result<Vec<Said>, UnreadMessagesError> {
+    Ok(log_lines(bus_dir)
+        .await?
+        .into_iter()
+        .filter(|line| after.is_none_or(|mark| line.id > mark) && line.from == sender && line.is_direct_for(reader))
+        .map(|line| Said {
+            id: line.id,
+            text: line.text,
+        })
+        .collect())
+}
+
 /// The file of the bus that holds the messages, one JSON object a line.
 const LOG_FILE: &str = "messages.jsonl";
 
@@ -177,6 +257,11 @@ impl Line {
             self.to == "all"
         };
         addressed && (self.task.is_empty() || self.task == reader.task.as_str())
+    }
+
+    /// Whether this message is written to the session of `reader` by name or by task, not to everybody or to a team.
+    fn is_direct_for(&self, reader: Reader<'_>) -> bool {
+        (self.to == reader.agent.as_str() || self.to == reader.task.as_str()) && self.is_for(reader)
     }
 }
 
@@ -325,5 +410,7 @@ async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError>
     Ok(Some(Window { bytes, from, cut }))
 }
 
+#[cfg(test)]
+mod after_tests;
 #[cfg(test)]
 mod tests;

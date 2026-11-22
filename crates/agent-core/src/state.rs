@@ -18,6 +18,10 @@ mod holding;
 #[cfg(test)]
 mod holding_tests;
 mod item;
+#[cfg(test)]
+mod item_parts_tests;
+#[cfg(test)]
+mod item_tests;
 mod member;
 mod migrate;
 mod plan;
@@ -45,8 +49,8 @@ pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use holding::{HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
-    ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, ReplaceReviewError, Review,
-    ReviewOutcome, SubmitReviewError,
+    ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection, RejectionError,
+    ReplaceReviewError, Review, ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanKeeping, PlanReason, PlanStage};

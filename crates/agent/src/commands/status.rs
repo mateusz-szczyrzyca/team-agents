@@ -596,7 +596,14 @@ fn render_in(
             team.rounds
                 .iter()
                 .filter(|round| view == View::Full || *round.life() == RoundLife::Open)
-                .map(|round| format!("  {}{}", round_line(round), rounds(round))),
+                .map(|round| {
+                    format!(
+                        "  {}{}{}",
+                        round_line(round),
+                        returned::round_note(round, &team.members),
+                        rounds(round)
+                    )
+                }),
         );
         if detail == Detail::Tasks {
             lines.extend(splits::lines_of(team, view));
@@ -889,6 +896,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
 mod members;
+mod returned;
 mod reviewer;
 mod rounds;
 mod snapshots;
@@ -916,6 +924,10 @@ mod short_desc_tests;
 #[cfg(test)]
 #[path = "status/tests/part_states.rs"]
 mod part_state_tests;
+
+#[cfg(test)]
+#[path = "status/tests/returned.rs"]
+mod returned_tests;
 
 #[cfg(test)]
 #[path = "status/tests/short.rs"]

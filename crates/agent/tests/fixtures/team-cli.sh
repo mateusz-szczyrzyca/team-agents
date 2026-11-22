@@ -50,6 +50,11 @@
 #   checks-lead     what a coordinator does under the checks before a review: puts the question the prompt says the harness wrote
 #                   (ends with STATUS: QUESTIONS and writes no file), ends at once when the prompt says the human answered, and
 #                   otherwise integrates like `integrate`
+#   return:M:TEXT   as a lead that sends the work of its member M back: tells M TEXT on the bus (TEXT has no quotes), then ends
+#                   with the line `RETURNED: 1.1` and STATUS: SLEEPING
+#   return-silent   as a lead that sends the work back with the line `RETURNED: 1.1` and no message to the member
+#   say:M:TEXT      as a lead that only answers its member M: tells M TEXT on the bus and ends with STATUS: SLEEPING, with no
+#                   RETURNED line
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
 #                   the gate as `work` does and ends with STATUS: DONE
 #
@@ -118,6 +123,15 @@ read_messages() {
   task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
   [[ -n $bus_bin && -n $team ]] || return 0
   echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_messages","arguments":{}}}' |
+    "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" > /dev/null
+}
+
+# Tells the agent $1 on the bus of the team, as the agent of this run: `send_message` through the agentbus MCP server.
+send_to() {
+  local team task
+  team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+  task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+  printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"send_message","arguments":{"to":"%s","text":"%s"}}}\n' "$1" "$2" |
     "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" > /dev/null
 }
 
@@ -438,6 +452,19 @@ case $action in
     result "${action#target-done:}"'\nSTATUS: DONE'
     ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
+  return:*)
+    spec=${action#return:}
+    send_to "${spec%%:*}" "${spec#*:}"
+    result 'Not accepted.\nRETURNED: 1.1\nSTATUS: SLEEPING'
+    ;;
+  return-silent)
+    result 'Not accepted.\nRETURNED: 1.1\nSTATUS: SLEEPING'
+    ;;
+  say:*)
+    spec=${action#say:}
+    send_to "${spec%%:*}" "${spec#*:}"
+    result 'Answered.\nSTATUS: SLEEPING'
+    ;;
   bus-sleep)
     # Reads its messages under the name the run's MCP configuration gives it on the bus (the `--agent` of the agentbus
     # server), as an agent that uses the server the harness gave it, then ends with STATUS: SLEEPING.

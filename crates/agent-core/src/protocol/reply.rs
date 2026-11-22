@@ -372,6 +372,23 @@ pub struct MemberSummary {
     /// from older daemons' replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub held_by: Option<AgentName>,
+    /// How often the lead returned the item this member holds, once it did; absent otherwise and from older daemons'
+    /// replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub returned: Option<Returned>,
+}
+
+/// How often the lead sent the work of an item back to the member that holds it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Returned {
+    /// The item.
+    pub item: ItemId,
+    /// How many returns were counted: the member ran again after each.
+    pub counted: NonZeroU32,
+    /// `[replacement] rejections` as the daemon knows it; absent when the key is `0` (never) and from older daemons.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<NonZeroU32>,
 }
 
 impl ItemCounts {
@@ -399,6 +416,7 @@ impl MemberSummary {
             open_question: member.open_question().map(Question::number),
             new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
             held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
+            returned: None,
         }
     }
 }
@@ -524,7 +542,11 @@ impl From<&Team> for TeamSummary {
             part_assignments: team.part_assignments().clone(),
             members: crew
                 .chain(reviewers)
-                .map(|(role, member)| MemberSummary::of(role, member))
+                .map(|(role, member)| {
+                    let mut summary = MemberSummary::of(role, member);
+                    summary.returned = returned_by(team, member);
+                    summary
+                })
                 .collect(),
             activities: team.activities().to_vec(),
             task_plans: std::collections::BTreeMap::new(),
@@ -557,6 +579,47 @@ impl Response {
         }
     }
 }
+
+impl TeamSummary {
+    /// The summary with `limit`, the `[replacement] rejections` of the daemon, told to every count of returns; `0` is no
+    /// limit.
+    #[must_use]
+    pub fn with_rejection_limit(mut self, limit: u32) -> Self {
+        for returned in self.members.iter_mut().filter_map(|member| member.returned.as_mut()) {
+            returned.limit = NonZeroU32::new(limit);
+        }
+        self
+    }
+}
+
+/// How often the lead returned the item that `member` holds in `team`; `None` when it holds none, or none that was
+/// returned and run again after.
+fn returned_by(team: &Team, member: &Member) -> Option<Returned> {
+    team.items().iter().find_map(|progress| {
+        let (ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }) = progress.phase() else {
+            return None;
+        };
+        if assignee.as_str() != member.agent().name() {
+            return None;
+        }
+        let part = team
+            .rounds()
+            .iter()
+            .find(|round| round.item() == Some(progress.id()) && matches!(round.life(), crate::state::RoundLife::Open))
+            .and_then(crate::state::Round::part);
+        let counted = NonZeroU32::new(progress.counted_rejections_of(part, 0).get())?;
+        Some(Returned {
+            item: progress.id(),
+            counted,
+            limit: None,
+        })
+    })
+}
+
+#[cfg(test)]
+mod returned_parts_tests;
+#[cfg(test)]
+mod returned_tests;
 
 #[cfg(test)]
 mod tests {
