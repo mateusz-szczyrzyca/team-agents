@@ -697,6 +697,32 @@ case $action in
       result 'Integrated.\nSTATUS: DONE'
     fi
     ;;
+  ask-worker:*)
+    # Asks for a worker through the agentbus MCP server of this run, which the daemon started with the plan of a run
+    # that keeps a plan: the call is written to `.fake-delegate-N` and the answer to the call file.
+    # ask-worker:STEP:FOR:FILES:CHECK:DO, every field after STEP optional and defaulted.
+    IFS=: read -r _ step for_field files check doing <<< "$action"
+    for_field=${for_field-1.1}
+    files=${files-docs/guide.md}
+    check=${check-exists docs/guide.md}
+    doing=${doing-Write the guide section.}
+    python3 - "$mcp_config" "$for_field" "$files" "$check" "$doing" > ".fake-delegate-$n" <<'PY'
+import json, sys
+config, for_field, files, check, doing = sys.argv[1:6]
+server = json.load(open(config))["mcpServers"]["agentbus"]
+call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {"name": "delegate", "arguments": {
+            "goal": "the guide", "workdir": "/tmp", "steps": "write it", "returns": "the file",
+            "for": for_field, "files": files, "check": check, "do": doing}}}
+server["command"].extend(server["args"])
+print(json.dumps(server))
+print(json.dumps(call))
+PY
+    mapfile -t server < <(sed -n '1p' ".fake-delegate-$n" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')
+    answer=$(sed -n '2p' ".fake-delegate-$n" | "${server[@]}" 2> ".fake-delegate-$n.err")
+    printf '%s\n' "$answer" > ".fake-delegate-$n.answer"
+    result "Sent the request.\nSTATUS: DONE"
+    ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)
     for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
