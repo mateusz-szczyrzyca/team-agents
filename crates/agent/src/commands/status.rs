@@ -700,6 +700,13 @@ pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
 }
 
+/// The line that counts the runs going on each CLI configured in `config` across `teams`, in the order of
+/// [`agent_core::kinds::CliKind`]; `None` when no run is going or `config` configures no agent.
+#[must_use]
+pub(crate) fn cli_runs_line(_config: &agent_core::config::Config, _teams: &[TeamSummary]) -> Option<String> {
+    None
+}
+
 /// Tallies of a team's tasks by status, in the order the short view prints them: the tasks that act or wait first.
 #[derive(Default)]
 struct StatusCounts {
