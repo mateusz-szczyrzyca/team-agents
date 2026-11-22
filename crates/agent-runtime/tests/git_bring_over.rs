@@ -157,17 +157,20 @@ mod git_bring_over {
     async fn a_commit_that_applies_reaches_the_head_and_leaves_uncommitted_and_untracked_files_as_they_were() {
         let (_tmp, repo) = repository();
         commit(&repo, &[("guide.md", b"one\n"), ("other.txt", b"other\n")], "base");
-        write(&repo, "uncommitted.txt", b"mine\n");
-        write(&repo, "untracked.txt", b"new\n");
         let files = ["guide.md", "other.txt", "uncommitted.txt", "untracked.txt"];
-        // The worker's commit, made on a branch of the same repository from the base the requester is at.
+        // The worker's commit, made on a branch of the same repository from the base the requester is at, before the
+        // requester writes its own uncommitted and untracked files: a `git add -A` in the worker's run must not take
+        // them into the worker's commit.
         let base = raw(&repo, &["rev-parse", "HEAD"]);
         raw(&repo, &["switch", "-q", "-c", "worker", &base]);
         commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
         let worker: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
         raw(&repo, &["switch", "-q", "main"]);
+        write(&repo, "uncommitted.txt", b"mine\n");
+        write(&repo, "untracked.txt", b"new\n");
         // The requester's state, as a bringing over must leave it: its files, its index and its untracked files.
         let before = state(&repo, &files);
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
 
         let outcome = handle(&repo)
             .bring_over(&worker, &round(), &task())
