@@ -1142,7 +1142,7 @@ async fn an_existing_reviewer_keeps_its_holder_while_the_investigator_runs_elsew
     assert_eq!(reviewer_after.role, agent_core::kinds::Role::Reviewer);
     assert_eq!(reviewer_after.member.agent().name(), "inv-r1");
     assert_eq!(reviewer_after.member.status(), TaskStatus::Waiting);
-    assert!(reviewer_after.member.past_holders().is_empty());
+    assert_eq!(reviewer_after.member.past_holders(), []);
     assert_eq!(reviewer_after.member.runs().len(), reviewer_runs);
     assert_eq!(state.team(&review_team).unwrap().items()[0].phase(), &review_before);
     assert_eq!(
