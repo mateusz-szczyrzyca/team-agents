@@ -41,6 +41,9 @@ mod lines;
 #[path = "tests/log_command.rs"]
 mod log_command_tests;
 #[cfg(test)]
+#[path = "tests/requests_source.rs"]
+mod requests_source_tests;
+#[cfg(test)]
 #[path = "tests/run_command.rs"]
 mod run_command_tests;
 mod split_context;
@@ -71,14 +74,17 @@ use crate::commands::pause::pause;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
+use crate::commands::status::requests::Source as RequestsSource;
 use crate::commands::status::{
     Activity, Detail, StatusError, status_investigators, status_json, status_running_shown, status_shown,
 };
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
 use crate::environment::{EditorError, Environment, EnvironmentError};
+use agent_runtime::agentbus::AgentBus;
 use agent_runtime::process::error_chain;
 use agent_runtime::settings::{Settings, SettingsError};
+use agent_runtime::store::Home;
 
 /// Exit status of a command line that clap refuses: its own convention for usage errors.
 const USAGE_ERROR: u8 = 2;
@@ -828,7 +834,7 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
         Command::Status(args) => {
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
-            let activity = Activity::new(home.clone(), environment.zone());
+            let activity = Activity::new(home.clone(), environment.zone()).with_requests(requests_source(&home).await);
             let detail = if args.task { Detail::Tasks } else { Detail::Short };
             if args.json {
                 status_json(&mut connection, args.target, out).await?;
@@ -841,6 +847,20 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             }
             Ok(())
         }
+    }
+}
+
+/// Where `agent status` reads the requests for workers of the tasks it shows: the bus of `home`; nothing for a home
+/// without a configuration file, which names no bus to ask (as the line of the disk takes the default then); or why it
+/// cannot be known when the configuration does not load (the status is shown all the same).
+async fn requests_source(home: &Home) -> RequestsSource {
+    match Settings::load(home).await {
+        Ok(settings) => RequestsSource::Bus(AgentBus::new(
+            settings.config.binaries().agentbus.clone(),
+            home.absolute_root().clone(),
+        )),
+        Err(SettingsError::MissingConfig { .. }) => RequestsSource::Unread,
+        Err(error) => RequestsSource::Unknown(error_chain(&error)),
     }
 }
 

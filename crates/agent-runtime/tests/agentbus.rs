@@ -20,7 +20,7 @@ mod agentbus_commands {
     use agent_runtime::agentbus::{
         AgentBus, AgentBusError, BoardItemId, BoardLevel, BoardStatus, BusCommand, BusMember, BusTier, CheckpointKey,
         Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, MemberState, NewBoardItem, NewMember,
-        NewTeam, NoticeKind, Outgoing, Recipient, RequestId, Woken,
+        NewTeam, NoticeKind, Outgoing, Recipient, RequestId, TaskRequest, Woken,
     };
     use agent_runtime::process::CaptureError;
     use rustix::fs::{FlockOperation, flock};
@@ -659,6 +659,35 @@ mod agentbus_commands {
         assert_eq!(read.context, "See README.md");
         assert_eq!(read.status, DelegationStatus::Queued);
         assert_eq!((read.worker, read.helper_task, read.summary.as_str()), (None, None, ""));
+    }
+
+    #[tokio::test]
+    async fn helper_dump_lists_the_requests_of_a_task_with_their_state() {
+        let fixture = with_team().await;
+        let first = fixture.bus.delegate(&delegation("First")).await.unwrap();
+        let second = fixture.bus.delegate(&delegation("Second")).await.unwrap();
+
+        let listed = fixture.bus.helper_dump(&task("aaa1")).await.unwrap();
+        let other = fixture.bus.helper_dump(&task("bbb2")).await.unwrap();
+
+        assert_eq!(
+            listed,
+            [
+                TaskRequest {
+                    id: first,
+                    step: None,
+                    worker: None,
+                    status: DelegationStatus::Queued,
+                },
+                TaskRequest {
+                    id: second,
+                    step: None,
+                    worker: None,
+                    status: DelegationStatus::Queued,
+                },
+            ]
+        );
+        assert_eq!(other, []);
     }
 
     /// A dispatcher that records how it was run: its arguments and `AGENTS_HOME`, one per line, in `dispatched` in

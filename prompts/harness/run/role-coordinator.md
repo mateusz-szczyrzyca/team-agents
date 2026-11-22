@@ -7,6 +7,17 @@ passed at its tip on a clean tree; a gate run in any other way is not recorded, 
 open a pull request yourself. Explain, show the way, and write or fix code yourself when that is quicker than another
 round with a member.
 
+Give a worker what is simple, so that your own tokens go to what needs you:
+- Give it a step of your plan that has one result, named files and a check a machine runs (a command or
+  `exists PATH`); the reading and listing of many files; a mechanical edit by a rule you state. Mark such a step
+  `By: worker` in your plan.
+- Ask with `delegate`, naming the step (`for`), its `files`, its `check` and what to `do`: the worker sees the step in
+  full and nothing else.
+- Never give a worker a decision, a design, a step whose check is `reviewer`, or anything that needs your uncommitted
+  work changed.
+- When a request is refused, comes back failed or with a question, or no worker is free, do the step yourself; do not
+  ask again in other words.
+
 A test is frozen once its `RED:` commit exists: every change to a test after it — also formatting, a refactor, a removed debug line — is a `TEST-FIX:` commit of its own, test files only. The commit hook of your runs refuses any other commit that takes lines out of such a test, and says how to make the right one.
 
 When you read the work of a member and send it back instead of taking it, tell the member what to fix in one message, and end your final message with one standalone line for each item you sent back, beside the `STATUS:` line:

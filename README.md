@@ -914,6 +914,26 @@ investigation request, a run of a home that keeps no plan, or a run whose worktr
 the old form, which is for look-ups only and waits
 in the queue as before.
 
+**When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
+instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
+say it: a step with one result, named files and a check a machine runs, the reading and listing of many files, a
+mechanical edit by a stated rule — never a decision, a design, a step whose check is `reviewer` or anything that needs
+the requester's uncommitted work changed; a refused or failed request is done by the requester itself. A plan marks
+such a step with the line `By: worker` in its text (`docs/plan.md`).
+
+**The requests are seen.** `agent status <task>` (and `--task`) shows the requests for workers of each task under its
+plan, as the bus has them (`agentbus helper-dump --task <task>`, JSON):
+
+```text
+    request H3  step 1.2  worker glm-1  done
+    request H4  no step  no worker yet  queued
+```
+
+When the bus cannot be read, a line says why (`requests unknown (…)`); a home without `agents.toml` shows none. The
+description of a pull request gets the harness's section `## Steps done by a worker`, with each request of the team's
+tasks that is done and names a step: `- step 1.2 of claude-1's plan — done by glm-1 (H3)`. A lead cannot write that
+section itself.
+
 **An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
 session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session
 in that team only: it wakes only that task, and only that session reads it. Each session of an agent has its own read

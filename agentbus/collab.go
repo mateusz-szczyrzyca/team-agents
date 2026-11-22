@@ -1559,3 +1559,41 @@ func workerWaits(state MemberState) bool {
 	}
 	return false
 }
+
+// helpersOfTask lists the worker requests that runs of task made, oldest first.
+func helpersOfTask(st *State, task string) []*Helper {
+	var out []*Helper
+	for _, h := range sortedHelpers(st) {
+		if h.FromTask == task {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// helperDumpTask checks the --task of helper-dump: a request recorded without a task has an empty one, so an empty
+// --task would list those instead of a task's.
+func helperDumpTask(task string) *CmdHelperDumpError {
+	if strings.TrimSpace(task) == "" {
+		return opErr(CmdHelperDumpMissingTask, "%s", missing("--task"))
+	}
+	return nil
+}
+
+// helper-dump: the worker requests of a task as a JSON array, oldest first (for agent status and the description of a
+// pull request); an empty array for a task without requests.
+func cmdHelperDump(args []string) {
+	fs := newFlagSet("helper-dump")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	task := fs.String("task", "", "the task whose requests are listed")
+	parseFlags(fs, args)
+	exitOn(helperDumpTask(*task).asError())
+	b := &Bus{dir: *dir}
+	exitOn(transact(b, CmdHelperDumpStorage, func(st *State) *CmdHelperDumpError {
+		helpers := helpersOfTask(st, *task)
+		if helpers == nil {
+			helpers = []*Helper{}
+		}
+		return fromStorage(CmdHelperDumpStorage, printJSON(helpers))
+	}).asError())
+}

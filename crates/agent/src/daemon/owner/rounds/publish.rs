@@ -999,8 +999,22 @@ impl Owner {
             let files = git.range_changes(&merge_base, &record.result.head).await?;
             crate::daemon::pr::description::allowed_section(&pulls.texts, &files, team.allowances())?
         };
+        let mut requests = Vec::new();
+        for (_, member) in team.crew().roster() {
+            let of_task = self
+                .parts
+                .bus
+                .helper_dump(member.task())
+                .await
+                .map_err(|source| PublishError::Bus {
+                    task: member.task().clone(),
+                    source,
+                })?;
+            requests.push((member.agent().name().parse()?, of_task));
+        }
+        let worker_steps = crate::daemon::pr::description::worker_steps_section(&pulls.texts, &requests)?;
         text.body = [text.body.trim_end(), contribution.trim(), &measured].join("\n\n");
-        if let Some(section) = allowed {
+        for section in [allowed, worker_steps].into_iter().flatten() {
             text.body.push_str("\n\n");
             text.body.push_str(section.trim_end());
         }

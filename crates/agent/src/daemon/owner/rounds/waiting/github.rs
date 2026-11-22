@@ -40,6 +40,8 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
         {
             Outlook::MayPass
         }
+        // The bus is a process on this host: one that did not answer may answer at the next try.
+        PublishError::Bus { .. } => Outlook::MayPass,
         PublishError::Git(_)
         | PublishError::Findings(_)
         | PublishError::Commit(_)
