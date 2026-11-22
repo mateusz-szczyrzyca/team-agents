@@ -221,8 +221,9 @@ impl Owner {
             .to_vec();
         // A file the human allowed before the findings about commits had a subject of their own covers the commits that
         // were in the round then: they are kept as they are before the file's allowance may be taken back.
+        let bounded = record.bound_old_answers(reviewing.items, &reviewing.ready.tip);
         let first = judge(&gathered, rules, record, reviewing.items, &team_allowances);
-        if migrate(record, reviewing.items, &first, &reviewing.ready.tip) {
+        if migrate(record, reviewing.items, &first) || bounded {
             self.parts.store.save_checks_record(&lead.task, record).await?;
         }
         self.revoke_changed_allowances(site, reviewing, record).await?;
@@ -719,27 +720,16 @@ fn judge(
 }
 
 /// Records what a file the human allowed or refused before commits had subjects covers: the commits that are in the round
-/// now, as subjects of their own, and for a file with no head the head up to which that holds, so that a commit added
-/// later is a finding of its own. Whether anything was recorded.
-fn migrate(record: &mut ChecksRecord, items: &[ItemId], assessed: &Assessed, tip: &CommitId) -> bool {
+/// now, as subjects of their own (the head up to which an answer with no head covers was bounded before, see
+/// [`ChecksRecord::bound_old_answers`]). Whether anything was recorded.
+fn migrate(record: &mut ChecksRecord, items: &[ItemId], assessed: &Assessed) -> bool {
     let allowed = &assessed.settled.inherited;
     let refused = &assessed.inherited_refused;
     if allowed.is_empty() && refused.is_empty() {
         return false;
     }
-    let mut known = record.allowed_at_of(items);
-    known.extend(record.covered_at_of(items));
-    let unbounded: Vec<RepoPath> = allowed
-        .iter()
-        .chain(refused)
-        .filter_map(|subject| match subject {
-            Subject::Commit { path, .. } if !known.contains_key(path) => Some(path.clone()),
-            Subject::Commit { .. } | Subject::Path(_) | Subject::NoTests => None,
-        })
-        .collect();
     record.allow(items, allowed);
     record.keep_refused(items, refused);
-    record.snapshot_covered(items, &unbounded, tip);
     true
 }
 

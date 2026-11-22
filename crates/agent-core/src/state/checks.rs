@@ -206,8 +206,31 @@ impl ChecksRecord {
     /// Bounds what an answer written before commits had subjects covers: every file the human allowed or refused for
     /// `items` with no head known is taken to cover the commits up to `head`, so that a commit added after it is a
     /// finding of its own, whether or not the round has a finding about that file now. Whether anything was recorded.
-    pub fn bound_old_answers(&mut self, _items: &[ItemId], _head: &CommitId) -> bool {
-        false
+    pub fn bound_old_answers(&mut self, items: &[ItemId], head: &CommitId) -> bool {
+        let mut recorded = false;
+        for item in items {
+            let Some(kept) = self.items.get_mut(item) else {
+                continue;
+            };
+            let unbounded: Vec<RepoPath> = kept
+                .allowed
+                .iter()
+                .chain(&kept.refused)
+                .filter_map(|subject| match subject {
+                    Subject::Path(path)
+                        if !kept.allowed_at.contains_key(path) && !kept.covered_at.contains_key(path) =>
+                    {
+                        Some(path.clone())
+                    }
+                    Subject::Path(_) | Subject::NoTests | Subject::Commit { .. } => None,
+                })
+                .collect();
+            for path in unbounded {
+                kept.covered_at.insert(path, head.clone());
+                recorded = true;
+            }
+        }
+        recorded
     }
 
     /// Records that the human refused `subjects` for `items`, without an answer to a question.
