@@ -777,6 +777,10 @@ async fn unwritable_history_db_writes_events_to_stderr_without_looping_and_finis
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one block per level of the event vocabulary: each block is a cause of the events of its level"
+)]
 fn every_log_event_variant_is_produced_with_its_level_and_ids() {
     let state = solo_state();
     let daemon = Daemon::new(&state, None);
