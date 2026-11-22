@@ -190,15 +190,7 @@ impl Owner {
         };
         let derived_part_branch = team
             .round(&round)
-            .and_then(agent_core::state::Round::part)
-            .map(|p| {
-                let p_str = p.to_string();
-                if branch.as_str().ends_with(&p_str) {
-                    branch.to_string()
-                } else {
-                    format!("{branch}{p_str}")
-                }
-            });
+            .and_then(|r| expected_part_branch(r, branch.as_str()));
         let repo = team.repo().clone();
         let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;
         let git = self.worktree_git(&repo, &member, &assignee)?;
@@ -208,43 +200,14 @@ impl Owner {
         let github = self.github_for(&pulls, &repo, &git).await?;
         let remote = github.get_pull_request(number).await?;
 
-        if is_part {
-            let same_repo = remote.origin == agent_runtime::github::Origin::SameRepository;
-            let pr_branch = remote.head_branch.as_str();
-            let task_branch = branch.as_str();
-            let part_branch = derived_part_branch.as_deref();
-            let observation = match remote.state {
-                PullState::Open => DeliveryObservation::Open,
-                PullState::Closed => DeliveryObservation::Closed,
-                PullState::Merged => DeliveryObservation::Merged,
-            };
-
-            let verdict = evaluate_delivery_report(DeliveryReportFacts {
-                same_repo,
-                pr_branch,
-                task_branch,
-                part_branch,
-                state: observation,
-            });
-
-            match verdict {
-                DeliveryVerdict::Accepted => {}
-                DeliveryVerdict::RefusedForeignRepository => return Err(ClaimError::ForeignRepository),
-                DeliveryVerdict::RefusedForeignBranch => return Err(ClaimError::ForeignBranch),
-                DeliveryVerdict::RefusedOpen => return Err(ClaimError::Unmerged),
-                DeliveryVerdict::RefusedClosed => return Err(ClaimError::Closed),
-            }
-        } else {
-            let pr = recorded_pr
-                .as_ref()
-                .ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?;
-            if remote.head_branch != pr.branch {
-                return Err(ClaimError::Branch);
-            }
-            if remote.state == PullState::Closed {
-                return Err(ClaimError::Closed);
-            }
-        }
+        check_remote_claim(
+            is_part,
+            &remote,
+            branch.as_str(),
+            derived_part_branch.as_deref(),
+            recorded_pr.as_ref(),
+            number,
+        )?;
 
         git.fetch(&base).await.map_err(|source| DeliveryGitError::Read {
             read: DeliveryRead::Base,
@@ -533,4 +496,59 @@ async fn verify_published_tip(
     } else {
         Err(DeliveryGitError::OwnCommits)
     }
+}
+
+fn check_remote_claim(
+    is_part: bool,
+    remote: &agent_runtime::github::RemotePullRequest,
+    task_branch: &str,
+    part_branch: Option<&str>,
+    recorded_pr: Option<&agent_core::state::PullRequest>,
+    number: PrNumber,
+) -> Result<(), ClaimError> {
+    if is_part {
+        let same_repo = remote.origin == agent_runtime::github::Origin::SameRepository;
+        let pr_branch = remote.head_branch.as_str();
+        let observation = match remote.state {
+            PullState::Open => DeliveryObservation::Open,
+            PullState::Closed => DeliveryObservation::Closed,
+            PullState::Merged => DeliveryObservation::Merged,
+        };
+
+        let verdict = evaluate_delivery_report(DeliveryReportFacts {
+            same_repo,
+            pr_branch,
+            task_branch,
+            part_branch,
+            state: observation,
+        });
+
+        match verdict {
+            DeliveryVerdict::Accepted => Ok(()),
+            DeliveryVerdict::RefusedForeignRepository => Err(ClaimError::ForeignRepository),
+            DeliveryVerdict::RefusedForeignBranch => Err(ClaimError::ForeignBranch),
+            DeliveryVerdict::RefusedOpen => Err(ClaimError::Unmerged),
+            DeliveryVerdict::RefusedClosed => Err(ClaimError::Closed),
+        }
+    } else {
+        let pr = recorded_pr.ok_or(agent_core::state::DeliverRoundError::NoTeamPr { number })?;
+        if remote.head_branch != pr.branch {
+            return Err(ClaimError::Branch);
+        }
+        if remote.state == PullState::Closed {
+            return Err(ClaimError::Closed);
+        }
+        Ok(())
+    }
+}
+
+fn expected_part_branch(round: &agent_core::state::Round, branch: &str) -> Option<String> {
+    round.part().map(|p| {
+        let p_str = p.to_string();
+        if branch.ends_with(&p_str) {
+            branch.to_owned()
+        } else {
+            format!("{branch}{p_str}")
+        }
+    })
 }
