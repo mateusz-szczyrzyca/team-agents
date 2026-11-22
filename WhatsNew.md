@@ -5,14 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.65.0 — 22.11.2026 — PR #183
-
-### New features
-- [agent] [agent-core] [agentbus] The member, the coordinator and the solo agent, and an investigator through the bus, are told when to give a step to a worker and when not to: a step with one result, named files and a check a machine runs, never a decision, a design or a step a reviewer judges; a refused or failed request they do themselves.
-- [agent-core] A plan can mark a step for a worker with the line `By: worker` in its text; plans without it read as before.
-- [agent] [agent-runtime] [agentbus] `agent status <task>` lists the task's requests for workers under its plan, for example `request H3  step 1.2  worker glm-1  done`.
-- [agent] The description of a pull request gets a section of the harness, "Steps done by a worker", for example `- step 1.2 of claude-1's plan — done by glm-1 (H3)`.
-
 ## 0.64.0 — 22.11.2026 — PR #181
 
 ### Bug fixes
