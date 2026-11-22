@@ -5,7 +5,12 @@ use crate::protocol::{Frame, ReplyFormat};
 
 /// The versions of a build of the four crates, with the numbers the tests compare.
 fn versions() -> Versions {
-    Versions::new("0.9.1", "0.9.2", "0.9.3", "0.9.4")
+    Versions {
+        agent: String::from("0.9.1"),
+        agent_core: String::from("0.9.2"),
+        agent_runtime: String::from("0.9.3"),
+        agent_web: String::from("0.9.4"),
+    }
 }
 
 #[test]
@@ -14,7 +19,7 @@ fn a_status_answer_carries_the_daemon_versions_and_reads_them_back() {
     response.daemon_versions = Some(versions());
     let frame = Frame::Response(response);
 
-    let line = frame.to_line_for(ReplyFormat::Executor).unwrap();
+    let line = frame.to_line_for(ReplyFormat::Versions).unwrap();
     let read = Frame::from_line_negotiated(&line).unwrap();
 
     assert_eq!(read, frame);
@@ -35,7 +40,7 @@ fn a_status_answer_carries_the_daemon_versions_and_reads_them_back() {
 fn an_answer_without_versions_is_written_as_before() {
     let frame = Frame::Response(Response::ok(RequestId(8), Reply::Teams { teams: vec![] }));
 
-    let line = frame.to_line_for(ReplyFormat::Executor).unwrap();
+    let line = frame.to_line_for(ReplyFormat::Versions).unwrap();
 
     assert!(!line.contains("daemon_versions"), "{line}");
     assert_eq!(Frame::from_line_negotiated(&line).unwrap(), frame);
@@ -47,14 +52,19 @@ fn the_formats_older_clients_read_leave_the_versions_out() {
     response.daemon_versions = Some(versions());
     let frame = Frame::Response(response);
 
-    for format in [ReplyFormat::Legacy, ReplyFormat::Split, ReplyFormat::Plan] {
+    for format in [
+        ReplyFormat::Legacy,
+        ReplyFormat::Split,
+        ReplyFormat::Plan,
+        ReplyFormat::Executor,
+    ] {
         let line = frame.to_line_for(format).unwrap();
         let value: serde_json::Value = serde_json::from_str(&line).unwrap();
         assert_eq!(value.pointer("/daemon_versions"), None, "{format:?}: {line}");
     }
-    let executor = frame.to_line_for(ReplyFormat::Executor).unwrap();
-    let value: serde_json::Value = serde_json::from_str(&executor).unwrap();
-    assert!(value.pointer("/daemon_versions").is_some(), "{executor}");
+    let with_versions = frame.to_line_for(ReplyFormat::Versions).unwrap();
+    let value: serde_json::Value = serde_json::from_str(&with_versions).unwrap();
+    assert!(value.pointer("/daemon_versions").is_some(), "{with_versions}");
 }
 
 #[test]
