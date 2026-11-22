@@ -791,3 +791,104 @@ async fn busy_notice_rendering_failures_are_typed_and_retained() {
         BusyNoticeError::MissingPreviousHolder { task: failed } if failed == task
     ));
 }
+
+#[tokio::test]
+async fn an_owed_notice_with_no_matching_item_is_settled() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, _team, task) = waiting_team_state();
+    state
+        .begin_holder_session(&task, agent_core::decide::ladder::Trouble::Busy, crate::fixtures::at(0))
+        .unwrap();
+    state.owe_busy_notice(&task).unwrap();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.team_life().await.unwrap();
+
+    assert!(!owner.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
+    let saved =
+        agent_core::state::State::from_json(&std::fs::read_to_string(daemon.home.state_file()).unwrap()).unwrap();
+    assert!(!saved.find_task(&task).unwrap().member.busy_notice_owed());
+}
+
+/// Queues a normal notice whose accepted text proves that the outbox got past a settled busy notice.
+fn tell_later_marker(owner: &mut crate::daemon::owner::Owner, team: &agent_core::ids::TeamId) {
+    use crate::daemon::team::{BusJob, BusNotice};
+
+    owner.tell_bus(
+        team,
+        BusJob::Tell {
+            to: "inv-opus".parse().unwrap(),
+            notice: BusNotice::MemberFinished {
+                member: "claude-1".parse().unwrap(),
+                item: Some("1.1".parse().unwrap()),
+                branch: "agents/claude-1/1.1".parse().unwrap(),
+            },
+        },
+    );
+}
+
+#[tokio::test]
+async fn a_permanent_bus_refusal_settles_the_notice_and_lets_later_jobs_run() {
+    use super::super::fixture::Daemon;
+
+    let (state, team, task) = pre_send_busy_notice();
+    let flaky = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
+    let daemon = Daemon::new(&state, Some(&flaky));
+    std::fs::write(
+        daemon.home.root().join("real-agentbus"),
+        super::super::fixture::agentbus_binary().to_str().unwrap(),
+    )
+    .unwrap();
+    std::fs::write(daemon.home.root().join("flaky-bus-refuse-once"), "send").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.queue_busy_handover_notices();
+    tell_later_marker(&mut owner, &team);
+    owner.look_at_every_team();
+
+    owner.team_life().await.unwrap();
+
+    let messages = std::fs::read_to_string(daemon.home.root().join("bus/messages.jsonl")).unwrap_or_default();
+    assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
+    assert!(!owner.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
+    assert!(!daemon.home.root().join("flaky-bus-refuse-once").exists());
+}
+
+#[tokio::test]
+async fn an_unrenderable_notice_settles_the_obligation_and_lets_later_jobs_run() {
+    use super::super::fixture::Daemon;
+
+    let (state, team, task) = pre_send_busy_notice();
+    let flaky = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
+    let daemon = Daemon::new(&state, Some(&flaky));
+    std::fs::write(
+        daemon.home.root().join("real-agentbus"),
+        super::super::fixture::agentbus_binary().to_str().unwrap(),
+    )
+    .unwrap();
+    let down = daemon.home.root().join("flaky-bus-down");
+    std::fs::write(&down, "").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.look_at_every_team();
+    owner.team_life().await.unwrap();
+    assert!(owner.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
+    owner
+        .parts
+        .state
+        .team_mut(&team)
+        .unwrap()
+        .item_mut("1.1".parse().unwrap())
+        .unwrap()
+        .advance(agent_core::state::ItemPhase::Pending)
+        .unwrap();
+    tell_later_marker(&mut owner, &team);
+    std::fs::remove_file(&down).unwrap();
+    owner.look_at_every_team();
+
+    owner.team_life().await.unwrap();
+
+    let messages = std::fs::read_to_string(daemon.home.root().join("bus/messages.jsonl")).unwrap_or_default();
+    assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
+    assert!(!owner.parts.state.find_task(&task).unwrap().member.busy_notice_owed());
+}
