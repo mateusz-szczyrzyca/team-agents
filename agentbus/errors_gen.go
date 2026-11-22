@@ -923,7 +923,7 @@ const (
 	DelegateMissingField                             // a required field of the request (goal, workdir, steps, returns) is empty [InvalidArgument]
 	DelegateWorkdirInvalid                           // the request's working directory is not absolute, or (for a local agent) not an existing directory [InvalidArgument]
 	DelegateUndefinedTerm                            // a harness identifier (a round, a board item, a request) in the request has no definition in its terms [InvalidArgument]
-	DelegateNotNormalTier                            // a worker or an investigator called it (delegate is for normal models) [Permission]
+	DelegateNotNormalTier                            // a worker called it (a worker does its own job and hands nothing on) [Permission]
 	DelegateMissingRequest                           // the request text is missing [InvalidArgument]
 	DelegateBoardInstruction                         // the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for [InvalidArgument]
 	DelegateInvalidCapabilities                      // requires contains an unknown or malformed capability [InvalidArgument]

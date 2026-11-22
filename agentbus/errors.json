@@ -567,7 +567,7 @@
     {
      "name": "NotNormalTier",
      "class": "Permission",
-     "doc": "a worker or an investigator called it (delegate is for normal models)"
+     "doc": "a worker called it (a worker does its own job and hands nothing on)"
     },
     {
      "name": "MissingRequest",
