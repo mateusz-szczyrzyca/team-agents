@@ -35,9 +35,6 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] super::findings::TextError),
-    /// The file with the findings of the fix pass cannot be written.
-    #[error("cannot write the findings of the fix pass to a file")]
-    FindingsFile(#[from] agent_runtime::text_file::ReplaceError),
     /// The repository of the team is not configured, so its base branch is not known.
     #[error("the repository {repo} of the team is not configured")]
     Repo {
@@ -382,7 +379,10 @@ pub(super) async fn fix_pass(
     findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
     let findings = findings.join("\n\n");
     // The same text goes to a file the prompts of the pass name: a lead that has lost it reads it again.
-    replace_text_file(&findings_file, &findings, 0o600).await?;
+    // The findings are in the prompt either way: a file that cannot be written is a warning, and is then not named.
+    if let Err(error) = replace_text_file(&findings_file, &findings, 0o600).await {
+        tracing::warn!(path = %findings_file.display(), error = %agent_runtime::process::error_chain(&error), "cannot write the findings of the fix pass to a file");
+    }
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("pass", passes.to_string())?
@@ -421,6 +421,18 @@ pub(in crate::daemon::owner) fn findings_file_line(
     texts: &AutopilotPrompts,
     file: &std::path::Path,
 ) -> Result<Option<String>, super::responses::ResponseTextError> {
+    let present = match std::fs::metadata(file) {
+        Ok(found) => found.is_file(),
+        // A pass begun before the file was kept has none: nothing is named.
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => {
+            tracing::warn!(path = %file.display(), error = %error, "the findings file of the fix pass cannot be looked at: it is not named");
+            false
+        }
+    };
+    if !present {
+        return Ok(None);
+    }
     // The home is a path of the configuration, which is text.
     let values = Variables::new().with("path", file.display().to_string())?;
     Ok(Some(
