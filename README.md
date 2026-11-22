@@ -474,14 +474,34 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
-| `agent status` | every team with its rounds and a count of its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks, their plans and the parts of a split are not listed; a question that waits for the human is named with its number |
-| `agent status --task` | as `agent status`, with the lines of the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
-| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
-| `agent status --running --task` | as `agent status --running`, with the tasks, their plans and the parts |
+| `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number |
+| `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
+| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now and who works on it. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
+| `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
+
+The short view of a team, as `agent status` and `agent status --running` print it: the team, its rounds, its live tasks
+and the count. A task that runs says when it was last active; a reviewer says what it does or did (`working`, or when
+and why its review stopped) instead of the status of its task:
+
+```
+team-20261111-153000-t5m8  team-agents  autopilot  1 pending, 1 in progress, 0 in review, 0 approved, 0 done
+  round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00
+  task-20261111-153001-k3x9  coordinator  inv-opus   running, last activity 2026-11-11 19:20:11 +00:00
+  task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers
+  task-20261111-153003-k3x9  worker       glm-1      done
+  task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 2026-11-11 19:19:58 +00:00
+  tasks: 2 running, 1 waiting, 1 with questions, 2 done; questions number 2 wait for answers (claude-1, task-20261111-153002-k3x9)
+```
+
+The count has two tasks more than the lines: reviewers whose review is over (one waits for its next review, one is
+done). A reviewer is listed while its task runs, and otherwise until its task is done or stopped or its last review
+ended with its report, by your `agent stop`, or as a second opinion that was abandoned; a review that failed stays
+listed, since `agent resume` can start it again. `--task` lists every task, and under each its plan (`[x] 1.1 …`), and
+the parts of a split.
 
 Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
 `done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it
