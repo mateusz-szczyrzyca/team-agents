@@ -120,6 +120,8 @@ pub enum LastRun {
     NoStatus,
     /// The human stopped it.
     Stopped,
+    /// A run of it is going: it has not handed anything over after it.
+    Running,
 }
 
 /// Whether the item moved on after the run it was handed over after.
@@ -185,6 +187,15 @@ impl Facts {
     #[must_use]
     pub const fn with_answered(self, answered: Answered) -> Self {
         Self { answered, ..self }
+    }
+
+    /// The facts of the item as its member's `runs` show them, with `held` holding it and `answered` saying whether the
+    /// hand-over was sent back already: the end of the last run, the number of the last run, and the number of the last
+    /// run that ended `DONE`, which is the one the hand-over was made after.
+    #[must_use]
+    pub fn from_runs(held: Held, answered: Answered, _runs: &[crate::state::Run]) -> Self {
+        let first = NonZeroU32::MIN;
+        Self::new(held, LastRun::Never, MovedOn::No, first, first).with_answered(answered)
     }
 
     /// The same facts with the lead's end `lead`.
@@ -266,5 +277,7 @@ pub fn classify(_line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
 mod answered_tests;
 #[cfg(test)]
 mod facts_tests;
+#[cfg(test)]
+mod runs_tests;
 #[cfg(test)]
 mod tests;
