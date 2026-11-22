@@ -1199,7 +1199,7 @@ Integrate the guide.
     fn damage_the_file(path: &Path, damage: Damage) -> String {
         let text = std::fs::read_to_string(path).unwrap();
         match damage {
-            Damage::Truncated => std::fs::write(path, &text[..text.len() / 2]).unwrap(),
+            Damage::Truncated => std::fs::write(path, &text.as_bytes()[..text.len() / 2]).unwrap(),
             Damage::UnknownField => {
                 let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
                 value["surprise"] = serde_json::json!(1);
@@ -1266,7 +1266,10 @@ Integrate the guide.
         if !matches!(damage, Damage::UnknownField | Damage::Truncated) {
             assert!(aside[0].is_dir(), "kept as it was");
         } else if matches!(damage, Damage::Truncated) {
-            assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), &before[..before.len() / 2]);
+            assert_eq!(
+                std::fs::read(&aside[0]).unwrap(),
+                &before.as_bytes()[..before.len() / 2]
+            );
         }
         eventually("the damaged file to be logged with its name", || {
             output_of(&world.agent(&["log", "--json", "--event", "restart_corrected"]))
@@ -1303,6 +1306,39 @@ Integrate the guide.
     #[test]
     fn an_unreadable_file_of_a_request_is_settled_as_a_wrong_result_and_set_aside() {
         a_damaged_file_is_settled_as_a_wrong_result_and_set_aside(Damage::Unreadable);
+    }
+
+    /// Gives a directory its permissions back when the test ends, so that the scratch home can be removed.
+    struct Writable(PathBuf);
+
+    impl Drop for Writable {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+            // A test that cannot give them back leaves a scratch directory behind; there is nothing to do about that here.
+            if let Err(error) = std::fs::set_permissions(&self.0, std::fs::Permissions::from_mode(0o755)) {
+                eprintln!("cannot restore the permissions of {:?}: {error}", self.0);
+            }
+        }
+    }
+
+    #[test]
+    fn a_request_whose_stage_cannot_be_written_is_settled_as_a_wrong_result_and_the_daemon_goes_on() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, serde_json::json!({"stage": "ended"}), MEMBER_REQUEST);
+        let task_dir = world.home.join("tasks").join(&worker);
+        std::fs::set_permissions(&task_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let _writable = Writable(task_dir);
+
+        world.start();
+
+        world.request_is("1", "failed");
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(told.contains("cannot keep"), "{told}");
+        assert!(
+            output_of(&world.agent(&["status"])).contains("claude-1"),
+            "the daemon still answers"
+        );
     }
 
     #[test]
