@@ -2,15 +2,15 @@
 //! word of its status, which says `waiting` between its reviews.
 
 use agent_core::kinds::ActivityKind;
+use agent_core::local_time::Zone;
 use agent_core::protocol::MemberSummary;
 use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest, OpinionFailure, RunEnd, Timestamp};
-use time::UtcOffset;
 
 use super::clock_of;
 
 /// What the line of the reviewer `member` says, `None` when the team recorded no activity of it: the activity replaces
 /// the line of its status for a reviewer.
-pub(crate) fn status(member: &MemberSummary, activities: &[Activity], offset: UtcOffset) -> Option<String> {
+pub(crate) fn status(member: &MemberSummary, activities: &[Activity], zone: Zone) -> Option<String> {
     let (place, newest) = newest(member, activities)?;
     Some(match newest.outcome() {
         ActivityOutcome::Working => "working".to_owned(),
@@ -20,15 +20,15 @@ pub(crate) fn status(member: &MemberSummary, activities: &[Activity], offset: Ut
         } => format!(
             "done, {} review finished {}",
             ordinal_text(ordinal(place, newest, activities)),
-            clock_of(*at, offset)
+            clock_of(*at, zone)
         ),
-        ActivityOutcome::Finished { at, end } => stopped(*at, end, offset),
+        ActivityOutcome::Finished { at, end } => stopped(*at, end, zone),
     })
 }
 
 /// What an activity that ended at `at` without its report says: when, and why in the words the human reads.
-pub(super) fn stopped(at: Timestamp, end: &ActivityEnd, offset: UtcOffset) -> String {
-    format!("stopped at {}, reason: {}", clock_of(at, offset), ending(end))
+pub(super) fn stopped(at: Timestamp, end: &ActivityEnd, zone: Zone) -> String {
+    format!("stopped at {}, reason: {}", clock_of(at, zone), ending(end))
 }
 
 /// Where an activity stands in the record of its team, oldest first: by when it was asked, then by the pass of the pull

@@ -750,7 +750,7 @@ impl Owner {
     }
 }
 
-pub(super) use self::prompts::{Addition, SectionError, sections_for};
+pub(super) use self::prompts::{Addition, SectionError, sections_for_in};
 
 #[cfg(test)]
 #[path = "rounds/tests/checks.rs"]

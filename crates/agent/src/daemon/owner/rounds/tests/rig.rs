@@ -174,6 +174,7 @@ pub(super) struct Rig {
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
     clock: TickingClock,
     pub(super) free_space: agent_runtime::disk::FakeFreeSpace,
+    zone: agent_core::local_time::Zone,
 }
 
 impl Rig {
@@ -211,6 +212,11 @@ impl Rig {
         std::fs::write(&secrets, "github_token = \"ghp_test_token_0123\"\n").unwrap();
         std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
         let free_space = agent_runtime::disk::FakeFreeSpace::new(200 * 1024 * 1024 * 1024);
+        let zone = if bus && agents.iter().any(|agent| agent.scenario.starts_with("fail")) {
+            agent_core::local_time::Zone::Utc
+        } else {
+            agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC)
+        };
         Self {
             _dir: dir,
             home,
@@ -221,6 +227,7 @@ impl Rig {
             daemon: None,
             clock: TickingClock::new(),
             free_space,
+            zone,
         }
     }
 
@@ -234,10 +241,11 @@ impl Rig {
 
     fn setup(&self) -> DaemonSetup {
         DaemonSetup {
+            local_offset: time::UtcOffset::UTC,
             home: self.home.clone(),
             prompts_dir: Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
             clock: SharedClock::new(self.clock.clone()),
-            local_offset: time::UtcOffset::UTC,
+            zone: self.zone,
             timings: Some(Timings {
                 tick: Duration::from_millis(25),
                 run: RunTimings {
@@ -310,7 +318,9 @@ impl Rig {
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run_with_log_layer(self.setup(), self.shutdown.clone(), layer.clone()));
+            let mut setup = self.setup();
+            setup.zone = agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC);
+            let daemon = tokio::spawn(run_with_log_layer(setup, self.shutdown.clone(), layer.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -655,5 +665,10 @@ impl Rig {
             start: 1_795_000_000,
             ticks: Arc::new(AtomicU32::new(0)),
         };
+    }
+
+    /// Sets the zone the daemon uses when started again.
+    pub(super) fn set_zone(&mut self, zone: agent_core::local_time::Zone) {
+        self.zone = zone;
     }
 }

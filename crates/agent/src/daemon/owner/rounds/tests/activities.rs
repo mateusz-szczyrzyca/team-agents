@@ -297,9 +297,14 @@ async fn status_investigators_shows_the_reviewers_at_work_and_the_free_ones() {
         .unwrap();
     let mut shown = Vec::new();
 
-    crate::commands::status::status_investigators(&mut connection, &rig.home, time::UtcOffset::UTC, &mut shown)
-        .await
-        .unwrap();
+    crate::commands::status::status_investigators(
+        &mut connection,
+        &rig.home,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        &mut shown,
+    )
+    .await
+    .unwrap();
     rig.stop().await.unwrap();
 
     let activities = state.team(&id).unwrap().activities();

@@ -94,3 +94,13 @@ async fn the_command_prints_what_the_daemon_lists_as_json() {
     let read: Vec<TeamSummary> = serde_json::from_slice(&out).unwrap();
     assert_eq!(read, teams);
 }
+
+#[test]
+fn the_json_is_byte_for_byte_what_it_was_before_local_times() {
+    let text = render_json(&[summary(Some("Fix the typo in the README"))]).unwrap();
+
+    assert_eq!(
+        text,
+        "[{\"id\":\"team-20261111-153000-t5m8\",\"repo\":\"team-agents\",\"short_desc\":\"Fix the typo in the README\",\"created_at\":\"2026-11-11T19:15:00Z\",\"merge\":\"autopilot\",\"items\":{\"pending\":2,\"in_progress\":0,\"in_review\":0,\"approved\":0,\"done\":0},\"members\":[{\"task\":\"task-20261111-153001-k3x9\",\"agent\":{\"tier\":\"investigator\",\"name\":\"inv-opus\"},\"role\":\"coordinator\",\"status\":\"queued\"},{\"task\":\"task-20261111-153002-k3x9\",\"agent\":{\"tier\":\"normal\",\"name\":\"claude-1\"},\"role\":\"member\",\"status\":\"queued\"},{\"task\":\"task-20261111-153003-k3x9\",\"agent\":{\"tier\":\"worker\",\"name\":\"glm-1\"},\"role\":\"worker\",\"status\":\"queued\"},{\"task\":\"task-20261111-153004-k3x9\",\"agent\":{\"tier\":\"investigator\",\"name\":\"inv-codex\"},\"role\":\"reviewer\",\"status\":\"queued\"}],\"activities\":[{\"investigator\":\"inv-opus\",\"task\":\"task-20261111-153001-k3x9\",\"rounds\":[],\"request\":{\"kind\":\"team_member\"},\"asked_at\":\"2026-11-11T19:15:00Z\",\"outcome\":{\"status\":\"working\"}}]}]\n"
+    );
+}

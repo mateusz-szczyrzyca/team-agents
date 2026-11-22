@@ -1,14 +1,14 @@
 //! Pure bounded summary renderer for `agent debug`.
 //!
-//! Renders `SUMMARY.md` from collected facts in strict specification order, with UTC and local
-//! times, task tables, and byte-safe bounded truncation (< 100,000 bytes) preserving section headings.
+//! Renders `SUMMARY.md` from collected facts in strict specification order, with local times in one
+//! form with their zone, task tables, and byte-safe bounded truncation (< 100,000 bytes) preserving section headings.
 
 #[cfg(test)]
 mod tests;
 
+use crate::local_time::Zone;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use time::UtcOffset;
 
 use crate::config::RepoName;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
@@ -345,49 +345,10 @@ pub struct UnreadablePartSummary {
     pub reason: String,
 }
 
-/// Formats a timestamp into human-readable UTC and local time representation.
+/// Formats a timestamp for a person in `zone`: the date, the time and the zone, as `agent log` writes it.
 #[must_use]
-pub fn format_time(ts: Timestamp, offset: UtcOffset) -> String {
-    let utc = ts.as_utc();
-    let (hours, mins, secs) = offset.as_hms();
-    let sign = if hours < 0 || mins < 0 || secs < 0 { '-' } else { '+' };
-    let offset_str = if secs != 0 {
-        format!(
-            "{}{:02}:{:02}:{:02}",
-            sign,
-            hours.unsigned_abs(),
-            mins.unsigned_abs(),
-            secs.unsigned_abs()
-        )
-    } else {
-        format!("{}{:02}:{:02}", sign, hours.unsigned_abs(), mins.unsigned_abs())
-    };
-
-    let utc_str = format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}:{:02} UTC",
-        utc.year(),
-        u8::from(utc.month()),
-        utc.day(),
-        utc.hour(),
-        utc.minute(),
-        utc.second(),
-    );
-
-    let local_str = match utc.checked_to_offset(offset) {
-        Some(local) if (0..=9999).contains(&local.year()) => format!(
-            "{:04}-{:02}-{:02} {:02}:{:02}:{:02} {}",
-            local.year(),
-            u8::from(local.month()),
-            local.day(),
-            local.hour(),
-            local.minute(),
-            local.second(),
-            offset_str,
-        ),
-        _ => format!("(local offset out of range: {offset_str})"),
-    };
-
-    format!("{utc_str} ({local_str})")
+pub fn format_time(ts: Timestamp, zone: Zone) -> String {
+    zone.stamp(ts)
 }
 
 /// Computes minutes since activity relative to `now`, saturating at 0 if activity is in the future.
@@ -546,12 +507,12 @@ fn write_process_line(out: &mut SummaryWriter, label: &str, value: &str) {
     write_line(out, "");
 }
 
-fn render_daemon(input: &SummaryInput, offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_daemon(input: &SummaryInput, zone: Zone, out: &mut SummaryWriter) {
     let command_version = &input.command_version;
     if let Some(d) = &input.daemon {
         write_line(out, &format!("- PID: {}", d.pid));
         if let Some(started) = d.started_at {
-            write_line(out, &format!("- Started: {}", format_time(started, offset)));
+            write_line(out, &format!("- Started: {}", format_time(started, zone)));
         }
         write_process_line(out, "- Command version: ", command_version);
         write_process_line(out, "- Daemon version: ", &d.version);
@@ -592,7 +553,7 @@ fn render_daemon(input: &SummaryInput, offset: UtcOffset, out: &mut SummaryWrite
     write_line(out, "");
 }
 
-fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_team(team: &TeamSummaryFacts, zone: Zone, out: &mut SummaryWriter) {
     write_line(out, &format!("Team `{}` (repository `{}`)", team.id, team.repo));
     write_line(out, "");
     write_line(out, "### Items");
@@ -615,7 +576,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWrit
         let item_str = r.item.as_ref().map_or_else(|| "-".to_owned(), ToString::to_string);
         let status_str = match r.status {
             RoundLife::Open => "open".to_owned(),
-            RoundLife::Closed { at, how } => format!("closed ({how}) at {}", format_time(at, offset)),
+            RoundLife::Closed { at, how } => format!("closed ({how}) at {}", format_time(at, zone)),
         };
         write_line(
             out,
@@ -623,7 +584,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWrit
                 "| {} | {} | {} | {} |",
                 r.id,
                 item_str,
-                format_time(r.opened_at, offset),
+                format_time(r.opened_at, zone),
                 status_str
             ),
         );
@@ -631,7 +592,7 @@ fn render_team(team: &TeamSummaryFacts, offset: UtcOffset, out: &mut SummaryWrit
     write_line(out, "");
 }
 
-fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, zone: Zone, out: &mut SummaryWriter) {
     write_line(
         out,
         "| Task | Agent | Role | Status | Runs | Started | Ended | Last Activity | Minutes Since |",
@@ -640,13 +601,13 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, offset: UtcOffs
     for t in tasks {
         let started = t
             .last_run_started
-            .map_or_else(|| "-".to_owned(), |s| format_time(s, offset));
+            .map_or_else(|| "-".to_owned(), |s| format_time(s, zone));
         let ended = t
             .last_run_ended
-            .map_or_else(|| "-".to_owned(), |e| format_time(e, offset));
+            .map_or_else(|| "-".to_owned(), |e| format_time(e, zone));
         let (act_str, mins_str) = t.last_activity.map_or_else(
             || ("-".to_owned(), "-".to_owned()),
-            |a| (format_time(a, offset), format!("{} min", minutes_since(now, a))),
+            |a| (format_time(a, zone), format!("{} min", minutes_since(now, a))),
         );
         write_line(
             out,
@@ -678,7 +639,7 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     }
 }
 
-fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_git(worktrees: &[GitWorktreeSummary], zone: Zone, out: &mut SummaryWriter) {
     for w in worktrees {
         write_line(out, &format!("### Worktree for Task `{}`", w.task_id));
         write_line(out, "");
@@ -709,7 +670,7 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Sum
                     c.id,
                     c.author,
                     c.subject,
-                    format_time(c.time, offset)
+                    format_time(c.time, zone)
                 ),
             );
         }
@@ -718,7 +679,7 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Sum
             &format!("- Untracked files (newest {}):", w.newest_untracked.len()),
         );
         for u in &w.newest_untracked {
-            let mod_str = u.modified.map_or_else(|| "-".to_owned(), |m| format_time(m, offset));
+            let mod_str = u.modified.map_or_else(|| "-".to_owned(), |m| format_time(m, zone));
             write_line(
                 out,
                 &format!(
@@ -733,7 +694,7 @@ fn render_git(worktrees: &[GitWorktreeSummary], offset: UtcOffset, out: &mut Sum
     }
 }
 
-fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWriter) {
+fn render_gate(gates: &[TaskGateSummary], zone: Zone, out: &mut SummaryWriter) {
     for g in gates {
         write_line(out, &format!("### Gate for Task `{}`", g.task_id));
         write_line(out, "");
@@ -756,7 +717,7 @@ fn render_gate(gates: &[TaskGateSummary], offset: UtcOffset, out: &mut SummaryWr
             );
             write_line(
                 out,
-                &format!("  Finished: {}", format_time(rec.result.finished_at, offset)),
+                &format!("  Finished: {}", format_time(rec.result.finished_at, zone)),
             );
             write_line(out, &format!("  Log: `{}`", out.path(rec.result.log.as_path())));
         } else {
@@ -937,8 +898,8 @@ fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWrit
 /// # Errors
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
-pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, str::to_owned, PathPresentation::Escaped, None)
+pub fn render_summary(input: &SummaryInput, zone: Zone) -> Result<String, SummaryError> {
+    render_with_redaction(input, zone, str::to_owned, PathPresentation::Escaped, None)
 }
 
 /// Renders collected text after redaction, before measuring or truncating any fragment.
@@ -949,15 +910,15 @@ pub fn render_summary(input: &SummaryInput, offset: UtcOffset) -> Result<String,
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when redacted required facts exceed the budget.
 pub fn render_redacted_summary(
     input: &SummaryInput,
-    offset: UtcOffset,
+    zone: Zone,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, redact, PathPresentation::Escaped, None)
+    render_with_redaction(input, zone, redact, PathPresentation::Escaped, None)
 }
 
 fn render_with_redaction(
     input: &SummaryInput,
-    offset: UtcOffset,
+    zone: Zone,
     redact: impl Fn(&str) -> String,
     paths: PathPresentation,
     git_notice: Option<&str>,
@@ -972,7 +933,7 @@ fn render_with_redaction(
     write_line(&mut out, "");
     write_line(
         &mut out,
-        &format!("Collected at: {}", format_time(input.collected_at, offset)),
+        &format!("Collected at: {}", format_time(input.collected_at, zone)),
     );
     write_line(&mut out, "");
 
@@ -1003,19 +964,19 @@ fn render_with_redaction(
         match section {
             SummarySection::Anomalies => render_anomalies(&input.anomalies, &mut out),
             SummarySection::DaemonAndVersions => {
-                render_daemon(input, offset, &mut out);
+                render_daemon(input, zone, &mut out);
             }
-            SummarySection::TeamItemsRounds => render_team(&input.team, offset, &mut out),
-            SummarySection::TaskTable => render_task_table(&input.tasks, now, offset, &mut out),
+            SummarySection::TeamItemsRounds => render_team(&input.team, zone, &mut out),
+            SummarySection::TaskTable => render_task_table(&input.tasks, now, zone, &mut out),
             SummarySection::TaskDetails => render_task_details(&input.tasks, &mut out),
             SummarySection::GitWorktrees => {
                 if let Some(notice) = git_notice {
                     write_line(&mut out, notice);
                     write_line(&mut out, "");
                 }
-                render_git(&input.git, offset, &mut out);
+                render_git(&input.git, zone, &mut out);
             }
-            SummarySection::GateRecords => render_gate(&input.gate, offset, &mut out),
+            SummarySection::GateRecords => render_gate(&input.gate, zone, &mut out),
             SummarySection::HistoryTail => render_history(input.history_tail.as_deref(), &mut out),
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
@@ -1048,10 +1009,10 @@ pub enum SummaryError {
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
 pub fn render_command_summary(
     input: &SummaryInput,
-    offset: UtcOffset,
+    zone: Zone,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, redact, PathPresentation::Plain, None)
+    render_with_redaction(input, zone, redact, PathPresentation::Plain, None)
 }
 
 /// Renders a command summary with a retained-worktree notice in the git section.
@@ -1060,9 +1021,9 @@ pub fn render_command_summary(
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
 pub fn render_command_summary_with_git_notice(
     input: &SummaryInput,
-    offset: UtcOffset,
+    zone: Zone,
     redact: impl Fn(&str) -> String,
     git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, offset, redact, PathPresentation::Plain, git_notice)
+    render_with_redaction(input, zone, redact, PathPresentation::Plain, git_notice)
 }

@@ -10,6 +10,7 @@ use std::num::NonZeroU32;
 
 use agent_core::decide::retry::pause;
 use agent_core::ids::{RoundId, TeamId};
+use agent_core::local_time::Zone;
 use agent_core::state::{InvalidTimestamp, PrNumber, Timestamp};
 use agent_runtime::git::{GitError, GitOperation};
 use agent_runtime::github::Outlook;
@@ -67,11 +68,10 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
     }
 }
 
-/// The time of day `time` as a reader of the local clock sees it, `HH:MM`.
+/// The moment `time` in `zone` to the minute, as a person reads it: `2026-11-21 01:07 +01:00`.
 #[must_use]
-pub(in crate::daemon::owner) fn clock_time(time: Timestamp, offset: time::UtcOffset) -> String {
-    let local = time.as_utc().to_offset(offset);
-    format!("{:02}:{:02}", local.hour(), local.minute())
+pub(in crate::daemon::owner) fn clock_time(time: Timestamp, zone: Zone) -> String {
+    zone.stamp_minute(time)
 }
 
 /// Which step of a round that calls GitHub waits: its key in the waits, its words in the status and the log, and the
@@ -207,16 +207,16 @@ impl Wait {
         }
     }
 
-    /// What `agent status` says of it: `prepare a second opinion #138, tried 4 times, next try 01:07`; for a step the
+    /// What `agent status` and the daemon log say of it: `prepare a second opinion #138, tried 4 times, next try 2026-11-21 01:07 +01:00`; for a step the
     /// human resumed `..., tried 4 times, tried again at the next look`; for a refusal `..., refused: <answer>`.
-    pub(super) fn line(&self, offset: time::UtcOffset) -> String {
+    pub(super) fn line(&self, zone: Zone) -> String {
         let tried = self.tries.get();
         let times = if tried == 1 { "time" } else { "times" };
         match (self.outlook, self.next_at) {
             (Outlook::MayPass, Some(at)) => format!(
                 "{}, tried {tried} {times}, next try {}",
                 self.operation,
-                minute_shown(at, offset)
+                minute_shown(at, zone)
             ),
             (Outlook::MayPass, None) => format!(
                 "{}, tried {tried} {times}, tried again at the next look",
@@ -237,16 +237,16 @@ fn named(step: WaitingStep, pr: Option<PrNumber>) -> String {
 
 /// The minute a time shows, rounded up: 25 seconds past 00:04 shows 00:05, and 00:05 exactly shows 00:05, so that the
 /// shown minute is never before the try.
-fn minute_shown(at: Timestamp, offset: time::UtcOffset) -> String {
+fn minute_shown(at: Timestamp, zone: Zone) -> String {
     let utc = at.as_utc();
     if utc.second() == 0 && utc.nanosecond() == 0 {
-        return clock_time(at, offset);
+        return clock_time(at, zone);
     }
     let shown = utc.saturating_add(Duration::seconds(60_i64.saturating_sub(i64::from(utc.second()))));
     match Timestamp::from_utc(shown) {
-        Ok(shown) => clock_time(shown, offset),
+        Ok(shown) => clock_time(shown, zone),
         // A next try in the last minute a time records is shown as it is: there is no later minute to round to.
-        Err(_past_the_last_year) => clock_time(at, offset),
+        Err(_past_the_last_year) => clock_time(at, zone),
     }
 }
 
@@ -373,12 +373,7 @@ impl Waits {
 
     /// What `agent status` says `round` of `team` waits for: the step of the round itself, else a step of all the
     /// team's rounds; the one tried last when several wait, and a refusal before all of them.
-    pub(in crate::daemon::owner) fn line_of(
-        &self,
-        team: &TeamId,
-        round: &RoundId,
-        offset: time::UtcOffset,
-    ) -> Option<String> {
+    pub(in crate::daemon::owner) fn line_of(&self, team: &TeamId, round: &RoundId, zone: Zone) -> Option<String> {
         let own = Step::Round { round: round.clone() };
         let shared = Step::Team { team: team.clone() };
         self.steps
@@ -386,6 +381,6 @@ impl Waits {
             .filter(|((place, _), wait)| *place == own || (*place == shared && &wait.team == team))
             .map(|(_, wait)| wait)
             .max_by_key(|wait| (wait.outlook == Outlook::WillNotPass, wait.next_at))
-            .map(|wait| wait.line(offset))
+            .map(|wait| wait.line(zone))
     }
 }

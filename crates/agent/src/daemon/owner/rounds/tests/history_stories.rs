@@ -411,7 +411,16 @@ fn minute_time_length(text: &str) -> Option<usize> {
         && digits(11, 2)
         && bytes.get(13) == Some(&b':')
         && digits(14, 2);
-    shape.then_some(16)
+    if !shape {
+        return None;
+    }
+    // A minute time of a notification or a status line carries the offset of its zone after a space: `+01:00`.
+    let offset_shaped = bytes.get(16) == Some(&b' ')
+        && matches!(bytes.get(17), Some(b'+' | b'-'))
+        && digits(18, 2)
+        && bytes.get(20) == Some(&b':')
+        && digits(21, 2);
+    Some(if offset_shaped { 23 } else { 16 })
 }
 
 /// `line` with every UUID replaced.

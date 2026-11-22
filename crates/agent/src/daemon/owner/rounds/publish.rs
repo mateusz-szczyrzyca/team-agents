@@ -982,8 +982,13 @@ impl Owner {
         let base = Revision::RemoteBranch(self.base_branch(repo)?);
         let size = git.pull_request_size(&base, &record.result.head).await?;
         let previous = self.parts.store.previous_gate_record(lead.task()).await?;
-        let measured =
-            crate::daemon::pr::description::measured_sections(&pulls.texts, size, record, previous.as_ref())?;
+        let measured = crate::daemon::pr::description::measured_sections_in(
+            &pulls.texts,
+            size,
+            record,
+            previous.as_ref(),
+            self.parts.zone,
+        )?;
         let mut text = self.harness_text_of(pulls, team_id, repo, ids, record)?;
         let allowed = if team.allowances().is_empty() {
             None

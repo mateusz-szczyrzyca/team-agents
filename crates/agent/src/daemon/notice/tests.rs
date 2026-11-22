@@ -1,3 +1,5 @@
+//! Unit tests for notification layout and rendering, expecting `Time:` headers in `YYYY-MM-DD HH:MM <zone>`.
+
 use std::path::Path;
 
 use agent_core::config::Language;
@@ -24,7 +26,7 @@ async fn rendered(notice: &Notice) -> (String, String) {
         cli: Some(agent_core::kinds::CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: None,
         pr: None,
@@ -140,7 +142,7 @@ fn layout_as_a_table_every_field_present() {
         cli: Some(CliKind::Codex),
         model: Some("o3-mini"),
         time,
-        offset,
+        offset: agent_core::local_time::Zone::Fixed(offset),
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.com/org/team-agents/pull/42"),
@@ -153,7 +155,7 @@ fn layout_as_a_table_every_field_present() {
     assert_eq!(notification.title(), "✅✅ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 21:15
+Time: 2026-11-11 21:15 +02:00
 Task: Fix the typo in the README.
 Agent: codex-1 (codex, o3-mini)
 Task ID: task-20261111-191500-1111
@@ -182,7 +184,7 @@ fn layout_optional_fields_absent() {
         cli: Some(CliKind::Codex),
         model: None,
         time,
-        offset,
+        offset: agent_core::local_time::Zone::Fixed(offset),
         task: &task_id,
         team: None,
         pr: None,
@@ -195,7 +197,7 @@ fn layout_optional_fields_absent() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 19:15
+Time: 2026-11-11 19:15 +00:00
 Task: Fix the typo in the README.
 Agent: codex-1 (codex)
 Task ID: task-20261111-191500-1111
@@ -222,7 +224,7 @@ fn layout_empty_body() {
         cli: Some(CliKind::Codex),
         model: None,
         time,
-        offset,
+        offset: agent_core::local_time::Zone::Fixed(offset),
         task: &task_id,
         team: None,
         pr: None,
@@ -235,7 +237,7 @@ fn layout_empty_body() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 19:15
+Time: 2026-11-11 19:15 +00:00
 Task: Fix the typo in the README.
 Agent: codex-1 (codex)
 Task ID: task-20261111-191500-1111
@@ -288,7 +290,7 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: None,
         pr: None,
@@ -373,7 +375,7 @@ async fn actual_task_state_notices_render_expected_notes_and_statuses() {
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: None,
         pr: None,
@@ -446,7 +448,7 @@ async fn actual_run_error_notices_render_expected_notes_and_statuses() {
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: None,
         pr: None,
@@ -518,7 +520,7 @@ async fn check_autopilot_notices(
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: Some(&team_id),
         pr: Some("https://github.example.com/octo/example/pull/1"),
@@ -668,7 +670,7 @@ async fn actual_checks_not_asked_notice_renders_expected_note_and_status() {
         cli: Some(CliKind::Claude),
         model: None,
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: Some(&team_id),
         pr: None,
@@ -752,7 +754,7 @@ fn longest_allowed_repository_name_stays_within_notification_limit() {
         cli: Some(CliKind::Claude),
         model: None,
         time,
-        offset,
+        offset: agent_core::local_time::Zone::Fixed(offset),
         task: &task_id,
         team: None,
         pr: None,
@@ -762,4 +764,29 @@ fn longest_allowed_repository_name_stays_within_notification_limit() {
     let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();
     assert!(notification.title().len() <= agent_runtime::notify::MAX_TITLE_BYTES);
     assert_eq!(notification.title(), format!("✅✅ {long_repo}"));
+}
+
+#[test]
+fn layout_notification_formats_time_header_with_the_offset_of_the_event_in_zone() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "agent-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: "2026-11-21T16:30:00Z".parse().unwrap(),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+
+    let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();
+
+    assert!(
+        notification.body().contains("\nTime: 2026-11-21 17:30 +01:00\n"),
+        "{}",
+        notification.body()
+    );
 }
