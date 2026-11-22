@@ -614,7 +614,10 @@ Integrate the guide.
         fn script(&self, name: &str, body: &str) {
             let dir = self.home.join("fake-scripts");
             std::fs::create_dir_all(&dir).unwrap();
-            std::fs::write(dir.join(format!("{name}.sh")), body).unwrap();
+            // The stand-in's own `.fake-*` files are kept out of git's sight, as the harness keeps its files of a run out:
+            // the daemon refuses a result whose worktree holds uncommitted files.
+            let exclude = "printf '%s\\n' '.fake-*' >> \"$(git rev-parse --git-path info/exclude)\"\n";
+            std::fs::write(dir.join(format!("{name}.sh")), format!("{exclude}{body}")).unwrap();
         }
 
         /// What a git command of the worktree of `task` prints, without its last line break.
