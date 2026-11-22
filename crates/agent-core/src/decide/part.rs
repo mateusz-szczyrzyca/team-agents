@@ -53,6 +53,38 @@ pub enum PartChoice<'a> {
     Nobody,
 }
 
+/// Decides who gets a split part under a specific replacement mode.
+#[must_use]
+pub fn who_gets_part_in_mode<'a>(
+    required: Tier,
+    previous: Option<Candidate<'a>>,
+    replacements: &[Candidate<'a>],
+    lead: Option<Candidate<'a>>,
+    mode: crate::decide::replacement::ReplacementMode,
+) -> PartChoice<'a> {
+    if let Some(prev) = previous.filter(|cand| cand.can_take(required)) {
+        return PartChoice::PreviousMember(prev.agent);
+    }
+    match mode {
+        crate::decide::replacement::ReplacementMode::Off => PartChoice::Nobody,
+        crate::decide::replacement::ReplacementMode::Lead => {
+            if let Some(coord) = lead.filter(|cand| cand.can_take(required)) {
+                return PartChoice::Lead(coord.agent);
+            }
+            PartChoice::Nobody
+        }
+        crate::decide::replacement::ReplacementMode::Auto => {
+            if let Some(replacement) = replacements.iter().find(|cand| cand.can_take(required)) {
+                return PartChoice::Replacement(replacement.agent);
+            }
+            if let Some(coord) = lead.filter(|cand| cand.can_take(required)) {
+                return PartChoice::Lead(coord.agent);
+            }
+            PartChoice::Nobody
+        }
+    }
+}
+
 /// Decides who gets a split part: the member who had the round before unless stopped, failed
 /// or handed over; a fitting replacement member; none and a lead; nobody.
 /// Lower tier than required is never chosen.
@@ -63,29 +95,13 @@ pub fn who_gets_part<'a>(
     replacements: &[Candidate<'a>],
     lead: Option<Candidate<'a>>,
 ) -> PartChoice<'a> {
-    if let Some(prev) = previous.filter(|cand| cand.can_take(required)) {
-        return PartChoice::PreviousMember(prev.agent);
-    }
-    if let Some(replacement) = replacements.iter().find(|cand| cand.can_take(required)) {
-        return PartChoice::Replacement(replacement.agent);
-    }
-    if let Some(coord) = lead.filter(|cand| cand.can_take(required)) {
-        return PartChoice::Lead(coord.agent);
-    }
-    PartChoice::Nobody
-}
-
-/// Decides who gets a split part under a specific replacement mode.
-#[must_use]
-pub fn who_gets_part_in_mode<'a>(
-    required: Tier,
-    previous: Option<Candidate<'a>>,
-    replacements: &[Candidate<'a>],
-    lead: Option<Candidate<'a>>,
-    mode: crate::decide::replacement::ReplacementMode,
-) -> PartChoice<'a> {
-    let _ = (required, previous, replacements, lead, mode);
-    PartChoice::Nobody
+    who_gets_part_in_mode(
+        required,
+        previous,
+        replacements,
+        lead,
+        crate::decide::replacement::ReplacementMode::Auto,
+    )
 }
 
 #[cfg(test)]

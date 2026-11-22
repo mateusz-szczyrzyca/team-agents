@@ -39,6 +39,12 @@ pub struct Dispatch {
 /// Chooses available participants without lowering an item's or part's tier.
 #[must_use]
 pub fn dispatch(team: &Team) -> Dispatch {
+    dispatch_in_mode(team, crate::decide::replacement::ReplacementMode::Auto)
+}
+
+/// Chooses available participants under a specified replacement mode.
+#[must_use]
+pub fn dispatch_in_mode(team: &Team, mode: crate::decide::replacement::ReplacementMode) -> Dispatch {
     let sets = super::ItemSets::of(team.items());
     let features = team.task_list().list().features();
     let ready = features
@@ -62,7 +68,7 @@ pub fn dispatch(team: &Team) -> Dispatch {
         };
 
         if team.next_part(item).is_some() {
-            match dispatch_split_item(team, item, required, &sets, &reserved, &members) {
+            match dispatch_split_item(team, item, required, &sets, &reserved, &members, mode) {
                 Ok(agent) => {
                     reserved.insert(agent.name().to_owned());
                     result.assigned.push((item, agent));
@@ -115,28 +121,27 @@ fn dispatch_split_item<'a>(
     sets: &super::ItemSets<'_>,
     reserved: &std::collections::HashSet<String>,
     members: &[&'a Member],
+    mode: crate::decide::replacement::ReplacementMode,
 ) -> Result<Participant, Waiting> {
     let candidate_of = |member: &'a Member| crate::decide::part::Candidate {
         agent: member.agent(),
         status: member.status(),
-        handed_over: !member.past_holders().is_empty() || member.owes_lead(),
+        handed_over: member.owes_lead(),
         busy: sets.busy.iter().any(|name| name.as_str() == member.agent().name())
             || reserved.contains(member.agent().name()),
     };
     let prev_round = team.rounds().iter().rev().find(|r| r.item() == Some(item));
-    let prev_agent_name = prev_round.and_then(|round| {
-        team.part_assignments().get(round.id()).cloned().or_else(|| {
-            team.members_in(round.id())
-                .into_iter()
-                .find(|(role, _)| matches!(role, Role::Solo | Role::Member | Role::Coordinator))
-                .map(|(_, m)| m.agent().agent_name())
-        })
+    let prev_task = prev_round.and_then(|round| {
+        team.members_in(round.id())
+            .into_iter()
+            .find(|(role, _)| matches!(role, Role::Solo | Role::Member | Role::Coordinator))
+            .map(|(_, m)| m.task().clone())
     });
-    let prev_member = prev_agent_name.as_ref().and_then(|name| {
+    let prev_member = prev_task.as_ref().and_then(|task| {
         team.crew()
             .roster()
             .iter()
-            .find(|(_, m)| m.agent().name() == name.as_str())
+            .find(|(_, m)| m.task() == task)
             .map(|(_, m)| *m)
     });
     let is_coord = |m: &Member| team.crew().coordinator().is_some_and(|c| c.task() == m.task());
@@ -166,7 +171,7 @@ fn dispatch_split_item<'a>(
         (None, reps, lead)
     };
 
-    match crate::decide::part::who_gets_part(required, previous, &replacements, lead) {
+    match crate::decide::part::who_gets_part_in_mode(required, previous, &replacements, lead, mode) {
         crate::decide::part::PartChoice::PreviousMember(agent)
         | crate::decide::part::PartChoice::Replacement(agent)
         | crate::decide::part::PartChoice::Lead(agent) => Ok(agent.clone()),
