@@ -91,3 +91,30 @@ async fn an_empty_bus_has_no_answer_and_a_line_that_is_no_message_is_an_error() 
         Err(UnreadMessagesError::Line { line: 1, .. })
     ));
 }
+
+#[tokio::test]
+async fn a_message_bound_to_another_team_or_task_is_not_the_answer_and_one_to_the_task_id_is() {
+    let other_team = r#","team":"team-20261119-000000-zzzz""#;
+    let other_task = r#","task":"task-20261119-000000-abcd""#;
+    let direct = |id: u64, to: &str, extra: &str| {
+        let text = serde_json::to_string(&format!("message {id}")).unwrap();
+        format!(
+            r#"{{"id":{id},"ts":"2026-11-20 14:00:00","from":"lead","to":"{to}","kind":"chat","text":{text}{extra}}}"#
+        )
+    };
+    let dir = bus(&[
+        direct(1, "claude-1", other_team),
+        direct(2, "claude-1", other_task),
+        direct(3, "claude-1", ""),
+        direct(4, TASK, ""),
+    ]);
+
+    assert_eq!(
+        said(dir.path(), None)
+            .await
+            .iter()
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>(),
+        [3, 4]
+    );
+}
