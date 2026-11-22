@@ -293,6 +293,21 @@ fails before the lead is told tells it at the next turn after all; the item of t
 `mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
 `decision` `takeover`, and each hand-over as `task_handed_over` (history migration 16 admits it).
 
+**Rejections** (`decide/rejection.rs`, `daemon/owner/returned.rs`): when the lead of a team sends the work of a member
+back instead of taking it, it says so in its final message with a line `RETURNED: <item>` beside `STATUS:` (the
+coordinator's role text prescribes it). The line is a claim; the daemon counts it only where its own facts agree
+(`classify`, a pure decision with a table test): the lead's run ended `SLEEPING` or `DONE`, the item is in progress or
+being fixed and held by a member's task, the last run of that member that started before the lead's run began ended
+`DONE`, no run of it started in between, and no earlier return of the same hand-over waits for the member's next run. A
+message that only answers the member's question, a forwarded answer of the human, a bounce of the plan, a refused gate and
+the checks before a review carry no such line and have counters of their own; a lead of an older prompt that writes no
+line is never counted by guess. The return is recorded in the item's `rejections` with the lead's last message to the
+member as its reason (read from the bus log, `AgentBus::last_message_from`); it counts once the member is started again
+for the item — at once when the lead's message started the member during the lead's run, otherwise when the member's next
+run begins (`Owner::confirm_returns`). `agent status` shows the count as `returned 3 of 5` on the member's line and on the
+round's line when one more return reaches `[replacement] rejections`. What happens at the limit is the next part of the
+item (the hand-over); this part counts and shows.
+
 **After the last step** (`daemon/owner/last_step.rs`): when a run would fail a task that was handed over before, or a
 coordinator holding the item of a stopped member, the daemon writes the task's next questions file from
 `harness/run/notice-last-step.md` instead, records its number with `State::ask_after_last_step` (in the member's
