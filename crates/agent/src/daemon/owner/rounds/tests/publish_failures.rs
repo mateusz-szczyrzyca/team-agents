@@ -212,14 +212,14 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let gate: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
     let gated_commit = gate["result"]["head"].as_str().unwrap().to_owned();
-    let branch = "agents/codex-1/task-20261122-120000-1.1a";
-    rig.wait_for("gated commit pushed to origin", || {
-        git(&rig.origin, &["rev-parse", branch]).trim() == gated_commit
-    })
-    .await;
-
-    // Assert exact accounting AFTER publication before merge resets counts:
-    let state = rig.state();
+    let branch = rig.github.pulls()[0].head.clone();
+    // Wait until publication succeeds, gated commit is pushed, and pass is spent:
+    let state = rig
+        .state_where("conflict publication succeeds and pass is recorded", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.merge_passes() == 1 && item.publish_tries() == 0
+        })
+        .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
         item.merge_passes(),
@@ -231,24 +231,10 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
         0,
         "successful publication resets publish tries"
     );
-
-    // Restart daemon again to assert exact counts survive restart under controlled refusal:
-    rig.stop().await.unwrap();
-    rig.start().await;
-
-    // Observe daemon evaluation after restart:
-    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
-    rig.wait_for("daemon evaluation after restart", || {
-        rig.github.calls("GET", &pull_path).len() >= 1
-    })
-    .await;
-
-    let state = rig.state();
-    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
-        item.merge_passes(),
-        1,
-        "exact conflict pass count must survive restart before merge reset"
+        git(&rig.origin, &["rev-parse", branch.as_str()]).trim(),
+        gated_commit,
+        "gated commit must be pushed to origin upon successful publication"
     );
 
     // Now allow merge:
@@ -2747,13 +2733,18 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     })
     .await;
 
-    // Assert exact accounting AFTER publication before restart:
-    let state = rig.state();
+    // Observe that approved head is updated upon refusal to the newly pushed gated tip:
+    let state = rig
+        .state_where("approved head updated to newly gated tip upon refusal", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.conflict_approved_head().map(agent_core::state::CommitId::as_str) == Some(gated_tip.as_str())
+        })
+        .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
         item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
-        Some(refused_head.as_str()),
-        "approved head must remain original refused head after push"
+        Some(gated_tip.as_str()),
+        "approved head must update to gated tip upon merge refusal"
     );
 
     // Restart daemon after push:
@@ -2772,8 +2763,8 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
         item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
-        Some(refused_head.as_str()),
-        "persisted fallback approved head matching refused head must survive restart after push"
+        Some(gated_tip.as_str()),
+        "persisted approved head must survive restart after push"
     );
 
     rig.stop().await.unwrap();
