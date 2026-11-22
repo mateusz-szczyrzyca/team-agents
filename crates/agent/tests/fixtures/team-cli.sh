@@ -194,6 +194,25 @@ wait_for_peer_review() {
   rm -f "$fifo"
 }
 
+# Calls `delegate` once for every line of `$home/fake-requests/$1.jsonl` (the arguments of one call, as JSON) through
+# the agentbus server of the run's MCP configuration (`--mcp-config`, the file the daemon wrote), after copying
+# `$home/fake-plans/$1.md`, when there is one, to the plan of the worktree. Each answer is a line of `.fake-delegate-N`.
+ask_worker() {
+  local command line
+  local -a bus_args
+  if [[ -f $home/fake-plans/$1.md ]]; then
+    mkdir -p .agent
+    cp "$home/fake-plans/$1.md" .agent/plan.md
+  fi
+  command=$(sed -n '/"agentbus": {/,/]/s/^ *"command": "\(.*\)",$/\1/p' "$mcp_config")
+  mapfile -t bus_args < <(sed -n '/"agentbus": {/,/]/p' "$mcp_config" | sed -n '/"args": \[/,/]/s/^ *"\(.*\)",\{0,1\}$/\1/p')
+  : > ".fake-delegate-$n"
+  while IFS= read -r line; do
+    printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate","arguments":%s}}\n' "$line" |
+      "$command" "${bus_args[@]}" >> ".fake-delegate-$n"
+  done < "$home/fake-requests/$1.jsonl"
+}
+
 deaf=false
 if [[ $action == deaf-* ]]; then
   deaf=true
@@ -696,6 +715,20 @@ case $action in
       record_gate
       result 'Integrated.\nSTATUS: DONE'
     fi
+    ;;
+  ask-worker:*)
+    # Asks for workers as the agent of this run does, through the agentbus server of the MCP configuration the daemon
+    # wrote for the run: see `ask_worker`. The answers are in `.fake-delegate-N`, one line a call.
+    ask_worker "${action#ask-worker:}"
+    result 'Asked for a worker.\nSTATUS: SLEEPING'
+    ;;
+  ask-worker-after:*)
+    # Asks for workers as `ask-worker:NAME` does, once the test says so with `.fake-ask` in the worktree.
+    while [[ ! -f .fake-ask ]]; do
+      sleep 0.05
+    done
+    ask_worker "${action#ask-worker-after:}"
+    result 'Asked for a worker.\nSTATUS: SLEEPING'
     ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)

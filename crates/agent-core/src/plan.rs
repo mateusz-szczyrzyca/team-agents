@@ -395,6 +395,28 @@ impl Check {
     fn to_text(&self) -> String {
         format!("{TEXT_INDENT}{CHECK_PREFIX} {self}\n")
     }
+
+    /// Whether this check is run by a machine — a command or an `exists PATH` — and not `reviewer`, a person's
+    /// judgement: only such a check can show a worker's result to be right.
+    #[must_use]
+    pub fn shows_a_result(&self) -> bool {
+        matches!(self, Self::Command(_) | Self::Exists(_))
+    }
+}
+
+impl std::str::FromStr for Check {
+    type Err = PlanError;
+
+    /// Reads `text` as the rest of a step's `Check:` line, the way a plan reads it. A check is one line: a text with a
+    /// line break in it is [`PlanError::MultilineCheck`], and every fault is reported on line 1.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.contains(['\n', '\r']) {
+            return Err(PlanError::MultilineCheck {
+                line: NonZeroUsize::MIN,
+            });
+        }
+        read_check(NonZeroUsize::MIN, text)
+    }
 }
 
 /// The part of a step's text that a label starts: `Files:` or `Check:`.
@@ -573,6 +595,12 @@ pub enum PlanError {
         /// The line of the label.
         line: NonZeroUsize,
     },
+    /// A check read alone, outside a plan, that is more than one line: a step's `Check:` is one line.
+    #[error("line {line}: Check: is more than one line")]
+    MultilineCheck {
+        /// The line the check starts on.
+        line: NonZeroUsize,
+    },
     /// An `exists` check names a path that is not a valid path of the repository.
     #[error("line {line}: invalid path in Check: exists")]
     BadCheck {
@@ -606,6 +634,7 @@ impl PlanError {
             | Self::DuplicatePart { line, .. }
             | Self::EmptyCheck { line }
             | Self::ExistsWithoutPath { line }
+            | Self::MultilineCheck { line }
             | Self::BadCheck { line, .. } => Some(*line),
         }
     }

@@ -86,6 +86,7 @@ type Helper struct {
 	VerdictNote string          `json:"verdict_note,omitempty"` // what was wrong with a corrected or discarded result
 	AnsweredBy  int64           `json:"answered_by,omitempty"`  // the request that answered this unclear one's questions
 	FollowsUp   int64           `json:"follows_up,omitempty"`   // the unclear request whose questions this one answers
+	Step        string          `json:"step,omitempty"`         // the step of the requester's plan the work is for (absent: a request before a step existed, or the old form)
 }
 
 // AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
@@ -777,6 +778,10 @@ type DelegateFields struct {
 	Requires  []string // capabilities the worker's node must have
 	AnswersTo string   // "H<n>": the requester's unclear request whose worker's questions this one answers
 	Answers   string   // the answers to those questions (required with AnswersTo)
+	Step      string   // the step of the requester's plan the work is for; empty for an agent without a plan
+	Files     string   // the paths the worker may read and write, as a step's Files: line lists them
+	Check     string   // how the result is shown to be right, as a step's Check: line
+	Doing     string   // what to do, in the requester's words
 }
 
 // harnessIDRE matches the harness's identifiers — a round (R12, R10B), a board item (B80), a request (H1091) — which
@@ -810,6 +815,14 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 	} else if unrated := unratedResults(st, s.me, s.info.Task); len(unrated) > 0 {
 		return "", opErr(DelegateUnratedResult, "first rate your task's worker results — %s: delegation_feedback(id, "+
 			"verdict: used | corrected | discarded, note: what was wrong, for the last two)", strings.Join(unrated, ", "))
+	}
+	var step string
+	if strings.TrimSpace(s.plan) != "" {
+		named, why := s.planCheck(f)
+		if why != nil {
+			return "", why
+		}
+		step = named
 	}
 	var follows int64
 	var first *Helper
@@ -847,6 +860,9 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 	}
 	request := "Goal: " + strings.TrimSpace(f.Goal) + "\n\nSteps:\n" + strings.TrimSpace(f.Steps) +
 		"\n\nReturn: " + strings.TrimSpace(f.Returns)
+	if step != "" {
+		request = strings.TrimPrefix(step, acceptedLine) + "\n\n" + request
+	}
 	context := "Working directory: " + dir
 	if terms := strings.TrimSpace(f.Terms); terms != "" {
 		context += "\n\nTerms:\n" + terms
@@ -856,7 +872,112 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 			"H%d's request:\n%s\n\nIts worker's questions:\n%s\n\nThe answers:\n%s", follows, follows,
 			trunc(first.Request, 2000), trunc(first.Summary, 2000), strings.TrimSpace(f.Answers))
 	}
-	return s.delegateWith(request, context, follows, f.Requires...)
+	// Only a request the harness accepted for a step carries it; after NO-PLAN the request is in the old form.
+	var named DelegateFields
+	if step != "" {
+		named.Step = strings.TrimSpace(f.Step)
+	}
+	return s.delegateWith(request, context, follows, named, f.Requires...)
+}
+
+// acceptedKeyword is what `agent _delegation-check` prints first when it accepts a request.
+const acceptedKeyword = "ACCEPTED"
+
+// noPlanKeyword is what `agent _delegation-check` prints when the requester's plan file is not there: the request is
+// one of an agent without a plan.
+const noPlanKeyword = "NO-PLAN"
+
+// acceptedLine starts what planCheck keeps of an accepted answer: the harness's output, quoted as it came.
+const acceptedLine = acceptedKeyword + "\n"
+
+// planCheck asks the harness, at the moment of the request, whether the request names a step of the requester's
+// plan: agent _delegation-check reads the plan file and the [plan] check_refuse then. It returns what the worker
+// reads — the step quoted as the plan has it, then the request's own pieces —, nothing when the plan file is not there
+// (the request is in the old form), or the cause of the first missing or wrong one. A harness that gives no answer is a failure of the check, never an accepted request: nothing is queued
+// when it cannot say the request is complete.
+func (s *Server) planCheck(f DelegateFields) (string, *DelegateError) {
+	if s.agentCmd == "" || s.home == "" {
+		return "", opErr(DelegateCheckFailed, "no harness is configured for this run (--agent-cmd and --home): "+
+			"the request cannot be checked against your plan — end this run and start it again from `agent`")
+	}
+	step, files, check, doing := strings.TrimSpace(f.Step), strings.TrimSpace(f.Files), strings.TrimSpace(f.Check), strings.TrimSpace(f.Doing)
+	// The harness is asked first: only it knows whether the plan file is there, and a run without one sends the old
+	// form, whose four pieces are not required.
+	verdict, out, perr := agentCheckFn(s.agentCmd, s.home, "_delegation-check", "--plan", s.plan, "--for", step,
+		"--files", files, "--check", check, "--do", doing)
+	switch verdict {
+	case AgentCheckYes:
+	case AgentCheckNo, AgentCheckUnknown:
+		return "", &DelegateError{Cause: DelegateCheckFailed, Message: fmt.Sprintf("the harness could not check the "+
+			"request against your plan: %s", trunc(strings.TrimSpace(out), 500)), Err: perr}
+	}
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	head := strings.TrimSpace(lines[0])
+	advice := ""
+	if len(lines) > 1 {
+		advice = strings.TrimSpace(strings.Join(lines[1:], " "))
+	}
+	if head == noPlanKeyword {
+		return "", nil
+	}
+	if why := delegatePlanMissing(step, files, check, doing); why != nil {
+		return "", why
+	}
+	switch head {
+	case acceptedKeyword:
+		// Everything the harness printed after ACCEPTED is the step and the request's pieces, quoted as they came; the
+		// step the request is for is its own `for`.
+		return acceptedLine + strings.TrimSpace(strings.Join(lines[1:], "\n")), nil
+	}
+	cause := delegatePlanCause(strings.TrimPrefix(head, "REFUSED "))
+	return "", opErr(cause, "%s", trunc(advice, 1000))
+}
+
+// delegatePlanMissing refuses a request of an agent with a plan that lacks one of its four pieces: planCheck asks it
+// after the harness has answered that the plan file is there (any answer but NO-PLAN). Each missing piece has its own
+// cause and says what to add.
+func delegatePlanMissing(step, files, check, doing string) *DelegateError {
+	switch {
+	case step == "":
+		return opErr(DelegateMissingFor, "the request names no step of your plan: add for, the ID of a step still to "+
+			"do or in hand (2.3), and the worker gets the step in full")
+	case files == "":
+		return opErr(DelegateMissingFiles, "the request names no files: add files, the paths the worker may read and "+
+			"write, comma-separated, relative to the repository, no globs")
+	case check == "":
+		return opErr(DelegateMissingCheck, "the request names no check: add check, a command or `exists PATH` that "+
+			"shows the result is right (never reviewer, never the repository's gate)")
+	case doing == "":
+		return opErr(DelegateMissingDo, "the request says nothing to do: add do, what the worker is to do, in your words")
+	}
+	return nil
+}
+
+// delegatePlanCause is the cause of the refusal keyword of `agent _delegation-check`, which is part of the
+// interface between the bus and the harness.
+func delegatePlanCause(keyword string) DelegateCause {
+	switch keyword {
+	case "MISSING-STEP":
+		return DelegateMissingFor
+	case "MISSING-FILES":
+		return DelegateMissingFiles
+	case "MISSING-CHECK":
+		return DelegateMissingCheck
+	case "MISSING-DO":
+		return DelegateMissingDo
+	case "NO-SUCH-STEP":
+		return DelegateNoSuchStep
+	case "STEP-CLOSED":
+		return DelegateStepClosed
+	case "PATH-OUTSIDE":
+		return DelegatePathOutside
+	case "CHECK-REFUSED":
+		return DelegateCheckRefused
+	case "PLAN-UNREADABLE":
+		return DelegatePlanUnreadable
+	default:
+		return DelegateCheckFailed
+	}
 }
 
 // answerable says why request h cannot be answered by requester me (empty: it can): it must be me's own, unclear,
@@ -876,14 +997,15 @@ func answerable(h *Helper, me string) string {
 }
 
 func (s *Server) delegate(request, context string, requires ...string) (string, *DelegateError) {
-	return s.delegateWith(request, context, 0, requires...)
+	return s.delegateWith(request, context, 0, DelegateFields{}, requires...)
 }
 
 // delegateWith is delegate for a request that may answer an unclear one (follows: its ID, or 0): checked again, and
 // both linked, in the transaction that writes the new request.
-func (s *Server) delegateWith(request, context string, follows int64, requires ...string) (string, *DelegateError) {
-	if s.tier == TierWorker || s.role == RoleInvestigator {
-		return "", opErr(DelegateNotNormalTier, "delegate is for normal models")
+func (s *Server) delegateWith(request, context string, follows int64, named DelegateFields, requires ...string) (string, *DelegateError) {
+	if s.tier == TierWorker {
+		return "", opErr(DelegateNotNormalTier, "delegate is for normal models: a worker does its own job and "+
+			"hands nothing on")
 	}
 	request = strings.TrimSpace(request)
 	if request == "" {
@@ -912,6 +1034,12 @@ func (s *Server) delegateWith(request, context string, follows int64, requires .
 	var id int64
 	err := transact(s.bus, DelegateStorage, func(st *State) *DelegateError {
 		s.touch(st)
+		// A request for a step of a plan is checked in the transaction that queues it: two requests at once cannot
+		// both take the last free worker.
+		if team := st.Teams[s.team]; named.Step != "" && team != nil && freeWorkers(team, sortedHelpers(st)) <= 0 {
+			return opErr(DelegateNoFreeWorker, "no worker of your team is free now: do step %s yourself, or ask again "+
+				"for a later step", named.Step)
+		}
 		st.NextHelperID++
 		if follows != 0 {
 			first := st.Helpers[helperKey(follows)]
@@ -922,7 +1050,7 @@ func (s *Server) delegateWith(request, context string, follows int64, requires .
 		}
 		h := &Helper{ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
 			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha,
-			FollowsUp: follows}
+			FollowsUp: follows, Step: named.Step}
 		st.Helpers[helperKey(h.ID)] = h
 		id = h.ID
 		_, serr := s.bus.post(st, s.me, "all", EventWorkerRequest{ID: h.ID, Request: request})
@@ -1034,32 +1162,56 @@ func collabToolDefs(inTeam bool, tier Tier) []map[string]any {
 		obj(map[string]any{"summary": str("State: what is done, where (commits/files), key findings and decisions"),
 			"next_steps": str("What next, in which order, by whom")}, "summary")))
 	if tier != TierWorker {
-		defs = append(defs,
-			tool("delegate", "Delegate a simple, mechanical task to a free worker (a cheap model) instead of doing it yourself and spending expensive tokens: "+
-				"listing and searching files, checking whether something exists, running a known command and summarising its output. "+
-				"The result will arrive as a message. In a team use the board first (board_add level=easy). "+
-				"The worker sees only this request and its context — not your conversation, notes, team or board (it has no board tools): "+
-				"write full sentences without shorthand, with absolute paths and the exact commands, and say what to return. "+
-				"Do not delegate what runs for minutes, such as a full gate.",
-				obj(map[string]any{
-					"goal":    str("What the work is for, in a sentence"),
-					"workdir": str("The absolute path of the directory the worker works in"),
-					"steps":   str("The exact commands or actions, one a line"),
-					"returns": str("What to return, and in what form"),
-					"terms": str("Definitions, one a line (\"term: meaning\"), of what the worker cannot know: a round, board " +
-						"item or request identifier (R12, B80, H1091) used above must be defined here"),
-					"requires":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"},
-					"answers_to": str("Only when this request answers a worker's questions: the unclear request, e.g. H12"),
-					"answers":    str("With answers_to: the answers to its worker's questions"),
-				}, "goal", "workdir", "steps", "returns")),
-			tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
-			tool("delegation_feedback", "Rate a worker's done result: used, corrected (used after fixing it) or "+
-				"discarded. Your next request waits until your task's done results are rated.",
-				obj(map[string]any{"id": str("The request, e.g. H12"), "verdict": str("used | corrected | discarded"),
-					"note": str("For corrected or discarded: what was wrong")}, "id", "verdict")),
-		)
+		defs = append(defs, delegationToolDefs()...)
 	}
 	return defs
+}
+
+// delegationToolDefs returns the tools that hand a mechanical task to a worker: delegate, delegation_status and
+// delegation_feedback. A worker has none; an investigator has these and nothing of the board or the quiz.
+func delegationToolDefs() []map[string]any {
+	str := func(d string) map[string]any { return map[string]any{"type": "string", "description": d} }
+	obj := func(props map[string]any, req ...string) map[string]any {
+		m := map[string]any{"type": "object", "properties": props}
+		if len(req) > 0 {
+			m["required"] = req
+		}
+		return m
+	}
+	tool := func(name, desc string, schema map[string]any) map[string]any {
+		return map[string]any{"name": name, "description": desc, "inputSchema": schema}
+	}
+	return []map[string]any{
+		tool("delegate", "Delegate a simple, mechanical task to a free worker (a cheap model) instead of doing it yourself and spending expensive tokens: "+
+			"listing and searching files, checking whether something exists, running a known command and summarising its output. "+
+			"The result will arrive as a message. In a team use the board first (board_add level=easy). "+
+			"The worker sees only this request and its context — not your conversation, notes, team or board (it has no board tools): "+
+			"write full sentences without shorthand, with absolute paths and the exact commands, and say what to return. "+
+			"Do not delegate what runs for minutes, such as a full gate.",
+			obj(map[string]any{
+				"goal":    str("What the work is for, in a sentence"),
+				"workdir": str("The absolute path of the directory the worker works in"),
+				"steps":   str("The exact commands or actions, one a line"),
+				"returns": str("What to return, and in what form"),
+				"terms": str("Definitions, one a line (\"term: meaning\"), of what the worker cannot know: a round, board " +
+					"item or request identifier (R12, B80, H1091) used above must be defined here"),
+				"requires":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Required declared capabilities; push your commit first when this needs another node"},
+				"answers_to": str("Only when this request answers a worker's questions: the unclear request, e.g. H12"),
+				"answers":    str("With answers_to: the answers to its worker's questions"),
+				"for": str("The step of your plan the work is for, e.g. 2.3. Required when your role keeps a plan: " +
+					"the worker sees the step in full"),
+				"files": str("The paths the worker may read and, when it produces something, write: comma-separated, " +
+					"relative to the repository, no globs"),
+				"check": str("How the result is shown to be right, as a step's Check: line: a command, or `exists PATH`. " +
+					"Never reviewer, never the repository's gate"),
+				"do": str("What to do, in your own words"),
+			}, "goal", "workdir", "steps", "returns")),
+		tool("delegation_status", "Status of your worker requests and of the queue.", obj(map[string]any{})),
+		tool("delegation_feedback", "Rate a worker's done result: used, corrected (used after fixing it) or "+
+			"discarded. Your next request waits until your task's done results are rated.",
+			obj(map[string]any{"id": str("The request, e.g. H12"), "verdict": str("used | corrected | discarded"),
+				"note": str("For corrected or discarded: what was wrong")}, "id", "verdict")),
+	}
 }
 
 // ---------------------------------------------------------------- CLI used by the `agent` script
@@ -1354,4 +1506,56 @@ func cmdClaimLead(args []string) {
 	out, err := s.claimLead()
 	exitOn(err.asError())
 	fmt.Println(out)
+}
+
+// freeWorkers counts the workers of team that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
+// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
+// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
+// the request was given to (while that is not yet recorded, the worker counts as serving here).
+func freeWorkers(team *Team, helpers []*Helper) int {
+	tasks := map[string]bool{}
+	for _, m := range team.Members {
+		tasks[m.Task] = true
+	}
+	ours := func(h *Helper) bool {
+		if h.FromTask == "" {
+			return team.Members[h.From] != nil
+		}
+		return tasks[h.FromTask]
+	}
+	serving := map[string]bool{}
+	waiting := 0
+	for _, h := range helpers {
+		switch h.Status {
+		case HelperStarting, HelperRunning:
+			if h.HelperTask == "" || tasks[h.HelperTask] {
+				serving[h.Worker] = true
+			}
+		case HelperQueued:
+			if ours(h) {
+				waiting++
+			}
+		case HelperDone, HelperFailed, HelperUnclear:
+		}
+	}
+	free := 0
+	for name, m := range team.Members {
+		if m.Tier == TierWorker && workerWaits(m.State) && !serving[name] {
+			free++
+		}
+	}
+	return free - waiting
+}
+
+// workerWaits reports whether a worker in state waits for work: only such a worker is given a request by the daemon.
+// One in a run of its own or waking is busy; one that is done, excluded, hung, paused or stopped is not started.
+func workerWaits(state MemberState) bool {
+	switch state {
+	case MemberSleeping:
+		return true
+	case MemberActive, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberStopped:
+		return false
+	}
+	return false
 }
