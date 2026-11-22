@@ -103,7 +103,10 @@ pub(in crate::daemon) fn assignable_in_policy(
                 let required = required_tier(team, *item);
                 agent_runtime::history::log_decision(
                     "who_gets_part",
-                    &format!("team={}, item={item}, part={part}, required={required:?}, mode={mode:?}", team.id()),
+                    &format!(
+                        "team={}, item={item}, part={part}, required={required:?}, mode={mode:?}",
+                        team.id()
+                    ),
                     &[format!("{agent}")],
                 );
             }

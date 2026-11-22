@@ -284,11 +284,7 @@ fn dispatch_split_item<'a>(
             Err(Waiting {
                 item,
                 required,
-                reason: if fitting {
-                    WaitReason::Busy
-                } else {
-                    WaitReason::Absent
-                },
+                reason: if fitting { WaitReason::Busy } else { WaitReason::Absent },
             })
         }
     }
