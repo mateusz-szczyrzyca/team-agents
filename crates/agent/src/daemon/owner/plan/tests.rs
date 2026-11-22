@@ -361,7 +361,7 @@ async fn a_restart_of_the_daemon_keeps_the_count_of_the_send_backs() {
 
 #[tokio::test]
 async fn a_done_step_whose_check_fails_is_judged_mismatch_and_recorded_in_history() {
-    let mut daemon = with_bounces(&solo_state(), 1);
+    let mut daemon = with_bounces(&solo_state(), 0);
     let dir = daemon.scenario(1, "done");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     std::fs::write(
@@ -484,7 +484,8 @@ async fn unjudged_intervening_plan_causes_changed_step_to_be_rejudged() {
     std::fs::write(dir.join(".agent/plan.md"), plan2_text).unwrap();
 
     daemon.start().await;
-    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    // The re-judged step is a mismatch of a run that ends DONE: with the bounce spent, the human is asked.
+    wait_for_questions(&daemon).await;
     daemon.stop().await.unwrap();
 
     let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
@@ -835,7 +836,8 @@ async fn reopened_step_is_checked_again_when_marked_done() {
     std::fs::write(dir.join(".agent/plan.md"), plan2_text.replace("[>]", "[x]")).unwrap();
 
     daemon.start().await;
-    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    // The re-judged step is a mismatch of a run that ends DONE: with the bounce spent, the human is asked.
+    wait_for_questions(&daemon).await;
     daemon.stop().await.unwrap();
 
     let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
@@ -1095,7 +1097,7 @@ async fn a_daemon_that_starts_ends_the_check_a_dead_daemon_left_running() {
 
 #[tokio::test]
 async fn two_done_steps_with_commands_run_one_after_the_other_and_show_in_status() {
-    let mut daemon = with_bounces(&solo_state(), 1);
+    let mut daemon = with_bounces(&solo_state(), 0);
     let dir = daemon.scenario(1, "done");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     let plan = concat!(
@@ -2347,19 +2349,43 @@ async fn a_refused_gate_check_is_told_to_the_next_run_once_and_not_after_a_resta
     let plan = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: make gate\n[ ] 1.2 Later\n";
     let mut daemon = running_with_plan(&solo_state(), 1, Some(plan)).await;
 
+    // The next run takes the notice when it starts. Wait until that run has told it and has ended.
     sent_back_count(&daemon, 1).await;
-    daemon.stop().await.unwrap();
-    daemon.start().await;
-    // The plan still has step 1.2 to do after the second run: the human is asked, with the limit reached.
-    wait_for_questions(&daemon).await;
+    wait_for_run_with_notice(&daemon).await;
+    daemon
+        .state_where("the second run to end", |state| {
+            state.find_task(&task(1)).is_some_and(|found| {
+                let runs = found.member.runs();
+                runs.len() >= 2 && matches!(runs[runs.len() - 1].state(), agent_core::state::RunState::Ended { .. })
+            })
+        })
+        .await;
     daemon.stop().await.unwrap();
 
+    // After a restart the state holds no notice left to tell, and the run that had it told it exactly once.
+    daemon.start().await;
+    daemon.stop().await.unwrap();
     let prompt = daemon.recorded(1, ".fake-args");
     assert_eq!(prompt.matches("## Step 1.1 check was refused").count(), 1, "{prompt}");
+    let state = daemon.state();
+    let keeping = state.find_task(&task(1)).unwrap().member.plan().unwrap();
+    assert_eq!(keeping.refused_gate(), &[]);
     assert_eq!(
         judgement_of(&daemon, "1.1").reason.as_deref(),
         Some("refused gate command")
     );
+}
+
+/// Waits until the prompt of the run of task 1 that was last started holds the refused gate notice.
+async fn wait_for_run_with_notice(daemon: &Daemon) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !daemon
+        .recorded(1, ".fake-args")
+        .contains("## Step 1.1 check was refused")
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
 
 /// Waits until the questions file of task 1, number 1, is written.
