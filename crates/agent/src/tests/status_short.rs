@@ -222,3 +222,142 @@ fn task_is_refused_with_a_target_and_with_the_investigators() {
         .expect_err("a target takes no --task");
     Cli::try_parse_from(["agent", "status", "--investigators", "--task"]).expect_err("--investigators takes no --task");
 }
+
+#[tokio::test]
+async fn target_pages_for_team_task_and_round_print_what_they_printed() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut state = team_state();
+    let round_id: agent_core::ids::RoundId = "round-20261111-153001-q1w2".parse().unwrap();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(round_id.clone(), Some("1.1".parse().unwrap()), at(10))
+        .unwrap();
+    let team = state.team(&team_id(0)).unwrap().clone();
+    let round = team.rounds().last().unwrap().clone();
+    let detail = RoundDetail::new(&team, &round, Vec::new());
+    let summary = TeamSummary::from(&team);
+    let reply_summary = summary.clone();
+    let reply_detail = detail.clone();
+    let _fake = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = match &request.command {
+            Wire::Show(_) => Reply::Round {
+                round: Box::new(reply_detail.clone()),
+            },
+            _ => Reply::Teams {
+                teams: vec![reply_summary.clone()],
+            },
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+
+    for target in [Target::Team(team_id(0)), Target::Task(crate::fixtures::task(2))] {
+        let mut out = Vec::new();
+        execute(
+            &environment(&dir),
+            Command::Status(StatusArgs {
+                target: Some(target.clone()),
+                running: false,
+                task: false,
+                investigators: false,
+                json: false,
+            }),
+            &mut out,
+        )
+        .await
+        .unwrap();
+        let text = String::from_utf8(out).unwrap();
+        assert!(
+            !text.starts_with("agent "),
+            "target page for {target:?} must not prepend list version header: {text}"
+        );
+        assert!(
+            text.contains("  task-20261111-153002-k3x9  member       claude-1   queued\n"),
+            "target page for {target:?} must include task lines: {text}"
+        );
+    }
+
+    let mut round_out = Vec::new();
+    execute(
+        &environment(&dir),
+        Command::Status(StatusArgs {
+            target: Some(Target::Round(round_id)),
+            running: false,
+            task: false,
+            investigators: false,
+            json: false,
+        }),
+        &mut round_out,
+    )
+    .await
+    .unwrap();
+    let round_text = String::from_utf8(round_out).unwrap();
+    assert!(!round_text.starts_with("agent "), "{round_text}");
+    assert!(
+        round_text.starts_with("round-20261111-153001-q1w2  item 1.1  open  team team-20261111-153000-t5m8\n"),
+        "{round_text}"
+    );
+}
+
+#[tokio::test]
+async fn json_output_is_identical_with_and_without_task() {
+    let dir = tempfile::tempdir().unwrap();
+    let teams = vec![quiet()];
+    let without_task = {
+        let listed = teams.clone();
+        let _fake = FakeDaemon::serve(&socket(&dir), move |request| {
+            Answer::Lines(vec![
+                Frame::Response(Response::ok(request.id, Reply::Teams { teams: listed.clone() }))
+                    .to_line()
+                    .unwrap(),
+            ])
+        });
+        let mut out = Vec::new();
+        execute(
+            &environment(&dir),
+            Command::Status(StatusArgs {
+                target: None,
+                running: false,
+                task: false,
+                investigators: false,
+                json: true,
+            }),
+            &mut out,
+        )
+        .await
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    };
+
+    let dir_with = tempfile::tempdir().unwrap();
+    let with_task = {
+        let listed = teams.clone();
+        let _fake = FakeDaemon::serve(&socket(&dir_with), move |request| {
+            Answer::Lines(vec![
+                Frame::Response(Response::ok(request.id, Reply::Teams { teams: listed.clone() }))
+                    .to_line()
+                    .unwrap(),
+            ])
+        });
+        let mut out = Vec::new();
+        execute(
+            &environment(&dir_with),
+            Command::Status(StatusArgs {
+                target: None,
+                running: false,
+                task: true,
+                investigators: false,
+                json: true,
+            }),
+            &mut out,
+        )
+        .await
+        .unwrap();
+        String::from_utf8(out).unwrap()
+    };
+
+    assert_eq!(without_task, with_task);
+    assert_eq!(without_task, crate::commands::status::render_json(&teams).unwrap());
+}

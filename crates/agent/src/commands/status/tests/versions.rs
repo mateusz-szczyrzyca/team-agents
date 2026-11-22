@@ -58,3 +58,42 @@ fn a_daemon_that_does_not_tell_its_versions_is_version_unknown() {
          daemon: version unknown\n"
     );
 }
+
+#[test]
+fn versions_table_covers_all_equal_one_different_and_daemon_equal_different_or_unknown() {
+    let equal = Versions::new("0.9.0", "0.9.0", "0.9.0", "0.9.0");
+    let one_diff = Versions::new("0.9.0", "0.9.1", "0.9.0", "0.9.0");
+    let other_daemon = Versions::new("0.8.0", "0.8.0", "0.8.0", "0.8.0");
+    let cases = [
+        (
+            "all equal and daemon equal",
+            &equal,
+            Some(&equal),
+            "agent 0.9.0 \u{b7} agent-core 0.9.0 \u{b7} agent-runtime 0.9.0 \u{b7} agent-web 0.9.0\n",
+        ),
+        (
+            "one crate different and daemon equal",
+            &one_diff,
+            Some(&one_diff),
+            "agent 0.9.0 \u{b7} agent-core 0.9.1 \u{b7} agent-runtime 0.9.0 \u{b7} agent-web 0.9.0\n",
+        ),
+        (
+            "daemon different",
+            &equal,
+            Some(&other_daemon),
+            "agent 0.9.0 \u{b7} agent-core 0.9.0 \u{b7} agent-runtime 0.9.0 \u{b7} agent-web 0.9.0\n\
+             daemon: agent 0.8.0 \u{b7} agent-core 0.8.0 \u{b7} agent-runtime 0.8.0 \u{b7} agent-web 0.8.0 (differs from this command)\n",
+        ),
+        (
+            "daemon unknown",
+            &equal,
+            None,
+            "agent 0.9.0 \u{b7} agent-core 0.9.0 \u{b7} agent-runtime 0.9.0 \u{b7} agent-web 0.9.0\n\
+             daemon: version unknown\n",
+        ),
+    ];
+
+    for (name, command, daemon, expected) in cases {
+        assert_eq!(block(command, daemon), expected, "{name}");
+    }
+}

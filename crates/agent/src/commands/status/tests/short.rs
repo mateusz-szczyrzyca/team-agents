@@ -184,3 +184,186 @@ fn a_team_without_tasks_says_so_in_its_count() {
 
     assert_eq!(short(&[team]), format!("{HEADER}\n  tasks: none\n"));
 }
+
+/// One row of the short-view table test.
+struct ShortCase {
+    /// Case description.
+    name: &'static str,
+    /// Teams to render.
+    teams: Vec<TeamSummary>,
+    /// What follows each round line.
+    round_suffix: fn(&Round) -> String,
+    /// Expected rendered output.
+    expected: String,
+}
+
+fn no_round_suffix(_: &Round) -> String {
+    String::new()
+}
+
+fn waits_for_agent(_: &Round) -> String {
+    String::from(", waits for claude-1")
+}
+
+fn waits_for_human(_: &Round) -> String {
+    String::from(", waits for an answer of the human")
+}
+
+fn team_with_rounds(second: bool) -> TeamSummary {
+    let r1: RoundId = "round-20261111-153001-q1w2".parse().unwrap();
+    let r2: RoundId = "round-20261111-153002-q1w2".parse().unwrap();
+    let mut state = team_state();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(r1, Some("1.1".parse().unwrap()), at(10))
+        .unwrap();
+    if second {
+        state
+            .team_mut(&team_id(0))
+            .unwrap()
+            .open_round(r2, Some("1.2".parse().unwrap()), at(20))
+            .unwrap();
+    }
+    TeamSummary::from(&state.teams()[0])
+}
+
+fn team_with_all_statuses() -> TeamSummary {
+    let mut all = sample();
+    while all.members.len() < 8 {
+        let extra = all.members[0].clone();
+        all.members.push(extra);
+    }
+    for (index, status) in [
+        TaskStatus::Running,
+        TaskStatus::Waiting,
+        TaskStatus::Questions,
+        TaskStatus::Queued,
+        TaskStatus::Paused,
+        TaskStatus::Stopped,
+        TaskStatus::Failed,
+        TaskStatus::Done,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        set_status(&mut all, index, status);
+    }
+    all
+}
+
+fn team_with_split(base: &TeamSummary) -> TeamSummary {
+    let mut split_wire = serde_json::to_value(base).unwrap();
+    split_wire["splits"] = serde_json::json!([{
+        "parent": "1.1",
+        "approved_by": "harness",
+        "parts": [
+            {"title": "First", "delivers": "Guide", "checks": "Read", "depends_on": []},
+            {"title": "Second", "delivers": "Bundle", "checks": "Read", "depends_on": ["a"]}
+        ]
+    }]);
+    serde_json::from_value(split_wire).unwrap()
+}
+
+#[test]
+fn short_team_table_covers_rounds_waits_questions_splits_descriptions_and_empty() {
+    let r1: RoundId = "round-20261111-153001-q1w2".parse().unwrap();
+    let r2: RoundId = "round-20261111-153002-q1w2".parse().unwrap();
+    let one_round = team_with_rounds(false);
+    let two_rounds = team_with_rounds(true);
+
+    let mut tier_wait = sample();
+    tier_wait
+        .tier_waits
+        .insert("1.1".parse().unwrap(), agent_core::kinds::Tier::Investigator);
+
+    let split_team = team_with_split(&one_round);
+
+    let mut with_question = sample();
+    ask(&mut with_question, 1, 4);
+
+    let mut with_desc = sample();
+    with_desc.short_desc = Some(String::from("Short status by default"));
+
+    let cases = [
+        ShortCase {
+            name: "no team at all",
+            teams: Vec::new(),
+            round_suffix: no_round_suffix,
+            expected: String::from("no teams\n"),
+        },
+        ShortCase {
+            name: "one round waiting for named agent",
+            teams: vec![one_round.clone()],
+            round_suffix: waits_for_agent,
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open, waits for claude-1\n  tasks: 4 queued\n"),
+        },
+        ShortCase {
+            name: "one round waiting for the human",
+            teams: vec![one_round],
+            round_suffix: waits_for_human,
+            expected: format!(
+                "{HEADER}\n  {r1}  item 1.1  open, waits for an answer of the human\n  tasks: 4 queued\n"
+            ),
+        },
+        ShortCase {
+            name: "two rounds",
+            teams: vec![two_rounds],
+            round_suffix: no_round_suffix,
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n  {r2}  item 1.2  open\n  tasks: 4 queued\n"),
+        },
+        ShortCase {
+            name: "item waiting for a tier",
+            teams: vec![tier_wait],
+            round_suffix: no_round_suffix,
+            expected: format!("{HEADER}\n    1.1  waiting for investigator agent\n  tasks: 4 queued\n"),
+        },
+        ShortCase {
+            name: "team with split parts omits part lines in short view",
+            teams: vec![split_team],
+            round_suffix: no_round_suffix,
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n  tasks: 4 queued\n"),
+        },
+        ShortCase {
+            name: "team with a task that has questions",
+            teams: vec![with_question],
+            round_suffix: no_round_suffix,
+            expected: format!(
+                "{HEADER}\n  tasks: 1 with questions, 3 queued; questions number 4 wait for answers (claude-1, {})\n",
+                task(2)
+            ),
+        },
+        ShortCase {
+            name: "tasks in every status in the count",
+            teams: vec![team_with_all_statuses()],
+            round_suffix: no_round_suffix,
+            expected: format!(
+                "{HEADER}\n  tasks: 1 running, 1 waiting, 1 with questions, 1 queued, 1 paused, 1 stopped, 1 failed, 1 done\n"
+            ),
+        },
+        ShortCase {
+            name: "team without short description",
+            teams: vec![sample()],
+            round_suffix: no_round_suffix,
+            expected: format!("{HEADER}\n  tasks: 4 queued\n"),
+        },
+        ShortCase {
+            name: "team with short description",
+            teams: vec![with_desc],
+            round_suffix: no_round_suffix,
+            expected: format!("{HEADER}  \"Short status by default\"\n  tasks: 4 queued\n"),
+        },
+    ];
+
+    for case in cases {
+        let actual = render_in(
+            &case.teams,
+            View::Full,
+            Detail::Short,
+            &|_| None,
+            &case.round_suffix,
+            Zone::Fixed(UtcOffset::UTC),
+        );
+        assert_eq!(actual, case.expected, "{}", case.name);
+    }
+}
