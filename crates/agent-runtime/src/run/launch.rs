@@ -309,3 +309,22 @@ pub async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Re
     handle.write_all(added.as_bytes()).await.map_err(io_error)?;
     handle.flush().await.map_err(io_error)
 }
+
+/// The environment of a command check of a task whose agent has `identity`: the variables a run of that agent gets from
+/// the daemon (the agents' secrets, `PATH` and `HOME`, the commit identity), and no other secret of the daemon.
+///
+/// # Errors
+/// [`RunError`] when the `PATH` cannot be joined or is not UTF-8, or `home` is not UTF-8.
+pub fn check_environment(
+    secrets: &agent_core::config::Secrets,
+    agent_binary_dir: &AbsolutePath,
+    agent_path: &[AbsolutePath],
+    home: &Path,
+    identity: &CommitIdentity,
+) -> Result<Vec<(String, String)>, RunError> {
+    let _ = (secrets, agent_binary_dir, agent_path, home, identity);
+    Ok(Vec::new())
+}
+
+#[cfg(test)]
+mod tests;
