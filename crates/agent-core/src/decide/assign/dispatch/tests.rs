@@ -854,7 +854,13 @@ fn outside_team_replacement_selected_when_configured() {
 
     // An outside-team participant "outside-agent" is configured in replacement.agents:
     let outside_rep: AgentName = "outside-agent".parse().unwrap();
-    let dispatched = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[outside_rep]);
+    let participant = normal("outside-agent");
+    let dispatched = dispatch_with_candidates(
+        &team,
+        crate::decide::replacement::ReplacementMode::Auto,
+        &[outside_rep],
+        &[crate::decide::part::Candidate::available(&participant)],
+    );
     assert_eq!(dispatched.assigned, vec![(item, normal("outside-agent"))]);
 }
 
