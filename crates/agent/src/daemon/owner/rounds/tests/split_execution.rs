@@ -1863,6 +1863,13 @@ async fn later_split_part_accepts_the_parent_task_branch_for_external_delivery()
     rig.stop().await.unwrap();
 }
 
+fn add_collision_test_worktree(rig: &Rig, task: &TaskId, branch: &str) {
+    super::rig::git(
+        &rig.repo,
+        &["worktree", "add", rig.worktree(task).to_str().unwrap(), branch],
+    );
+}
+
 #[tokio::test]
 async fn split_branch_collision_keeps_the_old_holder_stopped_until_a_round_can_open() {
     let mut rig = Rig::new(
@@ -1893,24 +1900,8 @@ async fn split_branch_collision_keeps_the_old_holder_stopped_until_a_round_can_o
     super::rig::git(&rig.repo, &["branch", &lead_branch, "main"]);
     super::rig::git(&rig.origin, &["branch", &branch_c, "main"]);
     super::rig::git(&rig.repo, &["branch", &member_branch, "main"]);
-    super::rig::git(
-        &rig.repo,
-        &[
-            "worktree",
-            "add",
-            rig.worktree(&lead_task).to_str().unwrap(),
-            &lead_branch,
-        ],
-    );
-    super::rig::git(
-        &rig.repo,
-        &[
-            "worktree",
-            "add",
-            rig.worktree(&member_task).to_str().unwrap(),
-            &member_branch,
-        ],
-    );
+    add_collision_test_worktree(&rig, &lead_task, &lead_branch);
+    add_collision_test_worktree(&rig, &member_task, &member_branch);
 
     rig.github
         .foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1a");
