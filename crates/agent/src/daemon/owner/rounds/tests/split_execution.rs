@@ -1040,7 +1040,7 @@ async fn authentic_pre_task_persisted_fixture_loads_and_daemon_resumes() {
 
     rig.start().await;
     let state = rig.state();
-    assert!(!state.teams().is_empty());
+    assert_eq!(state.teams().len(), 1);
     assert_eq!(state.teams()[0].id().as_str(), "team-20261111-193000-a1b2");
     rig.stop().await.unwrap();
 }
