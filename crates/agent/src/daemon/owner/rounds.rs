@@ -940,5 +940,9 @@ mod delivery_restart_tests;
 mod proposal_execution_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/split_refusal.rs"]
+mod split_refusal_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
