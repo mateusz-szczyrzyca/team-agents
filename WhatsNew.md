@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.62.0 — 22.11.2026 — PR #177
+## 0.62.0 — 22.11.2026 — PR #181
 
 ### Bug fixes
 - [agent] [agent-core] An unsuccessful publication of a merge conflict resolution no longer consumes a conflict pass: only confirmed publication to the remote branch spends the pass. Legacy split rounds that appeared exhausted without recorded approved heads recover and merge when valid gated work is ready, without erasing legitimately spent passes.
