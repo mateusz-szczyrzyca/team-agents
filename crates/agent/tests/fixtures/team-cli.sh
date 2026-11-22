@@ -194,6 +194,25 @@ wait_for_peer_review() {
   rm -f "$fifo"
 }
 
+# Calls `delegate` once for every line of `$home/fake-requests/$1.jsonl` (the arguments of one call, as JSON) through
+# the agentbus server of the run's MCP configuration (`--mcp-config`, the file the daemon wrote), after copying
+# `$home/fake-plans/$1.md`, when there is one, to the plan of the worktree. Each answer is a line of `.fake-delegate-N`.
+ask_worker() {
+  local command line
+  local -a bus_args
+  if [[ -f $home/fake-plans/$1.md ]]; then
+    mkdir -p .agent
+    cp "$home/fake-plans/$1.md" .agent/plan.md
+  fi
+  command=$(sed -n '/"agentbus": {/,/]/s/^ *"command": "\(.*\)",$/\1/p' "$mcp_config")
+  mapfile -t bus_args < <(sed -n '/"agentbus": {/,/]/p' "$mcp_config" | sed -n '/"args": \[/,/]/s/^ *"\(.*\)",\{0,1\}$/\1/p')
+  : > ".fake-delegate-$n"
+  while IFS= read -r line; do
+    printf '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delegate","arguments":%s}}\n' "$line" |
+      "$command" "${bus_args[@]}" >> ".fake-delegate-$n"
+  done < "$home/fake-requests/$1.jsonl"
+}
+
 deaf=false
 if [[ $action == deaf-* ]]; then
   deaf=true
@@ -698,30 +717,10 @@ case $action in
     fi
     ;;
   ask-worker:*)
-    # Asks for a worker through the agentbus MCP server of this run, which the daemon started with the plan of a run
-    # that keeps a plan: the call is written to `.fake-delegate-N` and the answer to the call file.
-    # ask-worker:STEP:FOR:FILES:CHECK:DO, every field after STEP optional and defaulted.
-    IFS=: read -r _ step for_field files check doing <<< "$action"
-    for_field=${for_field-1.1}
-    files=${files-docs/guide.md}
-    check=${check-exists docs/guide.md}
-    doing=${doing-Write the guide section.}
-    python3 - "$mcp_config" "$for_field" "$files" "$check" "$doing" > ".fake-delegate-$n" <<'PY'
-import json, sys
-config, for_field, files, check, doing = sys.argv[1:6]
-server = json.load(open(config))["mcpServers"]["agentbus"]
-call = {"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-        "params": {"name": "delegate", "arguments": {
-            "goal": "the guide", "workdir": "/tmp", "steps": "write it", "returns": "the file",
-            "for": for_field, "files": files, "check": check, "do": doing}}}
-server["command"].extend(server["args"])
-print(json.dumps(server))
-print(json.dumps(call))
-PY
-    mapfile -t server < <(sed -n '1p' ".fake-delegate-$n" | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')
-    answer=$(sed -n '2p' ".fake-delegate-$n" | "${server[@]}" 2> ".fake-delegate-$n.err")
-    printf '%s\n' "$answer" > ".fake-delegate-$n.answer"
-    result "Sent the request.\nSTATUS: DONE"
+    # Asks for workers as the agent of this run does, through the agentbus server of the MCP configuration the daemon
+    # wrote for the run: see `ask_worker`. The answers are in `.fake-delegate-N`, one line a call.
+    ask_worker "${action#ask-worker:}"
+    result 'Asked for a worker.\nSTATUS: SLEEPING'
     ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)
