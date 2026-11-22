@@ -110,6 +110,10 @@ impl Zone {
     }
 
     /// Formats any retry timestamp in a daemon `waiting` line (`..., next try <timestamp>`) in this zone.
+    ///
+    /// The socket protocol (`RoundDetail.waiting`) carries the retry moment inside the UTC wait text so that the
+    /// protocol schema and `agent status --json` stay byte-for-byte compatible while client commands display their
+    /// own local zone.
     #[must_use]
     pub fn stamp_waiting(&self, waiting: &str) -> String {
         let Some((before, raw)) = waiting.rsplit_once(", next try ") else {
@@ -233,7 +237,7 @@ impl Zone {
 }
 
 impl From<UtcOffset> for Zone {
-    /// A fixed offset from UTC.
+    /// A fixed offset from UTC, allowing callers and untouched tests with a [`UtcOffset`] to convert into [`Zone`].
     fn from(offset: UtcOffset) -> Self {
         Self::Fixed(offset)
     }

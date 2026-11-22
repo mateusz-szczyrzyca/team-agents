@@ -347,8 +347,8 @@ pub struct UnreadablePartSummary {
 
 /// Formats a timestamp for a person in `zone`: the date, the time and the zone, as `agent log` writes it.
 #[must_use]
-pub fn format_time(ts: Timestamp, _zone: Zone) -> String {
-    Zone::Utc.stamp(ts)
+pub fn format_time(ts: Timestamp, zone: Zone) -> String {
+    zone.stamp(ts)
 }
 
 /// Computes minutes since activity relative to `now`, saturating at 0 if activity is in the future.

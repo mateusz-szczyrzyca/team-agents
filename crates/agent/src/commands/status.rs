@@ -143,8 +143,8 @@ pub(crate) fn clock_time(at: SystemTime, zone: Zone) -> String {
 }
 
 /// `at` as a person reads it in `zone`: the time of a recorded activity.
-pub(crate) fn clock_of(at: Timestamp, _zone: Zone) -> String {
-    Zone::Utc.stamp(at)
+pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
+    zone.stamp(at)
 }
 
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say

@@ -104,6 +104,10 @@ impl NoticeKind {
 }
 
 /// The facts about the task and environment needed to lay out a notification.
+///
+/// The type parameter `Z` defaults to [`Zone`] for daemon callers while accepting [`time::UtcOffset`] via
+/// `From<UtcOffset> for Zone` so that the existing tests in `words/catalog_tests.rs` and `words/legacy_tests.rs` keep
+/// passing `offset: UtcOffset` without modification.
 #[derive(Debug, Clone)]
 pub(super) struct NoticeContext<'a, Z = Zone> {
     /// The repository name.
@@ -117,6 +121,7 @@ pub(super) struct NoticeContext<'a, Z = Zone> {
     /// The time the event occurred.
     pub(super) time: Timestamp,
     /// The zone of the host: the times a notification shows are written in it, with the offset of each moment.
+    /// Named `offset` so that existing tests in `words/catalog_tests.rs` and `words/legacy_tests.rs` compile unchanged.
     pub(super) offset: Z,
     /// The task ID.
     pub(super) task: &'a TaskId,
@@ -154,8 +159,7 @@ pub(super) fn layout_notification<Z: Into<Zone> + Copy>(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let _ = context.offset.into();
-    let time_str = Zone::Utc.stamp_minute(context.time);
+    let time_str = context.offset.into().stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {
