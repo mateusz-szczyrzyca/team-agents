@@ -262,19 +262,17 @@ impl Owner {
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
         let waiting = self.waiting_for(team, round)?;
-        let line = Self::wait_text(team, round, waiting);
-        if waiting != Waiting::For(Obligation::QueuedRun) {
-            return Some(line);
-        }
+        let since = Self::wait_since(team, round, waiting);
         // A queued run whose agent runs another task at its limit goes after that run: the line names it.
-        let holder = round_tasks(team, round)
-            .into_iter()
-            .filter(|member| member.status() == TaskStatus::Queued)
-            .find_map(|member| self.run_holding(member.agent()));
-        Some(match holder {
-            Some(run) => format!("{line}{}", agent_core::decide::wait::behind_run(&run.agent, &run.team)),
-            None => line,
-        })
+        let holder = (waiting == Waiting::For(Obligation::QueuedRun))
+            .then(|| {
+                round_tasks(team, round)
+                    .into_iter()
+                    .filter(|member| member.status() == TaskStatus::Queued)
+                    .find_map(|member| self.run_holding(member.agent()))
+            })
+            .flatten();
+        Some(waiting.line_with_holder(since.as_deref(), holder.as_ref().map(|run| (&run.agent, &run.team))))
     }
 
     /// `waiting` as a line that names who owes it and since when.
@@ -282,6 +280,11 @@ impl Owner {
     /// The wait starts when the question was put, for the human's, and otherwise when the round last went idle: the end of
     /// the latest run that worked for it. A round whose tasks have not run, or whose run goes on, has no start to name.
     pub(in crate::daemon::owner) fn wait_text(team: &Team, round: &Round, waiting: Waiting) -> String {
+        waiting.line(Self::wait_since(team, round, waiting).as_deref())
+    }
+
+    /// The UTC timestamp string from which `round` has owed `waiting`, or `None` when the round has not run yet.
+    fn wait_since(team: &Team, round: &Round, waiting: Waiting) -> Option<String> {
         let tasks = round_tasks(team, round);
         // The human's wait began when the question was put; any other when the round last went idle: the end of the latest
         // run that worked for this round, not one of the same task for another.
@@ -301,8 +304,7 @@ impl Owner {
                 agent_core::state::RunState::Running => None,
             })
             .max();
-        let since = asked.or(idle).map(|at| agent_core::local_time::Zone::Utc.stamp(at));
-        waiting.line(since.as_deref())
+        asked.or(idle).map(|at| agent_core::local_time::Zone::Utc.stamp(at))
     }
 
     /// The action that owns the next step of an idle round.

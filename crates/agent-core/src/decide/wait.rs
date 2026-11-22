@@ -152,8 +152,14 @@ impl Waiting {
     /// The wait as a line that also names the active run `(agent, team)` holding a queued task of the round at its
     /// run limit. Only [`Obligation::QueuedRun`] carries a holding run; any other wait state ignores `holder`.
     #[must_use]
-    pub fn line_with_holder(self, since: Option<&str>, _holder: Option<(&AgentName, &TeamId)>) -> String {
-        self.line(since)
+    pub fn line_with_holder(self, since: Option<&str>, holder: Option<(&AgentName, &TeamId)>) -> String {
+        let base = self.line(since);
+        match (self, holder) {
+            (Self::For(Obligation::QueuedRun), Some((agent, team))) => {
+                format!("{base}{}", behind_run(agent, team))
+            }
+            _ => base,
+        }
     }
 }
 
