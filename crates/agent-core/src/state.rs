@@ -17,8 +17,6 @@ mod gate;
 mod holding;
 #[cfg(test)]
 mod holding_tests;
-#[cfg(test)]
-mod waiting_tests;
 mod item;
 #[cfg(test)]
 mod item_parts_tests;
@@ -37,6 +35,8 @@ pub mod split;
 mod strict;
 mod team;
 mod values;
+#[cfg(test)]
+mod waiting_tests;
 mod wake_delivery;
 
 pub use base::UnpushedBase;
