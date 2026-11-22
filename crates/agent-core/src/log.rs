@@ -169,6 +169,8 @@ pub enum LogEvent {
     RunStarted,
     /// A model CLI run ends.
     RunEnded,
+    /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
+    TaskWaitsForAgent,
     /// The daemon has opened its state and its history and serves its socket.
     DaemonStarted,
     /// A signal (`SIGTERM` or `SIGINT`) asks the daemon to stop.
@@ -257,6 +259,7 @@ impl LogEvent {
             | Self::TaskStatusChanged
             | Self::RunStarted
             | Self::RunEnded
+            | Self::TaskWaitsForAgent
             | Self::DaemonStarted
             | Self::DaemonStopRequested
             | Self::DaemonStopped

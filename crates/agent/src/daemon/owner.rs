@@ -37,6 +37,7 @@ use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
+use agent_core::decide::slot::{Going, busy_run, limit_for, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -44,7 +45,7 @@ use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
-    TeamSummary,
+    TeamSummary, mark_runs_elsewhere,
 };
 use agent_core::state::{
     BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Question, QuestionError, RunEnd, RunError, SessionId,
@@ -464,6 +465,8 @@ pub(super) struct Owner {
     running: HashMap<JoinId, TaskId>,
     /// The tasks that have a run going.
     in_flight: HashSet<TaskId>,
+    /// The queued tasks that wait for their agent to finish a run in another task; the wait is logged once per task.
+    agent_waits: HashSet<TaskId>,
     /// What stops the run of each task that has one going, by task.
     cancels: HashMap<TaskId, CancellationToken>,
     /// The tasks whose run the human has stopped, and how: the end of the run decides their status.
@@ -555,7 +558,11 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
 impl Owner {
     /// The summary of `team` as `agent status` shows it: with the limit of returns `[replacement] rejections` sets.
     fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
-        TeamSummary::described(team).with_rejection_limit(self.parts.settings.config.replacement().rejections().get())
+        let mut summary = TeamSummary::described(team)
+            .with_rejection_limit(self.parts.settings.config.replacement().rejections().get());
+        let going = runs_going(self.parts.state.teams());
+        mark_runs_elsewhere(&mut summary.members, &going, self.parts.settings.config.limits());
+        summary
     }
 
     /// An owner made of `parts`.
@@ -577,6 +584,7 @@ impl Owner {
             runs: JoinSet::new(),
             running: HashMap::new(),
             in_flight: HashSet::new(),
+            agent_waits: HashSet::new(),
             cancels: HashMap::new(),
             halts: HashMap::new(),
             wakes: HashMap::new(),
@@ -784,6 +792,8 @@ impl Owner {
             })
             .filter(|task| !self.in_flight.contains(task) && !self.pending_removals.contains(task))
             .collect();
+        // A task that is no longer queued is no longer waiting for its agent.
+        self.agent_waits.retain(|task| queued.contains(task));
         if queued.is_empty() {
             return Ok(());
         }
@@ -798,9 +808,42 @@ impl Owner {
             if !self.space_allows_run().await {
                 break;
             }
+            // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
+            if let Some(holder) = self.run_holding_agent(&task)? {
+                self.note_agent_wait(&task, &holder);
+                continue;
+            }
+            self.agent_waits.remove(&task);
             self.start(task).await?;
         }
         Ok(())
+    }
+
+    /// The run that holds the agent of `task` at its limit of runs, `None` when the agent may run `task` now.
+    fn run_holding_agent(&self, task: &TaskId) -> Result<Option<Going>, OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let agent = found.member.agent();
+        let limit = limit_for(self.parts.settings.config.limits(), agent.tier());
+        let going = runs_going(self.parts.state.teams());
+        Ok(busy_run(&agent.agent_name(), limit, &going).cloned())
+    }
+
+    /// Notes that the queued `task` waits for the run `holder`; the log says so once, not at every look of the loop.
+    fn note_agent_wait(&mut self, task: &TaskId, holder: &Going) {
+        if self.agent_waits.insert(task.clone()) {
+            tracing::info!(
+                event = LogEvent::TaskWaitsForAgent.as_str(),
+                task = %task,
+                holder_team = %holder.team,
+                holder_task = %holder.task,
+                agent = %holder.agent,
+                "the task waits: its agent runs another task at its limit of runs"
+            );
+        }
     }
 
     /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
