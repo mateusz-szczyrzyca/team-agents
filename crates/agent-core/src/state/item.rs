@@ -437,6 +437,12 @@ pub struct ItemProgress {
     /// The approved head GitHub refused to merge before the current conflict pass or question, when one is in progress.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     conflict_approved_head: Option<CommitId>,
+    /// The conflict head for which the pass was refunded; absent if not refunded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict_refunded_head: Option<CommitId>,
+    /// The conflict head for which the pass was recorded as published.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict_accounted_head: Option<CommitId>,
     /// The merge conflict pass in progress, if any; absent while the merge of the approved pull request is not in
     /// trouble.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -528,6 +534,12 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written without a recorded conflict head has none.
     #[serde(default)]
     conflict_approved_head: Option<CommitId>,
+    /// See [`ItemProgress`]; a state written without a refunded conflict head has none.
+    #[serde(default)]
+    conflict_refunded_head: Option<CommitId>,
+    /// See [`ItemProgress`]; a state written without an accounted conflict head has none.
+    #[serde(default)]
+    conflict_accounted_head: Option<CommitId>,
     /// See [`ItemProgress`]; a state written before merge conflicts has none.
     #[serde(default)]
     merge_conflict: Option<MergeConflict>,
@@ -571,6 +583,8 @@ impl<'de> Deserialize<'de> for ItemProgress {
             merge_passes: wire.merge_passes,
             conflict_verifications: wire.conflict_verifications,
             conflict_approved_head: wire.conflict_approved_head,
+            conflict_refunded_head: wire.conflict_refunded_head,
+            conflict_accounted_head: wire.conflict_accounted_head,
             merge_conflict: wire.merge_conflict,
             publish_tries: wire.publish_tries,
             publish_question,
@@ -1056,6 +1070,8 @@ impl ItemProgress {
             merge_passes: 0,
             conflict_verifications: 0,
             conflict_approved_head: None,
+            conflict_refunded_head: None,
+            conflict_accounted_head: None,
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
@@ -1126,12 +1142,25 @@ impl ItemProgress {
 
     /// Records that a merge conflict pass was published and increments spent merge passes.
     pub fn record_published_conflict_pass(&mut self) -> u32 {
-        self.spend_merge_pass()
+        if let Some(ref head) = self.conflict_approved_head.clone() {
+            if self.conflict_refunded_head.as_ref() == Some(head) {
+                self.merge_passes = self.merge_passes.saturating_add(1);
+                self.conflict_refunded_head = None;
+            }
+            self.conflict_accounted_head = Some(head.clone());
+        }
+        self.merge_passes
     }
 
     /// Refunds an unspent or unpublished conflict pass and returns the new count.
     pub fn refund_conflict_pass(&mut self) -> u32 {
-        self.merge_passes = self.merge_passes.saturating_sub(1);
+        if let Some(ref head) = self.conflict_approved_head.clone() {
+            if self.conflict_refunded_head.as_ref() != Some(head) {
+                self.merge_passes = self.merge_passes.saturating_sub(1);
+                self.conflict_refunded_head = Some(head.clone());
+                self.conflict_accounted_head = None;
+            }
+        }
         self.merge_passes
     }
 
@@ -1186,6 +1215,8 @@ impl ItemProgress {
     /// recorded at `at`. Returns the passes spent so far, this one included.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.conflict_approved_head = Some(approved_head.clone());
+        self.conflict_refunded_head = None;
+        self.conflict_accounted_head = None;
         self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
         self.spend_merge_pass()
     }
@@ -1194,6 +1225,8 @@ impl ItemProgress {
     pub fn end_merge_conflict(&mut self) {
         self.merge_conflict = None;
         self.conflict_approved_head = None;
+        self.conflict_refunded_head = None;
+        self.conflict_accounted_head = None;
     }
 
     /// Reopens the review of an approved item whose branch the lead changed beyond the merge of the base: the reviewers
