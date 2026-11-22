@@ -965,7 +965,13 @@
    "type": "CmdHelperDump",
    "op": "helper-dump",
    "what": "the subcommand helper-dump",
-   "causes": []
+   "causes": [
+    {
+     "name": "MissingTask",
+     "class": "InvalidArgument",
+     "doc": "--task is missing: the requests of every task are not listed"
+    }
+   ]
   },
   {
    "type": "CmdHelperList",

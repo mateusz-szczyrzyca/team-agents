@@ -21,3 +21,10 @@ func TestHelpersOfATaskAreItsOwnRequestsOldestFirst(t *testing.T) {
 		t.Fatalf("a task without requests has none: %+v", none)
 	}
 }
+
+func TestHelperDumpNeedsATask(t *testing.T) {
+	failsWith(t, CmdHelperDumpMissingTask)("", helperDumpTask(" "))
+	if err := helperDumpTask("task-a"); err != nil {
+		t.Fatalf("a task is enough: %v", err)
+	}
+}

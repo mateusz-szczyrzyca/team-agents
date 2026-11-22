@@ -1668,7 +1668,8 @@ func (c CmdHelperGetCause) String() string { return c.info().name }
 type CmdHelperDumpCause int
 
 const (
-	CmdHelperDumpStorage CmdHelperDumpCause = iota // the shared state or a file could not be read or written [Storage]
+	CmdHelperDumpMissingTask CmdHelperDumpCause = iota // --task is missing: the requests of every task are not listed [InvalidArgument]
+	CmdHelperDumpStorage                               // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdHelperDumpError is the error of the subcommand helper-dump.
@@ -1676,6 +1677,7 @@ type CmdHelperDumpError = OpError[CmdHelperDumpCause]
 
 // cmdHelperDumpCauses describes the CmdHelperDumpCause values (same order as the constants).
 var cmdHelperDumpCauses = [...]causeInfo{
+	{"MissingTask", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 

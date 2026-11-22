@@ -1571,6 +1571,12 @@ func helpersOfTask(st *State, task string) []*Helper {
 	return out
 }
 
+// helperDumpTask checks the --task of helper-dump: a request recorded without a task has an empty one, so an empty
+// --task would list those instead of a task's.
+func helperDumpTask(task string) *CmdHelperDumpError {
+	return nil
+}
+
 // helper-dump: the worker requests of a task as a JSON array, oldest first (for agent status and the description of a
 // pull request); an empty array for a task without requests.
 func cmdHelperDump(args []string) {
