@@ -817,7 +817,7 @@ pub struct RequestWork {
     #[serde(default)]
     pub step: Option<ItemId>,
     /// The paths the worker may write; none for a request that asks for facts only.
-    #[serde(skip)]
+    #[serde(default)]
     pub files: Vec<RepoPath>,
     /// What shows the result is right: a command or `exists PATH`; `None` when the request has no check.
     #[serde(default)]
