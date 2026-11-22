@@ -198,8 +198,9 @@ restart of the daemon loses neither.
 sent back with that step: the correction names the step, its title, its check, the reason and the last lines of the
 check's output (at most 40). It counts against `[plan] bounces` like any other send-back. When an unfinished or lost-step
 plan fault and a mismatch come together, the run goes back once with both corrections (consuming one bounce of
-`[plan] bounces`). A run that ends another way, a role outside `[plan] roles` and a task created before plans are never
-sent back for a mismatch.
+`[plan] bounces`). A run that ends another way, a role outside `[plan] roles`, a task created before plans, and a task
+created before the daemon first ran step judging (`#163`, without the `plan_judging` marker) are never sent back for a
+mismatch.
 
 **A refused gate command.** A step whose check is `[plan] check_refuse` (the gate) stays `declared`, and the next run is
 told once, in its prompt, that the gate is never a step's check. The notice is kept in the task's plan in
