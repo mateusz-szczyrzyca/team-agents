@@ -188,6 +188,8 @@ pub enum AutopilotPrompt {
     ReviewFixResponse,
     /// Tell a lead woken during an open fix pass that the pass is still open and its response is due.
     ReviewFixPassOpen,
+    /// The line that names the file holding the full text of the findings of the fix pass, for every later prompt of it.
+    ReviewFixPassFile,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -325,6 +327,7 @@ impl AutopilotPrompt {
         Self::ReviewResponseFixed,
         Self::ReviewFixResponse,
         Self::ReviewFixPassOpen,
+        Self::ReviewFixPassFile,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -456,6 +459,7 @@ impl AutopilotPrompt {
             Self::ReviewFixPass => "harness/review/fix-pass.md",
             Self::ReviewFixResponse => "harness/review/fix-response.md",
             Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
+            Self::ReviewFixPassFile => "harness/review/fix-pass-file.md",
             Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
             Self::ReviewResponseExplain => "harness/review/response-explain.md",
             Self::ReviewResponseFixed => "harness/review/response-fixed.md",
@@ -593,6 +597,7 @@ impl AutopilotPrompt {
             Self::ReviewMemberFix => &["integration"],
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
             Self::ReviewFixPassOpen => &["pr", "pass"],
+            Self::ReviewFixPassFile => &["path"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
             Self::ReviewResponseForm | Self::ReviewVerifierAnswer => &["number", "allowed"],
             Self::ReviewAnswerDiagnostic => &["number", "source", "mistake", "forms"],

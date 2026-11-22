@@ -154,7 +154,12 @@ impl Owner {
                     }
                     None
                 }
-                FixAnswer::Correction(text) => Some(text),
+                FixAnswer::Correction(text) => {
+                    // A lead that lost the findings reads them again from the file the pass named in its first prompt.
+                    let file = self.parts.store.home().fix_pass_findings_file(&lead.task);
+                    let line = super::prompts::findings_file_line(&pulls.texts, &file)?;
+                    Some(format!("{}\n\n{line}", text.trim_end()))
+                }
             };
             let Some(disputes) = ledger.disputes_mut() else {
                 continue;

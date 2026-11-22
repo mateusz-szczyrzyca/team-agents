@@ -17,7 +17,7 @@ use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextErro
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::store::{StoreError, load_checks_record};
-use agent_runtime::text_file::{TextFileError, read_text_file};
+use agent_runtime::text_file::{TextFileError, read_text_file, replace_text_file};
 
 use super::super::start::{Context, next_number};
 use crate::daemon::checks::{ChecksTextError, answered, relay};
@@ -35,6 +35,9 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] super::findings::TextError),
+    /// The file with the findings of the fix pass cannot be written.
+    #[error("cannot write the findings of the fix pass to a file")]
+    FindingsFile(#[from] agent_runtime::text_file::ReplaceError),
     /// The repository of the team is not configured, so its base branch is not known.
     #[error("the repository {repo} of the team is not configured")]
     Repo {
@@ -352,6 +355,7 @@ pub(super) async fn fix_pass(
     {
         return Ok(Some(correction.clone()));
     }
+    let findings_file = ctx.home.fix_pass_findings_file(found.member.task());
     let Some(asked) = progress.fix_passes().last() else {
         return Ok(None);
     };
@@ -361,12 +365,12 @@ pub(super) async fn fix_pass(
         let values = Variables::new()
             .with("pr", pr.number.to_string())?
             .with("pass", passes.to_string())?;
-        return Ok(Some(
-            texts
-                .render(AutopilotPrompt::ReviewFixPassOpen, &values)?
-                .trim_end()
-                .to_owned(),
-        ));
+        let open = texts.render(AutopilotPrompt::ReviewFixPassOpen, &values)?;
+        return Ok(Some(format!(
+            "{}\n\n{}",
+            open.trim_end(),
+            findings_file_line(texts, &findings_file)?
+        )));
     }
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(progress.completed_review_passes().saturating_sub(1));
@@ -375,12 +379,15 @@ pub(super) async fn fix_pass(
         findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
     }
     findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
+    let findings = findings.join("\n\n");
+    // The same text goes to a file the prompts of the pass name: a lead that has lost it reads it again.
+    replace_text_file(&findings_file, &findings, 0o600).await?;
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("pass", passes.to_string())?
         .with("passes", ctx.settings.config.review().fix_passes.to_string())?
         .with("branch", branch.as_str())?
-        .with("findings", findings.join("\n\n"))?;
+        .with("findings", findings)?;
     let mut text = texts
         .render(
             if progress.findings().is_some_and(|l| l.disputes().is_some()) {
@@ -392,6 +399,8 @@ pub(super) async fn fix_pass(
         )?
         .trim_end()
         .to_owned();
+    text.push_str("\n\n");
+    text.push_str(&findings_file_line(texts, &findings_file)?);
     if matches!(found.role, Role::Member | Role::Worker) {
         let integration = texts.render(
             AutopilotPrompt::ReviewMemberFix,
@@ -401,6 +410,19 @@ pub(super) async fn fix_pass(
         text.push_str(integration.trim_end());
     }
     Ok(Some(text))
+}
+
+/// The line that names `file`, which holds the full text of the findings of the fix pass.
+pub(in crate::daemon::owner) fn findings_file_line(
+    texts: &AutopilotPrompts,
+    file: &std::path::Path,
+) -> Result<String, super::responses::ResponseTextError> {
+    // The home is a path of the configuration, which is text.
+    let values = Variables::new().with("path", file.display().to_string())?;
+    Ok(texts
+        .render(AutopilotPrompt::ReviewFixPassFile, &values)?
+        .trim_end()
+        .to_owned())
 }
 
 /// The request to the lead `found` to put the question to the human, when a pull request of the team waits for it: the
