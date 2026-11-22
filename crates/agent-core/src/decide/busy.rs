@@ -39,11 +39,28 @@ pub struct Offer<'a> {
     pub cli_runs: u32,
 }
 
+/// Why a task is waiting or active: only a queued task waiting for its busy agent ([`TaskWait::BusyAgent`]) is handed
+/// over after `busy_after`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TaskWait {
+    /// The task is queued and waits for its busy agent.
+    #[default]
+    BusyAgent,
+    /// The task is currently running.
+    Running,
+    /// The task waits for an answer of the human.
+    HumanAnswer,
+    /// The task's item waits for a review.
+    Review,
+}
+
 /// What the daemon knows about a queued task that waits for its agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Waiting<'a> {
     /// The role of the task.
     pub role: Role,
+    /// What the task is currently doing or waiting for.
+    pub wait: TaskWait,
     /// Whether a member of the task's team runs now; a coordinator is not taken from its team while one does.
     pub member_runs: bool,
     /// The tier of the agent that holds the task.

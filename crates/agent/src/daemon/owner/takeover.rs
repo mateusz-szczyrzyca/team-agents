@@ -2,7 +2,7 @@
 //! task from now on and starts it briefed in a new session, in its worktree and on its branch; or, with nobody fitting,
 //! the team's lead, which is given a member's work; or, as before, nobody, and the human decides.
 
-use agent_core::decide::busy::{self, Availability, Decision, Offer, Waiting};
+use agent_core::decide::busy::{self, Availability, Decision, Offer, TaskWait, Waiting};
 use agent_core::decide::ladder::Trouble;
 use agent_core::decide::replacement::{Activity, Candidate, Handover, ReplacementMode, choose};
 use agent_core::decide::slot::runs_going;
@@ -365,6 +365,7 @@ impl Owner {
             .any(|(_, member)| member.status() == TaskStatus::Running);
         let waiting = Waiting {
             role: found.role,
+            wait: TaskWait::BusyAgent,
             member_runs,
             held: held.tier(),
             waited: now.as_utc() - since.as_utc(),

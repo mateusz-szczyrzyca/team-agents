@@ -2,6 +2,7 @@
 
 use time::Duration;
 
+use super::TaskWait;
 use super::{Availability, Decision, Offer, Waiting, decide};
 use crate::ids::AgentName;
 use crate::kinds::{Role, Tier};
@@ -26,6 +27,7 @@ fn free(name: &AgentName, tier: Tier, cli_runs: u32) -> Offer<'_> {
 fn waiting<'a>(held: Tier, minutes: i64, busy_after: u32, offers: &'a [Offer<'a>]) -> Waiting<'a> {
     Waiting {
         role: Role::Solo,
+        wait: TaskWait::BusyAgent,
         member_runs: false,
         held,
         waited: Duration::minutes(minutes),
@@ -145,4 +147,145 @@ fn the_tasks_that_are_never_handed_over_keep_waiting() {
         ..waiting(Tier::Normal, 10, 300, &offers)
     };
     assert_eq!(decide(&idle_coordinator), Decision::HandOver(&claude_2));
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "table test with one row per wait duration, candidate state, CLI load, empty list and non-handed-over wait"
+)]
+fn decide_table_covers_every_wait_candidate_load_and_non_handed_over_state() {
+    let claude_2 = agent("claude-2");
+    let codex_1 = agent("codex-1");
+    let inv_opus = agent("inv-opus");
+    let glm_1 = agent("glm-1");
+    let fit = [free(&claude_2, Tier::Normal, 0)];
+    let lower = [free(&glm_1, Tier::Worker, 0)];
+    let higher = [free(&inv_opus, Tier::Investigator, 0)];
+    let in_team = [Offer {
+        in_team: true,
+        ..free(&claude_2, Tier::Normal, 0)
+    }];
+    let running_offer = [Offer {
+        availability: Availability::Busy,
+        ..free(&claude_2, Tier::Normal, 0)
+    }];
+    let paused_offer = [Offer {
+        availability: Availability::Paused,
+        ..free(&claude_2, Tier::Normal, 0)
+    }];
+    let different_loads = [free(&claude_2, Tier::Normal, 2), free(&codex_1, Tier::Normal, 1)];
+    let equal_loads = [free(&claude_2, Tier::Normal, 1), free(&codex_1, Tier::Normal, 1)];
+
+    let cases: [(&str, Waiting<'_>, Decision<'_>); 18] = [
+        (
+            "waited less than busy_after",
+            waiting(Tier::Normal, 4, 300, &fit),
+            Decision::Keep,
+        ),
+        (
+            "waited at least busy_after",
+            waiting(Tier::Normal, 5, 300, &fit),
+            Decision::HandOver(&claude_2),
+        ),
+        ("busy_after = 0", waiting(Tier::Normal, 10, 0, &fit), Decision::Keep),
+        (
+            "empty [replacement] agents list (no candidate)",
+            waiting(Tier::Normal, 10, 300, &[]),
+            Decision::Keep,
+        ),
+        (
+            "candidate of lower tier",
+            waiting(Tier::Normal, 10, 300, &lower),
+            Decision::Keep,
+        ),
+        (
+            "candidate of same tier",
+            waiting(Tier::Normal, 10, 300, &fit),
+            Decision::HandOver(&claude_2),
+        ),
+        (
+            "candidate of higher tier",
+            waiting(Tier::Normal, 10, 300, &higher),
+            Decision::HandOver(&inv_opus),
+        ),
+        (
+            "candidate in the task's team",
+            waiting(Tier::Normal, 10, 300, &in_team),
+            Decision::Keep,
+        ),
+        (
+            "candidate running",
+            waiting(Tier::Normal, 10, 300, &running_offer),
+            Decision::Keep,
+        ),
+        (
+            "candidate paused for quota",
+            waiting(Tier::Normal, 10, 300, &paused_offer),
+            Decision::Keep,
+        ),
+        (
+            "two candidates of two CLIs with different counts of runs",
+            waiting(Tier::Normal, 10, 300, &different_loads),
+            Decision::HandOver(&codex_1),
+        ),
+        (
+            "two candidates of two CLIs with equal counts of runs (order decides)",
+            waiting(Tier::Normal, 10, 300, &equal_loads),
+            Decision::HandOver(&claude_2),
+        ),
+        (
+            "not handed over: task is running",
+            Waiting {
+                wait: TaskWait::Running,
+                ..waiting(Tier::Normal, 10, 300, &fit)
+            },
+            Decision::Keep,
+        ),
+        (
+            "not handed over: task waits for an answer of the human",
+            Waiting {
+                wait: TaskWait::HumanAnswer,
+                ..waiting(Tier::Normal, 10, 300, &fit)
+            },
+            Decision::Keep,
+        ),
+        (
+            "not handed over: task waits for a review",
+            Waiting {
+                wait: TaskWait::Review,
+                ..waiting(Tier::Normal, 10, 300, &fit)
+            },
+            Decision::Keep,
+        ),
+        (
+            "not handed over: lead whose member runs",
+            Waiting {
+                role: Role::Coordinator,
+                member_runs: true,
+                ..waiting(Tier::Normal, 10, 300, &fit)
+            },
+            Decision::Keep,
+        ),
+        (
+            "not handed over: reviewer",
+            Waiting {
+                role: Role::Reviewer,
+                ..waiting(Tier::Investigator, 10, 300, &higher)
+            },
+            Decision::Keep,
+        ),
+        (
+            "not handed over: worker",
+            Waiting {
+                role: Role::Worker,
+                ..waiting(Tier::Worker, 10, 300, &fit)
+            },
+            Decision::Keep,
+        ),
+    ];
+
+    for (name, case, expected) in cases {
+        assert_eq!(decide(&case), expected, "{name}");
+    }
 }
