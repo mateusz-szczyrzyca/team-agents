@@ -2565,7 +2565,7 @@ async fn mismatch_across_roles_statuses_and_refused_gate_across_restart() {
         );
     }
 
-    for (scenario, expected_status) in [("sleep", TaskStatus::Waiting), ("fail", TaskStatus::Failed)] {
+    for (scenario, expected_status) in [("sleep", TaskStatus::Waiting), ("fail-tool", TaskStatus::Failed)] {
         let mut daemon = with_bounces(&solo_state(), 2);
         let dir = daemon.scenario(1, scenario);
         std::fs::create_dir_all(dir.join(".agent")).unwrap();
