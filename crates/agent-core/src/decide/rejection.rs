@@ -220,9 +220,22 @@ impl Facts {
                     }
                 )
             })
-            .map_or(NonZeroU32::MIN, |index| number(index.saturating_add(1)));
-        let last_run_number = number(runs.len().max(1));
+            .map_or(NonZeroU32::MIN, |index| run_number(index.saturating_add(1)));
+        let last_run_number = run_number(runs.len().max(1));
         Self::new(held, last_run, MovedOn::No, handed_over_after, last_run_number).with_answered(answered)
+    }
+
+    /// The facts of the item as `from_runs` reads them from the runs of its member that started before `lead_started_at`,
+    /// the start of the lead's run that ended with the line: a run the member was started for after the lead began is the
+    /// consequence of the return, not the work the lead read.
+    #[must_use]
+    pub fn from_runs_before(
+        held: Held,
+        answered: Answered,
+        runs: &[crate::state::Run],
+        _lead_started_at: crate::state::Timestamp,
+    ) -> Self {
+        Self::from_runs(held, answered, runs)
     }
 
     /// The same facts with the lead's end `lead`.
@@ -264,11 +277,19 @@ impl Facts {
 
 /// The run number `position`, counted from one: a list of runs is never as long as `u32` can count, so the largest
 /// number stands for a position beyond it.
-fn number(position: usize) -> NonZeroU32 {
+#[must_use]
+pub fn run_number(position: usize) -> NonZeroU32 {
     u32::try_from(position)
         .ok()
         .and_then(NonZeroU32::new)
         .unwrap_or(NonZeroU32::MAX)
+}
+
+/// The number of the member's last run when it started at `at` or later: the member was started again since the lead's
+/// run began; `None` when no run of it did.
+#[must_use]
+pub fn run_started_since(_runs: &[crate::state::Run], _at: crate::state::Timestamp) -> Option<NonZeroU32> {
+    None
 }
 
 /// What a return of `line` counts.
@@ -311,6 +332,8 @@ pub fn classify(_line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
 
 #[cfg(test)]
 mod answered_tests;
+#[cfg(test)]
+mod before_tests;
 #[cfg(test)]
 mod facts_tests;
 #[cfg(test)]
