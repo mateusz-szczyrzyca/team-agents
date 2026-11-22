@@ -1,4 +1,4 @@
-PRAGMA user_version = 17;
+PRAGMA user_version = 18;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -313,6 +313,24 @@ END,'') AS body
 FROM history_records h WHERE sequence=new.sequence;
 END;
 
+CREATE TABLE step_judgements (
+    id INTEGER PRIMARY KEY,
+    task TEXT NOT NULL,
+    team TEXT NOT NULL,
+    run TEXT,
+    at TEXT NOT NULL,
+    step TEXT NOT NULL,
+    state TEXT NOT NULL CHECK (state IN ('confirmed', 'declared', 'mismatch')),
+    check_line TEXT,
+    reason TEXT,
+    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
+    output_path TEXT
+) STRICT;
+
+CREATE INDEX step_judgements_by_task ON step_judgements (task, id);
+
+CREATE INDEX step_judgements_by_team ON step_judgements (team, id);
+
 CREATE TABLE daemon_logs (
     id INTEGER PRIMARY KEY,
     first_at TEXT NOT NULL,
@@ -329,7 +347,7 @@ CREATE TABLE daemon_logs (
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-        'task_handed_over'
+        'task_handed_over', 'task_waits_for_agent'
     )),
     team TEXT,
     task TEXT,
@@ -355,7 +373,8 @@ CREATE TABLE daemon_logs (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
-            'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over'
+            'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
+            'task_waits_for_agent'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
@@ -392,21 +411,3 @@ CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CA
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
-
-CREATE TABLE step_judgements (
-    id INTEGER PRIMARY KEY,
-    task TEXT NOT NULL,
-    team TEXT NOT NULL,
-    run TEXT,
-    at TEXT NOT NULL,
-    step TEXT NOT NULL,
-    state TEXT NOT NULL CHECK (state IN ('confirmed', 'declared', 'mismatch')),
-    check_line TEXT,
-    reason TEXT,
-    duration_ms INTEGER NOT NULL CHECK (duration_ms >= 0),
-    output_path TEXT
-) STRICT;
-
-CREATE INDEX step_judgements_by_task ON step_judgements (task, id);
-
-CREATE INDEX step_judgements_by_team ON step_judgements (team, id);

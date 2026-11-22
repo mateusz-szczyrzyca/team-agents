@@ -847,6 +847,10 @@ mod takeover_tests;
 mod last_step_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/agent_slots.rs"]
+mod agent_slots_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 

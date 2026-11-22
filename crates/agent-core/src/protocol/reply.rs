@@ -6,7 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use super::ProtocolVersion;
 use super::request::RequestId;
-use crate::config::{AbsolutePath, RepoName};
+use crate::config::{AbsolutePath, Limits, RepoName};
+use crate::decide::slot::{Going, busy_run, limit_for};
 use crate::history::HistoryHealth;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
@@ -376,6 +377,20 @@ pub struct MemberSummary {
     /// replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub returned: Option<Returned>,
+    /// The run that holds the agent of this queued task, which the task waits for; absent when the task starts as soon
+    /// as the daemon can, and from older daemons' replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub waits_for: Option<RunElsewhere>,
+}
+
+/// The run of an agent in another task, which a queued task of the same agent waits for.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunElsewhere {
+    /// The team of the run that holds the agent.
+    pub team: TeamId,
+    /// The task of the run that holds the agent.
+    pub task: TaskId,
 }
 
 /// How often the lead sent the work of an item back to the member that holds it.
@@ -417,6 +432,7 @@ impl MemberSummary {
             new_sessions: member.renewals().and_then(|renewals| NonZeroU32::new(renewals.used())),
             held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
             returned: None,
+            waits_for: None,
         }
     }
 }
@@ -551,6 +567,18 @@ impl From<&Team> for TeamSummary {
             activities: team.activities().to_vec(),
             task_plans: std::collections::BTreeMap::new(),
         }
+    }
+}
+
+/// Marks each queued member whose agent holds its run limit with the run that holds it, as `waits_for`; the other members
+/// keep none. `going` lists the runs that go over every team, and `limits` gives the limit of each tier.
+pub fn mark_runs_elsewhere(members: &mut [MemberSummary], going: &[Going], limits: &Limits) {
+    for member in members.iter_mut().filter(|member| member.status == TaskStatus::Queued) {
+        let limit = limit_for(limits, member.agent.tier());
+        member.waits_for = busy_run(&member.agent.agent_name(), limit, going).map(|run| RunElsewhere {
+            team: run.team.clone(),
+            task: run.task.clone(),
+        });
     }
 }
 
@@ -1064,6 +1092,9 @@ mod tests {
 
 #[cfg(test)]
 mod split_tests;
+
+#[cfg(test)]
+mod runs_elsewhere_tests;
 
 #[cfg(test)]
 mod legacy_split_tests;

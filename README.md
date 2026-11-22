@@ -257,7 +257,12 @@ Older clients and saved teams grant no such permission.
 A Claude Code run that exhausts its turn budget now resumes in the same session. Configure `[limits] max_turns`
 (default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
 notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
-of its continuation. This build supports legacy socket protocol `3` and split-aware protocol `4`, reads existing
+of its continuation.
+
+An agent has one run at a time, over all its teams and solo tasks (`[limits] runs_per_agent`, default `1`; the agents
+of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is queued already runs another task, the
+queued task waits — it is not failed — and `agent status` says `queued, waits for claude-1, running in team-…`. It starts
+when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued. This build supports legacy socket protocol `3` and split-aware protocol `4`, reads existing
 state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
 [state compatibility](docs/state.md#turn-limit-compatibility-item-88).
 

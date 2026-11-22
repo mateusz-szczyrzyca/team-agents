@@ -137,3 +137,11 @@ fn the_wait_line_names_the_owner_and_since_when() {
     );
     assert_eq!(Waiting::Defect.line(Some("03:12")), "nothing: this is a defect");
 }
+
+#[test]
+fn a_queued_run_behind_another_names_its_agent_and_team() {
+    assert_eq!(
+        super::behind_run("codex-1", "team-20261122-140915-aaaa"),
+        ", after the run of codex-1 in team-20261122-140915-aaaa"
+    );
+}

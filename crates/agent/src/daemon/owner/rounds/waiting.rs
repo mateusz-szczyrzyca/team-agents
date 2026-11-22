@@ -261,8 +261,23 @@ impl Owner {
 
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
-        self.waiting_for(team, round)
-            .map(|waiting| Self::wait_text(team, round, waiting))
+        let waiting = self.waiting_for(team, round)?;
+        let line = Self::wait_text(team, round, waiting);
+        if waiting != Waiting::For(Obligation::QueuedRun) {
+            return Some(line);
+        }
+        // A queued run whose agent runs another task at its limit goes after that run: the line names it.
+        let holder = round_tasks(team, round)
+            .into_iter()
+            .filter(|member| member.status() == TaskStatus::Queued)
+            .find_map(|member| self.run_holding(member.agent()));
+        Some(match holder {
+            Some(run) => format!(
+                "{line}{}",
+                agent_core::decide::wait::behind_run(run.agent.as_str(), run.team.as_str())
+            ),
+            None => line,
+        })
     }
 
     /// `waiting` as a line that names who owes it and since when.

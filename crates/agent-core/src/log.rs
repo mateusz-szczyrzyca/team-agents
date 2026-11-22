@@ -206,6 +206,8 @@ pub enum LogEvent {
     /// A task whose runs went bad after the last new session is handed over: to another agent, which holds it from now
     /// on, or, for a member's work, to its team's lead.
     TaskHandedOver,
+    /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
+    TaskWaitsForAgent,
 }
 
 impl Keyword for LogEvent {
@@ -257,6 +259,7 @@ impl LogEvent {
             | Self::TaskStatusChanged
             | Self::RunStarted
             | Self::RunEnded
+            | Self::TaskWaitsForAgent
             | Self::DaemonStarted
             | Self::DaemonStopRequested
             | Self::DaemonStopped
