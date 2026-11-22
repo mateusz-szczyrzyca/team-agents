@@ -46,10 +46,6 @@ fn request() -> DelegationRequest {
         worker: None,
         helper_task: None,
         summary: String::new(),
-        step: None,
-        files: Vec::new(),
-        check: None,
-        doing: None,
     }
 }
 
