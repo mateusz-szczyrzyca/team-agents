@@ -2613,9 +2613,6 @@ async fn mismatch_across_roles_statuses_and_refused_gate_across_restart() {
 
 #[tokio::test]
 async fn legacy_member_and_roles_deliver_refused_gate_and_plain_mismatch_end_to_end() {
-    use crate::fixtures::{investigator, member};
-    use agent_core::state::TeamMembers;
-
     // 1. Legacy member (Member::without_plan) with `Check: make gate`, ends SLEEPING, restarts, and queues next run.
     let mut legacy_state = State::new();
     let legacy_crew = Crew::solo(Member::without_plan(task(1), normal("claude-1"))).unwrap();
@@ -2662,17 +2659,7 @@ async fn legacy_member_and_roles_deliver_refused_gate_and_plain_mismatch_end_to_
 
     // 2. End-to-end daemon.start() plain mismatch bounce and repair for both coordinator (task 1) and member (task 2).
     for (active_task, inactive_task) in [(1_u32, 2_u32), (2_u32, 1_u32)] {
-        let mut team_done = State::new();
-        let crew = Crew::team(TeamMembers {
-            coordinator: member(1, investigator("inv-opus")),
-            members: vec![member(2, normal("claude-1"))],
-            workers: Vec::new(),
-        })
-        .unwrap();
-        let list = TaskListText::new("Finish it.".to_owned()).unwrap();
-        team_done
-            .insert_team(Team::new(team_id(0), repo(), at(0), MergeMode::Autopilot, list, crew))
-            .unwrap();
+        let mut team_done = super::super::fixture::pair_state();
         {
             let (_, mut other) = team_done.find_task_mut(&task(inactive_task)).unwrap();
             other.transition(TaskStatus::Running).unwrap();
