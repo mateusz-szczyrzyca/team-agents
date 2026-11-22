@@ -159,6 +159,7 @@ pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReas
     if limit == 0 {
         return PlanVerdict::Accept;
     }
+    let mismatch = if keeping.judging() { mismatch } else { None };
     let reason = match (fault(facts.read, facts.earlier), mismatch) {
         (
             Some(PlanReason::Unfinished { steps }),

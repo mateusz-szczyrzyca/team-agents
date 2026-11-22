@@ -853,6 +853,11 @@ impl Owner {
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
                 .member;
+            let mismatch = if member.plan().is_some_and(PlanKeeping::judging) {
+                mismatch
+            } else {
+                None
+            };
             decide_plan_with_mismatch(
                 PlanFacts {
                     role: located.role,
