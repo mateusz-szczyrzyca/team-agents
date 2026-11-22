@@ -683,16 +683,51 @@ impl Owner {
         Ok(())
     }
 
+    /// Configured replacement participants with their actual tiers, excluding the current team.
+    fn split_replacements(&self, team: &agent_core::state::Team) -> Vec<agent_core::state::Participant> {
+        let replacement = self.parts.settings.config.replacement();
+        let crew = team.crew().roster();
+        let outside: Vec<_> = replacement
+            .agents()
+            .iter()
+            .filter(|name| {
+                !crew.iter().any(|(_, member)| member.agent().name() == name.as_str())
+                    && !team
+                        .reviewers()
+                        .iter()
+                        .any(|member| member.agent().name() == name.as_str())
+            })
+            .filter_map(|name| self.participant_of(name))
+            .collect();
+        outside
+    }
+
     /// Records absent capability once, retaining the wait through daemon recovery.
     fn refresh_tier_waits(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
         let replacement = self.parts.settings.config.replacement();
+        let found = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let outside = self.split_replacements(found);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
         let mut team = self
             .parts
             .state
             .team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         let previous = team.tier_waits().clone();
-        let entered = team.refresh_tier_waits_in_policy(replacement.mode(), replacement.agents());
+        let entered = team.refresh_tier_waits_with_candidates(replacement.mode(), replacement.agents(), &candidates);
         look.changed |= previous != *team.tier_waits();
         for (item, tier) in entered {
             tracing::info!(event = LogEvent::TeamChanged.as_str(), kind = "tier_wait", team = %team_id,
@@ -708,19 +743,7 @@ impl Owner {
             return Ok(());
         };
         let replacement = self.parts.settings.config.replacement();
-        let crew = team.crew().roster();
-        let outside: Vec<_> = replacement
-            .agents()
-            .iter()
-            .filter(|name| {
-                !crew.iter().any(|(_, member)| member.agent().name() == name.as_str())
-                    && !team
-                        .reviewers()
-                        .iter()
-                        .any(|member| member.agent().name() == name.as_str())
-            })
-            .filter_map(|name| self.participant_of(name))
-            .collect();
+        let outside = self.split_replacements(team);
         let busy = self.agents_in_runs();
         let candidates: Vec<_> = outside
             .iter()

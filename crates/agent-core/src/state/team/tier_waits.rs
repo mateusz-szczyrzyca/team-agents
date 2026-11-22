@@ -57,24 +57,24 @@ impl Team {
         self.refresh_tier_waits_in_policy(mode, &[])
     }
 
-    /// Refreshes capability waits with configured outside participant facts.
-    pub fn refresh_tier_waits_with_candidates(
-        &mut self,
-        mode: crate::decide::replacement::ReplacementMode,
-        configured_replacements: &[crate::ids::AgentName],
-        _outside: &[crate::decide::part::Candidate<'_>],
-    ) -> Vec<(ItemId, Tier)> {
-        self.refresh_tier_waits_in_policy(mode, configured_replacements)
-    }
-
     /// Refreshes capability waits under a specific replacement policy.
     pub fn refresh_tier_waits_in_policy(
         &mut self,
         mode: crate::decide::replacement::ReplacementMode,
         configured_replacements: &[crate::ids::AgentName],
     ) -> Vec<(ItemId, Tier)> {
-        use crate::decide::assign::dispatch::{WaitReason, dispatch_in_policy};
-        let mut next: BTreeMap<_, _> = dispatch_in_policy(self, mode, configured_replacements)
+        self.refresh_tier_waits_with_candidates(mode, configured_replacements, &[])
+    }
+
+    /// Refreshes capability waits with configured outside participant facts.
+    pub fn refresh_tier_waits_with_candidates(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+        configured_replacements: &[crate::ids::AgentName],
+        outside: &[crate::decide::part::Candidate<'_>],
+    ) -> Vec<(ItemId, Tier)> {
+        use crate::decide::assign::dispatch::{WaitReason, dispatch_with_candidates};
+        let mut next: BTreeMap<_, _> = dispatch_with_candidates(self, mode, configured_replacements, outside)
             .waiting
             .into_iter()
             .filter(|wait| wait.reason == WaitReason::Absent)
@@ -131,6 +131,17 @@ impl CheckedMut<'_, Team> {
         mode: crate::decide::replacement::ReplacementMode,
     ) -> Vec<(ItemId, Tier)> {
         self.value.refresh_tier_waits_in_mode(mode)
+    }
+
+    /// See [`Team::refresh_tier_waits_with_candidates`].
+    pub fn refresh_tier_waits_with_candidates(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+        configured_replacements: &[crate::ids::AgentName],
+        outside: &[crate::decide::part::Candidate<'_>],
+    ) -> Vec<(ItemId, Tier)> {
+        self.value
+            .refresh_tier_waits_with_candidates(mode, configured_replacements, outside)
     }
 
     /// See [`Team::refresh_tier_waits_in_policy`].
