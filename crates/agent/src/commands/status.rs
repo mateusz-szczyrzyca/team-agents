@@ -938,6 +938,10 @@ mod short_desc_tests;
 mod part_state_tests;
 
 #[cfg(test)]
+#[path = "status/tests/returned.rs"]
+mod returned_tests;
+
+#[cfg(test)]
 #[path = "status/tests/short.rs"]
 mod short_tests;
 
