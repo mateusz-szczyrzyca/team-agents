@@ -3,7 +3,7 @@
 //! A worker's run ends, and the harness checks what it left: its status line, the files it changed, the request's
 //! check and the time it took. [`decide`] reads those facts and answers what the harness does with the result: take it
 //! and bring the worker's commit to the requester's branch ([`Verdict::Accept`]), give the request once more to a free
-//! worker of another provider ([`Verdict::GiveToAnother`]), or return the step to the requester with every reason
+//! worker of another provider, or of the same one when no other is free ([`Verdict::GiveToAnother`]), or return the step to the requester with every reason
 //! ([`Verdict::Return`]). A request that names no path to write is looked up: its result goes to the requester as it
 //! always did, and a check that fails still makes it a wrong result.
 //!
@@ -108,7 +108,7 @@ pub enum Verdict {
     /// The result serves the request: the worker's commit is brought to the requester's branch — for a request for
     /// facts only there is no commit, and the result is the worker's.
     Accept,
-    /// Give the request once more to a free worker of another provider; `wrong` is why this result did not serve.
+    /// Give the request once more to a free worker, of another provider when one is free; `wrong` is why this result did not serve.
     GiveToAnother {
         /// Why the result did not serve the request.
         wrong: Vec<Wrong>,
@@ -133,16 +133,19 @@ pub fn decide(facts: &Facts) -> Verdict {
     if facts.past_seconds {
         wrong.push(Wrong::PastSeconds);
     }
-    match facts.check {
-        CheckOutcome::Passed | CheckOutcome::Absent => {}
-        CheckOutcome::Failed => wrong.push(Wrong::CheckFailed),
-        CheckOutcome::TimedOut => wrong.push(Wrong::CheckTimedOut),
+    // A check may be absent only for a request for facts: a commit that no check shows right is never accepted.
+    match (facts.check, facts.scope) {
+        (CheckOutcome::Passed, _) | (CheckOutcome::Absent, Scope::Facts) => {}
+        (CheckOutcome::Absent, Scope::Files) => wrong.push(Wrong::NoCheck),
+        (CheckOutcome::Failed, _) => wrong.push(Wrong::CheckFailed),
+        (CheckOutcome::TimedOut, _) => wrong.push(Wrong::CheckTimedOut),
     }
     if wrong.is_empty() {
         return Verdict::Accept;
     }
     let first_try = facts.try_number <= 1;
-    if first_try && facts.tries > 1 && facts.elsewhere == Elsewhere::Free {
+    let somebody_free = matches!(facts.elsewhere, Elsewhere::Free | Elsewhere::SameProvider);
+    if first_try && facts.tries > 1 && somebody_free {
         Verdict::GiveToAnother { wrong }
     } else {
         Verdict::Return { wrong }
