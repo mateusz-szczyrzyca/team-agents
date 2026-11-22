@@ -383,8 +383,8 @@ struct StatusArgs {
     #[arg(long, conflicts_with = "target")]
     running: bool,
     /// With the teams, also the lines of their tasks, with their plans and parts, as `agent status` printed them before
-    /// the short view.
-    #[arg(long, conflicts_with_all = ["investigators", "json"])]
+    /// the short view. With `--json` it changes nothing: the JSON array already carries every task.
+    #[arg(long, conflicts_with = "investigators")]
     task: bool,
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
     #[arg(long, conflicts_with = "target")]
