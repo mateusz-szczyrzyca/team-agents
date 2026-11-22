@@ -635,7 +635,7 @@ async fn an_agent_that_is_in_another_open_team_too_is_named_after_what_started()
     .unwrap();
 
     let expected = format!(
-        "{}  codex-1 is also in the open team {} (task {}): its messages there do not reach this team\n",
+        "{}  codex-1 is also in the open team {} (task {}): its messages there do not reach this team, and its task here waits while its run there goes on\n",
         render_started(&home(), &sample_team()),
         team_id(5),
         task(7)
