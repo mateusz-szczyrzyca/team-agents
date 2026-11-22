@@ -126,21 +126,6 @@ impl AgentBus {
     }
 }
 
-impl AgentBus {
-    /// The newest message `sender` wrote to the session of `reader`, whether the session read it or not: what a lead said
-    /// to its member when it sent the work back, which the member may have read already.
-    ///
-    /// # Errors
-    /// [`UnreadMessagesError`].
-    pub async fn last_message_from(
-        &self,
-        reader: Reader<'_>,
-        sender: &str,
-    ) -> Result<Option<UnreadMessage>, UnreadMessagesError> {
-        last_message_from(&self.bus_dir(), reader, sender).await
-    }
-}
-
 /// A direct message a sender wrote to a session, with the whole text the sender wrote.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Said {
@@ -148,34 +133,6 @@ pub struct Said {
     pub id: NonZeroU64,
     /// What it says, whole.
     pub text: String,
-}
-
-/// The notice of the bus that tells a lead that a member finished, which the messages a lead writes back are counted from.
-#[derive(Debug, Clone, Copy)]
-pub struct Finished<'a> {
-    /// The lead the notice was written to, by its name on the bus.
-    pub lead: &'a str,
-    /// The member that finished, by its agent name.
-    pub member: &'a str,
-    /// The item the member reported `DONE` on.
-    pub item: &'a str,
-}
-
-impl AgentBus {
-    /// What `sender` wrote directly to the session of `reader` after the newest notice that `finished` names: the answer of
-    /// a lead to the work of a member it was told of. Messages to everybody or to the team, and those written before
-    /// the notice, are not the answer. `None` when the bus holds no such notice.
-    ///
-    /// # Errors
-    /// [`UnreadMessagesError`].
-    pub async fn said_since_finished(
-        &self,
-        reader: Reader<'_>,
-        sender: &str,
-        finished: Finished<'_>,
-    ) -> Result<Option<Vec<Said>>, UnreadMessagesError> {
-        said_since_finished(&self.bus_dir(), reader, sender, finished).await
-    }
 }
 
 impl AgentBus {
@@ -249,87 +206,6 @@ async fn said_after(
         .collect())
 }
 
-/// See [`AgentBus::said_since_finished`]; `bus_dir` is the directory of the bus.
-async fn said_since_finished(
-    bus_dir: &Path,
-    reader: Reader<'_>,
-    sender: &str,
-    finished: Finished<'_>,
-) -> Result<Option<Vec<Said>>, UnreadMessagesError> {
-    let path = bus_dir.join(LOG_FILE);
-    let Some(window) = read_window(&path).await? else {
-        return Ok(None);
-    };
-    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
-        path: path.clone(),
-        source,
-    })?;
-    // What the lead said after each notice of the hand-over, by notice: a notice opens a new answer.
-    let mut answers: Vec<Vec<Said>> = Vec::new();
-    for (index, text) in text.lines().enumerate().filter(|(_, text)| !text.trim().is_empty()) {
-        let line: Line = serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
-            path: path.clone(),
-            line: index.saturating_add(1),
-            source,
-        })?;
-        if line.is_finished_notice(finished) {
-            answers.push(Vec::new());
-        } else if line.from == sender
-            && line.is_direct_for(reader)
-            && let Some(answer) = answers.last_mut()
-        {
-            answer.push(Said {
-                id: line.id,
-                text: line.text,
-            });
-        }
-    }
-    if answers.is_empty() {
-        return Ok(None);
-    }
-    // The lead's message that sends the work back starts the member, which may report `DONE` again before the lead's run
-    // is over: the newest notice is then not yet answered, and the answer is the newest one that is.
-    Ok(Some(
-        answers
-            .into_iter()
-            .rev()
-            .find(|answer| !answer.is_empty())
-            .unwrap_or_default(),
-    ))
-}
-
-/// See [`AgentBus::last_message_from`]; `bus_dir` is the directory of the bus.
-async fn last_message_from(
-    bus_dir: &Path,
-    reader: Reader<'_>,
-    sender: &str,
-) -> Result<Option<UnreadMessage>, UnreadMessagesError> {
-    let path = bus_dir.join(LOG_FILE);
-    let Some(window) = read_window(&path).await? else {
-        return Ok(None);
-    };
-    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
-        path: path.clone(),
-        source,
-    })?;
-    let mut newest = None;
-    for (index, text) in text.lines().enumerate().filter(|(_, text)| !text.trim().is_empty()) {
-        let line: Line = serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
-            path: path.clone(),
-            line: index.saturating_add(1),
-            source,
-        })?;
-        if line.from == sender && line.is_for(reader) {
-            newest = Some(UnreadMessage {
-                id: line.id,
-                from: line.from,
-                text: line.text.chars().take(MAX_TEXT_CHARS).collect(),
-            });
-        }
-    }
-    Ok(newest)
-}
-
 /// The file of the bus that holds the messages, one JSON object a line.
 const LOG_FILE: &str = "messages.jsonl";
 
@@ -363,9 +239,6 @@ struct Line {
     /// The task a direct message is for; empty when it is for any session of the agent.
     #[serde(default)]
     task: String,
-    /// The fields of the event, as JSON; null in messages of older versions.
-    #[serde(default)]
-    data: serde_json::Value,
 }
 
 impl Line {
@@ -389,19 +262,6 @@ impl Line {
     /// Whether this message is written to the session of `reader` by name or by task, not to everybody or to a team.
     fn is_direct_for(&self, reader: Reader<'_>) -> bool {
         (self.to == reader.agent.as_str() || self.to == reader.task.as_str()) && self.is_for(reader)
-    }
-
-    /// Whether this message is the notice that tells the lead of `finished` that its member reported `DONE` on its item.
-    fn is_finished_notice(&self, finished: Finished<'_>) -> bool {
-        let field = |name: &str| {
-            self.data
-                .pointer(&format!("/fields/{name}"))
-                .and_then(serde_json::Value::as_str)
-        };
-        self.to == finished.lead
-            && self.data.get("notice").and_then(serde_json::Value::as_str) == Some("member_finished")
-            && field("member") == Some(finished.member)
-            && field("item") == Some(finished.item)
     }
 }
 
