@@ -85,7 +85,19 @@ const fn may_be_handed_over(waiting: &Waiting<'_>) -> bool {
 /// least `busy_after` seconds; otherwise [`Decision::Keep`].
 #[must_use]
 pub fn decide<'a>(waiting: &Waiting<'a>) -> Decision<'a> {
-    let _ = may_be_handed_over(waiting);
-    let _ = rank(waiting.held);
-    Decision::Keep
+    if !may_be_handed_over(waiting) || waiting.busy_after == 0 {
+        return Decision::Keep;
+    }
+    if waiting.waited < Duration::seconds(i64::from(waiting.busy_after)) {
+        return Decision::Keep;
+    }
+    // `min_by_key` returns the first of several equal minima: the first of the list among the least loaded CLIs.
+    waiting
+        .offers
+        .iter()
+        .filter(|offer| {
+            !offer.in_team && offer.availability == Availability::Free && rank(offer.tier) >= rank(waiting.held)
+        })
+        .min_by_key(|offer| offer.cli_runs)
+        .map_or(Decision::Keep, |offer| Decision::HandOver(offer.agent))
 }
