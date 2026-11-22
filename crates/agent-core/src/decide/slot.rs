@@ -94,4 +94,3 @@ pub fn runs_going(teams: &[Team]) -> Vec<Going> {
         })
         .collect()
 }
-
