@@ -242,6 +242,11 @@ impl Owner {
             };
             self.settle_joined(joined).await?;
         }
+        for task in halted {
+            if self.parked.contains_key(task) {
+                self.halt_parked_check(task).await?;
+            }
+        }
         // A halt whose run was gone already is not left for the next run of the task.
         for task in halted {
             self.halts.remove(task);

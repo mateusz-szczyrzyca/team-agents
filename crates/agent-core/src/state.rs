@@ -53,7 +53,7 @@ pub use item::{
     ReplaceReviewError, Review, ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
-pub use plan::{PlanKeeping, PlanReason, PlanStage};
+pub use plan::{PlanKeeping, PlanReason, PlanStage, RunningPlanCheck};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
 pub use renewal::{InvalidRenewalLimit, RenewTaskError, RenewalError, RenewalLimit, Renewals};
 pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
