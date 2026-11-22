@@ -942,3 +942,16 @@ async fn a_commit_is_named_by_its_first_digits_and_its_path() {
         "commit aaaaaaa in `tests/a.rs`"
     );
 }
+
+// Rule (review finding 5): what the human refused about a commit asks nothing of the lead, which cannot undo it.
+#[tokio::test]
+async fn the_lead_is_told_that_a_refusal_about_a_commit_asks_nothing_of_it() {
+    let texts = texts().await;
+
+    let text = answered(&texts).unwrap();
+
+    assert!(
+        text.contains("A commit that is already in the branch cannot be undone: where the human refused one, change nothing for it"),
+        "{text}"
+    );
+}
