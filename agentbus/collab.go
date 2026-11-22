@@ -87,6 +87,9 @@ type Helper struct {
 	AnsweredBy  int64           `json:"answered_by,omitempty"`  // the request that answered this unclear one's questions
 	FollowsUp   int64           `json:"follows_up,omitempty"`   // the unclear request whose questions this one answers
 	Step        string          `json:"step,omitempty"`         // the step of the requester's plan the work is for (absent: a request before a step existed, or the old form)
+	Files       []string        `json:"files,omitempty"`        // the paths the worker may write, as the request named them (absent: the old form)
+	Check       string          `json:"check,omitempty"`        // what shows the result right: a command or "exists PATH" (absent: no check)
+	Doing       string          `json:"doing,omitempty"`        // what to do, in the requester's words (absent: the old form)
 }
 
 // AgentCheckVerdict is the harness's answer to a check the bus asks it (runAgentCheck).
