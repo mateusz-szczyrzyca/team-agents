@@ -237,7 +237,7 @@ FINDINGS
    CHECK: read src/lib.rs:7
   ----- end of review report -----
 <time>  fix pass 1 of 5 on #1 started
-  ----- findings sent to the team (2484 bytes) -----
+  ----- findings sent to the team (2779 bytes) -----
 # THE REVIEWERS ASKED FOR CHANGES (pull request #1, fix pass 1 of 5)
 
 All reviews of your pull request are in, and at least one asks for changes. The reports, each with its verdict:
@@ -272,6 +272,9 @@ with `STATUS: DONE`.
 
 Do not push, and do not open or update the pull request: the harness pushes your branch when the gate has passed at its
 head, and asks available investigators to verify the fixes, preferring a different group. Do not answer the reviewers on GitHub.
+
+The full text of the findings of this fix pass, each with its number, its reviewer and its level, is also in the file
+`<home>/tasks/<task-4>/fix-pass-findings.md`. If a message asks you to correct your answers and you no longer have the findings, read that file.
 
 # YOUR PART OF THE PULL REQUEST DESCRIPTION
 
