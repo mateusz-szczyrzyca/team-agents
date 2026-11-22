@@ -266,8 +266,20 @@ impl Owner {
     }
 
     /// `waiting` as a line that names who owes it and since when.
-    pub(in crate::daemon::owner) fn wait_text(_team: &Team, _round: &Round, waiting: Waiting) -> String {
-        waiting.text().to_owned()
+    ///
+    /// The wait starts when the round last went idle: the end of the latest run of its tasks. A round whose tasks have not
+    /// run, or whose run goes on, has no start to name.
+    pub(in crate::daemon::owner) fn wait_text(team: &Team, round: &Round, waiting: Waiting) -> String {
+        let since = round_tasks(team, round)
+            .iter()
+            .flat_map(|member| member.runs())
+            .filter_map(|run| match run.state() {
+                agent_core::state::RunState::Ended { at, .. } => Some(*at),
+                agent_core::state::RunState::Running => None,
+            })
+            .max()
+            .map(|at| agent_core::local_time::Zone::Utc.stamp(at));
+        waiting.line(since.as_deref())
     }
 
     /// The action that owns the next step of an idle round.
