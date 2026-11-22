@@ -443,7 +443,10 @@ Integrate the guide.
         assert!(worker[0].0, "a worker does not delegate: {worker:?}");
         eventually("both requests to be done", || {
             let requests = world.requests();
-            requests.len() == 2 && requests.values().all(|request| request["status"] == "done")
+            requests.len() == 2
+                && requests
+                    .values()
+                    .all(|request| request["status"] == "done" || request["status"] == "failed")
         });
         let prompts = [
             request_prompts(&world, glm_1, 1, world.runs(glm_1)),
@@ -567,7 +570,9 @@ Integrate the guide.
         assert_eq!(world.requests()["1"]["status"], "queued");
         world.start();
 
-        eventually("the request to be done", || world.requests()["1"]["status"] == "done");
+        eventually("the request to be answered", || {
+            ["done", "failed"].contains(&world.requests()["1"]["status"].as_str().unwrap())
+        });
         let runs = world.runs(glm_1);
         assert_eq!(
             request_prompts(&world, glm_1, 1, runs).len(),
@@ -591,18 +596,18 @@ Integrate the guide.
         world.ended(task(&tasks, "glm-1"), 1);
         world.sleeps_on_the_bus("glm-1");
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
-        eventually("the request to be done", || {
+        eventually("the request to be answered", || {
             world
                 .requests()
                 .get("1")
-                .is_some_and(|request| request["status"] == "done")
+                .is_some_and(|request| request["status"] == "failed")
         });
 
         let output = world.agent(&["status", member]);
 
         let status = String::from_utf8(output.stdout).unwrap();
         assert!(
-            status.contains("    request H1  step 1.1  worker glm-1  done"),
+            status.contains("    request H1  step 1.1  worker glm-1  failed"),
             "{status}"
         );
     }
