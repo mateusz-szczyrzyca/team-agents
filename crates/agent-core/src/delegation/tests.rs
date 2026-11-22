@@ -1,5 +1,7 @@
 //! The decision of a request of an agent with a plan: one row per outcome of [`decide`].
 use super::*;
+use std::num::NonZeroUsize;
+
 use crate::plan::parse_plan;
 
 /// A plan with a step still to do, one in hand, one done and one given up.
@@ -161,6 +163,9 @@ fn every_missing_or_wrong_piece_is_refused_with_its_own_outcome() {
             |r: &mut Request| r.named.check = "exists".to_owned(),
             Rejection::BadCheck {
                 check: "exists".to_owned(),
+                source: PlanError::ExistsWithoutPath {
+                    line: NonZeroUsize::MIN,
+                },
             },
         ),
         (
