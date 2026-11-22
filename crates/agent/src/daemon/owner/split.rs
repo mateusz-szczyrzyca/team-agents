@@ -69,6 +69,7 @@ impl Owner {
         task: &TaskId,
         located: &Located,
         message: Option<&str>,
+        own: &Settled,
     ) -> Result<Option<Settled>, OwnerError> {
         if located.role != Role::Coordinator {
             return Ok(None);
@@ -87,9 +88,15 @@ impl Owner {
             .map(agent_core::state::split::SplitPlan::parent)
             .collect();
         let item = match judge_submission(&items, &split, message) {
-            Submission::NotSubmitted => return Ok(None),
-            Submission::Refused(refusal) => return self.refuse_split(task, located, &refusal).await.map(Some),
-            Submission::Taken(item) => item,
+            Submission::NotSubmitted => {
+                self.watch.split_refusals.remove(task);
+                return Ok(None);
+            }
+            Submission::Refused(refusal) => return self.refuse_split(task, located, &refusal, own).await,
+            Submission::Taken(item) => {
+                self.watch.split_refusals.remove(task);
+                item
+            }
         };
         let keeping = team.split_proposal(item).cloned();
         let path = self
@@ -122,13 +129,22 @@ impl Owner {
     }
 
     /// Records a `SPLIT:` line that cannot be taken and tells its author why, in a message of the catalog that says what to do
-    /// instead; the author is queued to run again and read it. Nobody is left waiting for a correction it was not asked for.
+    /// instead; the message wakes an author that sleeps. The run's own ending is acted on as if nothing was refused: a
+    /// refusal replaces nothing, and `STATUS: DONE` and `STATUS: QUESTIONS` are never thrown away.
+    ///
+    /// An author that repeats the line is told as often as a proposal is corrected (`[split] corrections`); after that the
+    /// refusal is only logged, and its own status decides, so it is not run again for ever.
     async fn refuse_split(
         &mut self,
         task: &TaskId,
         located: &Located,
         refusal: &Refusal,
-    ) -> Result<Settled, OwnerError> {
+        own: &Settled,
+    ) -> Result<Option<Settled>, OwnerError> {
+        let refused = self.watch.split_refusals.entry(task.clone()).or_insert(0);
+        *refused = refused.saturating_add(1);
+        let refused = *refused;
+        let limit = self.parts.settings.config.split().corrections;
         let (id, values, item) = match refusal {
             Refusal::AlreadySplit { item } => (
                 TeamPrompt::SplitRefusedAlready,
@@ -149,9 +165,13 @@ impl Owner {
         let reason = text.trim().to_owned();
         agent_runtime::history::log_decision(
             "split_proposal",
-            &serde_json::json!({"task": task, "item": item.map(|item| item.to_string()), "corrections": 0}),
-            &serde_json::json!({"decision": SplitDecision::Corrected, "reason": reason}),
+            &serde_json::json!({"task": task, "item": item.map(|item| item.to_string()), "corrections": refused}),
+            &serde_json::json!({"decision": SplitDecision::Corrected, "reason": reason, "told": refused <= limit}),
         );
+        if refused > limit {
+            tracing::warn!(%task, refused, limit, "a coordinator repeats a refused SPLIT line: it is not told again, its status decides");
+            return Ok(None);
+        }
         if let Some(item) = item {
             self.record_event(
                 &located.team,
@@ -160,7 +180,7 @@ impl Owner {
                     task: task.clone(),
                     item,
                     decision: SplitDecision::Corrected,
-                    corrections: 0,
+                    corrections: refused,
                     question: None,
                     reason,
                 },
@@ -169,11 +189,14 @@ impl Owner {
         let to = self.recipient_of(task)?;
         let from = "agentbus".parse()?;
         if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
-            // The refusal is recorded; the author still runs again, and the checks of its next end say it again.
             tracing::warn!(event = LogEvent::BusDown.as_str(), %task, error = %agent_runtime::process::error_chain(&error),
                 "cannot tell the author of a refused split why");
+            // Nothing wakes a coordinator that sleeps and was not told: it runs again, within the bound above.
+            if matches!(own, Settled::Status(TaskStatus::Waiting)) {
+                return Ok(Some(Settled::Status(TaskStatus::Queued)));
+            }
         }
-        Ok(Settled::Status(TaskStatus::Queued))
+        Ok(None)
     }
 
     /// Applies one saved pending proposal; all outcomes are committed with the task status.

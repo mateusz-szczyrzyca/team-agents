@@ -1150,7 +1150,10 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
-        let (settled, held) = match self.split_at_end(task, &located, run.final_message.as_deref()).await? {
+        let (settled, held) = match self
+            .split_at_end(task, &located, run.final_message.as_deref(), &settled)
+            .await?
+        {
             Some(settled) => (settled, plan::PlanHeld::Yes),
             None => self.plan_at_end(task, &located, &run.classified.end, settled).await?,
         };
