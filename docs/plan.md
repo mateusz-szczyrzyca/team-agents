@@ -63,6 +63,10 @@ stage here, and what it calls an item is a step. A plan has no `Coordinator:` or
   valid — a step whose being done nobody can show by a machine or by a path is written without it.
 - **The note** — every other line of the step's text. A `[-]` step needs a note that is not blank: its reason. A note
   that is only a `Files:` line or a `Check:` line is no reason, and is refused as none.
+- **`By: worker`** — a line of the note that marks the step for a worker: its holder gives it to a worker with
+  `delegate` (one result, named files, a check a machine runs) instead of doing it. Only the exact line
+  `By: worker` is the mark; any other line that starts with `By:` is a note like any other, and a plan without the
+  line is done by its holder, step by step, as before. The mark stays in the note, so the plan writes it back.
 
 Two words of a `Check:` line are not commands, and how a command is told from them:
 
