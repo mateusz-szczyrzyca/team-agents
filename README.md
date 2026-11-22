@@ -453,9 +453,9 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
 | `agent status --running --task` | as `agent status --running`, with the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
+| `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
-| `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
 
 Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
 `done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it

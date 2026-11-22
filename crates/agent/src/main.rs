@@ -91,7 +91,7 @@ struct Cli {
 enum Command {
     /// Runs the daemon: the owner of the state and of every model run, which the other commands talk to.
     Daemon(DaemonArgs),
-    /// Shows the teams the daemon knows and what each of their tasks is doing.
+    /// Shows the crate versions, the teams the daemon knows, their rounds and a count of their tasks (--task adds the tasks, plans and parts).
     Status(StatusArgs),
 }
 
