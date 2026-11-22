@@ -716,7 +716,7 @@ line `DELIVERED: #N` before its final `STATUS: DONE`. The harness checks that th
 item, the PR belongs to another round of this team and uses its recorded branch, the member's worktree is clean,
 and the item has no commits outside the published PR or base branch. For an approved split part, the coordinator
 can likewise deliver the part with `DELIVERED: #N` when an external or already merged PR of the same repository
-delivers the part's branch, without running the round's agent or reviewers. Git or GitHub failures, unmerged or closed PRs,
+delivers the task's or part's branch, without running the round's agent or reviewers. Git or GitHub failures, unmerged or closed PRs,
 or foreign repositories and branches refuse the claim and the coordinator receives a correction with the reason in its
 next prompt; the item stays in progress.
 

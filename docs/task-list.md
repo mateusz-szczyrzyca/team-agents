@@ -257,3 +257,18 @@ submitted proposal and an approving `split` verdict example. The example omits t
 The human can approve the complete plan or answer with instructions, using the existing answer workflow.
 Saved pending input is decided after a restart; corrections are not counted again and an existing question is
 not duplicated. Each outcome is recorded as `split_decision` in history and the daemon log.
+
+## Approved split parts: execution, replacement and external delivery
+
+Each part of an approved split executes in its own daemon round. When an approved part is ready to start, the daemon
+chooses its assignee following pure handover and capability rules:
+1. The member who held the previous round gets the next part, provided the member is available and qualified.
+2. If the previous member is stopped, failed or handed over, a qualified replacement member from the crew is chosen according to configured `[replacement]` rules.
+3. If no replacement member is available, the coordinator serves as fallback if it meets the part's required tier.
+4. If `[replacement] mode = "off"` or no agent in the crew meets the required tier, the item blocks and the human is asked once in a questions file (`notice-tier-question.md`), avoiding repeated lead wakeups.
+
+When an external or already merged pull request of the same repository delivers the work of a split part, the
+coordinator can report it with standalone `DELIVERED: #N` in its final message. The daemon accepts the delivery if
+the pull request is merged and targets either the parent task branch or the current split part branch, advancing the
+item to the next part or marking it done if all parts have merged. PRs that are unmerged, closed without merging,
+belong to a foreign repository, or target an unrelated branch are refused with a diagnostic reason sent to the lead.
