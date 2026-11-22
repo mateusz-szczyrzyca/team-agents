@@ -21,6 +21,8 @@ pub struct Replacement {
     mode: ReplacementMode,
     /// How many times a task is taken over by another agent after its runs went bad; `0` never takes one over.
     replacements: replacements::Limit,
+    /// How many times the lead may return an item before the agent that holds it is replaced; `0` never replaces it.
+    rejections: rejections::Limit,
 }
 
 impl Replacement {
@@ -51,7 +53,7 @@ impl Replacement {
     /// How many times the lead may return an item before the agent that holds it is replaced; `0` never replaces it.
     #[must_use]
     pub const fn rejections(&self) -> rejections::Limit {
-        rejections::Limit::of(0)
+        self.rejections
     }
 }
 
@@ -117,21 +119,60 @@ pub(super) mod replacements {
 
 /// `[replacement] rejections`: how many times the lead may return an item before the agent that holds it is replaced.
 pub(super) mod rejections {
-    /// The rejections after which an agent is replaced.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    /// The most rejections a limit may name: a configuration above it is refused.
+    const MAX: u32 = 10;
+
+    /// The rejections after which the agent that holds an item is replaced: `0` to 10, `0` never.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+    #[serde(try_from = "u32", into = "u32")]
     pub struct Limit(u32);
 
+    /// A number the rejections of an item cannot have.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+    #[error("{value} rejections per item is not a limit: it is 0 to {MAX}")]
+    pub struct InvalidLimit {
+        /// The refused number.
+        pub value: u32,
+    }
+
     impl Limit {
-        /// A limit of `value` rejections, without checking it.
-        #[must_use]
-        pub const fn of(value: u32) -> Self {
-            Self(value)
+        /// A limit of `value` rejections per item.
+        ///
+        /// # Errors
+        /// [`InvalidLimit`] above 10.
+        pub fn new(value: u32) -> Result<Self, InvalidLimit> {
+            if value <= MAX {
+                Ok(Self(value))
+            } else {
+                Err(InvalidLimit { value })
+            }
         }
 
         /// The number of rejections this limit allows.
         #[must_use]
         pub const fn get(self) -> u32 {
             self.0
+        }
+    }
+
+    impl TryFrom<u32> for Limit {
+        type Error = InvalidLimit;
+
+        fn try_from(value: u32) -> Result<Self, Self::Error> {
+            Self::new(value)
+        }
+    }
+
+    impl From<Limit> for u32 {
+        fn from(limit: Limit) -> Self {
+            limit.get()
+        }
+    }
+
+    impl Default for Limit {
+        fn default() -> Self {
+            // The human's decision of 21.11.2026: after five rejections the model is changed for an equivalent one.
+            Self(5)
         }
     }
 }
