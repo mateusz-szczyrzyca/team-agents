@@ -606,4 +606,194 @@ Integrate the guide.
             "{status}"
         );
     }
+
+    impl World {
+        /// Gives the stand-ins that run `script:NAME` their script: it runs in the worktree of the agent.
+        fn script(&self, name: &str, body: &str) {
+            let dir = self.home.join("fake-scripts");
+            std::fs::create_dir_all(&dir).unwrap();
+            std::fs::write(dir.join(format!("{name}.sh")), body).unwrap();
+        }
+
+        /// What a git command of the worktree of `task` prints, without its last line break.
+        fn git_output(&self, task: &str, args: &[&str]) -> String {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(self.worktree(task))
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
+        }
+
+        /// Waits until the request `number` of the bus has the status `status`.
+        fn request_is(&self, number: &str, status: &str) {
+            eventually(&format!("request H{number} to be {status}"), || {
+                self.requests()
+                    .get(number)
+                    .is_some_and(|request| request["status"] == status)
+            });
+        }
+    }
+
+    /// A worker's script that commits the file `docs/guide.md` with the text `text`, and the files `more`.
+    fn commit_script(text: &str, more: &[&str]) -> String {
+        let mut script = format!("mkdir -p docs\nprintf '{text}\\n' > docs/guide.md\ngit add docs/guide.md\n");
+        for file in more {
+            script.push_str(&format!("printf 'x\\n' > {file}\ngit add {file}\n"));
+        }
+        script.push_str(
+            "git -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
+        );
+        script
+    }
+
+    /// Starts a team of a member that asks for its step 1.1 with `request` once the test says so, and a worker whose
+    /// second run is `scenario`; returns the world and the tasks, with the request answered.
+    fn answered_request(world: &mut World, request: &str, scenario_after: &str) -> Vec<(String, String)> {
+        let _ = scenario_after;
+        world.asks("member", Some(MEMBER_PLAN), &[request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
+        world.ended(task(&tasks, "glm-1"), 1);
+        world.sleeps_on_the_bus("glm-1");
+        tasks
+    }
+
+    #[test]
+    fn a_worker_that_commits_the_requested_file_has_its_commit_brought_to_the_requesters_branch_when_its_check_passes()
+    {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let member = task(&tasks, "claude-1");
+        // The requester has uncommitted work of its own, which the bringing over must leave as it is.
+        std::fs::write(world.worktree(member).join("scratch.txt"), "my notes\n").unwrap();
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.file(member, "scratch.txt"), "my notes\n");
+        let message = world.git_output(member, &["log", "-1", "--format=%B"]);
+        assert!(message.contains("Write the walkthrough"), "{message}");
+        assert!(message.contains("Brought over from"), "{message}");
+        world.ended(member, 2);
+        let prompt = world.file(member, ".fake-prompt-2");
+        assert!(prompt.contains("did step 1.1 of your plan, and its commit"), "{prompt}");
+        assert!(prompt.contains("Files: docs/guide.md"), "{prompt}");
+        assert_eq!(world.requests().len(), 1, "the result is answered once");
+        assert_eq!(prompt.matches("did step 1.1 of your plan").count(), 1, "{prompt}");
+    }
+
+    #[test]
+    fn a_worker_whose_check_fails_has_nothing_brought_over_and_the_step_goes_back_with_the_reason() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("wrong text", &[]));
+        let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        request["check"] = serde_json::Value::String("grep -q walkthrough docs/guide.md".to_owned());
+        let tasks = answered_request(&mut world, &request.to_string(), "");
+        let member = task(&tasks, "claude-1");
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        world.ended(member, 2);
+        let prompt = world.file(member, ".fake-prompt-2");
+        assert!(prompt.contains("is back with you"), "{prompt}");
+        assert!(
+            prompt.contains("the check `grep -q walkthrough docs/guide.md` failed"),
+            "{prompt}"
+        );
+        assert!(!world.worktree(member).join("docs/guide.md").exists());
+        let message = world.git_output(member, &["log", "-1", "--format=%B"]);
+        assert!(!message.contains("Brought over from"), "{message}");
+    }
+
+    #[test]
+    fn a_worker_that_changes_a_file_outside_the_request_has_nothing_brought_over_and_the_file_is_named() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &["docs/notes.md"]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let member = task(&tasks, "claude-1");
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        world.ended(member, 2);
+        let prompt = world.file(member, ".fake-prompt-2");
+        assert!(
+            prompt.contains("changed files the request did not name: docs/notes.md"),
+            "{prompt}"
+        );
+        assert!(!world.worktree(member).join("docs/guide.md").exists());
+    }
+
+    #[test]
+    fn a_worker_that_commits_nothing_for_a_request_that_names_files_has_the_step_returned() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,done:Result: done."),
+        ]);
+        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let member = task(&tasks, "claude-1");
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        world.ended(member, 2);
+        let prompt = world.file(member, ".fake-prompt-2");
+        assert!(prompt.contains("is back with you"), "{prompt}");
+    }
+
+    #[test]
+    fn a_commit_that_conflicts_with_the_requesters_branch_is_not_applied_and_the_requester_is_told() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the worker's text", &[]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let member = task(&tasks, "claude-1");
+        // The requester wrote the same file differently and committed it meanwhile.
+        let worktree = world.worktree(member);
+        std::fs::create_dir_all(worktree.join("docs")).unwrap();
+        std::fs::write(worktree.join("docs/guide.md"), "the requester's text\n").unwrap();
+        git(&worktree, &["add", "docs/guide.md"]);
+        git(&worktree, &["commit", "-q", "-m", "The requester's own walkthrough"]);
+        let head = world.git_output(member, &["rev-parse", "HEAD"]);
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        world.ended(member, 2);
+        let prompt = world.file(member, ".fake-prompt-2");
+        assert!(
+            prompt.contains("does not apply to your branch as it is now"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("docs/guide.md"), "{prompt}");
+        assert_eq!(world.git_output(member, &["rev-parse", "HEAD"]), head);
+        assert_eq!(world.file(member, "docs/guide.md"), "the requester's text\n");
+    }
 }
