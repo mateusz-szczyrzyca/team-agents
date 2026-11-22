@@ -352,7 +352,9 @@ Decisions appear in history as `split_decision` and, at debug log level, as `dec
 `split_proposal`. A `SPLIT:` line the harness cannot take — the item is split already, or the team has no item of that name —
 is answered, not dropped: it is recorded in the log and in the history as a correction with its reason, the coordinator is
 sent a text of the catalog on the bus that says what was refused, why and what to do instead (deliver the part of its round;
-what does not fit is described for a task of its own), and it is woken for it, with no question to you. Existing configurations and split plans remain readable;
+what does not fit is described for a task of its own), and it is woken for it, with no question to you. The status the run ended with is acted on as before, and a coordinator that repeats the
+line is told as many times as a proposal is corrected (`[split] corrections`); after that only its own status counts. Only `SPLIT:` and an
+item number is a submission. Existing configurations and split plans remain readable;
 history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
 items and parts are assigned only to agents meeting their minimum tier. When none fits, the harness writes one
 questions file for the lead and keeps the item waiting. An answer goes to the lead without permitting a lower-tier

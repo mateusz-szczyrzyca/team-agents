@@ -1388,7 +1388,10 @@ Member markers produce a bus notice to the coordinator, without activating a spl
 item that is not split is the proposal; one that names a split item (`Refusal::AlreadySplit`) or no item of the team
 (`Refusal::UnknownItem`) is refused. A refusal is logged as `split_proposal` (debug) and, for a known item, kept in the
 history as a `split_decision` correction with its reason; the coordinator gets `TeamPrompt::SplitRefusedAlready` or
-`SplitRefusedUnknown` on the bus and is queued to run again. Nobody is left waiting for a correction it was not asked for.
+`SplitRefusedUnknown` on the bus, which wakes a coordinator that sleeps; the run's own status is acted on as before (a refusal
+replaces nothing). Only a line of the form `SPLIT: <item number>` is a submission. A coordinator that repeats a refused line is told
+`[split] corrections` times (`PullWatch::split_refusals`, kept in memory: a restart counts again), then only its status decides.
+Nobody is left waiting for a correction it was not asked for.
 Pending decisions are resumed before team assignment; saved corrections and asked stages are not replayed.
 Catalog entries supply each fault, the next prompt and the question. The append-only history records the outcome
 as `split_decision`, with parent, correction count and reason. At debug level the structured log uses the existing
@@ -1451,11 +1454,11 @@ Markers survive answers and restarts and expire only when the corresponding wait
 
 `decide::wait::Obligation` has an owner (`WaitOwner`: lead, human, reviewers, harness) and a way the owner is told (`Told`:
 prompt, notification, none needed); a table test lists every state and fails when one is added without a row. `Waiting::line`
-adds the owner and, when it is known, the start of the wait to the line of `agent status` (`Owner::wait_text`: the end of the
-latest run of the round's tasks); the clients show that time in the reader's zone (`Zone::stamp_waiting`). The first prompt
+adds the owner and, when it is known, the start of the wait to the line of `agent status` (`Owner::wait_text`: when the question was put
+for the human's wait, otherwise the end of the latest run that worked for this round); the clients show that time in the reader's zone (`Zone::stamp_waiting`). The first prompt
 of a fix pass writes its findings block to `fix-pass-findings.md` of the lead's task directory (`Home::fix_pass_findings_file`)
 and ends with `AutopilotPrompt::ReviewFixPassFile`, which names the file; the open-pass line and the request to correct a
-response end with it too. `decide::fix::response_of` says whether a lead's run can be the response to a pass: only one that
+response end with it too, when the file is there (a pass begun by an older daemon has none; a file that cannot be written is a warning). `decide::fix::response_of` says whether a lead's run can be the response to a pass: only one that
 started at or after the verdict (`Response::AfterVerdict`); a message from before the review, or from a run that started
 before it and ended after it, is not judged.
 
