@@ -1930,3 +1930,147 @@ async fn what_was_allowed_in_one_part_holds_in_the_next_and_a_new_commit_is_aske
     assert!(body.contains("Already settled for this item"), "{body}");
     assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
 }
+
+/// A team of a lead and a member whose item 1.1 is split into two parts, with the checks table: the member's first part
+/// edits a frozen test of `tests/new.txt` and its second one a frozen test of `tests/other.txt`, each in a commit of its own.
+async fn team_with_two_parts_and_the_checks() -> Rig {
+    let rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,checks-lead"),
+            normal("claude-1", "script:part-a,script:part-b"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let text = text.replace("fix_passes = 5", "fix_passes = 5\ncheck_passes = 2");
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{text}[repos.example.checks]\ntest_paths = [\"tests/\"]\ncode_paths = [\"src/\"]\nprotected_paths = [\"ci/\"]\n"
+        ),
+    )
+    .unwrap();
+    for (name, body) in [("tests/existing.txt", "a\nb\nc\n"), ("src/code.txt", "code\n")] {
+        let file = rig.repo.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed the tests and the code"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    for (name, file) in [("part-a", "tests/new.txt"), ("part-b", "tests/other.txt")] {
+        script(
+            &rig,
+            name,
+            &format!(
+                "printf 'x\\ny\\nz\\n' > {file}\ngit add {file}\ncommit -m 'RED: a test of {name}'\nsed -i 1d {file}\ngit add {file}\ncommit -m 'Tidy the test of {name}'\n"
+            ),
+        );
+    }
+    rig
+}
+
+// Rule (review finding 8): what the human refused in one part is kept in the next, and a commit that part adds is asked alone.
+#[tokio::test]
+async fn what_was_refused_in_one_part_is_kept_in_the_next_and_a_new_commit_is_asked_alone() {
+    let mut rig = team_with_two_parts_and_the_checks().await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers: crate::daemon::owner::fixture::answers(&[(1, &two_part_split())]),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    rig.wait_for("the question about the first part", || {
+        question_recorded(&rig, &tasks[0], 2)
+    })
+    .await;
+    let first_part = record(&rig, &tasks[0]).await.asked.unwrap().subjects;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 2, "refuse").await;
+    rig.wait_for("the question about the second part", || {
+        question_recorded(&rig, &tasks[0], 3)
+    })
+    .await;
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(first_part.len(), 1, "{first_part:?}");
+    let asked = kept.asked.as_ref().unwrap().subjects.clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_ne!(asked, first_part);
+    assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), first_part);
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), []);
+    // Nothing was sent back to the team for the refusal: no pass was spent.
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.sent, None);
+}
+
+// Rule (review findings 13 and 14): an answer an earlier daemon wrote for a file that has no finding at the first look is
+// bounded at that look too, so that a frozen-test commit added to that file later is asked and not inherited.
+#[tokio::test]
+async fn a_legacy_answer_about_a_file_with_no_finding_yet_does_not_cover_a_commit_added_later() {
+    let mut rig = checking_rig(
+        "script:edit-other,questions,done,fix-script:edit-new,questions,done",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    script(
+        &rig,
+        "edit-other",
+        "printf 'x\\ny\\nz\\n' > tests/other.txt\ngit add tests/other.txt\ncommit -m 'RED: another test'\nsed -i 1d tests/other.txt\ngit add tests/other.txt\ncommit -m 'Tidy the other test'\n",
+    );
+    script(
+        &rig,
+        "edit-new",
+        "printf 'x\\ny\\nz\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'RED: a new test'\nsed -i 1d tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the new test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    // What an earlier daemon had written: both files allowed with no head. At the first look only `tests/other.txt` has a
+    // finding; `tests/new.txt` has none yet.
+    std::fs::write(
+        rig.home.checks_file(&tasks[0]),
+        r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"},{"path":"tests/other.txt"}]}}}"#,
+    )
+    .unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    let added = commit_of(&rig, &tasks[0], "Tidy the new test");
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        kept.asked.as_ref().unwrap().subjects,
+        [Subject::Commit {
+            commit: added,
+            path: "tests/new.txt".parse().unwrap()
+        }]
+    );
+}
