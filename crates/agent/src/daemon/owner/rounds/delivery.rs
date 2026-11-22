@@ -188,6 +188,10 @@ impl Owner {
         let ItemPhase::InProgress { assignee, branch } = progress.phase().clone() else {
             return Err(ClaimError::Member);
         };
+        let derived_part_branch = team
+            .round(&round)
+            .and_then(|r| r.part())
+            .map(|p| format!("{branch}{p}"));
         let repo = team.repo().clone();
         let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;
         let git = self.worktree_git(&repo, &member, &assignee)?;
@@ -201,7 +205,10 @@ impl Owner {
             let same_repo = remote.origin == agent_runtime::github::Origin::SameRepository;
             let pr_branch = remote.head_branch.as_str();
             let task_branch = branch.as_str();
-            let part_branch = recorded_pr.as_ref().map(|p| p.branch.as_str());
+            let part_branch = recorded_pr
+                .as_ref()
+                .map(|p| p.branch.as_str())
+                .or(derived_part_branch.as_deref());
             let observation = match remote.state {
                 PullState::Open => DeliveryObservation::Open,
                 PullState::Closed => DeliveryObservation::Closed,

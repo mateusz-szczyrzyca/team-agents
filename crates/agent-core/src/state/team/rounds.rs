@@ -496,7 +496,7 @@ fn check_round_list(team: &Team) -> Result<(), RoundsError> {
                     || matches!(phase, Some(ItemPhase::Done { completion: Completion::Merged { pr: actual, .. } }) if actual == pr)
                     || round.ended() == Some(RoundEnd::Abandoned)
             };
-            if !fits || team.delivery_pull_request(pr.number) != Some(pr) {
+            if !fits || (round.part().is_none() && team.delivery_pull_request(pr.number) != Some(pr)) {
                 return Err(RoundsError::Delivery {
                     round: round.id().clone(),
                 });
