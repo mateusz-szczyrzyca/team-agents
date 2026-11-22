@@ -873,10 +873,10 @@ Integrate the guide.
             self.bus_cli(&["helper-set", "--id", "1", "--status", "running", "--task", worker]);
             let mut stage = stage;
             let head_text = serde_json::Value::String(head);
-            if let Some(object) = stage.as_object_mut() {
-                if object.contains_key("head") {
-                    object.insert("head".to_owned(), head_text);
-                }
+            if let Some(object) = stage.as_object_mut()
+                && object.contains_key("head")
+            {
+                object.insert("head".to_owned(), head_text);
             }
             let pending = serde_json::json!({
                 "request": 1,
