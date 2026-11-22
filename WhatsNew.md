@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.60.0 — 22.11.2026 — PR #178
+
+### Enhancements
+- [agent] `agent status` and `agent status --running` again list who is in each team and what each one does: a line for the coordinator, the members, the workers and the reviewers whose review is not over, between the team's rounds and its count of tasks — for example `task-…  member  claude-1  running, last activity 2026-11-22 10:15:42 +01:00`. A reviewer that gave its report or was stopped is only counted in the `tasks:` line. The plans of the tasks and the parts of a split stay behind `--task`.
+
 ## 0.59.0 — 22.11.2026 — PR #176
 
 ### New features
