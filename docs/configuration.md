@@ -177,7 +177,11 @@ A request is given to one worker first. Its result is wrong when the request's c
 than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
 the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
 wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
-facts only: its result goes to the requester as before, and its check, when it has one, is run all the same.
+facts only: its result goes to the requester as before, and its check, when it has one, is run all the same. Both keys
+apply to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the requester as failed at
+once, as before (its second try comes with a later version). The second worker is told who served the request before it and
+why that result did not serve; the requester is told the request went again, and, after a second wrong result, gets the
+reasons of both. A restart of the daemon while the request waits for the second worker does not lose it.
 
 | Key | Default | Meaning |
 |---|---|---|
