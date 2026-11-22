@@ -155,11 +155,26 @@ fn plan_check_table() {
         ("exists", Some("exists ok.txt"), 120, CheckRun::Inline),
         ("command runs", Some("cargo test"), 120, CheckRun::Run("cargo test")),
         ("refused gate", Some("make gate"), 120, CheckRun::Refused),
-        ("refused gate with flags", Some("agent gate --locked"), 120, CheckRun::Refused),
-        ("prefix in a longer word", Some("make gate-full"), 120, CheckRun::Run("make gate-full")),
+        (
+            "refused gate with flags",
+            Some("agent gate --locked"),
+            120,
+            CheckRun::Refused,
+        ),
+        (
+            "prefix in a longer word",
+            Some("make gate-full"),
+            120,
+            CheckRun::Run("make gate-full"),
+        ),
         ("checks switched off", Some("cargo test"), 0, CheckRun::Disabled),
         ("refused beats switched off", Some("make gate"), 0, CheckRun::Refused),
-        ("exists is inline when switched off", Some("exists ok.txt"), 0, CheckRun::Inline),
+        (
+            "exists is inline when switched off",
+            Some("exists ok.txt"),
+            0,
+            CheckRun::Inline,
+        ),
     ];
     for (name, check, seconds, expected) in rows {
         let plan = plan_check_of(check);
