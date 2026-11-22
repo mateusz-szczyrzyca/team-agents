@@ -497,54 +497,110 @@ pub enum RejectionError {
 ///
 /// Reading checks what the item's own constructors check: a phase with its data ([`ItemPhase`]), a fixing item with
 /// a fix pass, and that every fix pass was asked for by reviews that fit it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+/// The mutually exclusive conflict pass accounting state for an item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ConflictPassHead {
+    /// A conflict head for which a provisional pass is currently reserved.
+    Provisional(CommitId),
+    /// A conflict head for which the pass was refunded.
+    Refunded(CommitId),
+    /// A conflict head for which the pass was recorded as published.
+    Accounted(CommitId),
+}
+
+/// An item's progress inside a team.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ItemProgress {
     /// The item's number in the task list.
     id: ItemId,
     /// Where the item is.
     phase: ItemPhase,
     /// The fix passes so far, oldest first; their number is what the configured limit is compared with.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
     fix_passes: Vec<FixPass>,
     /// The last gate result for this item, if the gate has run.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub gate: Option<GateResult>,
     /// The numbered protocol, absent for rounds opened by an earlier daemon.
-    #[serde(skip_serializing_if = "Option::is_none")]
     findings: Option<Findings>,
     /// The lead passes spent on merging the base into the branch after GitHub refused the merge for a conflict; the
     /// configured `[merge] conflict_passes` is what this is compared with. Absent while none is spent.
-    #[serde(skip_serializing_if = "is_zero")]
     merge_passes: u32,
     /// How many times the review of this item was reopened after a merge conflict resolution changed files beyond the
     /// task's allowances; absent while zero.
-    #[serde(default, skip_serializing_if = "is_zero")]
     conflict_verifications: u32,
     /// The approved head GitHub refused to merge before the current conflict pass or question, when one is in progress.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     conflict_approved_head: Option<CommitId>,
-    /// The conflict head for which the pass was refunded; absent if not refunded.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    conflict_refunded_head: Option<CommitId>,
-    /// The conflict head for which the pass was recorded as published.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    conflict_accounted_head: Option<CommitId>,
-    /// The conflict head for which a provisional pass is currently reserved; absent when none is reserved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    conflict_provisional_head: Option<CommitId>,
+    /// The conflict pass head state (provisional, refunded, or accounted); absent when none.
+    conflict_head: Option<ConflictPassHead>,
     /// The merge conflict pass in progress, if any; absent while the merge of the approved pull request is not in
     /// trouble.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     merge_conflict: Option<MergeConflict>,
     /// How many times publication of this item was tried; absent while zero.
-    #[serde(default, skip_serializing_if = "is_zero")]
     publish_tries: u32,
     /// Complete ownership of the publication question, absent while none is open.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     publish_question: Option<PublishQuestion>,
     /// The rejections the lead made since the agent that held the item last had none, oldest first; absent while none.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     rejections: Option<Vec<Rejection>>,
+}
+
+#[derive(Serialize)]
+struct ItemProgressWireRef<'a> {
+    id: ItemId,
+    phase: &'a ItemPhase,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    fix_passes: &'a Vec<FixPass>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    gate: Option<&'a GateResult>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    findings: Option<&'a Findings>,
+    #[serde(skip_serializing_if = "is_zero")]
+    merge_passes: u32,
+    #[serde(skip_serializing_if = "is_zero")]
+    conflict_verifications: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_approved_head: Option<&'a CommitId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_refunded_head: Option<&'a CommitId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_accounted_head: Option<&'a CommitId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_provisional_head: Option<&'a CommitId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merge_conflict: Option<&'a MergeConflict>,
+    #[serde(skip_serializing_if = "is_zero")]
+    publish_tries: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    publish_question: Option<&'a PublishQuestion>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rejections: Option<&'a Vec<Rejection>>,
+}
+
+impl Serialize for ItemProgress {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let (provisional, refunded, accounted) = match &self.conflict_head {
+            Some(ConflictPassHead::Provisional(head)) => (Some(head), None, None),
+            Some(ConflictPassHead::Refunded(head)) => (None, Some(head), None),
+            Some(ConflictPassHead::Accounted(head)) => (None, None, Some(head)),
+            None => (None, None, None),
+        };
+        ItemProgressWireRef {
+            id: self.id,
+            phase: &self.phase,
+            fix_passes: &self.fix_passes,
+            gate: self.gate.as_ref(),
+            findings: self.findings.as_ref(),
+            merge_passes: self.merge_passes,
+            conflict_verifications: self.conflict_verifications,
+            conflict_approved_head: self.conflict_approved_head.as_ref(),
+            conflict_refunded_head: refunded,
+            conflict_accounted_head: accounted,
+            conflict_provisional_head: provisional,
+            merge_conflict: self.merge_conflict.as_ref(),
+            publish_tries: self.publish_tries,
+            publish_question: self.publish_question.as_ref(),
+            rejections: self.rejections.as_ref(),
+        }
+        .serialize(serializer)
+    }
 }
 
 /// Exact ownership of a publication question; legacy questions may lack a recorded branch.
@@ -672,6 +728,21 @@ impl<'de> Deserialize<'de> for ItemProgress {
             },
             None => None,
         };
+        let conflict_head = match (
+            wire.conflict_provisional_head,
+            wire.conflict_refunded_head,
+            wire.conflict_accounted_head,
+        ) {
+            (None, None, None) => None,
+            (Some(head), None, None) => Some(ConflictPassHead::Provisional(head)),
+            (None, Some(head), None) => Some(ConflictPassHead::Refunded(head)),
+            (None, None, Some(head)) => Some(ConflictPassHead::Accounted(head)),
+            _ => {
+                return Err(serde::de::Error::custom(
+                    "item progress cannot have multiple contradictory conflict pass heads simultaneously",
+                ));
+            }
+        };
         let value = Self {
             id: wire.id,
             phase: wire.phase,
@@ -681,9 +752,7 @@ impl<'de> Deserialize<'de> for ItemProgress {
             merge_passes: wire.merge_passes,
             conflict_verifications: wire.conflict_verifications,
             conflict_approved_head: wire.conflict_approved_head,
-            conflict_refunded_head: wire.conflict_refunded_head,
-            conflict_accounted_head: wire.conflict_accounted_head,
-            conflict_provisional_head: wire.conflict_provisional_head,
+            conflict_head,
             merge_conflict: wire.merge_conflict,
             publish_tries: wire.publish_tries,
             publish_question,
@@ -1341,9 +1410,7 @@ impl ItemProgress {
             merge_passes: 0,
             conflict_verifications: 0,
             conflict_approved_head: None,
-            conflict_refunded_head: None,
-            conflict_accounted_head: None,
-            conflict_provisional_head: None,
+            conflict_head: None,
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
@@ -1416,15 +1483,13 @@ impl ItemProgress {
     /// Records that a merge conflict pass was published and increments spent merge passes.
     pub fn record_published_conflict_pass(&mut self) -> u32 {
         if let Some(ref head) = self.conflict_approved_head.clone() {
-            if self.conflict_accounted_head.as_ref() == Some(head) {
+            if self.conflict_accounted_head() == Some(head) {
                 return self.merge_passes;
             }
-            if self.conflict_refunded_head.as_ref() == Some(head) {
+            if self.conflict_refunded_head() == Some(head) {
                 self.merge_passes = self.merge_passes.saturating_add(1);
-                self.conflict_refunded_head = None;
             }
-            self.conflict_provisional_head = None;
-            self.conflict_accounted_head = Some(head.clone());
+            self.conflict_head = Some(ConflictPassHead::Accounted(head.clone()));
         }
         self.merge_passes
     }
@@ -1433,14 +1498,13 @@ impl ItemProgress {
     /// If no provisional pass was reserved (e.g. an old state or already refunded), the count is preserved untouched.
     pub fn refund_conflict_pass(&mut self) -> u32 {
         if let Some(ref head) = self.conflict_approved_head.clone() {
-            if self.conflict_accounted_head.as_ref() == Some(head) {
+            if self.conflict_accounted_head() == Some(head) {
                 return self.merge_passes;
             }
-            if self.conflict_provisional_head.as_ref() == Some(head) {
+            if self.conflict_provisional_head() == Some(head) {
                 self.merge_passes = self.merge_passes.saturating_sub(1);
-                self.conflict_provisional_head = None;
-                self.conflict_refunded_head = Some(head.clone());
             }
+            self.conflict_head = Some(ConflictPassHead::Refunded(head.clone()));
         }
         self.merge_passes
     }
@@ -1454,8 +1518,6 @@ impl ItemProgress {
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
-
-    getter!("The gate record of this item, if one has run.", pub fn gate(&self) -> Option<&GateResult> = self.gate.as_ref());
 
     /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
     #[must_use]
@@ -1485,26 +1547,35 @@ impl ItemProgress {
 
     /// The conflict head for which the pass was recorded as published, if any.
     #[must_use]
-    pub const fn conflict_accounted_head(&self) -> Option<&CommitId> {
-        self.conflict_accounted_head.as_ref()
+    pub fn conflict_accounted_head(&self) -> Option<&CommitId> {
+        match &self.conflict_head {
+            Some(ConflictPassHead::Accounted(head)) => Some(head),
+            _ => None,
+        }
     }
 
     /// The conflict head for which the pass was refunded, if any.
     #[must_use]
-    pub const fn conflict_refunded_head(&self) -> Option<&CommitId> {
-        self.conflict_refunded_head.as_ref()
+    pub fn conflict_refunded_head(&self) -> Option<&CommitId> {
+        match &self.conflict_head {
+            Some(ConflictPassHead::Refunded(head)) => Some(head),
+            _ => None,
+        }
     }
 
     /// The conflict head for which a provisional pass is currently reserved, if any.
     #[must_use]
-    pub const fn conflict_provisional_head(&self) -> Option<&CommitId> {
-        self.conflict_provisional_head.as_ref()
+    pub fn conflict_provisional_head(&self) -> Option<&CommitId> {
+        match &self.conflict_head {
+            Some(ConflictPassHead::Provisional(head)) => Some(head),
+            _ => None,
+        }
     }
 
     /// Whether a provisional conflict pass is currently reserved and unconfirmed.
     #[must_use]
-    pub const fn has_provisional_conflict_pass(&self) -> bool {
-        self.conflict_provisional_head.is_some()
+    pub fn has_provisional_conflict_pass(&self) -> bool {
+        matches!(&self.conflict_head, Some(ConflictPassHead::Provisional(_)))
     }
 
     /// Records the approved head GitHub refused to merge before the current conflict pass or question.
@@ -1522,9 +1593,7 @@ impl ItemProgress {
     /// recorded at `at`. Returns the passes spent so far, this one included.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.conflict_approved_head = Some(approved_head.clone());
-        self.conflict_provisional_head = Some(approved_head.clone());
-        self.conflict_refunded_head = None;
-        self.conflict_accounted_head = None;
+        self.conflict_head = Some(ConflictPassHead::Provisional(approved_head.clone()));
         self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
         self.spend_merge_pass()
     }
@@ -1533,9 +1602,7 @@ impl ItemProgress {
     pub fn end_merge_conflict(&mut self) {
         self.merge_conflict = None;
         self.conflict_approved_head = None;
-        self.conflict_provisional_head = None;
-        self.conflict_refunded_head = None;
-        self.conflict_accounted_head = None;
+        self.conflict_head = None;
     }
 
     /// Reopens the review of an approved item whose branch the lead changed beyond the merge of the base: the reviewers
@@ -2460,7 +2527,7 @@ mod tests {
 
     #[test]
     fn contradictory_conflict_pass_heads_are_rejected_on_deserialization() {
-        let base = serde_json::to_value(&progress_in(PhaseKind::Approved)).unwrap();
+        let base = serde_json::to_value(progress_in(PhaseKind::Approved)).unwrap();
         let head1 = "1111111111111111111111111111111111111111";
         let head2 = "2222222222222222222222222222222222222222";
         let head3 = "3333333333333333333333333333333333333333";
