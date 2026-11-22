@@ -623,10 +623,8 @@ fn history_of(home: &agent_runtime::store::Home, agent: &str, team: &agent_core:
     String::from_utf8(output.stdout).unwrap()
 }
 
-#[tokio::test]
-async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
-    use super::super::fixture::Daemon;
-    use agent_core::decide::ladder::Trouble;
+/// A saved hand-over with its team notice still owed, its item on the former holder's original branch.
+fn pre_send_busy_notice() -> (agent_core::state::State, agent_core::ids::TeamId, TaskId) {
     use agent_core::state::{ItemPhase, Participant};
 
     let mut state = crate::fixtures::team_state();
@@ -663,8 +661,19 @@ async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
         .unwrap()
         .reassign(holder, "agents/claude-1/1.1".parse().unwrap())
         .unwrap();
-    assert!(state.begin_holder_session(&task, Trouble::Busy, at).unwrap());
+    assert!(
+        state
+            .begin_holder_session(&task, agent_core::decide::ladder::Trouble::Busy, at)
+            .unwrap()
+    );
     state.owe_busy_notice(&task).unwrap();
+    (state, team, task)
+}
+
+#[tokio::test]
+async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
+    use super::super::fixture::Daemon;
+    let (state, team, task) = pre_send_busy_notice();
 
     let flaky = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
     let daemon = Daemon::new(&state, Some(&flaky));
@@ -728,10 +737,9 @@ async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
         panic!("the team notice is missing: {messages}");
     };
     assert_eq!(notice["to"].as_str(), Some(format!("team:{team}").as_str()));
-    assert_eq!(
-        history_of(&daemon.home, "inv-opus", &team, &crate::fixtures::task(1),)
+    assert!(
+        history_of(&daemon.home, "inv-opus", &team, &crate::fixtures::task(1))
             .contains("is held by inv-1 now: claude-1 is busy in another team"),
-        true,
         "the coordinator did not receive the holder-change notice"
     );
 }
