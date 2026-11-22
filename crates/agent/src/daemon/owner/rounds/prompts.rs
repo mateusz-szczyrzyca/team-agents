@@ -366,11 +366,12 @@ pub(super) async fn fix_pass(
             .with("pr", pr.number.to_string())?
             .with("pass", passes.to_string())?;
         let open = texts.render(AutopilotPrompt::ReviewFixPassOpen, &values)?;
-        return Ok(Some(format!(
-            "{}\n\n{}",
-            open.trim_end(),
-            findings_file_line(texts, &findings_file)?
-        )));
+        let mut text = open.trim_end().to_owned();
+        if let Some(line) = findings_file_line(texts, &findings_file)? {
+            text.push_str("\n\n");
+            text.push_str(&line);
+        }
+        return Ok(Some(text));
     }
     // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
     let kept = count(progress.completed_review_passes().saturating_sub(1));
@@ -399,8 +400,10 @@ pub(super) async fn fix_pass(
         )?
         .trim_end()
         .to_owned();
-    text.push_str("\n\n");
-    text.push_str(&findings_file_line(texts, &findings_file)?);
+    if let Some(line) = findings_file_line(texts, &findings_file)? {
+        text.push_str("\n\n");
+        text.push_str(&line);
+    }
     if matches!(found.role, Role::Member | Role::Worker) {
         let integration = texts.render(
             AutopilotPrompt::ReviewMemberFix,
@@ -412,17 +415,20 @@ pub(super) async fn fix_pass(
     Ok(Some(text))
 }
 
-/// The line that names `file`, which holds the full text of the findings of the fix pass.
+/// The line that names `file`, which holds the full text of the findings of the fix pass, when the file is there: a pass
+/// begun before the file was kept, or one whose file could not be written, names nothing that is not.
 pub(in crate::daemon::owner) fn findings_file_line(
     texts: &AutopilotPrompts,
     file: &std::path::Path,
-) -> Result<String, super::responses::ResponseTextError> {
+) -> Result<Option<String>, super::responses::ResponseTextError> {
     // The home is a path of the configuration, which is text.
     let values = Variables::new().with("path", file.display().to_string())?;
-    Ok(texts
-        .render(AutopilotPrompt::ReviewFixPassFile, &values)?
-        .trim_end()
-        .to_owned())
+    Ok(Some(
+        texts
+            .render(AutopilotPrompt::ReviewFixPassFile, &values)?
+            .trim_end()
+            .to_owned(),
+    ))
 }
 
 /// The request to the lead `found` to put the question to the human, when a pull request of the team waits for it: the
