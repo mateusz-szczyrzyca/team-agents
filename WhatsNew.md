@@ -5,6 +5,23 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.73.0 — 23.11.2026 — PR pending (continues #190)
+
+### New features
+- [agent] [agent-core] A queued task that waits longer than `[replacement] busy_after` (default `300` seconds; `0` never hands it over) for an agent running in another team is handed over to a free agent from `[replacement] agents` of the same or higher tier outside its team, choosing the one whose CLI has the fewest runs going at that moment; an empty `[replacement] agents` list performs no hand-over for a busy agent and the task keeps waiting for its own agent. The new holder starts from a briefing in the same worktree and on the same branch, the team is told on the bus, and the log records `task_handed_over` with `reason = "busy"`. Only a review on one of the waiting task's own recorded rounds prevents a busy hand-over; another member's review does not.
+- [agent] `agent status` shows how many runs each configured CLI has going when at least one run is active, for example `runs: claude 1, codex 2, gemini 0`. It reads the configuration asynchronously and reports a file it cannot read or parse instead of dropping the error.
+- [agent] `agent run` that starts a task for an agent already in another open team says that its task here waits while its run there goes on, or goes to another agent when `[replacement] agents` is non-empty and `busy_after` is above `0`.
+
+### Bug fixes
+- [agent] A passing gate completed while the daemon checks a resolved merge conflict is recognized immediately, instead of unnecessarily asking the human to intervene.
+
+### Enhancements
+- [agent] [agent-core] The time a queued task has waited for its busy agent is kept in `state.json` (`waiting_since`) and survives a restart of the daemon; when the task is handed over before its first run, the first holder is not woken for it when its other run finishes.
+- [agent] [agent-core] A busy hand-over's obligation to tell the whole team who holds each item is persisted as `busy_notice_owed`, rebuilt after restart and retried after bus failures until every notice is accepted. The coordinator and peers receive the item, branch, task and both holders instead of only the replaced member being addressed.
+
+### Configuration
+- [agent-core] new: `[replacement] busy_after` (default `300`) — seconds a queued task waits for its busy agent before a free agent of `[replacement] agents` of the same or higher tier outside the team takes it over; `0` never hands a task over for this reason, and an empty `[replacement] agents` list performs no hand-over for a busy agent either.
+
 ## 0.72.0 — 22.11.2026 — PR #189
 
 ### New features
