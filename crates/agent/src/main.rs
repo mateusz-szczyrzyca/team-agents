@@ -92,7 +92,7 @@ struct Cli {
 enum Command {
     /// Runs the daemon: the owner of the state and of every model run, which the other commands talk to.
     Daemon(DaemonArgs),
-    /// Shows the crate versions, the teams the daemon knows, their rounds and a count of their tasks (--task adds the tasks, plans and parts).
+    /// Shows the crate versions, the teams the daemon knows, their rounds, their live tasks with what each does and a count of their tasks (--task adds every task, the plans and the parts).
     Status(StatusArgs),
 }
 
@@ -406,8 +406,10 @@ struct StatusArgs {
     /// Only the teams that have a round that goes on, with those rounds: what is being worked on now.
     #[arg(long, conflicts_with = "target")]
     running: bool,
-    /// With the teams, also the lines of their tasks, with their plans and parts, as `agent status` printed them before
-    /// the short view. With `--json` it changes nothing: the JSON array already carries every task.
+    /// With the teams, the lines of all their tasks with their plans, and the parts of a split, as `agent status`
+    /// printed them before the short view. Without it a team lists its coordinator, members, workers and the reviewers
+    /// whose review is not over, each with what it does, and a count of its tasks. With `--json` it changes nothing:
+    /// the JSON array already carries every task.
     #[arg(long, conflicts_with_all = ["target", "investigators"])]
     task: bool,
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
