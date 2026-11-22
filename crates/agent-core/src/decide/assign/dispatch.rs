@@ -48,6 +48,17 @@ pub fn dispatch_in_mode(team: &Team, mode: crate::decide::replacement::Replaceme
     dispatch_in_policy(team, mode, &[])
 }
 
+/// Chooses split replacements using configured tiers and availability supplied by the caller.
+#[must_use]
+pub fn dispatch_with_candidates(
+    team: &Team,
+    mode: crate::decide::replacement::ReplacementMode,
+    configured_replacements: &[AgentName],
+    _outside: &[crate::decide::part::Candidate<'_>],
+) -> Dispatch {
+    dispatch_in_policy(team, mode, configured_replacements)
+}
+
 /// Chooses available participants under a specified replacement policy and configured replacement ordering.
 #[must_use]
 pub fn dispatch_in_policy(

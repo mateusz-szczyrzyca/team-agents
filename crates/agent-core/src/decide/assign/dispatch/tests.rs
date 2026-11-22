@@ -857,3 +857,103 @@ fn outside_team_replacement_selected_when_configured() {
     let dispatched = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[outside_rep]);
     assert_eq!(dispatched.assigned, vec![(item, normal("outside-agent"))]);
 }
+
+#[test]
+fn outside_replacement_uses_supplied_tier_and_availability() {
+    use crate::state::fixtures::{at, drive, inv, member, normal, round_id, task, team_id};
+    use crate::state::{Crew, ItemPhase, MergeMode, PhaseKind, RoundEnd, TaskListText, TeamMembers};
+
+    let item = "1.1".parse().unwrap();
+    let mut team = Team::new(
+        team_id(11),
+        "example".parse().unwrap(),
+        at(0),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: normal\n".to_owned()).unwrap(),
+        Crew::team(TeamMembers {
+            coordinator: member(1, inv("inv-lead")),
+            members: vec![member(2, normal("claude-1"))],
+            workers: vec![],
+        })
+        .unwrap(),
+    );
+    team.open_round(round_id(1), Some(item), at(1)).unwrap();
+    drive(&mut team, "1.1", PhaseKind::InProgress);
+    let plan = serde_json::from_value(serde_json::json!({
+        "parent": "1.1",
+        "parts": [
+            {"title": "A", "delivers": "A", "checks": "A", "depends_on": []},
+            {"title": "B", "delivers": "B", "checks": "B", "depends_on": ["a"]}
+        ]
+    }))
+    .unwrap();
+    team.activate_split(plan).unwrap();
+    let mut handle = team.item_mut(item).unwrap();
+    handle
+        .advance(crate::state::ItemPhase::InReview {
+            pr: crate::state::fixtures::pr(1),
+            reviews: Vec::new(),
+        })
+        .unwrap();
+    let reviewer = crate::state::fixtures::review("inv-codex", 21, crate::state::ReviewOutcome::Pending);
+    handle.ask_reviews(vec![reviewer]).unwrap();
+    handle
+        .submit_review(
+            &crate::state::fixtures::task(21),
+            crate::status::ReviewVerdict::Approve,
+            at(5),
+        )
+        .unwrap();
+    let crate::state::ItemPhase::InReview { reviews, .. } = handle.phase().clone() else {
+        panic!("in review")
+    };
+    handle
+        .advance(crate::state::ItemPhase::Approved {
+            pr: crate::state::fixtures::pr(1),
+            reviews,
+        })
+        .unwrap();
+    handle
+        .advance(ItemPhase::Done {
+            completion: crate::state::Completion::Merged {
+                pr: crate::state::fixtures::pr(1),
+                at: at(10),
+            },
+        })
+        .unwrap();
+    team.close_round(&round_id(1), at(10), RoundEnd::Merged).unwrap();
+
+    // Member claude-1 stops:
+    team.find_mut(&task(2))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Stopped)
+        .unwrap();
+
+    use crate::decide::part::Candidate;
+    use crate::decide::replacement::ReplacementMode;
+    for (agent, busy, expected) in [
+        (
+            Participant::Worker("outside-agent".parse().unwrap()),
+            false,
+            inv("inv-lead"),
+        ),
+        (normal("outside-agent"), false, normal("outside-agent")),
+        (inv("outside-agent"), false, inv("outside-agent")),
+        (normal("outside-agent"), true, inv("inv-lead")),
+    ] {
+        let candidate = Candidate {
+            agent: &agent,
+            status: TaskStatus::Waiting,
+            handed_over: false,
+            busy,
+        };
+        let dispatched = dispatch_with_candidates(
+            &team,
+            ReplacementMode::Auto,
+            &["outside-agent".parse().unwrap()],
+            &[candidate],
+        );
+        assert_eq!(dispatched.assigned, vec![(item, expected)], "{agent:?}, busy={busy}");
+    }
+}
