@@ -687,7 +687,7 @@ impl Owner {
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, its
     /// command checks are started in the background, and a run that reported `DONE` against its plan is sent back or the
-    /// human asked, by [`decide_plan`]. `settled` is what the run's end comes to otherwise. The decision is
+    /// human asked, by [`decide_plan_with_mismatch`]. `settled` is what the run's end comes to otherwise. The decision is
     /// [`PlanStep::Waiting`] while command checks run: [`Owner::check_batch_done`] makes it when they have ended.
     ///
     /// # Errors
