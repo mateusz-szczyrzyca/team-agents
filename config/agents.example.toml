@@ -140,12 +140,15 @@ corrections = 2   # 0 asks the human at the first invalid proposal
 # member the team's lead, then you), "lead" (a member's work to the team's lead at once) or "off" (you at once, as
 # before). With no `agents`, mode "auto" gives a member's work to the team's lead. When the agent that took a task over
 # goes bad too, or a lead given a member's work does, you are asked once in a questions file: start it once more, or stop.
+# `rejections` is how many times a team's lead may return the work of an item to its member before the member's agent is
+# replaced by an equivalent one, told the lead's reasons: 5 by default, 0 never replaces it.
 
 [replacement]
 new_sessions = 1
 replacements = 1
 mode = "auto"
 agents = []
+rejections = 5
 
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that
