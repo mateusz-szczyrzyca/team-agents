@@ -702,7 +702,7 @@ impl Owner {
     /// Ends the runs a restart left going and finds the pauses to wake.
     async fn recover(&mut self) -> Result<(), OwnerError> {
         // A command check a dead daemon left running is ended before any run is looked at: nothing runs without its daemon.
-        self.end_leftover_checks()?;
+        self.recover_leftover_checks().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let recovery = recover(&mut self.parts.state, now, self.parts.settings.config.limits())?;
         for (at, task) in recovery.wakes {

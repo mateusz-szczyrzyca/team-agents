@@ -297,6 +297,15 @@ pub(crate) enum PlanCheckCleanupError {
         #[source]
         source: tokio::task::JoinError,
     },
+    /// Joining the blocking startup leftover recovery task failed.
+    #[error("cannot join startup leftover command check recovery task for {}", path.display())]
+    TasksDirJoin {
+        /// The tasks directory.
+        path: PathBuf,
+        /// The underlying blocking task join failure.
+        #[source]
+        source: tokio::task::JoinError,
+    },
 }
 
 /// Why the environment of a command check cannot be prepared.
@@ -1185,101 +1194,27 @@ impl Owner {
     }
 
     /// Ends the command checks that a daemon which died left running, from their records, on the blocking thread pool
-    /// before any run is looked at.
+    /// before any run is looked at so directory traversal and `/proc` scanning never block the async executor.
     ///
     /// # Errors
     /// [`OwnerError`] when the tasks directory cannot be read or a recorded check cannot be ended.
     pub(super) async fn recover_leftover_checks(&self) -> Result<(), OwnerError> {
-        std::future::ready(Ok(())).await
+        let tasks_dir = self.parts.store.home().tasks_dir();
+        let dir_for_join = tasks_dir.clone();
+        let joined = tokio::task::spawn_blocking(move || end_leftover_checks_in(&tasks_dir))
+            .await
+            .map_err(|source| PlanCheckCleanupError::TasksDirJoin {
+                path: dir_for_join,
+                source,
+            })?;
+        joined.map_err(Into::into)
     }
 
-    /// Ends the command checks that a daemon which died left running, from their records, before any run is looked at.
-    ///
-    /// # Errors
-    /// [`OwnerError`] when the tasks directory cannot be read or a recorded check cannot be ended.
+    /// Synchronous leftover-check helper for direct unit tests; production startup recovery calls
+    /// [`Self::recover_leftover_checks`] on the blocking thread pool.
+    #[cfg(test)]
     pub(super) fn end_leftover_checks(&self) -> Result<(), OwnerError> {
-        let tasks_dir = self.parts.store.home().tasks_dir();
-        let entries = match std::fs::read_dir(&tasks_dir) {
-            Ok(entries) => entries,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-            Err(source) => {
-                let error = PlanCheckCleanupError::TasksDirRead {
-                    path: tasks_dir,
-                    source,
-                };
-                tracing::error!(
-                    event = LogEvent::DaemonTaskFailed.as_str(),
-                    error = %error_chain(&error),
-                    "cannot read the tasks directory to end leftover command checks"
-                );
-                return Err(error.into());
-            }
-        };
-        let mut first_error: Option<PlanCheckCleanupError> = None;
-        for entry in entries {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(source) => {
-                    let error = PlanCheckCleanupError::TasksDirEntry {
-                        path: tasks_dir.clone(),
-                        source,
-                    };
-                    tracing::error!(
-                        event = LogEvent::DaemonTaskFailed.as_str(),
-                        error = %error_chain(&error),
-                        "cannot read an entry of the tasks directory for leftover command checks"
-                    );
-                    if first_error.is_none() {
-                        first_error = Some(error);
-                    }
-                    continue;
-                }
-            };
-            let path = entry.path();
-            let Ok(name) = entry.file_name().into_string() else {
-                let error = PlanCheckCleanupError::InvalidTaskEntry { path };
-                tracing::error!(
-                    event = LogEvent::DaemonTaskFailed.as_str(),
-                    error = %error_chain(&error),
-                    "a task directory name is not valid UTF-8"
-                );
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-                continue;
-            };
-            let Ok(task) = TaskId::from_str(&name) else {
-                let error = PlanCheckCleanupError::InvalidTaskEntry { path };
-                tracing::error!(
-                    event = LogEvent::DaemonTaskFailed.as_str(),
-                    error = %error_chain(&error),
-                    "a directory in tasks/ does not have a valid task ID"
-                );
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-                continue;
-            };
-            if let Err(source) = recover_checks(&self.parts.store.home().task_dir(&task)) {
-                let error = PlanCheckCleanupError::Recover {
-                    task: task.clone(),
-                    source,
-                };
-                tracing::error!(
-                    event = LogEvent::DaemonTaskFailed.as_str(),
-                    task = %task,
-                    error = %error_chain(&error),
-                    "a command check left by a dead daemon could not be ended"
-                );
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-            }
-        }
-        if let Some(error) = first_error {
-            return Err(error.into());
-        }
-        Ok(())
+        end_leftover_checks_in(&self.parts.store.home().tasks_dir()).map_err(Into::into)
     }
 
     /// Finishes the runs that had ended before a restart and were waiting for their plan command checks or settlement.
@@ -1777,6 +1712,91 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
         )?,
     };
     Ok(text)
+}
+
+/// Scans `tasks_dir` on a blocking thread and ends any command check process groups left running by a dead daemon.
+fn end_leftover_checks_in(tasks_dir: &Path) -> Result<(), PlanCheckCleanupError> {
+    let entries = match std::fs::read_dir(tasks_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(source) => {
+            let error = PlanCheckCleanupError::TasksDirRead {
+                path: tasks_dir.to_path_buf(),
+                source,
+            };
+            tracing::error!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                error = %error_chain(&error),
+                "cannot read the tasks directory to end leftover command checks"
+            );
+            return Err(error);
+        }
+    };
+    let mut first_error: Option<PlanCheckCleanupError> = None;
+    for entry in entries {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(source) => {
+                let error = PlanCheckCleanupError::TasksDirEntry {
+                    path: tasks_dir.to_path_buf(),
+                    source,
+                };
+                tracing::error!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    error = %error_chain(&error),
+                    "cannot read an entry of the tasks directory for leftover command checks"
+                );
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+                continue;
+            }
+        };
+        let path = entry.path();
+        let Ok(name) = entry.file_name().into_string() else {
+            let error = PlanCheckCleanupError::InvalidTaskEntry { path };
+            tracing::error!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                error = %error_chain(&error),
+                "a task directory name is not valid UTF-8"
+            );
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+            continue;
+        };
+        let Ok(task) = TaskId::from_str(&name) else {
+            let error = PlanCheckCleanupError::InvalidTaskEntry { path };
+            tracing::error!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                error = %error_chain(&error),
+                "a directory in tasks/ does not have a valid task ID"
+            );
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+            continue;
+        };
+        if let Err(source) = recover_checks(&tasks_dir.join(task.as_str())) {
+            let error = PlanCheckCleanupError::Recover {
+                task: task.clone(),
+                source,
+            };
+            tracing::error!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                task = %task,
+                error = %error_chain(&error),
+                "a command check left by a dead daemon could not be ended"
+            );
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

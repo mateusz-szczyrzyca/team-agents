@@ -579,7 +579,7 @@ fn prepare_process_spec_for_daemon(
         "read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && cticks=\"${20}\" && ",
         "read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ] && ",
         "printf '%s %s\\n' \"$$\" \"$cticks\" > \"$rec.child\" && mv -f \"$rec.child\" \"$rec\" && ",
-        "if true; then ",
+        "if read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ]; then ",
         "exec /bin/sh -c \"$cmd\"; ",
         "else rm -f \"$rec\"; exit 125; fi"
     )
@@ -602,17 +602,40 @@ fn prepare_process_spec_for_daemon(
     })
 }
 
+/// Reads the spawning daemon's kernel start time from `<proc_root>/<daemon_pid>/stat`, returning a typed
+/// [`CommandPreparationError::DaemonStartTime`] when the file is missing, unreadable, or malformed.
+fn read_daemon_start_ticks_in(proc_root: &Path, daemon_pid: u32) -> Result<u64, CommandPreparationError> {
+    let stat_path = proc_root.join(daemon_pid.to_string()).join("stat");
+    let stat = process_stat_group_and_ticks_in(proc_root, daemon_pid).map_err(|source| {
+        CommandPreparationError::DaemonStartTime {
+            pid: daemon_pid,
+            path: stat_path.clone(),
+            source,
+        }
+    })?;
+    stat.map(|(_, ticks)| ticks)
+        .ok_or_else(|| CommandPreparationError::DaemonStartTime {
+            pid: daemon_pid,
+            path: stat_path.clone(),
+            source: io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("process {daemon_pid} has no stat entry at {}", stat_path.display()),
+            ),
+        })
+}
+
 /// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected, reading the
 /// spawning daemon's kernel start time from `<proc_root>/<daemon_pid>/stat`.
 fn prepare_process_spec_in(
-    _proc_root: &Path,
+    proc_root: &Path,
     context: &CheckContext<'_>,
     command_str: &str,
     record: &Path,
     log_path: PathBuf,
     daemon_pid: u32,
 ) -> Result<ProcessSpec, CommandPreparationError> {
-    prepare_process_spec_for_daemon(context, command_str, record, log_path, daemon_pid, 0)
+    let daemon_ticks = read_daemon_start_ticks_in(proc_root, daemon_pid)?;
+    prepare_process_spec_for_daemon(context, command_str, record, log_path, daemon_pid, daemon_ticks)
 }
 
 /// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
@@ -625,9 +648,14 @@ fn prepare_process_spec(
     record: &Path,
     log_path: PathBuf,
 ) -> Result<ProcessSpec, CommandPreparationError> {
-    let daemon_pid = std::process::id();
-    let daemon_ticks = process_start_ticks(daemon_pid).ok().flatten().unwrap_or(0);
-    prepare_process_spec_for_daemon(context, command_str, record, log_path, daemon_pid, daemon_ticks)
+    prepare_process_spec_in(
+        Path::new("/proc"),
+        context,
+        command_str,
+        record,
+        log_path,
+        std::process::id(),
+    )
 }
 
 /// Executes a command check for `step` within `context`.
