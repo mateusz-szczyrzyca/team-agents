@@ -104,6 +104,9 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
+    /// When the task began to wait for its agent, which runs another task at its limit; `None` when it does not wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    waiting_since: Option<Timestamp>,
 }
 
 /// Why a task begins a new session.
@@ -146,6 +149,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before renewals existed has none.
     #[serde(default)]
     renewals: Option<renewal::Renewals>,
+    /// See [`Member`]; a member written before waits existed has none.
+    #[serde(default)]
+    waiting_since: Option<Timestamp>,
     /// See [`Member`]; a member written before hand-overs existed has none.
     #[serde(default)]
     past_holders: Vec<holding::Holding>,
@@ -415,6 +421,12 @@ pub enum MemberError {
 }
 
 impl Member {
+    /// When the task began to wait for its agent; `None` when it does not wait. Stub: always none.
+    #[must_use]
+    pub const fn waiting_since(&self) -> Option<Timestamp> {
+        None
+    }
+
     /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan under step judging.
     #[must_use]
     pub fn new(task: TaskId, agent: Participant) -> Self {
@@ -430,6 +442,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
         }
     }
 
@@ -449,6 +462,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
         }
     }
 
@@ -467,6 +481,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
         }
     }
 
@@ -1006,6 +1021,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                waiting_since: None,
             };
             member.sync_plan_judging();
             check_member(&member)?;

@@ -17,6 +17,8 @@ mod gate;
 mod holding;
 #[cfg(test)]
 mod holding_tests;
+#[cfg(test)]
+mod waiting_tests;
 mod item;
 #[cfg(test)]
 mod item_parts_tests;
@@ -614,6 +616,13 @@ impl State {
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
+    /// Stub: the wait of `task` is not recorded yet.
+    pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {
+        let _ = (task, at);
+        None
+    }
+
+    /// Hands the task over (see the docs of the stub above).
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
