@@ -60,13 +60,22 @@ impl Obligation {
     /// Who is obliged to act.
     #[must_use]
     pub const fn owner(self) -> WaitOwner {
-        WaitOwner::Harness
+        match self {
+            Self::Merge | Self::Gate | Self::FreeInvestigator | Self::QueuedRun => WaitOwner::Harness,
+            Self::Review | Self::SecondOpinion => WaitOwner::Reviewers,
+            Self::Human => WaitOwner::Human,
+            Self::LeadCorrection => WaitOwner::Lead,
+        }
     }
 
     /// How the owner is told what is expected of it.
     #[must_use]
     pub const fn told(self) -> Told {
-        Told::NoOneToTell
+        match self.owner() {
+            WaitOwner::Lead | WaitOwner::Reviewers => Told::ByPrompt,
+            WaitOwner::Human => Told::ByNotification,
+            WaitOwner::Harness => Told::NoOneToTell,
+        }
     }
 }
 
@@ -74,7 +83,12 @@ impl WaitOwner {
     /// The name of the owner in a wait line, from the harness's prompt catalog.
     #[must_use]
     pub const fn text(self) -> &'static str {
-        ""
+        match self {
+            Self::Lead => include_str!("../../../../prompts/harness/pr/wait-owner-lead.md"),
+            Self::Human => include_str!("../../../../prompts/harness/pr/wait-owner-human.md"),
+            Self::Reviewers => include_str!("../../../../prompts/harness/pr/wait-owner-reviewers.md"),
+            Self::Harness => include_str!("../../../../prompts/harness/pr/wait-owner-harness.md"),
+        }
     }
 }
 
@@ -111,8 +125,18 @@ impl Waiting {
     /// The wait as a line that names who is obliged and, when it is known, since when: `since` is the time as the reader
     /// is shown it. An unowned round names nobody.
     #[must_use]
-    pub fn line(self, _since: Option<&str>) -> String {
-        self.text().to_owned()
+    pub fn line(self, since: Option<&str>) -> String {
+        let Self::For(obligation) = self else {
+            return self.text().to_owned();
+        };
+        let template = match since {
+            Some(_) => include_str!("../../../../prompts/harness/pr/wait-owned.md"),
+            None => include_str!("../../../../prompts/harness/pr/wait-owned-undated.md"),
+        };
+        template
+            .replace("{{wait}}", self.text())
+            .replace("{{owner}}", obligation.owner().text())
+            .replace("{{since}}", since.unwrap_or_default())
     }
 }
 
