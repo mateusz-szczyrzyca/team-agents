@@ -96,7 +96,10 @@ fn a_limit_of_two_lets_a_queued_task_wait_only_when_two_runs_go() {
     let two = [going("codex-1", TEAM_A, TASK_A), going("codex-1", TEAM_B, TASK_B)];
     let mut members = vec![member("codex-1", TASK_C, TaskStatus::Queued)];
     mark_runs_elsewhere(&mut members, &two, &limits);
-    assert_eq!(members[0].waits_for.as_ref().map(|wait| wait.task.clone()), Some(task(TASK_A)));
+    assert_eq!(
+        members[0].waits_for.as_ref().map(|wait| wait.task.clone()),
+        Some(task(TASK_A))
+    );
 }
 
 #[test]
@@ -110,9 +113,5 @@ fn a_member_without_a_mark_has_no_waits_for_on_the_wire() {
         task: task(TASK_A),
     });
     let value = serde_json::to_value(&marked).expect("a member is JSON");
-    assert_eq!(
-        value["waits_for"],
-        json!({"team": TEAM_A, "task": TASK_A}),
-        "{value}"
-    );
+    assert_eq!(value["waits_for"], json!({"team": TEAM_A, "task": TASK_A}), "{value}");
 }

@@ -61,7 +61,11 @@ fn an_agent_with_no_run_going_is_free_at_every_limit() {
 
 #[test]
 fn a_run_of_another_agent_never_holds_an_agent() {
-    let going = [run("gemini-1", "team-20261122-140915-aaaa", "task-20261122-140915-a1a1")];
+    let going = [run(
+        "gemini-1",
+        "team-20261122-140915-aaaa",
+        "task-20261122-140915-a1a1",
+    )];
     assert_eq!(busy_run(&agent("codex-1"), at_most(1), &going), None);
 }
 
@@ -79,12 +83,18 @@ fn an_agent_at_its_limit_is_held_by_its_first_run_whatever_the_team() {
 
 #[test]
 fn an_agent_with_two_runs_going_is_held_at_a_limit_of_two() {
-    let going = [run("codex-1", "team-20261122-140915-aaaa", "task-20261122-140915-a1a1"), run("codex-1", "team-20261122-140915-bbbb", "task-20261122-140915-b1b1")];
+    let going = [
+        run("codex-1", "team-20261122-140915-aaaa", "task-20261122-140915-a1a1"),
+        run("codex-1", "team-20261122-140915-bbbb", "task-20261122-140915-b1b1"),
+    ];
     assert_eq!(busy_run(&agent("codex-1"), at_most(2), &going), Some(&going[0]));
 }
 
 #[test]
 fn an_agent_with_no_limit_is_never_held() {
-    let going = [run("codex-1", "team-20261122-140915-aaaa", "task-20261122-140915-a1a1"), run("codex-1", "team-20261122-140915-bbbb", "task-20261122-140915-b1b1")];
+    let going = [
+        run("codex-1", "team-20261122-140915-aaaa", "task-20261122-140915-a1a1"),
+        run("codex-1", "team-20261122-140915-bbbb", "task-20261122-140915-b1b1"),
+    ];
     assert_eq!(busy_run(&agent("codex-1"), RunLimit::Unlimited, &going), None);
 }

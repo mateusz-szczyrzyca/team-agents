@@ -652,7 +652,14 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     /// The task of the solo run that `output` started: the first word of its second line.
     fn solo_task(output: &Output) -> String {
         assert!(output.status.success(), "{}", stderr(output));
-        stdout(output).lines().nth(1).unwrap().split_whitespace().next().unwrap().to_owned()
+        stdout(output)
+            .lines()
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
     }
 
     /// The line of `status` about `task`.
@@ -670,7 +677,11 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
 
     /// Lets the run of `task` end: the `hold` scenario waits for this file in the worktree of the task.
     fn release(world: &World, task: &str) {
-        std::fs::write(world.home.join("worktrees/example").join(task).join(".fake-continue"), "").unwrap();
+        std::fs::write(
+            world.home.join("worktrees/example").join(task).join(".fake-continue"),
+            "",
+        )
+        .unwrap();
     }
 
     #[test]
@@ -692,7 +703,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert!(!line_of(&status, &second).contains("failed"), "{status}");
 
         release(&world, &first);
-        eventually("the second task to start after the first run", || world.runs(&second) == 1);
+        eventually("the second task to start after the first run", || {
+            world.runs(&second) == 1
+        });
         let status = world.status_where("the second task to run", |status| {
             line_of(status, &second).contains("running")
         });
@@ -713,7 +726,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             line_of(status, &first).contains("running") && line_of(status, &second).contains("running")
         });
         assert!(!status.contains("waits for"), "{status}");
-        eventually("both runs to go", || world.runs(&first) == 1 && world.runs(&second) == 1);
+        eventually("both runs to go", || {
+            world.runs(&first) == 1 && world.runs(&second) == 1
+        });
         release(&world, &first);
         release(&world, &second);
     }
@@ -738,7 +753,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
         assert_eq!(world.runs(&second), 0, "{status}");
         release(&world, &first);
-        eventually("the second task to start after the restart", || world.runs(&second) == 1);
+        eventually("the second task to start after the restart", || {
+            world.runs(&second) == 1
+        });
         release(&world, &second);
     }
 }
