@@ -353,7 +353,7 @@ Decisions appear in history as `split_decision` and, at debug log level, as `dec
 is answered, not dropped: it is recorded in the log and in the history as a correction with its reason, the coordinator is
 sent a text of the catalog on the bus that says what was refused, why and what to do instead (deliver the part of its round;
 what does not fit is described for a task of its own), and it is woken for it, with no question to you. The status the run ended with is acted on as before, and a coordinator that repeats the
-line is told as many times as a proposal is corrected (`[split] corrections`); after that only its own status counts. Only `SPLIT:` and an
+line is told as many times as a proposal is corrected (`[split] corrections`, and at least once); after that only its own status counts. Every refusal is in the log (`request_refused`) and the history. Only `SPLIT:` and an
 item number is a submission. Existing configurations and split plans remain readable;
 history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
 items and parts are assigned only to agents meeting their minimum tier. When none fits, the harness writes one
@@ -650,7 +650,7 @@ An unchanged tip can still enter verification when every blocker is explained or
 Legacy unanswered blockers require a committed fix too.
 
 The first run of the lead after a verdict with findings gets the full text of every open finding, with its number, its
-reviewer and its level, and the same text is written to `fix-pass-findings.md` in the lead's task directory; the line
+reviewer and its level, and the same text is written to `fix-pass-<n>-findings.md` in the lead's task directory; the line
 that says the pass is still open and the request to correct a response name that file, so a lead that has lost the text
 reads it again instead of asking you. A lead's response is judged only when it was given in a run that started at or
 after the verdict, never a message from before the review.

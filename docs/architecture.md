@@ -1390,7 +1390,7 @@ item that is not split is the proposal; one that names a split item (`Refusal::A
 history as a `split_decision` correction with its reason; the coordinator gets `TeamPrompt::SplitRefusedAlready` or
 `SplitRefusedUnknown` on the bus, which wakes a coordinator that sleeps; the run's own status is acted on as before (a refusal
 replaces nothing). Only a line of the form `SPLIT: <item number>` is a submission. A coordinator that repeats a refused line is told
-`[split] corrections` times (`PullWatch::split_refusals`, kept in memory: a restart counts again), then only its status decides.
+`[split] corrections` times, and at least once (`decide::split::submission::telling`; `PullWatch::split_refusals`, kept in memory: a restart counts again), then only its status decides; `wake_after` queues only a sleeping coordinator that the bus could not tell. Every refusal is a `request_refused` warning and a `split_decision` correction in the history, told or not.
 Nobody is left waiting for a correction it was not asked for.
 Pending decisions are resumed before team assignment; saved corrections and asked stages are not replayed.
 Catalog entries supply each fault, the next prompt and the question. The append-only history records the outcome
@@ -1456,9 +1456,9 @@ Markers survive answers and restarts and expire only when the corresponding wait
 prompt, notification, none needed); a table test lists every state and fails when one is added without a row. `Waiting::line`
 adds the owner and, when it is known, the start of the wait to the line of `agent status` (`Owner::wait_text`: when the question was put
 for the human's wait, otherwise the end of the latest run that worked for this round); the clients show that time in the reader's zone (`Zone::stamp_waiting`). The first prompt
-of a fix pass writes its findings block to `fix-pass-findings.md` of the lead's task directory (`Home::fix_pass_findings_file`)
+of a fix pass writes its findings block to `fix-pass-<n>-findings.md` of the lead's task directory (`Home::fix_pass_findings_file_of`, a file for each pass)
 and ends with `AutopilotPrompt::ReviewFixPassFile`, which names the file; the open-pass line and the request to correct a
-response end with it too, when the file is there (a pass begun by an older daemon has none; a file that cannot be written is a warning). `decide::fix::response_of` says whether a lead's run can be the response to a pass: only one that
+response end with it too, when the file is there (a pass begun by an older daemon has none: it is written again from the findings of the state when a prompt of the pass is built; a file that cannot be written is a warning, and the file of the pass before is never named for a later pass). `decide::fix::response_of` says whether a lead's run can be the response to a pass: only one that
 started at or after the verdict (`Response::AfterVerdict`); a message from before the review, or from a run that started
 before it and ended after it, is not judged.
 
