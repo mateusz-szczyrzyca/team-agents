@@ -769,7 +769,6 @@ impl Owner {
         )?;
         let repo = team.repo().clone();
         for assigned in given {
-            self.hand_over_split_task(&assigned, team_id, look)?;
             let Some(base) = self
                 .parts
                 .settings
@@ -798,10 +797,7 @@ impl Owner {
                 );
                 continue;
             }
-            let now = Timestamp::now(&self.parts.clock)?;
-            self.open_item_round(team_id, assigned.item, now, look)?;
-            self.record_assignment(team_id, &assigned)?;
-            let round = self.round_of_item(team_id, assigned.item)?;
+            let round = self.activate_assignment(team_id, &assigned, look)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
@@ -825,9 +821,41 @@ impl Owner {
                     "an item is given to a member"
                 );
             }
-            self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
         }
         Ok(())
+    }
+
+    /// Commits the holder, item and round together before a queued task can start.
+    fn activate_assignment(
+        &mut self,
+        team_id: &TeamId,
+        assigned: &Assigned,
+        look: &mut Look,
+    ) -> Result<agent_core::ids::RoundId, OwnerError> {
+        let previous = self.parts.state.clone();
+        let mut pending = Look::default();
+        // No await or persistence occurs inside this transaction. A failed transition
+        // restores the holder and queue along with the item and its round.
+        let activated = (|| {
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.open_item_round(team_id, assigned.item, now, &mut pending)?;
+            self.record_assignment(team_id, assigned)?;
+            self.hand_over_split_task(assigned, team_id, &mut pending)?;
+            let round = self.round_of_item(team_id, assigned.item)?;
+            self.release(&assigned.task, Why::Assigned(assigned.item), &mut pending)?;
+            Ok(round)
+        })();
+        match activated {
+            Ok(round) => {
+                look.events.extend(pending.events);
+                look.changed |= pending.changed;
+                Ok(round)
+            }
+            Err(error) => {
+                self.parts.state = previous;
+                Err(error)
+            }
+        }
     }
 
     /// Starts a fresh holder session when a split part selects another agent.
