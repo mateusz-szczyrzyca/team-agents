@@ -33,6 +33,68 @@ pub enum CheckError {
         #[source]
         source: std::num::TryFromIntError,
     },
+    /// The record of the running check cannot be written.
+    #[error("cannot record the running check in {}", path.display())]
+    RecordWrite {
+        /// The record file.
+        path: PathBuf,
+        /// The OS failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The record of a check left by a dead daemon cannot be read.
+    #[error("cannot read the record of a running check in {}", path.display())]
+    RecordRead {
+        /// The record file.
+        path: PathBuf,
+        /// The OS failure.
+        #[source]
+        source: io::Error,
+    },
+    /// The record of a check left by a dead daemon does not hold a process ID.
+    #[error("the record {} does not hold a process ID: {text:?}", path.display())]
+    RecordInvalid {
+        /// The record file.
+        path: PathBuf,
+        /// The text found in the file, trimmed.
+        text: String,
+        /// The parser's reason.
+        #[source]
+        source: std::num::ParseIntError,
+    },
+    /// The process ID of a check left by a dead daemon is not a process group that can be signalled.
+    #[error("the process ID {pid} of a check left by a dead daemon is not a process group")]
+    RecordNotGroup {
+        /// The process ID found in the record.
+        pid: u32,
+    },
+    /// The process ID of a check left by a dead daemon does not fit a signed process ID.
+    #[error("the process ID {pid} of a check left by a dead daemon does not fit a process group")]
+    RecordOutOfRange {
+        /// The process ID found in the record.
+        pid: u32,
+        /// The integer conversion error.
+        #[source]
+        source: std::num::TryFromIntError,
+    },
+    /// The process group of a check left by a dead daemon cannot be ended.
+    #[error("cannot end the process group {group} of a check left by a dead daemon")]
+    RecordEnd {
+        /// The process group that was to be ended.
+        group: u32,
+        /// The signal failure.
+        #[source]
+        source: crate::process::GroupSignalError,
+    },
+    /// The record of a finished check cannot be removed.
+    #[error("cannot remove the record of a running check in {}", path.display())]
+    RecordRemove {
+        /// The record file.
+        path: PathBuf,
+        /// The OS failure.
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// Errors that can happen while preparing a command check process spec.
@@ -182,6 +244,14 @@ async fn check_exists(
     })
 }
 
+/// The file, in the task's `checks` directory, that holds the process group of the command check running now.
+const RUNNING_RECORD: &str = "running";
+
+/// The record of the running command check of a task whose directory is `task_dir`.
+fn running_record_path(task_dir: &Path) -> PathBuf {
+    task_dir.join("checks").join(RUNNING_RECORD)
+}
+
 /// Maximum number of bytes read from the end of a command's log file for tail extraction.
 const TAIL_BYTES: u64 = 64 * 1024;
 /// Maximum number of trailing lines returned in a mismatch tail.
@@ -269,6 +339,41 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
             )
         }
     }
+}
+
+/// Waits for `process`, which is recorded in `record` while it runs, and removes the record when it has ended.
+/// A process that cannot be recorded is ended at once: nothing runs that a restarted daemon could not find.
+async fn wait_recorded(process: RunningProcess, record: &Path, check_seconds: u64) -> (JudgementState, Option<String>) {
+    let (state, mut reason) = match fs::write(record, format!("{}\n", process.id())).await {
+        Ok(()) => wait_child_outcome(process, check_seconds).await,
+        Err(error) => {
+            let cleanup = process.stop(Duration::ZERO).await.map(|_report| ());
+            (
+                JudgementState::Mismatch,
+                Some(with_cleanup_result(
+                    format!("cannot record the running check in {}: {error}", record.display()),
+                    cleanup,
+                )),
+            )
+        }
+    };
+    // A record that was never written (the Err arm above) is absent: that is the expected state, not a failure.
+    let removed = match fs::remove_file(record).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = removed {
+        let failure = format!(
+            "cannot remove the record of the running check {}: {error}",
+            record.display()
+        );
+        reason = Some(match reason.take() {
+            Some(primary) => format!("{primary}; {failure}"),
+            None => failure,
+        });
+    }
+    (state, reason)
 }
 
 /// Extracts mismatch output, retaining an output-read failure alongside the primary reason.
@@ -423,7 +528,8 @@ pub async fn execute_command_check(
         }
     };
 
-    let (state, mut reason) = wait_child_outcome(process, context.check_seconds).await;
+    let record = running_record_path(context.task_dir);
+    let (state, mut reason) = wait_recorded(process, &record, context.check_seconds).await;
     let tail = resolve_mismatch_tail(state, &log_path, &mut reason).await;
     let duration_ms = duration_millis(start.elapsed())?;
 
@@ -504,6 +610,26 @@ pub async fn execute_step_check(context: &CheckContext<'_>, step: &Step) -> Resu
 /// # Errors
 /// [`CheckError`] when the record cannot be read, is not a process ID, or its group cannot be ended.
 pub fn recover_checks(task_dir: &Path) -> Result<Option<NonZeroU32>, CheckError> {
-    let _ = task_dir;
-    Ok(None)
+    let path = running_record_path(task_dir);
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(CheckError::RecordRead { path, source }),
+    };
+    let trimmed = text.trim();
+    let id = trimmed
+        .parse::<NonZeroU32>()
+        .map_err(|source| CheckError::RecordInvalid {
+            path: path.clone(),
+            text: trimmed.to_owned(),
+            source,
+        })?;
+    let raw = i32::try_from(id.get()).map_err(|source| CheckError::RecordOutOfRange { pid: id.get(), source })?;
+    let group = rustix::process::Pid::from_raw(raw).ok_or(CheckError::RecordNotGroup { pid: id.get() })?;
+    crate::process::signal_group(group, crate::process::GroupSignal::Kill).map_err(|source| CheckError::RecordEnd {
+        group: id.get(),
+        source,
+    })?;
+    std::fs::remove_file(&path).map_err(|source| CheckError::RecordRemove { path, source })?;
+    Ok(Some(id))
 }

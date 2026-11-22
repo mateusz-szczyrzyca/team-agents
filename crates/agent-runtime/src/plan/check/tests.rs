@@ -661,7 +661,10 @@ async fn check_command_records_its_process_while_it_runs_and_clears_the_record_w
     };
 
     let pid = seen.expect("the record of the process is written while the check runs");
-    assert!(pid.trim().parse::<u32>().is_ok(), "the record holds a process ID: {pid:?}");
+    assert!(
+        pid.trim().parse::<u32>().is_ok(),
+        "the record holds a process ID: {pid:?}"
+    );
     assert_eq!(result.state, JudgementState::Mismatch);
     assert_eq!(result.reason.as_deref(), Some("ran past 1 seconds"));
     assert!(!record.exists(), "the record is cleared when the check has ended");
@@ -709,4 +712,26 @@ fn recover_checks_without_a_record_does_nothing() {
     let ended = super::recover_checks(&env.task_dir).expect("recovery");
 
     assert_eq!(ended, None);
+}
+
+#[tokio::test]
+async fn check_command_mismatches_without_running_when_its_record_cannot_be_written() {
+    let env = TestEnv::new();
+    // A directory where the record file belongs makes the record impossible to write.
+    fs::create_dir_all(running_record(&env.task_dir)).expect("record blocker");
+    let step = parse_first_step("[x] 1.1 First item\n    Check: echo never\n");
+    let ctx = env.context(60, &[]);
+
+    let result = super::execute_command_check(&ctx, &step, "echo never").await.unwrap();
+
+    assert_eq!(result.state, JudgementState::Mismatch);
+    assert!(
+        result
+            .reason
+            .as_deref()
+            .unwrap()
+            .starts_with("cannot record the running check"),
+        "reason: {:?}",
+        result.reason
+    );
 }
