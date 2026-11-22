@@ -213,4 +213,63 @@ mod commit_guard_hooks {
             String::from_utf8_lossy(&after_a_crash.stderr)
         );
     }
+
+    // Rule: a hook of the repository that fails still fails the commit, and its status is the commit's: the commit-msg of
+    // the repository runs after the guard allows and its exit code is the hook's.
+    #[tokio::test]
+    async fn a_hook_of_the_repository_that_fails_still_fails_the_commit() {
+        let world = repository();
+        let hooks_of_repo = world.repo.join(".git/hooks");
+        executable(&hooks_of_repo.join("pre-commit"), "#!/bin/sh\nexit 1\n");
+        let calls = world.root.join("calls");
+        let agent = stand_in(&world.root, &calls, 0);
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &agent)
+            .await
+            .unwrap();
+
+        let by_pre_commit = commit(&world.repo, &hooks, "One");
+
+        assert!(!by_pre_commit.status.success());
+        assert_eq!(commits(&world.repo), 0);
+
+        std::fs::remove_file(hooks_of_repo.join("pre-commit")).unwrap();
+        executable(&hooks_of_repo.join("commit-msg"), "#!/bin/sh\nexit 7\n");
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks2"), &agent)
+            .await
+            .unwrap();
+
+        let by_commit_msg = commit(&world.repo, &hooks, "Two");
+
+        assert!(!by_commit_msg.status.success());
+        assert_eq!(commits(&world.repo), 0);
+    }
+
+    // Rule: a repository that names its hooks directory itself (`core.hooksPath`) keeps them too.
+    #[tokio::test]
+    async fn a_repository_with_a_hooks_path_of_its_own_keeps_its_hooks() {
+        let world = repository();
+        let own = world.root.join("own-hooks");
+        executable(
+            &own.join("pre-commit"),
+            &format!("#!/bin/sh\necho pre >> '{}'\n", world.root.join("seen").display()),
+        );
+        assert!(
+            git_in(&world.repo, None, &["config", "core.hooksPath", own.to_str().unwrap()])
+                .status
+                .success()
+        );
+        let calls = world.root.join("calls");
+        let agent = stand_in(&world.root, &calls, 0);
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &agent)
+            .await
+            .unwrap();
+
+        let output = commit(&world.repo, &hooks, "One");
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(
+            std::fs::read_to_string(world.root.join("seen")).unwrap_or_default(),
+            "pre\n"
+        );
+    }
 }
