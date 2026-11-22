@@ -14,7 +14,7 @@
 
 use crate::ids::{InvalidItemId, ItemId};
 use crate::plan::judge::refuse_command;
-use crate::plan::{Check, Plan, Step, StepState};
+use crate::plan::{Check, Plan, PlanError, Step, StepState};
 use crate::repo_path::{InvalidRepoPath, RepoPath};
 
 /// The pieces of a request to a worker that tie it to a step of the requester's plan.
@@ -111,6 +111,9 @@ pub enum Rejection {
     BadCheck {
         /// The check as the requester wrote it.
         check: String,
+        /// Why a plan would not read it as a step's `Check:` line.
+        #[source]
+        source: PlanError,
     },
     /// The requirement says nothing to do.
     #[error("the request says nothing to do: add do, what the worker is to do")]
@@ -200,9 +203,10 @@ fn name_check(text: &str, refused: &[String]) -> Result<Check, Rejection> {
     if text.is_empty() {
         return Err(Rejection::MissingCheck);
     }
-    let check: Check = text
-        .parse()
-        .map_err(|()| Rejection::BadCheck { check: text.to_owned() })?;
+    let check: Check = text.parse().map_err(|source| Rejection::BadCheck {
+        check: text.to_owned(),
+        source,
+    })?;
     let refused_kind = match &check {
         Check::Command(command) => refuse_command(command, refused),
         Check::Exists(_) | Check::Reviewer => false,

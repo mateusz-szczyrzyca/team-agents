@@ -396,9 +396,8 @@ impl Check {
         format!("{TEXT_INDENT}{CHECK_PREFIX} {self}\n")
     }
 
-    /// Whether a worker may be given this check: a command or an `exists PATH`, never `reviewer`, which is a person's
-    /// judgement, and never `exists` with no path, which shows nothing.
-    /// Whether a step given this check shows a step done by the machine, which is what a worker's result must carry.
+    /// Whether this check is run by a machine — a command or an `exists PATH` — and not `reviewer`, a person's
+    /// judgement: only such a check can show a worker's result to be right.
     #[must_use]
     pub fn shows_a_result(&self) -> bool {
         matches!(self, Self::Command(_) | Self::Exists(_))
@@ -406,15 +405,12 @@ impl Check {
 }
 
 impl std::str::FromStr for Check {
-    type Err = ();
+    type Err = PlanError;
 
-    /// Reads a step's `Check:` line as [`read_check`] reads it, without a line number; `Err(())` for the text that
-    /// function refuses.
-    ///
-    /// The error is untyped on purpose: the caller has no line to put in a [`PlanError`], and says what is wrong with
-    /// the text in its own words.
+    /// Reads `text` as the rest of a step's `Check:` line, the way a plan reads it. The text is one line, so a fault is
+    /// reported on line 1.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        read_check(NonZeroUsize::MIN, text).map_err(PlanError::accounted)
+        read_check(NonZeroUsize::MIN, text)
     }
 }
 
@@ -606,16 +602,6 @@ pub enum PlanError {
 }
 
 impl PlanError {
-    /// The same fault with no line to show it on, for a reader outside a plan's text (a request's `Check:` line): it
-    /// is the fault's kind alone, and the caller words it.
-    #[expect(
-        unused_must_use,
-        reason = "the line is not wanted, and the call is there to make this conversion explicit"
-    )]
-    fn accounted(self) {
-        self.line();
-    }
-
     /// The number of the line the fault is on; `None` for [`Empty`](Self::Empty), [`TooLarge`](Self::TooLarge) and
     /// [`TooLargeWrittenBack`](Self::TooLargeWrittenBack), which are faults of the whole text.
     #[must_use]
