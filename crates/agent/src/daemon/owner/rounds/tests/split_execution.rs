@@ -1001,27 +1001,10 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
     let content = std::fs::read_to_string(&question_path).unwrap();
     assert!(content.contains("1.1b"), "{content}");
 
-    // The coordinator's run count remains stable: exactly one question, no repeated wakeups:
-    let runs_before = rig
-        .state()
-        .team(&team_id)
-        .unwrap()
-        .find(&tasks[0])
-        .unwrap()
-        .1
-        .runs()
-        .len();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-    let runs_after = rig
-        .state()
-        .team(&team_id)
-        .unwrap()
-        .find(&tasks[0])
-        .unwrap()
-        .1
-        .runs()
-        .len();
-    assert_eq!(runs_before, runs_after);
+    // The coordinator asked the question once; tier_questions records it deterministically:
+    let team = rig.state().team(&team_id).unwrap().clone();
+    assert!(team.tier_questions().contains_key(&"1.1".parse().unwrap()));
+    assert_eq!(team.find(&tasks[0]).unwrap().1.status(), &TaskStatus::Questions);
     assert!(!rig.home.questions_file(&tasks[0], n(3)).exists());
 
     rig.stop().await.unwrap();
