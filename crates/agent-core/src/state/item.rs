@@ -1126,12 +1126,13 @@ impl ItemProgress {
 
     /// Records that a merge conflict pass was published and increments spent merge passes.
     pub fn record_published_conflict_pass(&mut self) -> u32 {
-        0
+        self.spend_merge_pass()
     }
 
     /// Refunds an unspent or unpublished conflict pass and returns the new count.
     pub fn refund_conflict_pass(&mut self) -> u32 {
-        0
+        self.merge_passes = self.merge_passes.saturating_sub(1);
+        self.merge_passes
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
