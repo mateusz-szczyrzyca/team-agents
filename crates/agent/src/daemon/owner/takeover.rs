@@ -440,7 +440,6 @@ impl Owner {
         let in_review = found.team.items().iter().any(|progress| match progress.phase() {
             ItemPhase::InReview { .. } => {
                 found.role == Role::Coordinator
-                    || progress.rejections().is_some_and(|_| false)
                     || found
                         .team
                         .rounds()
