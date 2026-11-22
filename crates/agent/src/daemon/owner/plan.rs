@@ -229,6 +229,27 @@ pub(super) struct Found {
     text: Option<String>,
 }
 
+/// Why existing step judgements in `history.db` could not be read.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum PlanJudgementsError {
+    /// Reading `history.db` failed.
+    #[error("cannot read existing step judgements of task {task}")]
+    Read {
+        /// The task whose judgements were being read.
+        task: TaskId,
+        /// The underlying history reader failure.
+        cause: ReadError,
+    },
+    /// Joining the blocking history reader task failed.
+    #[error("cannot join step judgements reader task for {task}")]
+    Join {
+        /// The task whose judgements were being read.
+        task: TaskId,
+        /// The underlying blocking task join failure.
+        cause: tokio::task::JoinError,
+    },
+}
+
 /// Why a leftover or stopping command check could not be cleaned up.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum PlanCheckCleanupError {
@@ -1307,31 +1328,31 @@ impl Owner {
         match looked {
             Ok(Ok(map)) => Ok(map),
             Ok(Err(ReadError::Empty { .. })) => Ok(HashMap::new()),
-            Ok(Err(error)) => {
-                let reason = error_chain(&error);
+            Ok(Err(cause)) => {
+                let error = PlanJudgementsError::Read {
+                    task: task.clone(),
+                    cause,
+                };
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
-                    %reason,
+                    reason = %error_chain(&error),
                     "the previous judgements could not be read"
                 );
-                Err(OwnerError::PlanJudgementsRead {
-                    task: task.clone(),
-                    reason,
-                })
+                Err(OwnerError::PlanJudgementsRead(error))
             }
-            Err(error) => {
-                let reason = error.to_string();
+            Err(cause) => {
+                let error = PlanJudgementsError::Join {
+                    task: task.clone(),
+                    cause,
+                };
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
-                    %reason,
+                    reason = %error_chain(&error),
                     "the previous judgements could not be read"
                 );
-                Err(OwnerError::PlanJudgementsRead {
-                    task: task.clone(),
-                    reason,
-                })
+                Err(OwnerError::PlanJudgementsRead(error))
             }
         }
     }

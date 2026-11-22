@@ -346,13 +346,8 @@ pub(crate) enum OwnerError {
     #[error(transparent)]
     PlanCheckCleanup(#[from] plan::PlanCheckCleanupError),
     /// Existing step judgements in `history.db` could not be read.
-    #[error("cannot read existing step judgements of task {task}: {reason}")]
-    PlanJudgementsRead {
-        /// The task whose judgements could not be read.
-        task: TaskId,
-        /// What failed.
-        reason: String,
-    },
+    #[error(transparent)]
+    PlanJudgementsRead(#[from] plan::PlanJudgementsError),
 }
 
 /// What the owner is made of.
@@ -1216,6 +1211,7 @@ impl Owner {
                             pause: run.classified.pause.clone(),
                             made_progress: run.progress == Progress::Made,
                             final_message: run.final_message.clone(),
+                            ended_at: None,
                         }));
                         self.save().await?;
                     }

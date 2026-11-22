@@ -1656,6 +1656,7 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
             }),
             made_progress: true,
             final_message: None,
+            ended_at: None,
         }));
     }
     owner.recover_plan_checks().await.unwrap();
@@ -1713,6 +1714,7 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
             pause: None,
             made_progress: false,
             final_message: None,
+            ended_at: None,
         }));
     }
     owner.recover().await.unwrap();
@@ -1853,6 +1855,7 @@ async fn unreadable_history_during_recovery_does_not_rerun_command_checks() {
             pause: None,
             made_progress: true,
             final_message: Some("STATUS: DONE".to_owned()),
+            ended_at: None,
         }));
     }
 
@@ -1925,5 +1928,237 @@ async fn check_environment_failure_and_leftover_check_errors_are_reported() {
             .contains("cannot prepare the environment of the check: invalid agent name \"invalid agent name\""),
         "reason: {:?}",
         record.reason
+    );
+}
+
+#[tokio::test]
+async fn completed_check_batch_after_halt_parked_check_is_ignored_without_unknown_check_error() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_core::state::{NewRun, RunEnd};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Quick\n    Check: /bin/sh -c 'exit 0'\n",
+    )
+    .unwrap();
+
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id,
+                at: at(0),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+
+    owner
+        .finished(
+            &task(1),
+            FinishedRun {
+                classified: Classified {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                    pause: None,
+                },
+                finish: RunFinish {
+                    exit: ExitStatus::Code(0),
+                    stopped_by: StoppedBy::Nobody,
+                },
+                progress: Progress::Made,
+                session: None,
+                final_message: Some("STATUS: DONE".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    let joined = owner.checks.join_next_with_id().await.expect("completed check batch");
+    owner.halt_parked_check(&task(1)).await.unwrap();
+    let res = owner.check_batch_done(joined).await;
+    assert!(
+        res.is_ok(),
+        "check_batch_done must ignore a batch that completed right before halt_parked_check: {res:?}"
+    );
+    assert_eq!(
+        owner.parts.state.find_task(&task(1)).unwrap().member.status(),
+        TaskStatus::Stopped
+    );
+}
+
+#[tokio::test]
+async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgement_read_source() {
+    use std::error::Error as _;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_core::ids::Clock;
+    use agent_core::state::{NewRun, RunEnd, RunState, RunningPlanCheck};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::clock::SharedClock;
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    struct FailOnSecondRead(AtomicUsize);
+    impl Clock for FailOnSecondRead {
+        fn now(&self) -> time::UtcDateTime {
+            let call = self.0.fetch_add(1, Ordering::SeqCst);
+            if call == 0 {
+                at(210).as_utc()
+            } else {
+                time::UtcDateTime::MIN
+            }
+        }
+    }
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'exit 0'\n",
+    )
+    .unwrap();
+
+    // Part 1: typed source on PlanJudgementsRead.
+    std::fs::write(daemon.home.history_file(), b"corrupt-sqlite-header").unwrap();
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let read_err = owner
+        .latest_judgements(&task(1))
+        .await
+        .expect_err("corrupt history.db must fail");
+    assert!(
+        read_err.source().is_some(),
+        "PlanJudgementsRead must preserve the typed underlying source error: {read_err:?}"
+    );
+    drop(owner);
+    std::fs::remove_file(daemon.home.history_file()).unwrap();
+
+    // Part 2: original ended_at timestamp in RunningPlanCheck is preserved when settling after recovery.
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let recovered_run_id: agent_core::ids::RunId = "run-20261122-060000-end1".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: recovered_run_id.clone(),
+                at: at(10),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.set_plan_running_check(Some(RunningPlanCheck {
+            run: recovered_run_id,
+            end: RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            pause: None,
+            made_progress: true,
+            final_message: Some("STATUS: DONE".to_owned()),
+            ended_at: Some(at(123)),
+        }));
+    }
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+    owner.recover_plan_checks().await.unwrap();
+    let ended_state = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .state()
+        .clone();
+    assert_eq!(
+        ended_state,
+        RunState::Ended {
+            at: at(123),
+            end: RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+        },
+        "settled recovered run must record its original ended_at timestamp"
+    );
+    drop(owner);
+
+    // Part 3: clock failure inside run_command_checks propagates through check_batch_done as OwnerError::Clock.
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'exit 0'\n",
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let run_id: agent_core::ids::RunId = "run-20261122-060500-clk1".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run_id,
+                at: at(200),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+    }
+    owner.parts.clock = SharedClock::new(FailOnSecondRead(AtomicUsize::new(0)));
+    owner
+        .finished(
+            &task(1),
+            FinishedRun {
+                classified: Classified {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                    pause: None,
+                },
+                finish: RunFinish {
+                    exit: ExitStatus::Code(0),
+                    stopped_by: StoppedBy::Nobody,
+                },
+                progress: Progress::Made,
+                session: None,
+                final_message: Some("STATUS: DONE".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    let joined = owner.checks.join_next_with_id().await.expect("command check batch");
+    let batch_res = owner.check_batch_done(joined).await;
+    assert!(
+        matches!(batch_res, Err(super::super::OwnerError::Clock(_))),
+        "clock failure during command check judgement must propagate as OwnerError::Clock, got {batch_res:?}"
     );
 }

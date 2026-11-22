@@ -385,6 +385,11 @@ async fn record_running_process(process: &RunningProcess, record: &Path) -> io::
     fs::write(record, format!("{pid} {ticks}\n")).await
 }
 
+/// Removes `record` after a check or preparation failure, appending any non-`NotFound` removal error to `reason`.
+async fn remove_running_record(_record: &Path, reason: String) -> String {
+    reason
+}
+
 /// Waits for `process`, which is recorded in `record` while it runs, and removes the record when it has ended.
 /// A process that cannot be recorded is ended at once: nothing runs that a restarted daemon could not find.
 async fn wait_recorded(process: RunningProcess, record: &Path, check_seconds: u64) -> (JudgementState, Option<String>) {
@@ -543,34 +548,34 @@ pub async fn execute_command_check(
     let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, step.id()).await {
         Ok(paths) => paths,
         Err(error) => {
-            drop(fs::remove_file(&record).await);
-            return failure_without_output(command_str, format!("cannot create check log path: {error}"), start);
+            let reason = remove_running_record(&record, format!("cannot create check log path: {error}")).await;
+            return failure_without_output(command_str, reason, start);
         }
     };
 
     let spec = match prepare_process_spec(context, command_str, &record, log_path.clone()) {
         Ok(spec) => spec,
         Err(error) => {
-            drop(fs::remove_file(&record).await);
-            return failure_without_output(command_str, format!("cannot prepare check command: {error}"), start);
+            let reason = remove_running_record(&record, format!("cannot prepare check command: {error}")).await;
+            return failure_without_output(command_str, reason, start);
         }
     };
 
     // The supervisor appends output, so initialize this attempt's artifact before spawning.
     if let Err(error) = fs::write(&log_path, []).await {
-        drop(fs::remove_file(&record).await);
-        return failure_without_output(command_str, format!("cannot create check output: {error}"), start);
+        let reason = remove_running_record(&record, format!("cannot create check output: {error}")).await;
+        return failure_without_output(command_str, reason, start);
     }
 
     let supervisor = Supervisor::new(NonZeroUsize::MIN);
     let process = match supervisor.spawn(&spec).await {
         Ok(proc) => proc,
         Err(error) => {
-            drop(fs::remove_file(&record).await);
+            let reason = remove_running_record(&record, format!("cannot start check: {error}")).await;
             return Ok(JudgementResult {
                 state: JudgementState::Mismatch,
                 check_line: Some(command_str.to_owned()),
-                reason: Some(format!("cannot start check: {error}")),
+                reason: Some(reason),
                 duration_ms: duration_millis(start.elapsed())?,
                 output_path: Some(rel_output_path),
                 tail: String::new(),

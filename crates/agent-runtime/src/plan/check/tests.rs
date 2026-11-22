@@ -807,3 +807,75 @@ async fn check_command_does_not_spawn_process_when_record_cannot_be_written() {
         "command must not run before its record is writable"
     );
 }
+
+#[test]
+fn recover_checks_ends_surviving_descendants_after_group_leader_exits_and_is_reaped() {
+    use std::os::unix::process::CommandExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let checks_dir = dir.path().join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    let record_path = checks_dir.join("running");
+    let child_pid_path = dir.path().join("child.pid");
+
+    let mut leader = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("rec=\"$1\"; cpid=\"$2\"; read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && printf '%s %s\\n' \"$$\" \"${20}\" > \"$rec\"; sleep 30 >/dev/null 2>&1 & printf '%s\\n' \"$!\" > \"$cpid\"")
+        .arg("sh")
+        .arg(&record_path)
+        .arg(&child_pid_path)
+        .process_group(0)
+        .spawn()
+        .expect("spawn group leader");
+    let leader_pid = leader.id();
+    let status = leader.wait().expect("wait and reap group leader");
+    assert!(status.success(), "leader exited cleanly: {status:?}");
+
+    let child_pid: u32 = std::fs::read_to_string(&child_pid_path)
+        .expect("read child.pid")
+        .trim()
+        .parse()
+        .expect("parse child pid");
+    let child_proc_stat = format!("/proc/{child_pid}/stat");
+    assert!(
+        std::path::Path::new(&child_proc_stat).exists(),
+        "descendant process {child_pid} must still be alive after leader exit"
+    );
+
+    let recovered = super::recover_checks(dir.path()).expect("recover checks after leader exit");
+    if recovered.is_none()
+        && let Ok(raw) = i32::try_from(leader_pid)
+        && let Some(group) = rustix::process::Pid::from_raw(raw)
+    {
+        drop(crate::process::signal_group(group, crate::process::GroupSignal::Kill));
+    }
+    assert_eq!(
+        recovered,
+        Some(std::num::NonZeroU32::new(leader_pid).unwrap()),
+        "recover_checks must still identify and signal the process group after the leader exited and was reaped"
+    );
+    assert!(!record_path.exists(), "running record must be removed after recovery");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::path::Path::new(&child_proc_stat).exists() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+    let alive = std::fs::read_to_string(&child_proc_stat).is_ok_and(|s| !s.contains(") Z "));
+    assert!(
+        !alive,
+        "surviving descendant process {child_pid} must be killed by recover_checks"
+    );
+}
+
+#[tokio::test]
+async fn execute_command_check_keeps_running_record_non_empty_and_reports_remove_failure() {
+    let env = TestEnv::new();
+    let missing_dir = env.task_dir.join("not-a-dir-file");
+    std::fs::write(&missing_dir, b"file").unwrap();
+    let unremovable = missing_dir.join("running");
+    let combined = super::remove_running_record(&unremovable, "primary error".to_owned()).await;
+    assert!(
+        combined.contains("primary error; cannot remove the record of the running check"),
+        "remove_running_record must append non-NotFound removal errors: {combined}"
+    );
+}

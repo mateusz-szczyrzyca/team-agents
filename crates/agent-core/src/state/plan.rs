@@ -29,6 +29,9 @@ pub struct RunningPlanCheck {
     /// The agent's final message of the run, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub final_message: Option<String>,
+    /// When the CLI run ended, before its plan command checks started.
+    #[serde(skip)]
+    pub ended_at: Option<super::Timestamp>,
 }
 
 /// Where the task is with its plan: going back until it is clean, asked about, or released by the human.

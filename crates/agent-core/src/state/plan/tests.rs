@@ -77,6 +77,7 @@ fn running_plan_check_roundtrips_and_is_omitted_when_cleared() {
         pause: None,
         made_progress: true,
         final_message: Some("Finished.\nSTATUS: DONE".to_owned()),
+        ended_at: None,
     };
     keeping.set_running_check(Some(check.clone()));
     assert_eq!(keeping.running_check(), Some(&check));
@@ -119,6 +120,7 @@ fn legacy_member_without_plan_persists_running_plan_check_without_enabling_plan_
         }),
         made_progress: false,
         final_message: None,
+        ended_at: None,
     };
     member.set_plan_running_check(Some(check.clone()));
     assert_eq!(member.plan(), None, "legacy member still has no PlanKeeping");
@@ -134,4 +136,24 @@ fn legacy_member_without_plan_persists_running_plan_check_without_enabling_plan_
     assert_eq!(member.plan_running_check(), None);
     let cleared = serde_json::to_string(&member).expect("serialize cleared legacy member");
     assert!(!cleared.contains("running_check"), "{cleared}");
+}
+
+#[test]
+fn running_plan_check_round_trips_original_ended_at_timestamp() {
+    use crate::state::fixtures::at;
+    use crate::status::RunOutcome;
+
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        pause: None,
+        made_progress: true,
+        final_message: Some("STATUS: DONE".to_owned()),
+        ended_at: Some(at(123)),
+    };
+    let json = serde_json::to_string(&check).expect("serialize RunningPlanCheck with ended_at");
+    let loaded: RunningPlanCheck = serde_json::from_str(&json).expect("deserialize RunningPlanCheck with ended_at");
+    assert_eq!(loaded.ended_at, Some(at(123)));
 }
