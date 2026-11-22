@@ -443,10 +443,7 @@ Integrate the guide.
         assert!(worker[0].0, "a worker does not delegate: {worker:?}");
         eventually("both requests to be done", || {
             let requests = world.requests();
-            requests.len() == 2
-                && requests
-                    .values()
-                    .all(|request| request["status"] == "done" || request["status"] == "failed")
+            requests.len() == 2 && requests.values().all(|request| request["status"] == "failed")
         });
         let prompts = [
             request_prompts(&world, glm_1, 1, world.runs(glm_1)),
@@ -570,8 +567,8 @@ Integrate the guide.
         assert_eq!(world.requests()["1"]["status"], "queued");
         world.start();
 
-        eventually("the request to be answered", || {
-            ["done", "failed"].contains(&world.requests()["1"]["status"].as_str().unwrap())
+        eventually("the request to be failed", || {
+            world.requests()["1"]["status"] == "failed"
         });
         let runs = world.runs(glm_1);
         assert_eq!(
