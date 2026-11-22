@@ -879,6 +879,7 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 	var named DelegateFields
 	if step != "" {
 		named.Step = strings.TrimSpace(f.Step)
+		named.Files, named.Check, named.Doing = f.Files, f.Check, f.Doing
 	}
 	return s.delegateWith(request, context, follows, named, f.Requires...)
 }
@@ -1053,7 +1054,8 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 		}
 		h := &Helper{ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
 			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha,
-			FollowsUp: follows, Step: named.Step}
+			FollowsUp: follows, Step: named.Step, Files: requestFiles(named.Files), Check: strings.TrimSpace(named.Check),
+			Doing: strings.TrimSpace(named.Doing)}
 		st.Helpers[helperKey(h.ID)] = h
 		id = h.ID
 		_, serr := s.bus.post(st, s.me, "all", EventWorkerRequest{ID: h.ID, Request: request})
@@ -1068,6 +1070,18 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 	}
 	return fmt.Sprintf("Request H%d accepted. The worker gets the state of your branch's last commit and the path to your worktree "+
 		"(read-only). The result will arrive as a message from the worker (wait_for_message) — meanwhile do your own work.", id), nil
+}
+
+// requestFiles reads the request's files field as the request names them: the paths of a step's Files: line, separated
+// by commas, each trimmed; an empty field names none (a request for facts only, or the old form).
+func requestFiles(field string) []string {
+	var files []string
+	for _, path := range strings.Split(field, ",") {
+		if path = strings.TrimSpace(path); path != "" {
+			files = append(files, path)
+		}
+	}
+	return files
 }
 
 // delegationStatus (MCP delegation_status) lists the caller's requests and the pending queue.
