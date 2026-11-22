@@ -65,6 +65,12 @@ mod guard_process {
                 config.push_str("[repos.example.checks]\ntest_paths = [\"tests/\"]\n");
             }
             std::fs::write(home.join("agents.toml"), config).unwrap();
+            // The home of an installation has the prompts the harness's texts are read from.
+            std::os::unix::fs::symlink(
+                Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+                home.join("prompts"),
+            )
+            .unwrap();
             let repo = root.join("example");
             std::fs::create_dir(&repo).unwrap();
             let run = |dir: &Path, args: &[&str]| {
