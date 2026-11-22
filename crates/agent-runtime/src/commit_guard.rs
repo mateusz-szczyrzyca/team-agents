@@ -5,10 +5,10 @@
 //! on the remote or not — is never touched; where one slipped through, the checks before the review find it.
 
 use agent_core::config::Checks;
-use agent_core::decide::commit_guard::Verdict;
+use agent_core::decide::commit_guard::{PendingCommit, Verdict, frozen_tests, judge_commit};
 use agent_core::ids::BranchName;
 
-use crate::git::{Git, GitError, Revision};
+use crate::git::{Git, GitError, Revision, StagedAgainst};
 
 /// Whether the commit about to be made is a new one or replaces the last one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,21 +82,82 @@ pub enum Judged {
     NotAuthored(Operation),
 }
 
+/// The files whose presence in the git directory says which [`Operation`] is under way, in the order they are looked for.
+const OPERATION_FILES: [(&str, Operation); 5] = [
+    ("MERGE_HEAD", Operation::Merge),
+    ("CHERRY_PICK_HEAD", Operation::CherryPick),
+    ("REVERT_HEAD", Operation::Revert),
+    ("rebase-merge", Operation::Rebase),
+    ("rebase-apply", Operation::Rebase),
+];
+
+/// The operation under way in the checkout of `git`, if one is.
+async fn operation_in_progress(git: &Git) -> Result<Option<Operation>, GuardError> {
+    for (name, operation) in OPERATION_FILES {
+        let path = git.git_path(name).await.map_err(|source| GuardError::Git {
+            step: GuardStep::Operation,
+            source,
+        })?;
+        match tokio::fs::try_exists(&path).await {
+            Ok(true) => return Ok(Some(operation)),
+            Ok(false) => {}
+            Err(source) => return Err(GuardError::Look { path, source }),
+        }
+    }
+    Ok(None)
+}
+
+/// `step` as the way to turn the failure of a git call into a [`GuardError`].
+fn at(step: GuardStep) -> impl Fn(GitError) -> GuardError {
+    move |source| GuardError::Git { step, source }
+}
+
 /// Whether the commit with `subject` that is about to be made in the checkout of `git` may be made, for the branch that
 /// started at the base branch `base`, under the test files of `rules`.
+///
+/// The base is the remote-tracking branch as it was last fetched: nothing is fetched here.
 ///
 /// # Errors
 /// [`GuardError::Git`] for a step git fails; [`GuardError::Look`].
 pub async fn judge_staged(
     git: &Git,
-    _rules: &Checks,
-    _base: &BranchName,
-    _subject: &str,
-    _kind: CommitKind,
+    rules: &Checks,
+    base: &BranchName,
+    subject: &str,
+    kind: CommitKind,
 ) -> Result<Judged, GuardError> {
-    git.rev_parse(&Revision::Head).await.map_err(|source| GuardError::Git {
-        step: GuardStep::Head,
-        source,
-    })?;
-    Ok(Judged::Verdict(Verdict::Allowed))
+    if let Some(operation) = operation_in_progress(git).await? {
+        return Ok(Judged::NotAuthored(operation));
+    }
+    let head = git.rev_parse(&Revision::Head).await.map_err(at(GuardStep::Head))?;
+    // The commit that is made sits on `parent`: `HEAD`, or for an amend what `HEAD` sat on.
+    let parent = match kind {
+        CommitKind::New => Some(head),
+        CommitKind::Amend => git
+            .resolve_commit(&format!("{head}^"))
+            .await
+            .map_err(at(GuardStep::Head))?,
+    };
+    let (commits, against) = match parent {
+        Some(parent) => {
+            let merge_base = git
+                .merge_base(&Revision::RemoteBranch(base.clone()), &Revision::Commit(parent.clone()))
+                .await
+                .map_err(at(GuardStep::MergeBase))?;
+            let commits = git
+                .range_commits(&merge_base, &parent)
+                .await
+                .map_err(at(GuardStep::Commits))?;
+            (commits, StagedAgainst::Commit(parent))
+        }
+        // An amended commit with no parent is the first of its history: nothing came before it to freeze a test.
+        None => (Vec::new(), StagedAgainst::EmptyTree),
+    };
+    let files = git.staged_changes(&against).await.map_err(at(GuardStep::Staged))?;
+    let frozen = frozen_tests(rules, &commits);
+    Ok(Judged::Verdict(judge_commit(
+        rules,
+        &frozen,
+        &PendingCommit { subject, files: &files },
+    )))
 }

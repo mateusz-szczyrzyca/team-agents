@@ -24,6 +24,10 @@ const MAX_PATCH_BYTES: u64 = 8 << 20;
 /// [`MAX_PATCH_BYTES`].
 const WHOLE_FILE: u32 = 1 << 30;
 
+/// The ID of the tree with no file, which every repository knows without holding it: what the first commit of a history
+/// is compared with.
+const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
 /// What a commit message line's NUL-terminated record in `git log` has: the ID, the parents, the subject and the body.
 const LOG_FIELDS: usize = 4;
 
@@ -44,22 +48,27 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when git refuses; [`GitError::Unexpected`], [`GitError::NotUtf8`], [`GitError::NotAPath`],
     /// [`GitError::Run`] and [`GitError::OutputTooLong`] for what git prints or cannot do.
-    pub async fn staged_changes(&self, _against: &StagedAgainst) -> Result<Vec<FileChange>, GitError> {
-        let captured = self
-            .run_ok(
-                GitOperation::DiffIndex,
-                Reach::Local,
-                &[
-                    arg("diff-index"),
-                    arg("--cached"),
-                    arg("--name-only"),
-                    arg("HEAD"),
-                    arg("--"),
-                ],
-            )
-            .await?;
-        drop(captured);
-        Ok(Vec::new())
+    pub async fn staged_changes(&self, against: &StagedAgainst) -> Result<Vec<FileChange>, GitError> {
+        let operation = GitOperation::DiffIndex;
+        let tree = match against {
+            StagedAgainst::Commit(commit) => commit.to_string(),
+            StagedAgainst::EmptyTree => EMPTY_TREE.to_owned(),
+        };
+        let args = [
+            arg("diff-index"),
+            arg("--cached"),
+            arg("-r"),
+            arg("-z"),
+            arg("--no-renames"),
+            arg("--no-ext-diff"),
+            arg("--no-textconv"),
+            arg("--raw"),
+            arg("--numstat"),
+            arg(&tree),
+            arg("--"),
+        ];
+        let captured = self.run_ok(operation, Reach::Local, &args).await?;
+        parse_tree_diff(operation, whole(operation, &captured.stdout, self.limits)?)
     }
 
     /// The best common ancestor of two revisions: where a branch left its base.
