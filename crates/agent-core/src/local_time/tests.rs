@@ -272,3 +272,19 @@ fn waiting_lines_reformat_their_retry_minute_into_the_zone() {
     assert_eq!(Zone::Utc.stamp_waiting(line), line);
     assert_eq!(east.stamp_waiting("an answer of the human"), "an answer of the human");
 }
+
+// Rule: a wait line that says since when an owner owes it is shown in the zone of the reader, as the retry minute is.
+#[test]
+fn waiting_lines_reformat_the_start_of_a_wait_into_the_zone() {
+    let line = "the lead's correction, owed by the lead since 2026-11-21T00:07:09Z";
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    assert_eq!(
+        east.stamp_waiting(line),
+        "the lead's correction, owed by the lead since 2026-11-21 01:07 +01:00"
+    );
+    assert_eq!(Zone::Utc.stamp_waiting(line), line);
+    assert_eq!(
+        east.stamp_waiting("the lead's correction, owed by the lead since yesterday"),
+        "the lead's correction, owed by the lead since yesterday"
+    );
+}

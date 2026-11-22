@@ -14,6 +14,7 @@ pub(crate) enum ResponseTextError {
 }
 use super::{AutopilotNotice, Pulls};
 use crate::daemon::team::Why;
+use agent_core::decide::fix::{LeadRun, Response, response_of};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
@@ -215,6 +216,19 @@ impl Owner {
         };
         tracing::warn!(event = LogEvent::ChecksDecided.as_str(), task = %lead.task, bounces, "invalid lead finding response: verification remains held");
         if bounces <= super::verdicts::MAX_VERDICT_BOUNCES {
+            // The run that follows is given the correction and the file that holds the findings of the pass, when it is there;
+            // the correction kept in the state has none, so a run that follows a restart is given it by the prompt builder.
+            let passes = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|team| team.item(id))
+                .map_or(0, |item| item.fix_passes().len());
+            let file = self.parts.store.home().fix_pass_findings_file_of(&lead.task, passes);
+            let text = match super::prompts::findings_file_line(&pulls.texts, &file)? {
+                Some(line) => format!("{}\n\n{line}", text.trim_end()),
+                None => text,
+            };
             self.release(&lead.task, Why::Gate(text), look)?;
         } else {
             let values = Variables::new()
@@ -315,12 +329,16 @@ fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::stat
     let Some(disputes) = item.findings().and_then(agent_core::state::Findings::disputes) else {
         return false;
     };
+    let verdict_at = item
+        .fix_passes()
+        .last()
+        .and_then(|pass| pass.requested_by.iter().map(|request| request.requested_at).max());
+    let lead = LeadRun {
+        started: run.started_at(),
+    };
     disputes.answered_pass != pass
         && disputes.checked_run.as_ref() != Some(run.id())
-        && !item
-            .fix_passes()
-            .last()
-            .is_some_and(|pass| pass.requested_by.iter().any(|r| r.requested_at > run.started_at()))
+        && response_of(Some(lead), verdict_at) == Response::AfterVerdict
 }
 
 /// Renders a precise correction through the harness catalog.

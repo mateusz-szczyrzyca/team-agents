@@ -23,6 +23,10 @@ pub enum TeamPrompt {
     TierWaiting,
     /// The split proposal correction text.
     SplitCorrection,
+    /// What a coordinator is told when the `SPLIT:` it ended with names an item that is split already.
+    SplitRefusedAlready,
+    /// What a coordinator is told when the `SPLIT:` it ended with names no item of the team.
+    SplitRefusedUnknown,
     /// The split proposal limit text.
     SplitLimit,
     /// The split proposal count text.
@@ -102,6 +106,8 @@ impl TeamPrompt {
         Self::NoticeTierQuestion,
         Self::TierWaiting,
         Self::SplitCorrection,
+        Self::SplitRefusedAlready,
+        Self::SplitRefusedUnknown,
         Self::SplitLimit,
         Self::SplitCount,
         Self::SplitDeliverable,
@@ -146,6 +152,9 @@ impl TeamPrompt {
             Self::SplitCorrection => {
                 PromptSpec::new("harness/team/split-correction.md", Audience::Model, &["item", "reason"])
             }
+
+            Self::SplitRefusedAlready => refused_already_spec(),
+            Self::SplitRefusedUnknown => refused_unknown_spec(),
 
             Self::SplitLimit => PromptSpec::new(
                 "harness/team/split-limit.md",
@@ -314,4 +323,14 @@ const fn part_spec() -> PromptSpec {
         Audience::Model,
         &["part", "title", "delivers", "checks", "previous"],
     )
+}
+
+/// The text that tells a coordinator its `SPLIT:` line names an item that is split already.
+const fn refused_already_spec() -> PromptSpec {
+    PromptSpec::new("harness/team/split-refused-already.md", Audience::Model, &["item"])
+}
+
+/// The text that tells a coordinator its `SPLIT:` line names no item of the team.
+const fn refused_unknown_spec() -> PromptSpec {
+    PromptSpec::new("harness/team/split-refused-unknown.md", Audience::Model, &["text"])
 }

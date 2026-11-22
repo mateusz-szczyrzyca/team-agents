@@ -1150,7 +1150,10 @@ impl Owner {
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
         let settled = self.reviewer_waits(located.role, &located.team, settled);
-        let (settled, held) = match self.split_at_end(task, &located, run.final_message.as_deref()).await? {
+        let (settled, held) = match self
+            .split_at_end(task, &located, run.final_message.as_deref(), &settled)
+            .await?
+        {
             Some(settled) => (settled, plan::PlanHeld::Yes),
             None => self.plan_at_end(task, &located, &run.classified.end, settled).await?,
         };
@@ -1900,7 +1903,7 @@ impl Owner {
                     .github_waits
                     .line_of(team.id(), round, Zone::Utc)
                     .map(|line| format!("GitHub: {line}"))
-                    .or_else(|| self.waiting_for(team, found).map(|wait| wait.text().to_owned()));
+                    .or_else(|| self.wait_line(team, found));
                 Ok(Reply::Round {
                     round: Box::new(detail),
                 })

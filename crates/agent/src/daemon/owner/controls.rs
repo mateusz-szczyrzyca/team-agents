@@ -416,7 +416,7 @@ impl Owner {
     /// Who a word to `task` is for: its agent, in the team of the task when that team is on the bus, else in the task
     /// itself (a solo task) — an agent in several teams has a session in each, and the bus must not bind the words to
     /// the agent's other team or refuse them for it.
-    fn recipient_of(&self, task: &TaskId) -> Result<Recipient, OwnerError> {
+    pub(super) fn recipient_of(&self, task: &TaskId) -> Result<Recipient, OwnerError> {
         let agent = self.agent_of(task)?;
         let team = self
             .parts

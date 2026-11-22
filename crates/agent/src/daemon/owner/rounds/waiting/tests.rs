@@ -742,3 +742,97 @@ async fn a_round_whose_member_is_queued_again_after_a_run_in_it_waits_for_the_ru
 
     assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
 }
+
+// Rule: the wait of a round names who is obliged and since when: the lead whose run ended without a status owes the
+// correction from the end of that run.
+#[tokio::test]
+async fn the_wait_line_of_a_round_names_who_owes_it_and_since_when() {
+    let (state, team, round) = idle_round(in_progress(), RunEnd::NoStatus { exit_code: Some(1) });
+    let team = state.team(&team).unwrap();
+
+    let line = crate::daemon::owner::Owner::wait_text(
+        team,
+        team.round(&round).unwrap(),
+        Waiting::For(Obligation::LeadCorrection),
+    );
+
+    assert_eq!(
+        line,
+        format!(
+            "the lead's correction, owed by the lead since {}",
+            agent_core::local_time::Zone::Utc.stamp(at(30))
+        )
+    );
+}
+
+// Rule: the wait of a round starts when that round went idle: a later run of the same task for another round is not a start
+// of this one.
+#[tokio::test]
+async fn the_wait_starts_from_the_runs_of_this_round_only() {
+    let (mut state, team, round) = idle_round(in_progress(), RunEnd::NoStatus { exit_code: Some(1) });
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let other: RoundId = "round-20261119-090500-else".parse().unwrap();
+        found
+            .open_round(other.clone(), Some("1.2".parse().unwrap()), at(35))
+            .unwrap();
+        found
+            .begin_run(
+                &task(1),
+                NewRun {
+                    id: run(2),
+                    at: at(40),
+                    session: None,
+                    rounds: vec![other],
+                },
+            )
+            .unwrap();
+        let (_, mut lead) = found.find_mut(&task(1)).unwrap();
+        lead.end_run(at(50), RunEnd::NoStatus { exit_code: Some(1) }).unwrap();
+    }
+    let team = state.team(&team).unwrap();
+
+    let line = crate::daemon::owner::Owner::wait_text(
+        team,
+        team.round(&round).unwrap(),
+        Waiting::For(Obligation::LeadCorrection),
+    );
+
+    assert_eq!(
+        line,
+        format!(
+            "the lead's correction, owed by the lead since {}",
+            agent_core::local_time::Zone::Utc.stamp(at(30))
+        )
+    );
+}
+
+// Rule: the wait for the human starts when the question was asked, not when a run last ended.
+#[tokio::test]
+async fn the_wait_for_the_human_starts_when_the_question_was_asked() {
+    let (mut state, team, round) = idle_round(in_progress(), RunEnd::NoStatus { exit_code: Some(1) });
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let (_, mut lead) = found.find_mut(&task(1)).unwrap();
+        let file =
+            agent_core::config::AbsolutePath::try_from("/home/dev/agents/tasks/questions-1.md".to_owned()).unwrap();
+        lead.ask_question(agent_core::state::Question::new(
+            std::num::NonZeroU32::MIN,
+            file,
+            at(33),
+        ))
+        .unwrap();
+    }
+    let team = state.team(&team).unwrap();
+
+    let line =
+        crate::daemon::owner::Owner::wait_text(team, team.round(&round).unwrap(), Waiting::For(Obligation::Human));
+
+    assert_eq!(
+        line,
+        format!(
+            "an answer of the human, owed by the human since {}",
+            agent_core::local_time::Zone::Utc.stamp(at(33))
+        )
+    );
+}
