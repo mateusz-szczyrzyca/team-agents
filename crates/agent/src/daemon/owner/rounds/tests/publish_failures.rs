@@ -1614,3 +1614,72 @@ async fn publication_default_three_attempts_back_off_and_never_interrupt_a_runni
         rig.stop().await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn conflict_publication_adopts_an_answer_saved_before_question_registration_after_restart() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = rig.home.config_file();
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(config, text).unwrap();
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("conflict pass requested", |state| {
+        state.team(&team).unwrap().items()[0].merge_conflict().is_some()
+    })
+    .await;
+    move_base(&rig);
+    let hook = rig.origin.join("hooks/pre-receive");
+    std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    let file = rig.home.questions_file(&task, n(1));
+    let answer = "# Questions\n\n## 1. Retry?\n**Verdict:** a\n\n**ANSWERED**\n";
+    std::fs::write(&file, answer).unwrap();
+    let mut state: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.state_file()).unwrap()).unwrap();
+    state["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(0);
+    state["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    state["teams"][0]["crew"]["member"]["status"] = serde_json::json!("waiting");
+    std::fs::write(rig.home.state_file(), serde_json::to_string_pretty(&state).unwrap()).unwrap();
+    std::fs::remove_file(hook).unwrap();
+    rig.github.answer_merges(MergeAnswer::Allow);
+    rig.start().await;
+    rig.state_where("saved conflict answer adopted", |state| {
+        state
+            .find_task(&task)
+            .unwrap()
+            .member
+            .questions()
+            .last()
+            .is_some_and(|q| !q.is_open())
+    })
+    .await;
+    let state = rig.state();
+    let question = state.find_task(&task).unwrap().member.questions().last().unwrap();
+    assert_eq!(question.number(), n(1));
+    assert_eq!(question.file().as_path(), file.as_path());
+    assert_eq!(std::fs::read_to_string(file).unwrap(), answer);
+    assert!(!rig.home.questions_file(&task, n(2)).exists());
+    rig.item_where(
+        "conflict publication merges after automatic answer adoption",
+        "1.1",
+        |phase| matches!(phase, ItemPhase::Done { .. }),
+    )
+    .await;
+    rig.stop().await.unwrap();
+}
