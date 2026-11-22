@@ -109,31 +109,28 @@ async fn the_short_list_says_when_the_daemon_tells_other_versions() {
         let mut reader = BufReader::new(read);
         let mut line = String::new();
         while reader.read_line(&mut line).await.unwrap() != 0 {
-            match Request::from_line_negotiated(&line) {
-                Ok((request, format)) => {
-                    let mut response = Response::ok(request.id, Reply::Teams { teams: vec![quiet()] });
-                    response.daemon_versions = Some(Versions {
-                        agent: String::from("0.1.0"),
-                        agent_core: String::from("0.1.0"),
-                        agent_runtime: String::from("0.1.0"),
-                        agent_web: String::from("0.1.0"),
-                    });
-                    let wire = Frame::Response(response).to_line_for(format).unwrap();
-                    write.write_all(wire.as_bytes()).await.unwrap();
-                }
-                Err(_) => {
-                    let refusal = Frame::Response(Response::error(
-                        RequestId(0),
-                        Failure {
-                            kind: FailureKind::Invalid,
-                            message: String::from("unsupported protocol"),
-                        },
-                    ))
-                    .to_line()
-                    .unwrap();
-                    write.write_all(refusal.as_bytes()).await.unwrap();
-                    break;
-                }
+            if let Ok((request, format)) = Request::from_line_negotiated(&line) {
+                let mut response = Response::ok(request.id, Reply::Teams { teams: vec![quiet()] });
+                response.daemon_versions = Some(Versions {
+                    agent: String::from("0.1.0"),
+                    agent_core: String::from("0.1.0"),
+                    agent_runtime: String::from("0.1.0"),
+                    agent_web: String::from("0.1.0"),
+                });
+                let wire = Frame::Response(response).to_line_for(format).unwrap();
+                write.write_all(wire.as_bytes()).await.unwrap();
+            } else {
+                let refusal = Frame::Response(Response::error(
+                    RequestId(0),
+                    Failure {
+                        kind: FailureKind::Invalid,
+                        message: String::from("unsupported protocol"),
+                    },
+                ))
+                .to_line()
+                .unwrap();
+                write.write_all(refusal.as_bytes()).await.unwrap();
+                break;
             }
             line.clear();
         }
