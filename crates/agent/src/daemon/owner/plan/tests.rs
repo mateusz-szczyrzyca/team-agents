@@ -2235,35 +2235,38 @@ async fn async_recover_leftover_checks_ends_recorded_group_on_blocking_pool() {
         .expect("create running FIFO");
     assert!(mkfifo.success(), "mkfifo failed: {mkfifo}");
 
-    let watchdog_unblocked = Arc::new(AtomicBool::new(false));
-    let watchdog_flag = Arc::clone(&watchdog_unblocked);
-    let watchdog_fifo = record_path.clone();
-    let watchdog_line = record_line.clone();
+    let (owner, _sinks) = daemon.bare_owner().await;
+
+    let executor_progressed = Arc::new(AtomicBool::new(false));
+    let failsafe_triggered = Arc::new(AtomicBool::new(false));
+    let failsafe_flag = Arc::clone(&failsafe_triggered);
+    let failsafe_fifo = record_path.clone();
+    let failsafe_line = record_line.clone();
     let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
-    let watchdog = std::thread::spawn(move || {
+    let failsafe = std::thread::spawn(move || {
         if matches!(
-            done_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            done_rx.recv_timeout(std::time::Duration::from_secs(2)),
             Err(std::sync::mpsc::RecvTimeoutError::Timeout)
         ) {
-            watchdog_flag.store(true, Ordering::SeqCst);
-            drop(std::fs::write(&watchdog_fifo, watchdog_line));
+            failsafe_flag.store(true, Ordering::SeqCst);
+            drop(std::fs::write(&failsafe_fifo, failsafe_line));
         }
     });
 
-    let (owner, _sinks) = daemon.bare_owner().await;
     let (recover_res, ()) = tokio::join!(owner.recover_leftover_checks(), async {
-        if !watchdog_unblocked.load(Ordering::SeqCst) {
+        if !failsafe_triggered.load(Ordering::SeqCst) {
+            executor_progressed.store(true, Ordering::SeqCst);
             drop(std::fs::write(&record_path, &record_line));
         }
     });
     drop(done_tx);
-    watchdog.join().expect("join FIFO watchdog thread");
+    failsafe.join().expect("join FIFO hang-failsafe thread");
     recover_res.expect("recover_leftover_checks");
     let record_removed = !record_path.exists();
     drop(child.kill());
     drop(child.wait());
     assert!(
-        !watchdog_unblocked.load(Ordering::SeqCst),
+        executor_progressed.load(Ordering::SeqCst),
         "recover_leftover_checks blocked the async executor thread instead of offloading to spawn_blocking"
     );
     assert!(
