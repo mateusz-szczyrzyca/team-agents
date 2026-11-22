@@ -185,7 +185,6 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
     }))
     .unwrap();
 
-    // Case 1: Member who worked on part 1 is free -> gets part 2
     let mut team = Team::new(
         team_id(1),
         "example".parse().unwrap(),
@@ -201,8 +200,7 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
     );
     team.open_round(round_id(1), Some(item), at(1)).unwrap();
     drive(&mut team, "1.1", PhaseKind::InProgress);
-    team.activate_split(plan.clone()).unwrap();
-    // Record run for member-1 on round 1
+    team.activate_split(plan).unwrap();
     team.begin_run(
         &task(2),
         NewRun {
@@ -213,7 +211,6 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
         },
     )
     .unwrap();
-    // Round 1 merges
     let mut handle = team.item_mut(item).unwrap();
     handle
         .advance(ItemPhase::InReview {
@@ -248,13 +245,13 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
         })
         .unwrap();
     team.close_round(&round_id(1), at(50), RoundEnd::Merged).unwrap();
-    // After close_round, item is pending for next part
-    assert_eq!(team.next_part(item).unwrap().0.to_string(), "1.1b");
+
     // member-1 is free, so part 2 should go to member-1
+    assert_eq!(team.next_part(item).unwrap().0.to_string(), "1.1b");
     let dispatched = dispatch(&team);
     assert_eq!(dispatched.assigned, vec![(item, normal("member-1"))]);
 
-    // Case 2: member-1 is stopped -> part 2 goes to replacement member-2
+    // member-1 is stopped -> part 2 goes to replacement member-2
     team.find_mut(&task(2))
         .unwrap()
         .1
@@ -262,8 +259,23 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
         .unwrap();
     let dispatched = dispatch(&team);
     assert_eq!(dispatched.assigned, vec![(item, normal("member-2"))]);
+}
 
-    // Case 3: member-1 stopped, no other member, lead fits -> part 2 goes to lead
+#[test]
+fn next_split_part_falls_back_to_qualified_lead_when_members_stopped() {
+    use crate::state::NewRun;
+    use crate::state::fixtures::{drive, round_id, run};
+    use crate::state::{ItemPhase, PhaseKind, RoundEnd};
+
+    let item = "1.1".parse().unwrap();
+    let plan: crate::state::split::SplitPlan = serde_json::from_value(serde_json::json!({
+        "parent": "1.1", "parts": [
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[], "tier":"normal"},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"], "tier":"normal"}
+        ]
+    }))
+    .unwrap();
+
     let mut team_lead = Team::new(
         team_id(2),
         "example".parse().unwrap(),

@@ -190,7 +190,7 @@ impl Owner {
         };
         let derived_part_branch = team
             .round(&round)
-            .and_then(|r| r.part())
+            .and_then(agent_core::state::Round::part)
             .map(|p| format!("{branch}{p}"));
         let repo = team.repo().clone();
         let member = self.task_of(team_id, &assignee).ok_or(ClaimError::Member)?;

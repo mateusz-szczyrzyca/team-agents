@@ -486,12 +486,12 @@ async fn split_part_delivered_by_merged_pr_outside_round_completes_item_and_team
     let (team_id, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
         .await;
-    let part_a_branch = format!("agents/claude-1/{}-1.1a", tasks[1]);
-    let part_b_branch = format!("agents/claude-1/{}-1.1b", tasks[1]);
-    super::rig::git(&rig.origin, &["branch", &part_a_branch, "main"]);
-    super::rig::git(&rig.origin, &["branch", &part_b_branch, "main"]);
-    let pr1 = rig.github.foreign_pull(&part_a_branch);
-    let pr2 = rig.github.foreign_pull(&part_b_branch);
+    let branch_part_a = format!("agents/claude-1/{}-1.1a", tasks[1]);
+    let branch_part_b = format!("agents/claude-1/{}-1.1b", tasks[1]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_a, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_b, "main"]);
+    let pr1 = rig.github.foreign_pull(&branch_part_a);
+    let pr2 = rig.github.foreign_pull(&branch_part_b);
     assert_eq!(pr1, 1);
     assert_eq!(pr2, 2);
     rig.github.merged_by_a_human(1);
