@@ -1559,3 +1559,8 @@ func workerWaits(state MemberState) bool {
 	}
 	return false
 }
+
+// helpersOfTask lists the worker requests that runs of task made, oldest first.
+func helpersOfTask(st *State, task string) []*Helper {
+	return nil
+}
