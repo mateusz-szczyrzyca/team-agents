@@ -804,7 +804,6 @@ impl Owner {
     async fn judge_tip(&mut self, lead: &Lead, approved_head: &CommitId) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
-        let record = self.parts.store.load_gate_record(&lead.task).await?;
         let tip = git.rev_parse(&Revision::Head).await?;
         if &tip == approved_head
             || !git
@@ -817,6 +816,8 @@ impl Owner {
         if own == Own::Running {
             return Ok(Judgement::Wait);
         }
+        // Completion guarantees the gate record is saved; read it after consuming that completion.
+        let record = self.parts.store.load_gate_record(&lead.task).await?;
         if record
             .as_ref()
             .is_some_and(|record| record.result.head == tip && record.counts_as_pass())
