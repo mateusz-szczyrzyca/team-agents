@@ -258,8 +258,26 @@ impl Git {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Merged, GitError> {
+        self.merge_since_into_scratch(head, None, commit, round, task).await
+    }
+
+    /// As [`Git::merge_into_scratch`], but what is merged is what `commit` changed since `since`; `None` is since the merge
+    /// base with `head`.
+    ///
+    /// # Errors
+    /// The errors of [`Git::merge_into_scratch`].
+    pub async fn merge_since_into_scratch(
+        &self,
+        head: &CommitId,
+        since: Option<&CommitId>,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Merged, GitError> {
         let scratch = make_scratch().await?;
-        let merged = self.write_merge(scratch.path(), head, commit, round, task).await;
+        let merged = self
+            .write_merge(scratch.path(), (head, since), commit, round, task)
+            .await;
         close_scratch(scratch).await;
         merged
     }
@@ -269,7 +287,7 @@ impl Git {
     async fn write_merge(
         &self,
         scratch: &std::path::Path,
-        head: &CommitId,
+        (head, since): (&CommitId, Option<&CommitId>),
         commit: &CommitId,
         round: &RoundId,
         task: &TaskId,
@@ -304,7 +322,7 @@ impl Git {
         // The tree is settled from the objects alone: `merge-recursive` reads the worktree and a file the requester
         // changed uncommitted, or a directory where one side has a file, makes it refuse before it writes. What it
         // would have written is exactly what the two sides' trees say, and the requester's files play no part in it.
-        match handle.settle_tree(&overrides, head, commit).await? {
+        match handle.settle_tree(&overrides, (head, since), commit).await? {
             Settled::Clean(tree) => handle.commit_tree(&overrides, &tree, head, commit, round, task).await,
             Settled::Conflicts(conflicts) => Ok(Merged::Conflicts(conflicts)),
         }
@@ -401,17 +419,20 @@ impl Git {
     async fn settle_tree(
         &self,
         overrides: &[OsString],
-        head: &CommitId,
+        (head, since): (&CommitId, Option<&CommitId>),
         worker: &CommitId,
     ) -> Result<Settled, GitError> {
-        let base = match self
-            .merge_base(&Revision::Commit(head.clone()), &Revision::Commit(worker.clone()))
-            .await
-        {
-            Ok(base) => base.to_string(),
-            // No common ancestor: the worker's commit adds a history of its own, and the empty tree is its base.
-            Err(GitError::NoMergeBase { .. }) => EMPTY_TREE.to_owned(),
-            Err(error) => return Err(error),
+        let base = match since {
+            Some(since) => since.to_string(),
+            None => match self
+                .merge_base(&Revision::Commit(head.clone()), &Revision::Commit(worker.clone()))
+                .await
+            {
+                Ok(base) => base.to_string(),
+                // No common ancestor: the worker's commit adds a history of its own, and the empty tree is its base.
+                Err(GitError::NoMergeBase { .. }) => EMPTY_TREE.to_owned(),
+                Err(error) => return Err(error),
+            },
         };
         let base = self.tree_entries(overrides, &base).await?;
         let ours = self.tree_entries(overrides, &head.to_string()).await?;
@@ -561,8 +582,7 @@ impl Git {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<BringOver, GitError> {
-        let _ = base;
-        self.bring_over(commit, round, task).await
+        self.bring_over_from(Some(base), commit, round, task).await
     }
 
     /// Brings `commit` to the requester's branch after a snapshot of the requester's worktree: the snapshot is taken
@@ -575,6 +595,18 @@ impl Git {
     /// the merge was made. Files of the merge that the requester changed or has untracked are an answer, not an error:
     /// [`BringOver::InTheWay`]. Whatever the outcome, an error leaves the worktree and the branch as they were.
     pub async fn bring_over(&self, commit: &CommitId, round: &RoundId, task: &TaskId) -> Result<BringOver, GitError> {
+        self.bring_over_from(None, commit, round, task).await
+    }
+
+    /// [`Git::bring_over`] and [`Git::bring_over_since`]: what is merged is what `commit` changed since `since`, or since
+    /// the merge base with the requester's head.
+    async fn bring_over_from(
+        &self,
+        since: Option<&CommitId>,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<BringOver, GitError> {
         // The snapshot lists every file of the worktree: a big repository needs more bytes than a command may print.
         let snapshot = self
             .clone()
@@ -584,7 +616,10 @@ impl Git {
             })
             .snapshot(round, task)
             .await?;
-        match self.merge_into_scratch(&snapshot.head, commit, round, task).await? {
+        match self
+            .merge_since_into_scratch(&snapshot.head, since, commit, round, task)
+            .await?
+        {
             Merged::Conflicts(files) => Ok(BringOver::Conflicted {
                 snapshot,
                 worker: commit.clone(),
