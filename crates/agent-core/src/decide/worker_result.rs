@@ -37,17 +37,19 @@ pub enum CheckOutcome {
     Failed,
     /// The check ran past its time limit and was stopped.
     TimedOut,
-    /// The request has no check; nothing shows the result right or wrong.
+    /// The request has no check. Only a request for facts can lack one; for a request that names files nothing then
+    /// shows the commit right, and the result is wrong ([`Wrong::NoCheck`]).
     Absent,
 }
 
-/// A free worker of another provider than the one whose result is wrong: the retry [`Verdict::GiveToAnother`] takes.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// Which free worker, if any, the retry [`Verdict::GiveToAnother`] can go to; [`worker_for_second_try`] finds it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Elsewhere {
-    /// A free worker of another provider waits.
+    /// A free worker of another provider than the one whose result is wrong waits.
     Free,
-    /// Every free worker is of the provider that just failed, or no worker is free at all: the same provider's
-    /// worker is the retry, if `[workers] tries` allows one.
+    /// Every free worker is of the provider that just failed: the same provider serves the retry, as there is no other.
+    SameProvider,
+    /// No worker is free at all.
     None,
 }
 
@@ -78,7 +80,7 @@ pub struct Facts {
     pub try_number: u32,
     /// How many tries `[workers] tries` allows; `1` never gives the request to a second worker.
     pub tries: u32,
-    /// Whether a free worker of another provider than the one that just failed remains.
+    /// Which free worker the retry may go to.
     pub elsewhere: Elsewhere,
 }
 
@@ -94,6 +96,8 @@ pub enum Wrong {
     CheckTimedOut,
     /// The worker changed a file outside the request's `files`.
     OutsideFiles,
+    /// The request names files to write but no check: nothing shows the commit right.
+    NoCheck,
     /// The worker's run lasted past `[workers] seconds`.
     PastSeconds,
 }
