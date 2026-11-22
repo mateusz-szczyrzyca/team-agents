@@ -1507,19 +1507,32 @@ func cmdClaimLead(args []string) {
 	fmt.Println(out)
 }
 
-// freeWorkers counts the workers of team that could take one more request of the team now: the workers that can run
-// (active, sleeping or waking) and serve no request (starting or running), less the team's requests still queued for
-// them. It is zero or below when a new request would wait. A request belongs to the team when its requester is a
-// member; a worker's run of its own does not keep it from a request.
+// freeWorkers counts the workers of team that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
+// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
+// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
+// the request was given to (while that is not yet recorded, the worker counts as serving here).
 func freeWorkers(team *Team, helpers []*Helper) int {
+	tasks := map[string]bool{}
+	for _, m := range team.Members {
+		tasks[m.Task] = true
+	}
+	ours := func(h *Helper) bool {
+		if h.FromTask == "" {
+			return team.Members[h.From] != nil
+		}
+		return tasks[h.FromTask]
+	}
 	serving := map[string]bool{}
 	waiting := 0
 	for _, h := range helpers {
 		switch h.Status {
 		case HelperStarting, HelperRunning:
-			serving[h.Worker] = true
+			if h.HelperTask == "" || tasks[h.HelperTask] {
+				serving[h.Worker] = true
+			}
 		case HelperQueued:
-			if team.Members[h.From] != nil {
+			if ours(h) {
 				waiting++
 			}
 		case HelperDone, HelperFailed, HelperUnclear:
@@ -1527,20 +1540,20 @@ func freeWorkers(team *Team, helpers []*Helper) int {
 	}
 	free := 0
 	for name, m := range team.Members {
-		if m.Tier == TierWorker && workerCanRun(m.State) && !serving[name] {
+		if m.Tier == TierWorker && workerWaits(m.State) && !serving[name] {
 			free++
 		}
 	}
 	return free - waiting
 }
 
-// workerCanRun reports whether a worker in state can be given a request: one that is done, excluded, hung, paused or
-// stopped is not started for it.
-func workerCanRun(state MemberState) bool {
+// workerWaits reports whether a worker in state waits for work: only such a worker is given a request by the daemon.
+// One in a run of its own or waking is busy; one that is done, excluded, hung, paused or stopped is not started.
+func workerWaits(state MemberState) bool {
 	switch state {
-	case MemberActive, MemberSleeping, MemberWaking:
+	case MemberSleeping:
 		return true
-	case MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberStopped:
+	case MemberActive, MemberWaking, MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberStopped:
 		return false
 	}
 	return false
