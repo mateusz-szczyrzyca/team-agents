@@ -376,7 +376,7 @@ impl Owner {
                 .member
                 .runs()
                 .iter()
-                .flat_map(|run| run.rounds())
+                .flat_map(agent_core::state::Run::rounds)
                 .filter_map(|round| found.team.round(round))
                 .filter_map(agent_core::state::Round::item)
                 .collect();
@@ -428,8 +428,9 @@ impl Owner {
         let progress = found.team.item(item).ok_or(BusyNoticeError::MissingItem { item })?;
         let branch = match progress.phase() {
             ItemPhase::InProgress { branch, .. } | ItemPhase::Fixing { branch, .. } => branch,
-            ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => &pr.branch,
-            ItemPhase::Done {
+            ItemPhase::InReview { pr, .. }
+            | ItemPhase::Approved { pr, .. }
+            | ItemPhase::Done {
                 completion: agent_core::state::Completion::Merged { pr, .. },
             } => &pr.branch,
             ItemPhase::Pending
@@ -529,7 +530,7 @@ impl Owner {
                 .member
                 .runs()
                 .iter()
-                .flat_map(|run| run.rounds())
+                .flat_map(agent_core::state::Run::rounds)
                 .filter_map(|round| found.team.round(round))
                 .any(|round| round.item() == Some(progress.id()))
         });
