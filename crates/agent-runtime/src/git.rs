@@ -37,6 +37,7 @@ mod size;
 mod snapshot;
 
 pub use changes::WorkChanges;
+pub use range::StagedAgainst;
 pub use snapshot::Snapshot;
 
 /// How long a local git command may run before its group is killed.
@@ -246,6 +247,9 @@ pub enum GitOperation {
     /// `git diff-tree`, to list the files one commit changed.
     #[strum(serialize = "diff-tree")]
     DiffTree,
+    /// `git diff-index`, to list the files the index changes against a commit.
+    #[strum(serialize = "diff-index")]
+    DiffIndex,
     /// `git read-tree`, to fill the scratch index of a read of the uncommitted changes.
     #[strum(serialize = "read-tree")]
     ReadTree,
@@ -1068,6 +1072,26 @@ impl Git {
             .is_ancestor(&Revision::Commit(pushed.clone()), &Revision::Commit(tip.clone()))
             .await?;
         Ok((!continues).then_some(pushed))
+    }
+
+    /// Where git keeps `name` for this checkout: a file of its own directory (`MERGE_HEAD`, `rebase-merge`) or of the
+    /// repository's shared one (`hooks`, `info/exclude`).
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the directory is no repository; [`GitError::Run`], [`GitError::OutputTooLong`] and
+    /// [`GitError::NotUtf8`].
+    pub async fn git_path(&self, name: &str) -> Result<PathBuf, GitError> {
+        let operation = GitOperation::GitPath;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("rev-parse"), arg("--git-path"), arg(name)],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        // In the main checkout git prints the path relative to the directory it ran in; `join` keeps an absolute one.
+        Ok(self.dir.as_path().join(printed.trim_end()))
     }
 
     /// The file `info/exclude` that keeps paths out of git for every worktree of the repository.

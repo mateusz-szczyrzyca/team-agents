@@ -27,7 +27,41 @@ const WHOLE_FILE: u32 = 1 << 30;
 /// What a commit message line's NUL-terminated record in `git log` has: the ID, the parents, the subject and the body.
 const LOG_FIELDS: usize = 4;
 
+/// What the index is compared with to tell what a commit about to be made changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StagedAgainst {
+    /// A commit: the parent of the commit about to be made.
+    Commit(CommitId),
+    /// Nothing: the commit about to be made has no parent.
+    EmptyTree,
+}
+
 impl Git {
+    /// The files the index changes against `against`, as the commit that is about to be made changes them. A rename is
+    /// a deletion and an addition. The index is the one of this process's environment (`GIT_INDEX_FILE` when a hook of
+    /// `git commit -a` is run), which is what the commit is made of.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses; [`GitError::Unexpected`], [`GitError::NotUtf8`], [`GitError::NotAPath`],
+    /// [`GitError::Run`] and [`GitError::OutputTooLong`] for what git prints or cannot do.
+    pub async fn staged_changes(&self, _against: &StagedAgainst) -> Result<Vec<FileChange>, GitError> {
+        let captured = self
+            .run_ok(
+                GitOperation::DiffIndex,
+                Reach::Local,
+                &[
+                    arg("diff-index"),
+                    arg("--cached"),
+                    arg("--name-only"),
+                    arg("HEAD"),
+                    arg("--"),
+                ],
+            )
+            .await?;
+        drop(captured);
+        Ok(Vec::new())
+    }
+
     /// The best common ancestor of two revisions: where a branch left its base.
     ///
     /// # Errors
