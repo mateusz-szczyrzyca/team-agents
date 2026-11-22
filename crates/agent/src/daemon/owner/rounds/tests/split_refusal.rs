@@ -212,3 +212,53 @@ async fn a_coordinator_that_repeats_a_refused_line_is_told_twice_and_then_left_t
     assert_eq!(told, 2, "{}", messages(&rig));
     assert_eq!(runs, 4);
 }
+
+// Rule: every refusal is in the log at the default level, with a log event, and in the history with its reason: also the
+// refusal of a number the team does not have.
+#[tokio::test]
+async fn every_refusal_is_in_the_log_and_the_history_with_its_reason() {
+    use agent_core::history::Record;
+    use agent_runtime::history::Reader;
+    let mut rig = team_with("split-line:9.9@SLEEPING,sleep").await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let logged: Vec<_> = reader
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event().as_str() == "request_refused" && row.fields().contains_key("reason"))
+        .collect();
+    let events: Vec<_> = reader
+        .team_records(&id)
+        .unwrap()
+        .into_iter()
+        .filter_map(|row| match row.record {
+            Record::Event(event) if event.event.kind().to_string() == "split_decision" => {
+                Some(serde_json::to_value(event.event).unwrap())
+            }
+            _ => None,
+        })
+        .collect();
+
+    assert_eq!(logged.len(), 1, "{logged:?}");
+    assert!(
+        logged[0].fields()["reason"]
+            .as_str()
+            .unwrap()
+            .contains("no item named `9.9`"),
+        "{logged:?}"
+    );
+    assert_eq!(events.len(), 1, "{events:?}");
+    assert_eq!(events[0]["decision"], "corrected");
+    assert_eq!(events[0]["item"], "9.9");
+    assert!(
+        events[0]["reason"].as_str().unwrap().contains("no item named `9.9`"),
+        "{events:?}"
+    );
+}
