@@ -350,14 +350,16 @@ impl State {
     /// The tasks currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in queue-entry order, oldest first.
     fn effective_queued(&self) -> Vec<TaskId> {
         let natural = self.natural_queued();
+        let natural_set: HashSet<&TaskId> = natural.iter().collect();
+        let mut seen: HashSet<TaskId> = HashSet::with_capacity(natural.len());
         let mut order = Vec::with_capacity(natural.len());
         for task in &self.queued {
-            if natural.contains(task) && !order.contains(task) {
+            if natural_set.contains(task) && seen.insert(task.clone()) {
                 order.push(task.clone());
             }
         }
         for task in natural {
-            if !order.contains(&task) {
+            if seen.insert(task.clone()) {
                 order.push(task);
             }
         }
@@ -380,9 +382,17 @@ impl State {
     /// were already queued before the interruption (in their `waiting` order).
     pub fn place_waiting_after_interrupted(&mut self, waiting: &[TaskId]) {
         let natural = self.natural_queued();
-        let mut order: Vec<TaskId> = natural.iter().filter(|task| !waiting.contains(task)).cloned().collect();
+        let natural_set: HashSet<&TaskId> = natural.iter().collect();
+        let waiting_set: HashSet<&TaskId> = waiting.iter().collect();
+        let mut seen: HashSet<TaskId> = HashSet::with_capacity(natural.len());
+        let mut order = Vec::with_capacity(natural.len());
+        for task in &natural {
+            if !waiting_set.contains(task) && seen.insert(task.clone()) {
+                order.push(task.clone());
+            }
+        }
         for task in waiting {
-            if natural.contains(task) && !order.contains(task) {
+            if natural_set.contains(task) && seen.insert(task.clone()) {
                 order.push(task.clone());
             }
         }
@@ -392,18 +402,28 @@ impl State {
     /// The queued tasks in the order they entered the queue, oldest first.
     pub fn queued_tasks(&mut self) -> Vec<crate::decide::slot::Queued> {
         self.sync_queued();
-        self.queued
+        let mut by_task: HashMap<TaskId, crate::decide::slot::Queued> = self
+            .teams
             .iter()
-            .filter_map(|task| {
-                let found = self.find_task(task)?;
-                (found.member.status() == crate::status::TaskStatus::Queued).then(|| crate::decide::slot::Queued {
-                    task: found.member.task().clone(),
-                    team: found.team.id().clone(),
-                    agent: found.member.agent().agent_name(),
-                    tier: found.member.agent().tier(),
-                })
+            .flat_map(|team| {
+                let team_id = team.id();
+                team_members(team)
+                    .filter(|member| member.status() == crate::status::TaskStatus::Queued)
+                    .map(move |member| {
+                        let task = member.task().clone();
+                        (
+                            task.clone(),
+                            crate::decide::slot::Queued {
+                                task,
+                                team: team_id.clone(),
+                                agent: member.agent().agent_name(),
+                                tier: member.agent().tier(),
+                            },
+                        )
+                    })
             })
-            .collect()
+            .collect();
+        self.queued.iter().filter_map(|task| by_task.remove(task)).collect()
     }
 
     /// The teams, oldest first.
