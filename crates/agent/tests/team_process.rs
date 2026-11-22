@@ -1059,7 +1059,8 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
         assert_eq!(world.runs(&second), 0, "{status}");
         assert!(
-            line_of(&status, &busy_candidate).contains("running") && !line_of(&status, &busy_candidate).contains("for "),
+            line_of(&status, &busy_candidate).contains("running")
+                && !line_of(&status, &busy_candidate).contains("for "),
             "the candidate keeps its own run, which the restart of the daemon resumes: {status}"
         );
 
