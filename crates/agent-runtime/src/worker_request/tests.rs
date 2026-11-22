@@ -10,6 +10,11 @@ use agent_core::ids::{AgentName, TaskId, TeamId};
 
 use super::*;
 
+/// Every request of the task directory `dir`, or the first file that cannot be read.
+async fn read_pending(dir: &Path) -> Result<Vec<Pending>, PendingError> {
+    read_pending_each(dir).await?.into_iter().collect()
+}
+
 fn request(number: u64) -> RequestId {
     RequestId::new(NonZeroU64::new(number).expect("a number"))
 }

@@ -1080,6 +1080,53 @@ Integrate the guide.
     /// worker's worktree.
     const HELD_CHECK: &str = "touch .fake-check-started && for i in $(seq 1 300); do test -e .fake-check-go && break; sleep 0.1; done && test -e .fake-check-go && test -s docs/guide.md";
 
+    /// A world with a member and two workers, the first of which commits the guide, and the request `request` of the member,
+    /// served by the first worker; returns the tasks by name.
+    fn two_workers_one_request(world: &mut World, request: &str) -> Vec<(String, String)> {
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1", "glm-2"]);
+        world.ended(task(&tasks, "glm-1"), 1);
+        world.sleeps_on_the_bus("glm-1");
+        world.sleeps_on_the_bus("glm-2");
+        tasks
+    }
+
+    #[test]
+    fn a_worker_whose_result_is_being_checked_is_not_given_the_next_request() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+            ("glm-2", "worker", "sleep,sleep"),
+        ]);
+        let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        request["check"] = serde_json::Value::String(HELD_CHECK.to_owned());
+        let tasks = two_workers_one_request(&mut world, &request.to_string());
+        let (member, first) = (task(&tasks, "claude-1"), task(&tasks, "glm-1"));
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+        let started = world.worktree(first).join(".fake-check-started");
+        eventually("the check of the first request to start", || started.exists());
+
+        let second = answers(&world.delegate_as(member, MEMBER_REQUEST));
+
+        assert!(!second[0].0, "{second:?}");
+        eventually("the second request to be given to a worker", || {
+            world
+                .requests()
+                .get("2")
+                .is_some_and(|request| !request["worker"].is_null())
+        });
+        assert_eq!(
+            world.requests()["2"]["worker"],
+            "glm-2",
+            "the worker whose result is being checked was given the next request"
+        );
+        std::fs::write(world.worktree(first).join(".fake-check-go"), "").unwrap();
+        world.request_is("1", "done");
+    }
+
     #[test]
     fn a_worker_that_leaves_a_requested_file_uncommitted_has_the_step_returned() {
         let mut world = World::new(&[
@@ -1336,6 +1383,31 @@ Integrate the guide.
         );
     }
 
+    /// Like [`world_with_a_served_request`], with a second worker `glm-2` whose task directory the test may write to.
+    fn world_with_two_workers_and_a_served_request() -> (World, String, String, String) {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "sleep"),
+            ("glm-1", "worker", "sleep"),
+            ("glm-2", "worker", "sleep"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1", "glm-2"]);
+        let (member, first, second) = (
+            task(&tasks, "claude-1").to_owned(),
+            task(&tasks, "glm-1").to_owned(),
+            task(&tasks, "glm-2").to_owned(),
+        );
+        for name in ["claude-1", "inv-opus", "glm-1", "glm-2"] {
+            world.ended(task(&tasks, name), 1);
+        }
+        world.sleeps_on_the_bus("glm-1");
+        world.sleeps_on_the_bus("glm-2");
+        world.stop();
+        (world, member, first, second)
+    }
+
     impl World {
         /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
         fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
@@ -1395,6 +1467,92 @@ Integrate the guide.
             let number = self.one_more_request(member, worker);
             self.settle_as_a_look(number, member, worker);
         }
+    }
+
+    #[test]
+    fn a_request_whose_stage_cannot_be_written_is_answered_once_not_at_every_look() {
+        use std::os::unix::fs::PermissionsExt;
+        let (mut world, member, worker, other) = world_with_two_workers_and_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, serde_json::json!({"stage": "ended"}), MEMBER_REQUEST);
+        let task_dir = world.home.join("tasks").join(&worker);
+        let path = pending_file(&world, &worker);
+        let mut pending: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        pending.as_object_mut().unwrap().remove("base");
+        std::fs::write(&path, pending.to_string()).unwrap();
+        std::fs::set_permissions(&task_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let _writable = Writable(task_dir);
+
+        world.start();
+        world.told("claude-1", "Your request H1 to the workers is back with you");
+        world.after_a_look(&member, &other);
+
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+        assert_eq!(world.requests()["1"]["status"], "failed");
+    }
+
+    #[test]
+    fn a_damaged_file_of_a_request_the_bus_has_answered_does_not_answer_it_again() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+        let sentinel = world.one_more_request(&member, &worker);
+        world.bus_cli(&[
+            "helper-set",
+            "--id",
+            "1",
+            "--status",
+            "done",
+            "--summary",
+            "Done by the worker.",
+        ]);
+        damage_the_file(&pending_file(&world, &worker), Damage::Truncated);
+
+        world.start();
+        world.settle_as_a_look(sentinel, &member, &worker);
+
+        assert_eq!(
+            world.requests()["1"]["status"],
+            "done",
+            "the answer of the bus was not overwritten"
+        );
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            0
+        );
+        assert!(!pending_file(&world, &worker).exists());
+        assert_eq!(kept_aside(&world, &worker).len(), 1);
+    }
+
+    #[test]
+    fn a_file_whose_request_is_not_the_one_in_its_name_is_damage_and_is_not_settled_again_and_again() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+        let task_dir = world.home.join("tasks").join(&worker);
+        std::fs::rename(
+            task_dir.join("worker-request-1.json"),
+            task_dir.join("worker-request-5.json"),
+        )
+        .unwrap();
+
+        world.start();
+        world.after_a_look(&member, &worker);
+
+        assert!(
+            !task_dir.join("worker-request-5.json").exists(),
+            "the file is set aside"
+        );
+        assert!(task_dir.join("worker-request-5.json.damaged").exists(), "and kept");
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            0
+        );
+        assert_eq!(
+            world.requests()["1"]["status"],
+            "running",
+            "the request of the content was not settled by it"
+        );
     }
 
     #[test]
