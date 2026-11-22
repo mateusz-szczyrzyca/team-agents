@@ -37,7 +37,7 @@ use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
-use agent_core::decide::slot::{Going, busy_run, limit_for, runs_going};
+use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -778,7 +778,7 @@ impl Owner {
 
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
-        let queued: Vec<TaskId> = self
+        let queued: Vec<Queued> = self
             .parts
             .state
             .teams()
@@ -787,20 +787,28 @@ impl Owner {
                 let crew = team.crew().roster().into_iter().map(|(_, member)| member);
                 crew.chain(team.reviewers().iter())
                     .filter(|member| member.status() == TaskStatus::Queued)
-                    .map(|member| member.task().clone())
+                    .map(|member| Queued {
+                        task: member.task().clone(),
+                        team: team.id().clone(),
+                        agent: member.agent().agent_name(),
+                        tier: member.agent().tier(),
+                    })
                     .collect::<Vec<_>>()
             })
-            .filter(|task| !self.in_flight.contains(task) && !self.pending_removals.contains(task))
+            .filter(|item| !self.in_flight.contains(&item.task) && !self.pending_removals.contains(&item.task))
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
-        self.agent_waits.retain(|task| queued.contains(task));
+        self.agent_waits
+            .retain(|task| queued.iter().any(|item| item.task == *task));
         if queued.is_empty() {
             return Ok(());
         }
         if !self.space_allows_run().await {
             return Ok(());
         }
-        for task in queued {
+        let going = runs_going(self.parts.state.teams());
+        let decisions = plan_starts(&queued, &going, self.parts.settings.config.limits());
+        for (task, slot) in decisions {
             if self.runs.len() >= MAX_RUNS.get() {
                 break;
             }
@@ -809,7 +817,7 @@ impl Owner {
                 break;
             }
             // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
-            if let Some(holder) = self.run_holding_agent(&task)? {
+            if let Slot::Wait(holder) = slot {
                 self.note_agent_wait(&task, &holder)?;
                 continue;
             }
@@ -817,16 +825,6 @@ impl Owner {
             self.start(task).await?;
         }
         Ok(())
-    }
-
-    /// The run that holds the agent of `task` at its limit of runs, `None` when the agent may run `task` now.
-    fn run_holding_agent(&self, task: &TaskId) -> Result<Option<Going>, OwnerError> {
-        let found = self
-            .parts
-            .state
-            .find_task(task)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        Ok(self.run_holding(found.member.agent()))
     }
 
     /// The run that holds `agent` at its limit of runs over all teams, `None` when `agent` may run another task now.

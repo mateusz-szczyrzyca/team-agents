@@ -120,6 +120,21 @@ pub enum Slot {
 /// Decides, for each task of `queued` in order, whether it starts now or waits for a run of its agent, given the runs
 /// `going` and `limits`. A task that starts takes a slot of its agent for the tasks queued after it.
 #[must_use]
-pub fn plan_starts(queued: &[Queued], _going: &[Going], _limits: &Limits) -> Vec<(TaskId, Slot)> {
-    queued.iter().map(|item| (item.task.clone(), Slot::Start)).collect()
+pub fn plan_starts(queued: &[Queued], going: &[Going], limits: &Limits) -> Vec<(TaskId, Slot)> {
+    let mut active = going.to_vec();
+    let mut planned = Vec::with_capacity(queued.len());
+    for item in queued {
+        let limit = limit_for(limits, item.tier);
+        if let Some(holder) = busy_run(&item.agent, limit, &active) {
+            planned.push((item.task.clone(), Slot::Wait(holder.clone())));
+        } else {
+            active.push(Going {
+                agent: item.agent.clone(),
+                team: item.team.clone(),
+                task: item.task.clone(),
+            });
+            planned.push((item.task.clone(), Slot::Start));
+        }
+    }
+    planned
 }
