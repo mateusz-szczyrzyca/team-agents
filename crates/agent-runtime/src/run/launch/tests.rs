@@ -6,6 +6,7 @@ use agent_core::config::{AbsolutePath, Secrets};
 
 use super::check_environment;
 use crate::git::CommitIdentity;
+use crate::store::HOME_VARIABLE;
 
 #[test]
 fn check_environment_has_the_agents_secrets_path_and_home_but_no_daemon_secret() {
@@ -26,6 +27,6 @@ fn check_environment_has_the_agents_secrets_path_and_home_but_no_daemon_secret()
         map.get("PATH").map(|path| path.split(':').next()),
         Some(Some("/opt/agent/bin"))
     );
-    assert_eq!(map.get("HOME").map(String::as_str), Some("/home/h/.agents"));
+    assert_eq!(map.get(HOME_VARIABLE).map(String::as_str), Some("/home/h/.agents"));
     assert!(!map.contains_key("NOTIFY_KEY"), "a notification secret is not given to a check");
 }
