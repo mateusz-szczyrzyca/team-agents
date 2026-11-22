@@ -36,6 +36,7 @@
 #   ask-here        writes questions-1.md in this task's directory, including on a resumed assignment
 #   ask-or-hold     asks like `ask-here` when the prompt says `Asks the human.`, and holds like `hold` for every other run
 #   work-or-hold    does `work` when the prompt says `Holds the agent`, holds like `hold` for every other run
+#   sleep-or-hold   holds like `hold` when the prompt says `Holds the agent`, ends like `sleep` for every other run
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
@@ -112,6 +113,10 @@ action=${actions[$((n - 1))]:-${actions[${#actions[@]}-1]}}
 # The busy tests: the run whose prompt says `Holds the agent` holds like `hold`, every other run does `work`.
 if [[ $action == work-or-hold ]]; then
   if grep -q 'Holds the agent' <<< "$prompt"; then action=hold; else action=work; fi
+fi
+# The busy tests: the run whose prompt says `Holds the agent` holds like `hold`, every other run ends like `sleep`.
+if [[ $action == sleep-or-hold ]]; then
+  if grep -q 'Holds the agent' <<< "$prompt"; then action=hold; else action=sleep; fi
 fi
 
 init() {

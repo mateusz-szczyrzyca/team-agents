@@ -1061,3 +1061,94 @@ async fn a_busy_investigator_is_not_given_a_review_while_free_investigators_exis
     std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_reviewer_task_that_waits_for_its_review_is_not_handed_over_while_its_investigator_runs_elsewhere() {
+    use agent_core::state::ItemPhase;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-2", "work"),
+            investigator("inv-r1", "sleep-or-hold"),
+            investigator("inv-r2", SILENT),
+            investigator("inv-r3", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config_text + "\n[replacement]\nagents = [\"inv-r3\"]\nbusy_after = 3600\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    // The reviewers of the item are inv-r1 and inv-r2 (the first two free ones); each ends its turn without a verdict.
+    let (review_team, _) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let item_id = "1.1".parse().unwrap();
+    let state = rig
+        .state_where("both reviewers to wait for their verdict", |state| {
+            state.team(&review_team).is_some_and(|team| {
+                team.reviewers().len() == 2
+                    && team
+                        .reviewers()
+                        .iter()
+                        .all(|member| member.status() == TaskStatus::Waiting)
+                    && team
+                        .item(item_id)
+                        .is_some_and(|progress| matches!(progress.phase(), ItemPhase::InReview { .. }))
+            })
+        })
+        .await;
+    let reviewer = state
+        .team(&review_team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.agent().name() == "inv-r1")
+        .unwrap()
+        .task()
+        .clone();
+
+    // inv-r1 now runs a task of its own, so its waiting reviewer task has its investigator busy elsewhere.
+    let holder_list = ONE.replace("The first item", "Holds the agent");
+    let (_, holder) = rig.run(&["inv-r1"], &holder_list, MergeMode::NoMerge, None).await;
+    rig.status_is(&holder[0], TaskStatus::Running).await;
+    // The positive control: a second task of inv-r1 waits for it and goes to inv-r3, which is free and of the same tier.
+    let (_, waiting) = rig.run(&["inv-r1"], ONE, MergeMode::NoMerge, None).await;
+    let waiting = waiting[0].clone();
+    rig.state_where("the second task of inv-r1 to wait", |state| {
+        state
+            .find_task(&waiting)
+            .is_some_and(|found| found.member.waiting_since().is_some())
+    })
+    .await;
+    rig.advance_history_days(1);
+    let state = rig
+        .state_where("the waiting task to be handed over to inv-r3", |state| {
+            state
+                .find_task(&waiting)
+                .is_some_and(|found| found.member.agent().name() == "inv-r3")
+        })
+        .await;
+
+    let kept = state
+        .team(&review_team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.task() == &reviewer)
+        .unwrap();
+    assert_eq!(
+        kept.agent().name(),
+        "inv-r1",
+        "the reviewer task keeps its investigator"
+    );
+    assert_eq!(kept.status(), TaskStatus::Waiting);
+    assert!(kept.past_holders().is_empty(), "the reviewer task is not handed over");
+
+    std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
+    rig.stop().await.unwrap();
+}
