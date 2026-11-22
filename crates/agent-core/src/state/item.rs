@@ -2555,10 +2555,18 @@ mod tests {
 
         for case in [c1, c2, c3, c4] {
             let res: Result<ItemProgress, _> = serde_json::from_value(case.clone());
-            assert!(
-                res.is_err(),
-                "contradictory conflict heads must be rejected during deserialization, but parsed: {case}"
-            );
+            match res {
+                Err(err) => {
+                    let msg = err.to_string();
+                    assert!(
+                        msg.contains("cannot have multiple contradictory conflict pass heads simultaneously"),
+                        "unexpected error message: {msg}"
+                    );
+                }
+                Ok(_) => {
+                    panic!("contradictory conflict heads must be rejected during deserialization, but parsed: {case}");
+                }
+            }
         }
     }
 
