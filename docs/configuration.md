@@ -40,6 +40,7 @@ Top-level key and tables:
 | `[agents.NAME]` | table | none | one normal agent or worker |
 | `[investigators.NAME]` | table | none | one investigator |
 | `[tiers]` | table | empty | which agents are normal and which are workers |
+| `[workers]` | table | `tries = 2`, `seconds = 0` | what the harness does with the result of a worker that served a request |
 | `[build]` | table | `incremental = false` | Cargo cache policy for managed agent CLIs and gates |
 | `[binaries]` | table | see below | programs and the agents' `PATH` |
 | `[watchdog]` | table | see below | when a silent run is hung |
@@ -163,6 +164,22 @@ its runs are never sent back. Done steps are nevertheless judged for all roles a
 do not consume this budget yet. The daemon runs the command checks of done steps (`check_seconds` is their time limit); a command that fails is recorded as a
 `mismatch`.
 Existing configurations need no changes.
+
+### `[workers]`
+
+What the harness does with the result of a worker — a model of `[tiers] workers` — that served a `delegate` request.
+A request is given to one worker first. Its result is wrong when the request's check fails, the worker ends otherwise
+than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
+the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
+wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
+facts only: its result goes to the requester as before, and its check, when it has one, is run all the same.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`) |
+| `seconds` | `0` | how long a worker's run may last, in seconds; a run past it is a wrong result. `0` has no limit |
+
+A file without `[workers]` gets these defaults, so existing configurations need no change.
 
 ### `[split]`
 

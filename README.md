@@ -914,6 +914,14 @@ investigation request, a run of a home that keeps no plan, or a run whose worktr
 the old form, which is for look-ups only and waits
 in the queue as before.
 
+**A worker's result is checked before it reaches your branch.** The bus keeps, next to the step, the paths the request
+names (`files`), its check (`check`) and what to do (`do`) — a request that names no path is a look-up, in the old form,
+and its result goes to the requester as before. From item 4.2 the harness runs the request's check in the worker's
+worktree, brings the worker's commit to the requester's branch only when it passes, gives a wrong request once more to a
+free worker of another CLI, and returns the step to the requester with the reasons. The decision and the texts are in
+this version (`[workers]` in [`docs/configuration.md`](docs/configuration.md#workers)); the daemon uses them from the
+version that wires them.
+
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
 say it: a step with one result, named files and a check a machine runs, the reading and listing of many files, a
