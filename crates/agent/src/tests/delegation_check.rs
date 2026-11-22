@@ -82,12 +82,13 @@ fn a_complete_request_prints_the_step_in_full_with_its_files_check_and_what_to_d
         lines,
         [
             "ACCEPTED",
+            "The step of the requester's plan:",
             "Step 1.2 Write the walkthrough",
-            "Files: docs/guide.md",
             "These words are part of the step.",
+            "Files: docs/guide.md",
             "Check: exists docs/guide.md",
-            "Files: docs/guide.md, README.md",
-            "Check: exists docs/guide.md",
+            "Request files: docs/guide.md, README.md",
+            "Request check: exists docs/guide.md",
             "Do: Write the walkthrough from the answers.",
         ]
     );
@@ -116,7 +117,7 @@ fn every_refusal_has_its_own_keyword() {
     let (_dir, plan) = home_with_plan();
     let rows = [
         ("NO-SUCH-STEP", "9.9", "docs/guide.md", "exists docs/guide.md"),
-        ("STEP-DONE", "1.3", "docs/guide.md", "exists docs/guide.md"),
+        ("STEP-CLOSED", "1.3", "docs/guide.md", "exists docs/guide.md"),
         ("PATH-OUTSIDE", "1.2", "/etc/passwd", "exists docs/guide.md"),
         ("CHECK-REFUSED", "1.2", "docs/guide.md", "reviewer"),
         ("CHECK-REFUSED", "1.2", "docs/guide.md", "make gate"),
