@@ -543,13 +543,23 @@ impl Git {
         if let Err(error) = moved {
             // The files go back to the head the branch is at now, not to the one the merge was made on: when the requester
             // committed meanwhile, its commit is what the worktree must agree with, and it may be the staged merge itself.
-            // A failure to put them back is the worse one and is the one reported.
-            let now = self.rev_parse(&Revision::Head).await?;
-            self.read_tree_update(&applied_text, &now.to_string()).await?;
-            if now != *head {
+            // The requester may commit again while they are put back, so the branch is read again after each step until
+            // the files agree with it. A failure to put them back is the worse one and is the one reported.
+            let mut at = applied.clone();
+            let found = loop {
+                let now = self.rev_parse(&Revision::Head).await?;
+                if now != at {
+                    self.read_tree_update(&at.to_string(), &now.to_string()).await?;
+                    at = now;
+                }
+                if self.rev_parse(&Revision::Head).await? == at {
+                    break at;
+                }
+            };
+            if found != *head {
                 return Err(GitError::HeadMoved {
                     expected: head.clone(),
-                    found: now,
+                    found,
                 });
             }
             return Err(error);
