@@ -71,3 +71,40 @@ async fn a_findings_file_that_cannot_be_written_does_not_fail_the_fix_pass() {
         assert!(!prompt.contains("fix-pass-findings.md"), "{prompt}");
     }
 }
+
+// Golden: the request to correct a response, as the lead reads it: the numbers of the findings it speaks of with the answers
+// each allows, and the file that holds their full text. The home and the task are written as `<home>` and `<task>`.
+#[tokio::test]
+async fn the_request_to_correct_a_response_is_as_its_golden_says() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work:99"),
+            investigator("inv-r1", "review-reasons"),
+            investigator("inv-r2", "review-reasons"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("The lead's fix response was refused").await;
+    rig.stop().await.unwrap();
+
+    let prompt = rig.kept_prompt(&tasks[0], 3);
+    let start = prompt
+        .find("# CORRECT YOUR FIX RESPONSE")
+        .expect("the request to correct a response");
+    // The harness's own closing instructions follow the request; they are not a part of it.
+    let end = prompt
+        .find("# YOUR PART OF THE PULL REQUEST DESCRIPTION")
+        .unwrap_or(prompt.len());
+    let request = prompt
+        .get(start..end)
+        .unwrap()
+        .trim_end()
+        .replace(&rig.home.root().display().to_string(), "<home>")
+        .replace(tasks[0].as_str(), "<task>");
+
+    super::history_stories_tests::golden("fix-pass-correction.txt", &request);
+}
