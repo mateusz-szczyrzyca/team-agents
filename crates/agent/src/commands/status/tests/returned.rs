@@ -53,7 +53,7 @@ fn the_task_line_says_only_how_often_when_there_is_no_limit() {
 fn a_task_nobody_returned_says_nothing_of_it() {
     let team = TeamSummary::from(&team_state().teams()[0]);
 
-    assert!(lines_with(&team, "returned").is_empty());
+    assert_eq!(lines_with(&team, "returned"), Vec::<String>::new());
 }
 
 #[test]
