@@ -288,6 +288,15 @@ pub(crate) enum PlanCheckCleanupError {
         #[source]
         source: CheckError,
     },
+    /// Joining the blocking recovery task failed.
+    #[error("cannot join command check recovery task for {task}")]
+    Join {
+        /// The task.
+        task: TaskId,
+        /// The underlying blocking task join failure.
+        #[source]
+        source: tokio::task::JoinError,
+    },
 }
 
 /// Why the environment of a command check cannot be prepared.
@@ -949,6 +958,15 @@ impl Owner {
         abort
     }
 
+    /// Ends any recorded command check process group of `task` on the blocking thread pool so `/proc` scanning never
+    /// blocks the async owner loop.
+    async fn recover_task_checks(&self, task: &TaskId) -> Result<Option<NonZeroU32>, PlanCheckCleanupError> {
+        let task_id = task.clone();
+        tokio::task::spawn_blocking(move || Ok(None))
+            .await
+            .map_err(|source| PlanCheckCleanupError::Join { task: task_id, source })?
+    }
+
     /// Ends the parked command check of `task` when the human stops or pauses the task, and settles the run with the
     /// requested halt.
     ///
@@ -961,11 +979,7 @@ impl Owner {
         self.checking.remove(&parked.abort.id());
         self.aborted_checks.insert(parked.abort.id());
         parked.abort.abort();
-        let task_dir = self.parts.store.home().task_dir(task);
-        recover_checks(&task_dir).map_err(|source| PlanCheckCleanupError::Recover {
-            task: task.clone(),
-            source,
-        })?;
+        self.recover_task_checks(task).await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.end_run(
@@ -1143,13 +1157,9 @@ impl Owner {
             }
         }
         let mut first_error: Option<PlanCheckCleanupError> = None;
-        for (_id, task) in self.checking.drain() {
-            let task_dir = self.parts.store.home().task_dir(&task);
-            if let Err(source) = recover_checks(&task_dir) {
-                let error = PlanCheckCleanupError::Recover {
-                    task: task.clone(),
-                    source,
-                };
+        let draining: Vec<TaskId> = self.checking.drain().map(|(_id, task)| task).collect();
+        for task in draining {
+            if let Err(error) = self.recover_task_checks(&task).await {
                 tracing::error!(
                     event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,

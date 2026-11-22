@@ -879,3 +879,62 @@ async fn execute_command_check_keeps_running_record_non_empty_and_reports_remove
         "remove_running_record must append non-NotFound removal errors: {combined}"
     );
 }
+
+#[tokio::test]
+async fn spawning_daemon_death_before_record_write_prevents_child_command_from_running() {
+    let env = TestEnv::new();
+    let checks_dir = env.task_dir.join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    let record = checks_dir.join("running");
+    std::fs::write(&record, b"").unwrap();
+    let log_path = checks_dir.join("dead-daemon.log");
+    std::fs::write(&log_path, b"").unwrap();
+
+    let ctx = env.context(10, &[]);
+    let spec = super::prepare_process_spec_for_daemon(
+        &ctx,
+        "touch ran_after_daemon_death.txt",
+        &record,
+        log_path,
+        std::process::id(),
+        u64::MAX,
+    )
+    .expect("prepare process spec for dead daemon");
+    let supervisor = crate::process::Supervisor::new(std::num::NonZeroUsize::MIN);
+    let mut process = supervisor.spawn(&spec).await.expect("spawn child shell");
+    let _exit = process.wait().await.expect("wait for child shell");
+
+    assert!(
+        !env.worktree.join("ran_after_daemon_death.txt").exists(),
+        "child shell must not execute the check command when the spawning daemon died before the record write"
+    );
+}
+
+#[tokio::test]
+async fn replace_running_record_and_proc_scan_propagate_errors() {
+    let env = TestEnv::new();
+    let not_a_dir = env.task_dir.join("regular-file");
+    std::fs::write(&not_a_dir, b"file").unwrap();
+    let bad_temp = not_a_dir.join("running.daemon");
+    let target_dir = env.task_dir.join("target-dir");
+    std::fs::create_dir_all(&target_dir).unwrap();
+
+    let rename_err = super::replace_running_record(&bad_temp, &target_dir)
+        .await
+        .expect_err("rename from invalid path must fail");
+    assert!(
+        rename_err.to_string().contains("cannot remove temporary record"),
+        "replace_running_record must retain the temp-file removal error alongside the rename error: {rename_err}"
+    );
+
+    let fake_proc = env.task_dir.join("fake-proc");
+    let bad_pid_dir = fake_proc.join("4242");
+    std::fs::create_dir_all(&bad_pid_dir).unwrap();
+    std::fs::write(bad_pid_dir.join("stat"), "corrupt-stat-without-parens").unwrap();
+
+    let scan_res = super::process_group_has_member_since_in(&fake_proc, 4242, 100);
+    assert!(
+        scan_res.is_err(),
+        "process_group_has_member_since_in must propagate unexpected /proc/<pid>/stat errors instead of returning Ok(false): {scan_res:?}"
+    );
+}

@@ -348,9 +348,10 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
 }
 
 /// Reads the process group ID (field 5) and kernel start time (field 22, in clock ticks since boot) of `pid` from
-/// `/proc/<pid>/stat`. Returns `Ok(None)` when the process does not exist.
-fn process_stat_group_and_ticks(pid: u32) -> io::Result<Option<(u32, u64)>> {
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+/// `<proc_root>/<pid>/stat`. Returns `Ok(None)` when the process does not exist.
+fn process_stat_group_and_ticks_in(proc_root: &Path, pid: u32) -> io::Result<Option<(u32, u64)>> {
+    let stat_path = proc_root.join(pid.to_string()).join("stat");
+    let stat = match std::fs::read_to_string(&stat_path) {
         Ok(stat) => stat,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) if error.raw_os_error() == Some(rustix::io::Errno::SRCH.raw_os_error()) => return Ok(None),
@@ -359,14 +360,14 @@ fn process_stat_group_and_ticks(pid: u32) -> io::Result<Option<(u32, u64)>> {
     let Some((_, after_comm)) = stat.rsplit_once(')') else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("malformed /proc/{pid}/stat"),
+            format!("malformed {}", stat_path.display()),
         ));
     };
     let mut fields = after_comm.split_whitespace();
     let Some(pgrp_field) = fields.nth(2) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("missing pgrp in /proc/{pid}/stat"),
+            format!("missing pgrp in {}", stat_path.display()),
         ));
     };
     let pgrp = pgrp_field
@@ -375,7 +376,7 @@ fn process_stat_group_and_ticks(pid: u32) -> io::Result<Option<(u32, u64)>> {
     let Some(ticks_field) = fields.nth(16) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("missing starttime in /proc/{pid}/stat"),
+            format!("missing starttime in {}", stat_path.display()),
         ));
     };
     let ticks = ticks_field
@@ -387,12 +388,13 @@ fn process_stat_group_and_ticks(pid: u32) -> io::Result<Option<(u32, u64)>> {
 /// Reads the kernel start time (field 22 of `/proc/<pid>/stat`, in clock ticks since boot) of process `pid`.
 /// Returns `Ok(None)` when the process does not exist.
 fn process_start_ticks(pid: u32) -> io::Result<Option<u64>> {
-    Ok(process_stat_group_and_ticks(pid)?.map(|(_, ticks)| ticks))
+    Ok(process_stat_group_and_ticks_in(Path::new("/proc"), pid)?.map(|(_, ticks)| ticks))
 }
 
-/// Whether any live process in `/proc` belongs to process group `group` and started at or after `recorded_ticks`.
-fn process_group_has_member_since(group: u32, recorded_ticks: u64) -> io::Result<bool> {
-    let entries = match std::fs::read_dir("/proc") {
+/// Whether any live process in `proc_root` (`/proc`) belongs to process group `group` and started at or after
+/// `recorded_ticks`.
+fn process_group_has_member_since_in(proc_root: &Path, group: u32, recorded_ticks: u64) -> io::Result<bool> {
+    let entries = match std::fs::read_dir(proc_root) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
         Err(error) => return Err(error),
@@ -407,7 +409,7 @@ fn process_group_has_member_since(group: u32, recorded_ticks: u64) -> io::Result
         let Ok(pid) = name.parse::<u32>() else {
             continue;
         };
-        if let Ok(Some((pgrp, ticks))) = process_stat_group_and_ticks(pid)
+        if let Ok(Some((pgrp, ticks))) = process_stat_group_and_ticks_in(proc_root, pid)
             && pgrp == group
             && ticks >= recorded_ticks
         {
@@ -415,6 +417,21 @@ fn process_group_has_member_since(group: u32, recorded_ticks: u64) -> io::Result
         }
     }
     Ok(false)
+}
+
+/// Whether any live process in `/proc` belongs to process group `group` and started at or after `recorded_ticks`.
+fn process_group_has_member_since(group: u32, recorded_ticks: u64) -> io::Result<bool> {
+    process_group_has_member_since_in(Path::new("/proc"), group, recorded_ticks)
+}
+
+/// Atomically renames `temp` over `record`, retaining any non-`NotFound` cleanup failure of `temp` alongside the
+/// rename error if the rename fails.
+async fn replace_running_record(temp: &Path, record: &Path) -> io::Result<()> {
+    if let Err(error) = fs::rename(temp, record).await {
+        drop(fs::remove_file(temp).await);
+        return Err(error);
+    }
+    Ok(())
 }
 
 /// Writes the process group ID and kernel start time of `process` to `record` via an atomic rename so `record` is never
@@ -429,11 +446,7 @@ async fn record_running_process(process: &RunningProcess, record: &Path) -> io::
     })?;
     let temp = record.with_extension("daemon");
     fs::write(&temp, format!("{pid} {ticks}\n")).await?;
-    if let Err(error) = fs::rename(&temp, record).await {
-        drop(fs::remove_file(&temp).await);
-        return Err(error);
-    }
-    Ok(())
+    replace_running_record(&temp, record).await
 }
 
 /// Removes `record` after a check or preparation failure, appending any non-`NotFound` removal error to `reason`.
@@ -498,15 +511,15 @@ async fn resolve_mismatch_tail(state: JudgementState, log_path: &Path, reason: &
     }
 }
 
-/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
-/// The child shell writes its process ID (`$$`) and kernel start time (field 22 of `/proc/$$/stat`) to a temporary
-/// sibling file and atomically renames it over `record` before `exec`ing `/bin/sh -c` in the same process ID and
-/// process group.
-fn prepare_process_spec(
+/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected, supervised against
+/// the spawning daemon process (`daemon_pid`, `daemon_ticks`).
+fn prepare_process_spec_for_daemon(
     context: &CheckContext<'_>,
     command_str: &str,
     record: &Path,
     log_path: PathBuf,
+    _daemon_pid: u32,
+    _daemon_ticks: u64,
 ) -> Result<ProcessSpec, CommandPreparationError> {
     let program = Program::posix_shell();
     let worktree_str = context
@@ -550,6 +563,21 @@ fn prepare_process_spec(
         stdout_file: log_path.clone(),
         stderr_file: log_path,
     })
+}
+
+/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
+/// The child shell verifies that the spawning daemon process is alive and matches its start time before and after
+/// writing its process ID (`$$`) and kernel start time (field 22 of `/proc/$$/stat`) to `record.child` and atomically
+/// renaming it over `record`, then `exec`s `/bin/sh -c` in the same process ID and process group.
+fn prepare_process_spec(
+    context: &CheckContext<'_>,
+    command_str: &str,
+    record: &Path,
+    log_path: PathBuf,
+) -> Result<ProcessSpec, CommandPreparationError> {
+    let daemon_pid = std::process::id();
+    let daemon_ticks = process_start_ticks(daemon_pid).ok().flatten().unwrap_or(0);
+    prepare_process_spec_for_daemon(context, command_str, record, log_path, daemon_pid, daemon_ticks)
 }
 
 /// Executes a command check for `step` within `context`.

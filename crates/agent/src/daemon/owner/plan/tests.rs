@@ -2164,3 +2164,44 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
         "clock failure during command check judgement must propagate as OwnerError::Clock, got {batch_res:?}"
     );
 }
+
+#[tokio::test]
+async fn async_recover_task_checks_cleans_up_group_on_blocking_pool() {
+    use std::os::unix::process::CommandExt;
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let checks_dir = daemon.home.task_dir(&task(1)).join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    let record_path = checks_dir.join("running");
+
+    let mut child = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("rec=\"$1\"; read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && printf '%s %s\\n' \"$$\" \"${20}\" > \"$rec\" && exec sleep 30")
+        .arg("sh")
+        .arg(&record_path)
+        .process_group(0)
+        .spawn()
+        .expect("spawn check group");
+    let pid = child.id();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::fs::read_to_string(&record_path)
+        .unwrap_or_default()
+        .trim()
+        .is_empty()
+        && std::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let recovered = owner.recover_task_checks(&task(1)).await.expect("recover_task_checks");
+    if recovered.is_none() {
+        drop(child.kill());
+    }
+    drop(child.wait());
+    assert_eq!(
+        recovered,
+        Some(std::num::NonZeroU32::new(pid).unwrap()),
+        "recover_task_checks must end the recorded check process group via spawn_blocking"
+    );
+}
