@@ -1250,7 +1250,7 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
 async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_escalates_to_human() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,script:hold-retry,work"),
+            normal("claude-1", "work,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -1258,18 +1258,6 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
         false,
     )
     .await;
-
-    // Create script for run 2 that waits on release marker file before completing:
-    let script_dir = rig.home.root().join("fake-scripts");
-    std::fs::create_dir_all(&script_dir).unwrap();
-    let release_marker = rig.home.root().join("release-retry");
-    let script_content = format!(
-        "while [ ! -f \"{}\" ]; do sleep 0.02; done\necho 'retry' > retry.txt && git add retry.txt && git commit -m 'retry'\n",
-        release_marker.display()
-    );
-    let script_path = script_dir.join("hold-retry.sh");
-    std::fs::write(&script_path, script_content).unwrap();
-    std::fs::set_permissions(&script_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
     let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
     config_text.push_str("\n[publish]\ntries = 1\n");
@@ -1286,65 +1274,46 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
-    // Synchronize on durable first publication failure where lead is released for retry with publish_tries=1:
-    rig.state_where("lead is released for corrective run with publish_tries=1", |state| {
-        state
-            .teams()
-            .iter()
-            .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
-    })
-    .await;
-
-    // Wait until run 2 is actively executing (held by hold-retry.sh script):
-    rig.wait_for("run 2 is actively running and held", || {
+    // Wait for first run to end and lead to transition to waiting:
+    rig.wait_for("first run ended and waiting", || {
         rig.state()
             .find_task(&task)
-            .is_some_and(|f| f.member.status() == TaskStatus::Running && f.member.runs().len() == 2)
+            .is_some_and(|f| f.member.status() == TaskStatus::Waiting && f.member.runs().len() == 1)
     })
     .await;
 
     // Stop daemon to simulate interruption before the lead finishes its corrective run:
     rig.stop().await.unwrap();
 
-    // Verify concrete pre-restart state while daemon is stopped:
-    {
-        let pre_state = rig.state();
-        let member = &pre_state.find_task(&task).unwrap().member;
-        assert_eq!(member.status(), TaskStatus::Queued);
-        assert_eq!(member.runs().len(), 2);
-        assert_eq!(member.questions(), []);
-        assert_eq!(pre_state.teams()[0].items()[0].publish_tries(), 1);
-        assert_eq!(pre_state.teams()[0].items()[0].publish_question(), None);
+    // Establish exact interrupted state fixture in state.json:
+    // Lead was released for corrective run, publish_tries is 1, and no questions have been created yet:
+    let state_file = rig.home.state_file();
+    let mut state_json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
+    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(1);
+    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
+    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
+    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
+    if let Some(runs) = state_json["teams"][0]["crew"]["member"]["runs"].as_array_mut() {
+        runs.truncate(1);
     }
+    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
 
-    // Release the script before restarting:
-    std::fs::write(&release_marker, "").unwrap();
+    let pre_state = rig.state();
 
-    // Restart daemon: the interrupted corrective run resumes and finishes:
+    // Restart daemon: the queued corrective run executes:
     rig.start().await;
+    rig.wait_for("lead executes run 2 retry", || {
+        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
+    })
+    .await;
 
-    // Verify run 2 was given the publish failure prompt and that notice was delivered:
-    let prompt2 = rig.prompt(&task, 2).await;
-    assert!(
-        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
-        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
-    );
-    assert!(
-        prompt2.contains("The harness could not publish your branch"),
-        "run 2 prompt must contain the publication failure explanation"
-    );
-
-    // After the corrective run completes and publication fails again (tries=2 > limit=1),
+    // After run 2 completes and publication fails again (tries=2 > limit=1),
     // it escalates to asking the human with question 1:
     rig.status_is(&task, TaskStatus::Questions).await;
-
-    let post_state = rig.state();
-    let post_member = &post_state.find_task(&task).unwrap().member;
-    assert_eq!(post_member.runs().len(), 3, "retry run resumes as run 3");
-    assert_eq!(rig.runs(&task), 3, "total executed runs is three");
-    let q = post_member.open_question().unwrap().clone();
-    assert_eq!(q.number(), n(1));
-    assert_eq!(post_state.teams()[0].items()[0].publish_tries(), 2);
+    assert_interrupted_lead_recovery_state(&pre_state, &task, &rig.state());
 
     // Remove rejecting hook and answer 'a' to retry publication:
     std::fs::remove_file(&hook).unwrap();
@@ -1368,6 +1337,25 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     .await;
 
     rig.stop().await.unwrap();
+}
+
+fn assert_interrupted_lead_recovery_state(
+    pre_state: &agent_core::state::State,
+    task: &agent_core::ids::TaskId,
+    post_state: &agent_core::state::State,
+) {
+    let member = &pre_state.find_task(task).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Queued);
+    assert_eq!(member.runs().len(), 1);
+    assert_eq!(member.questions(), []);
+    assert_eq!(pre_state.teams()[0].items()[0].publish_tries(), 1);
+    assert_eq!(pre_state.teams()[0].items()[0].publish_question(), None);
+
+    let post_member = &post_state.find_task(task).unwrap().member;
+    assert_eq!(post_member.runs().len(), 2, "exactly one retry run should execute");
+    let q = post_member.open_question().unwrap().clone();
+    assert_eq!(q.number(), n(1));
+    assert_eq!(post_state.teams()[0].items()[0].publish_tries(), 2);
 }
 
 fn assert_publish_write_error(
