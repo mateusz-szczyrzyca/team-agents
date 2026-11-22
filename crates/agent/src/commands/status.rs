@@ -132,15 +132,13 @@ impl Activity {
     pub(crate) fn cli_runs_line(&self, teams: &[TeamSummary]) -> Option<String> {
         // An absent or unreadable `agents.toml` is already reported by `disk_line`; status tests without a
         // configuration file omit the per-CLI run count.
-        let text = match std::fs::read_to_string(self.home.config_file()) {
-            Ok(text) => text,
-            Err(_) => return None,
-        };
-        let config = match agent_core::config::Config::from_toml_str(&text) {
-            Ok(config) => config,
-            Err(_) => return None,
-        };
-        cli_runs_line(&config, teams)
+        match std::fs::read_to_string(self.home.config_file()) {
+            Ok(text) => match agent_core::config::Config::from_toml_str(&text) {
+                Ok(config) => cli_runs_line(&config, teams),
+                Err(_) => None,
+            },
+            Err(_) => None,
+        }
     }
 }
 
