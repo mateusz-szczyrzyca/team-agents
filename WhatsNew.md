@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.61.0 — 22.11.2026 — PR pending
+
+### New features
+- [agent] [agent-runtime] A done step whose check is a command is run by the daemon when its run ends: `confirmed` when the command exits with 0, `mismatch` with the reason otherwise, and the output is kept in `tasks/<task>/checks/`. The daemon goes on serving `agent status` and `agent answer` while the command runs.
+
+### Bug fixes
+- [agent] [agent-runtime] A daemon that stops while a step's command runs ends that command and its process group; a daemon that starts after a crash ends the command a dead daemon left running.
+
+Action: a done step with a command check is now run by the daemon. A command that fails or runs past `[plan] check_seconds` (default 120) makes the step `mismatch`, and a run that ended `DONE` with a mismatch is sent back to its agent. To keep the old behaviour (commands declared, never run), set `check_seconds = 0` under `[plan]`.
+
 ## 0.58.0 — 22.11.2026 — PR #175
 
 ### New features
