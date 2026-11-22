@@ -144,10 +144,21 @@ impl Activity {
         }
     }
 
-    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going and the
-    /// configuration file can be read.
-    pub(crate) async fn cli_runs_line(&self, _teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
-        Ok(None)
+    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
+    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
+    /// configured CLIs and is the only reason a configuration is omitted.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        let path = self.home.config_file();
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => agent_core::config::Config::from_toml_str(&text)
+                .map(|config| cli_runs_line(&config, teams))
+                .map_err(|source| StatusError::ConfigParse { path, source }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(StatusError::ConfigRead { path, source }),
+        }
     }
 }
 
