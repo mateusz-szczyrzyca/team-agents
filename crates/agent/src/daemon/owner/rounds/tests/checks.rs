@@ -1813,3 +1813,120 @@ async fn a_file_refused_without_a_head_is_a_refusal_of_the_commits_of_that_day_a
     );
     assert_eq!(kept.sent, None);
 }
+
+// ---- findings about commits across the parts of a split ---------------------------------------------------------------
+
+/// Whether question number `number` of `task` is written and the record already waits on it.
+fn question_recorded(rig: &Rig, task: &TaskId, number: u32) -> bool {
+    let number = NonZeroU32::new(number).unwrap();
+    rig.home.questions_file(task, number).exists()
+        && std::fs::read_to_string(rig.home.checks_file(task)).is_ok_and(|text| {
+            serde_json::from_str::<ChecksRecord>(&text)
+                .is_ok_and(|record| record.asked.is_some_and(|asked| asked.number == number))
+        })
+}
+
+/// The text a human answers the lead's question with to split item 1.1 into two parts.
+fn two_part_split() -> String {
+    let parts = (0..2)
+        .map(|index| {
+            serde_json::json!({
+                "title": format!("Part {index}"), "delivers": format!("Independent part {index}"),
+                "checks": format!("Read part {index}"), "depends_on": if index == 0 { vec![] } else { vec!["a"] }
+            })
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "split\n```json\n{}\n```",
+        serde_json::json!({"parent": "1.1", "parts": parts})
+    )
+}
+
+// Rule: what the human allowed for the item holds in the next part of a split, and a commit that part adds is asked alone,
+// with what was allowed before said in the question.
+#[tokio::test]
+async fn what_was_allowed_in_one_part_holds_in_the_next_and_a_new_commit_is_asked_alone() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,checks-lead"),
+            normal("claude-1", "script:part-a,script:part-b"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let text = text.replace("fix_passes = 5", "fix_passes = 5\ncheck_passes = 2");
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{text}[repos.example.checks]\ntest_paths = [\"tests/\"]\ncode_paths = [\"src/\"]\nprotected_paths = [\"ci/\"]\n"
+        ),
+    )
+    .unwrap();
+    for (name, body) in [("tests/existing.txt", "a\nb\nc\n"), ("src/code.txt", "code\n")] {
+        let file = rig.repo.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed the tests and the code"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    for (name, file) in [("part-a", "tests/new.txt"), ("part-b", "tests/other.txt")] {
+        script(
+            &rig,
+            name,
+            &format!(
+                "printf 'x\\ny\\nz\\n' > {file}\ngit add {file}\ncommit -m 'RED: a test of {name}'\nsed -i 1d {file}\ngit add {file}\ncommit -m 'Tidy the test of {name}'\n"
+            ),
+        );
+    }
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers: crate::daemon::owner::fixture::answers(&[(1, &two_part_split())]),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    // The first part is asked about its one commit that edits a frozen test, and the human allows it.
+    rig.wait_for("the question about the first part", || {
+        question_recorded(&rig, &tasks[0], 2)
+    })
+    .await;
+    let first_part = record(&rig, &tasks[0]).await.asked.unwrap().subjects;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 2, "allow").await;
+    // The second part has a commit of its own that edits a frozen test: that one alone is asked, and the question says
+    // what was allowed in the first part.
+    rig.wait_for("the question about the second part", || {
+        question_recorded(&rig, &tasks[0], 3)
+    })
+    .await;
+    let kept = record(&rig, &tasks[0]).await;
+    let file = questions_of(&rig, &tasks[0], 3);
+    rig.stop().await.unwrap();
+
+    assert_eq!(first_part.len(), 1, "{first_part:?}");
+    let asked = kept.asked.as_ref().unwrap().subjects.clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_ne!(asked, first_part);
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), first_part);
+    let body = file.entries()[0].body();
+    assert!(body.contains("Already settled for this item"), "{body}");
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+}
