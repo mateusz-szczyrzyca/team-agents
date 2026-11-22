@@ -765,6 +765,7 @@ impl Member {
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.holder_after_run = self.runs.last().map(|run| run.id().clone());
+        self.lead_told();
         let before = std::mem::replace(&mut self.agent, holder);
         self.past_holders.push(holding::Holding {
             agent: before,
