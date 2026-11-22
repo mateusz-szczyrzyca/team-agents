@@ -23,6 +23,11 @@ activity files are left alone. See [history retention](history.md#retention-and-
 
 ## State
 
+A member may carry optional `holder_after_run`, the last run of the previous task holder. A handover preserves all
+runs but resumes only sessions after this boundary and counts only those runs for the new holder's failure ladder.
+Older states omit the field; they load without migration and acquire a boundary on their next handover. The
+pre-renewal state fixture and handover reload tests exercise both formats.
+
 ### Approved split definitions
 
 Schema 13 adds optional per-team `splits`, a list of whole validated plans in approval order. Each plan has

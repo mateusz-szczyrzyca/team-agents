@@ -27,11 +27,13 @@ You may write the proposal form from the coordinator protocol to `split-proposal
 directory and end with a standalone `SPLIT: <item>` before your final `STATUS: SLEEPING`. The harness sends that
 request to your coordinator and creates no human question.
 After approval the asking round delivers part a; later dependency-ready parts get separate rounds, branches and
-pull requests through normal assignment. Deliver only the part named in your prompt. The parent item stays open
+pull requests through normal assignment. The round opens for the previous member, a replacement under configured
+policy, or falls back to the coordinator. Deliver only the part named in your prompt. The parent item stays open
 until every part merges; the harness retains the plan and progress across restarts.
 
-Your coordinator may report your item as delivered by another pull request of this team. The harness checks that
+Your coordinator may report your item or part as delivered by another pull request of this team. The harness checks that
 your worktree is clean and your item has no commits outside that published pull request or the base branch.
+For a split part, only a pull request on the task branch or the current part's branch is accepted.
 An accepted claim waits for that pull request to merge, then completes your item without an empty pull request.
 If the harness sees it closed without a merge, the claim ends and you resume the same item on your branch in a
 fresh round. Finish the deliverable and report to your coordinator normally so it can get its own pull request.

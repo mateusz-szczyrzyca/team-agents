@@ -731,9 +731,9 @@ catalog text to both status views. After scheduling each team's work, an unowned
 `daemon_task_failed` with `operation=round_wait` and its round ID. Deduplication lasts for the daemon's lifetime.
 No wait label or publication correction counter is added to `state.json`.
 
-An accepted delivery claim is optional durable round metadata naming another round's PR in the same team.
+An accepted delivery claim is optional durable round metadata naming another round's PR in the same team or an external merged PR for a split part.
 The daemon binds a claim to the coordinator run's round references, checks the clean member checkout against
-fresh base and published PR commits, and refuses unverifiable claims before publication. Accepted claims are
+fresh base and published PR commits (or verifies an external merged PR for a split part), and refuses unverifiable claims before publication. Accepted claims are
 excluded from publication and idle-work alarms. Their merge obligation survives restart, and separate polling
 observes the delivering PR even while its owner is in review or a fix pass. A merge completes the checked item
 and round before normal team completion and worktree cleanup. A stop of the whole team abandons the round but keeps
@@ -1521,3 +1521,17 @@ response end with it too, when the file is there (a pass begun by an older daemo
 started at or after the verdict (`Response::AfterVerdict`); a message from before the review, or from a run that started
 before it and ended after it, is not judged.
 
+
+### Split continuation and outside replacement
+
+Scheduling a ready split part uses the last round's member task rather than its lead's integration run. The pure
+assignment decision excludes stopped, failed and handed-over holders, applies the configured replacement mode and
+ordered agent list, then falls back to a qualified lead when the mode permits. Outside candidates carry their real
+configured tier and current global run occupancy. Capability waits consume the same facts: busy capability waits,
+absent capability asks the human once. The daemon logs `who_gets_part` with the choice and reason.
+
+An outside replacement takes over the previous member's task, preserving its worktree, bus identity and run history.
+The optional member `holder_after_run` points to the prior holder's last run; session lookup and failure accounting
+exclude runs at or before that boundary. Handing work to a replacement clears the prior holder's lead debt without
+creating a renewal or a fictitious failure. States without the field keep loading. Old split states are scheduled
+from their persisted merged rounds on the next poll, including after a restart between merge and continuation.

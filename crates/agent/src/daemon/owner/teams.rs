@@ -36,9 +36,9 @@ use tracing::Instrument;
 use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
-    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
-    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
-    request_outcome, shared_agents, start_item, team_done_notification,
+    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
+    assignable_with_candidates, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for,
+    reconcile, render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -690,15 +690,51 @@ impl Owner {
         Ok(())
     }
 
+    /// Configured replacement participants with their actual tiers, excluding the current team.
+    fn split_replacements(&self, team: &agent_core::state::Team) -> Vec<agent_core::state::Participant> {
+        let replacement = self.parts.settings.config.replacement();
+        let crew = team.crew().roster();
+        let outside: Vec<_> = replacement
+            .agents()
+            .iter()
+            .filter(|name| {
+                !crew.iter().any(|(_, member)| member.agent().name() == name.as_str())
+                    && !team
+                        .reviewers()
+                        .iter()
+                        .any(|member| member.agent().name() == name.as_str())
+            })
+            .filter_map(|name| self.participant_of(name))
+            .collect();
+        outside
+    }
+
     /// Records absent capability once, retaining the wait through daemon recovery.
     fn refresh_tier_waits(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let replacement = self.parts.settings.config.replacement();
+        let found = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let outside = self.split_replacements(found);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
         let mut team = self
             .parts
             .state
             .team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         let previous = team.tier_waits().clone();
-        let entered = team.refresh_tier_waits();
+        let entered = team.refresh_tier_waits_with_candidates(replacement.mode(), replacement.agents(), &candidates);
         look.changed |= previous != *team.tier_waits();
         for (item, tier) in entered {
             tracing::info!(event = LogEvent::TeamChanged.as_str(), kind = "tier_wait", team = %team_id,
@@ -713,10 +749,24 @@ impl Owner {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
-        let given = assignable(team).map_err(|source| OwnerError::Assign {
-            team: team_id.clone(),
-            source,
-        })?;
+        let replacement = self.parts.settings.config.replacement();
+        let outside = self.split_replacements(team);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
+        let given = assignable_with_candidates(team, replacement.mode(), replacement.agents(), &candidates).map_err(
+            |source| OwnerError::Assign {
+                team: team_id.clone(),
+                source,
+            },
+        )?;
         let repo = team.repo().clone();
         for assigned in given {
             let Some(base) = self
@@ -747,10 +797,7 @@ impl Owner {
                 );
                 continue;
             }
-            let now = Timestamp::now(&self.parts.clock)?;
-            self.open_item_round(team_id, assigned.item, now, look)?;
-            self.record_assignment(team_id, &assigned)?;
-            let round = self.round_of_item(team_id, assigned.item)?;
+            let round = self.activate_assignment(team_id, &assigned, look)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
@@ -774,7 +821,77 @@ impl Owner {
                     "an item is given to a member"
                 );
             }
-            self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
+        }
+        Ok(())
+    }
+
+    /// Commits the holder, item and round together before a queued task can start.
+    fn activate_assignment(
+        &mut self,
+        team_id: &TeamId,
+        assigned: &Assigned,
+        look: &mut Look,
+    ) -> Result<agent_core::ids::RoundId, OwnerError> {
+        let previous = self.parts.state.clone();
+        let mut pending = Look::default();
+        // No await or persistence occurs inside this transaction. A failed transition
+        // restores the holder and queue along with the item and its round.
+        let activated = (|| {
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.open_item_round(team_id, assigned.item, now, &mut pending)?;
+            self.record_assignment(team_id, assigned)?;
+            self.hand_over_split_task(assigned, team_id, &mut pending)?;
+            let round = self.round_of_item(team_id, assigned.item)?;
+            self.release(&assigned.task, Why::Assigned(assigned.item), &mut pending)?;
+            Ok(round)
+        })();
+        match activated {
+            Ok(round) => {
+                look.events.extend(pending.events);
+                look.changed |= pending.changed;
+                Ok(round)
+            }
+            Err(error) => {
+                self.parts.state = previous;
+                Err(error)
+            }
+        }
+    }
+
+    /// Starts a fresh holder session when a split part selects another agent.
+    fn hand_over_split_task(
+        &mut self,
+        assigned: &Assigned,
+        team_id: &TeamId,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(&assigned.task)
+            .ok_or_else(|| OwnerError::LostTask {
+                task: assigned.task.clone(),
+            })?;
+        if found.member.agent().name() != assigned.agent.as_str() {
+            let from = found.member.agent().name().to_owned();
+            let holder = self
+                .participant_of(&assigned.agent)
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: assigned.task.clone(),
+                })?;
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.parts
+                .state
+                .hand_over_task(&assigned.task, holder, now)
+                .map_err(|source| OwnerError::HandOver {
+                    task: assigned.task.clone(),
+                    source,
+                })?;
+            self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
+            look.changed = true;
+            tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
+                task = %assigned.task, from, to = %assigned.agent,
+                "the next split part goes to a configured replacement in a fresh session");
         }
         Ok(())
     }

@@ -270,8 +270,29 @@ Integrate the guide.
 
         /// The runs the task has had, as its stand-in counted them.
         fn runs(&self, task: &str) -> u32 {
-            std::fs::read_to_string(self.worktree(task).join(".fake-runs"))
-                .map_or(0, |text| text.trim().parse().unwrap())
+            let path = self.worktree(task).join(".fake-runs");
+            let deadline = Instant::now() + PATIENCE;
+            loop {
+                let pending = match std::fs::read_to_string(&path) {
+                    Ok(text) => match text.strip_suffix('\n') {
+                        Some(complete) => match complete.parse::<u32>() {
+                            Ok(runs) => return runs,
+                            Err(error) => format!("invalid counter {text:?}: {error}"),
+                        },
+                        // The stand-in terminates its counter with a newline; without it the
+                        // writer may still be between truncating the file and finishing it.
+                        None => format!("incomplete counter {text:?}"),
+                    },
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
+                    Err(error) => panic!("cannot read counter {}: {error}", path.display()),
+                };
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for counter {}: {pending}",
+                    path.display()
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
 
         /// The bus's worker requests, by their ID.
@@ -948,6 +969,7 @@ Integrate the guide.
         assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
         assert_eq!(world.file(&worker, ".fake-check-count"), "run\n", "the check ran once");
         assert_eq!(world.brought_over(&member), 1);
+        world.told("claude-1", "did step 1.1 of your plan");
         let answers = world
             .messages_to("claude-1")
             .iter()

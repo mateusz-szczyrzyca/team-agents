@@ -16,7 +16,11 @@ mod shared;
 mod support;
 mod sync;
 
-pub(super) use self::assign::{Assigned, AssignmentError, agent_name, assignable, start_item, task_branch};
+#[cfg(test)]
+pub(super) use self::assign::assignable;
+pub(super) use self::assign::{
+    Assigned, AssignmentError, agent_name, assignable_with_candidates, item_branch, start_item, task_branch,
+};
 pub(super) use self::close::{closing_transitions, is_finished, item_in_flight};
 pub(super) use self::form::{FormError, Formed, Workspace, form};
 pub(super) use self::jobs::{
