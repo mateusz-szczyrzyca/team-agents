@@ -551,4 +551,69 @@ mod git_bring_over {
         assert_eq!(in_the_way, paths(&["notes.md"]));
         assert_eq!(state(&repo, &files), before);
     }
+
+    #[tokio::test]
+    async fn an_ignored_file_in_the_way_of_a_file_the_worker_adds_is_not_overwritten() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("notes.md", b"the worker's notes\n")], "the worker's step");
+        });
+        std::fs::write(repo.join(".git").join("info").join("exclude"), "notes.md\n").expect("the exclude file");
+        write(&repo, "notes.md", b"my ignored notes\n");
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("an ignored file in the way is an answer");
+
+        let BringOver::InTheWay { files, .. } = outcome else {
+            panic!("an ignored file is in the way: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["notes.md"]));
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
+        assert_eq!(
+            std::fs::read(repo.join("notes.md")).expect("my notes"),
+            b"my ignored notes\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_untracked_file_where_the_worker_adds_a_path_under_it_is_in_the_way() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("node/child.txt", b"child\n")], "the worker's step");
+        });
+        write(&repo, "node", b"my file\n");
+        let before = state(&repo, &["guide.md", "node"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("an untracked file in the way is an answer");
+
+        let BringOver::InTheWay { files, .. } = outcome else {
+            panic!("an untracked file is in the way: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["node"]));
+        assert_eq!(state(&repo, &["guide.md", "node"]), before);
+    }
+
+    #[tokio::test]
+    async fn an_untracked_directory_where_the_worker_adds_a_file_of_that_name_is_in_the_way() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("dir", b"the worker's file\n")], "the worker's step");
+        });
+        write(&repo, "dir/mine.txt", b"mine\n");
+        let before = state(&repo, &["guide.md", "dir/mine.txt"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("an untracked directory in the way is an answer");
+
+        let BringOver::InTheWay { files, .. } = outcome else {
+            panic!("an untracked directory is in the way: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["dir"]));
+        assert_eq!(state(&repo, &["guide.md", "dir/mine.txt"]), before);
+    }
 }

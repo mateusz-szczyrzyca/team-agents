@@ -642,3 +642,6 @@ fn repo_path(operation: GitOperation, bytes: &[u8]) -> Result<RepoPath, GitError
     let text = String::from_utf8(bytes.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
     RepoPath::try_from(text).map_err(|source| GitError::NotARepoPath { operation, source })
 }
+
+#[cfg(test)]
+mod tests;
