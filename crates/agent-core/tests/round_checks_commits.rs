@@ -37,17 +37,7 @@ mod round_checks_commits {
     }
 
     fn to_ask(count: usize) -> CommitsLeft {
-        CommitsLeft {
-            to_ask: count,
-            refused_now: 0,
-        }
-    }
-
-    fn refused_now(count: usize) -> CommitsLeft {
-        CommitsLeft {
-            to_ask: 0,
-            refused_now: count,
-        }
+        CommitsLeft::asking(count)
     }
 
     struct Row {
@@ -111,30 +101,27 @@ mod round_checks_commits {
                 step: ask(AskReason::OnlyTheHumanMayAllow),
             },
             Row {
-                name: "a commit refused in this answer holds nothing back: the team cannot undo a commit",
+                name: "a commit the human refused leaves nothing to ask and holds nothing back: the team cannot undo a commit",
                 passes: 0,
                 issues: vec![],
                 refused: vec![],
-                commits: refused_now(1),
+                commits: CommitsLeft::default(),
                 step: ChecksStep::StartReviews,
             },
             Row {
-                name: "a commit refused in this answer after one pass spends no pass either",
+                name: "a commit the human refused after one pass spends no pass either",
                 passes: 1,
                 issues: vec![],
                 refused: vec![],
-                commits: refused_now(2),
+                commits: CommitsLeft::default(),
                 step: ChecksStep::StartReviews,
             },
             Row {
-                name: "a refused commit and one to ask: the human is asked, nobody is sent back",
+                name: "a refused commit and one still to ask: the human is asked, nobody is sent back",
                 passes: 0,
                 issues: vec![],
                 refused: vec![],
-                commits: CommitsLeft {
-                    to_ask: 1,
-                    refused_now: 1,
-                },
+                commits: to_ask(1),
                 step: ask(AskReason::OnlyTheHumanMayAllow),
             },
         ]
