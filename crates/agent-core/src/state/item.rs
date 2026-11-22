@@ -1888,7 +1888,11 @@ mod tests {
 
         assert_eq!(item.record_publish_try(), 1);
         assert_eq!(item.record_publish_try(), 2);
-        item.ask_human_about_publication(at(100));
+        item.record_publish_question(
+            "task-20261111-153001-k3x9".parse().unwrap(),
+            NonZeroU32::new(3).unwrap(),
+            at(100),
+        );
 
         let text = serde_json::to_string(&item).unwrap();
         assert!(text.contains("\"publish_tries\":2"), "{text}");
@@ -1919,11 +1923,8 @@ mod tests {
         assert_eq!(item.publish_question_number(), Some(num));
 
         let text = serde_json::to_string(&item).unwrap();
-        assert!(
-            text.contains("\"publish_question_task\":\"task-20261111-153001-k3x9\""),
-            "{text}"
-        );
-        assert!(text.contains("\"publish_question_number\":3"), "{text}");
+        assert!(text.contains("\"task\":\"task-20261111-153001-k3x9\""), "{text}");
+        assert!(text.contains("\"number\":3"), "{text}");
 
         let back: ItemProgress = serde_json::from_str(&text).unwrap();
         assert_eq!(back.publish_question(), Some(at(100)));
