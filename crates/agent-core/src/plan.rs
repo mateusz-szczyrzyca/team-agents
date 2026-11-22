@@ -407,9 +407,14 @@ impl Check {
 impl std::str::FromStr for Check {
     type Err = PlanError;
 
-    /// Reads `text` as the rest of a step's `Check:` line, the way a plan reads it. The text is one line, so a fault is
-    /// reported on line 1.
+    /// Reads `text` as the rest of a step's `Check:` line, the way a plan reads it. A check is one line: a text with a
+    /// line break in it is [`PlanError::MultilineCheck`], and every fault is reported on line 1.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
+        if text.contains(['\n', '\r']) {
+            return Err(PlanError::MultilineCheck {
+                line: NonZeroUsize::MIN,
+            });
+        }
         read_check(NonZeroUsize::MIN, text)
     }
 }

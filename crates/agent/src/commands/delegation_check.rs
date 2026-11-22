@@ -27,6 +27,7 @@ use std::path::{Path, PathBuf};
 use agent_core::delegation::{self, Named, Rejection, Request};
 use agent_core::plan::{self, Check, Plan, Step};
 use agent_core::repo_path::RepoPath;
+use agent_runtime::process::error_chain;
 use clap::Args;
 
 /// The verdict of an agent without a plan file: it may send a request in the old form (a look-up).
@@ -64,16 +65,16 @@ pub(crate) struct DelegationCheckArgs {
     #[arg(long, value_name = "PATH")]
     pub(crate) plan: PathBuf,
     /// The step of the plan the request names (`--for 2.3`).
-    #[arg(long = "for", value_name = "STEP", default_value = "")]
+    #[arg(long = "for", value_name = "STEP", default_value = "", allow_hyphen_values = true)]
     pub(crate) step: String,
     /// The paths the worker may read and write, comma-separated.
-    #[arg(long, value_name = "PATHS", default_value = "")]
+    #[arg(long, value_name = "PATHS", default_value = "", allow_hyphen_values = true)]
     pub(crate) files: String,
     /// The check that shows the result is right.
-    #[arg(long, value_name = "CHECK", default_value = "")]
+    #[arg(long, value_name = "CHECK", default_value = "", allow_hyphen_values = true)]
     pub(crate) check: String,
     /// What the worker is to do.
-    #[arg(long = "do", value_name = "WHAT", default_value = "")]
+    #[arg(long = "do", value_name = "WHAT", default_value = "", allow_hyphen_values = true)]
     pub(crate) doing: String,
 }
 
@@ -205,17 +206,11 @@ pub(crate) fn answer(args: &DelegationCheckArgs, refused: &[String], out: &mut i
     let plan = match read_plan(&args.plan) {
         Ok(None) => return write_lines(out, &[NO_PLAN.to_owned()]).map_err(AnswerError::Write),
         Ok(Some(plan)) => plan,
-        Err(problem) => return refuse(out, PLAN_UNREADABLE, &problem.to_string()),
+        Err(problem) => return refuse(out, PLAN_UNREADABLE, &error_chain(&problem)),
     };
     let named = Named {
         step: args.step.clone(),
-        files: args
-            .files
-            .split(',')
-            .map(str::trim)
-            .filter(|path| !path.is_empty())
-            .map(str::to_owned)
-            .collect(),
+        files: files_of(&args.files),
         check: args.check.clone(),
         doing: args.doing.clone(),
     };
@@ -228,8 +223,17 @@ pub(crate) fn answer(args: &DelegationCheckArgs, refused: &[String], out: &mut i
             let lines = answer_lines(&accepted.step, &accepted.files, &accepted.check, &accepted.doing);
             write_lines(out, &lines).map_err(AnswerError::Write)
         }
-        Err(rejection) => refuse(out, keyword(&rejection), &rejection.to_string()),
+        Err(rejection) => refuse(out, keyword(&rejection), &error_chain(&rejection)),
     }
+}
+
+/// The paths of a request's `--files`, comma-separated: none for a text with nothing in it, and otherwise every entry,
+/// an empty one too, so that the plan's path rules refuse it instead of it being dropped.
+fn files_of(text: &str) -> Vec<String> {
+    if text.trim().is_empty() {
+        return Vec::new();
+    }
+    text.split(',').map(|path| path.trim().to_owned()).collect()
 }
 
 /// Why `agent _delegation-check` could not answer.
