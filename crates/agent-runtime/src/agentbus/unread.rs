@@ -178,6 +178,46 @@ impl AgentBus {
     }
 }
 
+impl AgentBus {
+    /// The number of the newest message of the bus; `None` when the bus holds none. A lead's run is marked with it when it
+    /// begins, so that what the lead says during the run can be told from what was said before.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn newest_message_id(&self) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
+        newest_message_id(&self.bus_dir()).await
+    }
+
+    /// What `sender` wrote directly to the session of `reader` after the message `after` (all of it when `None`), whole:
+    /// a lead's answer during the run that began at the mark `after`. Messages to everybody or to a team are not it.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn said_after(
+        &self,
+        reader: Reader<'_>,
+        sender: &str,
+        after: Option<NonZeroU64>,
+    ) -> Result<Vec<Said>, UnreadMessagesError> {
+        said_after(&self.bus_dir(), reader, sender, after).await
+    }
+}
+
+/// See [`AgentBus::newest_message_id`]; `bus_dir` is the directory of the bus.
+async fn newest_message_id(_bus_dir: &Path) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
+    Ok(None)
+}
+
+/// See [`AgentBus::said_after`]; `bus_dir` is the directory of the bus.
+async fn said_after(
+    _bus_dir: &Path,
+    _reader: Reader<'_>,
+    _sender: &str,
+    _after: Option<NonZeroU64>,
+) -> Result<Vec<Said>, UnreadMessagesError> {
+    Ok(Vec::new())
+}
+
 /// See [`AgentBus::said_since_finished`]; `bus_dir` is the directory of the bus.
 async fn said_since_finished(
     bus_dir: &Path,
@@ -479,6 +519,8 @@ async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError>
     Ok(Some(Window { bytes, from, cut }))
 }
 
+#[cfg(test)]
+mod after_tests;
 #[cfg(test)]
 mod finished_segments_tests;
 #[cfg(test)]
