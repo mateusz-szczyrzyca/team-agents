@@ -1526,3 +1526,91 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
 
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn publication_default_three_attempts_back_off_and_never_interrupt_a_running_lead() {
+    for conflict in [false, true] {
+        let scenario = if conflict {
+            "work,merge-base,script:hold-publication"
+        } else {
+            "work,script:hold-publication"
+        };
+        let mut rig = Rig::new(
+            &[
+                normal("claude-1", scenario),
+                investigator("inv-r1", APPROVING),
+                investigator("inv-r2", APPROVING),
+            ],
+            5,
+            false,
+        )
+        .await;
+        let scripts = rig.home.root().join("fake-scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        std::fs::write(
+            scripts.join("hold-publication.sh"),
+            "set -eu\ntouch .fake-publication-running\nfor attempt in $(seq 300); do if [[ -e .fake-publication-release ]]; then exit 0; fi; sleep 0.1; done\nexit 1\n",
+        )
+        .unwrap();
+        let hook = rig.origin.join("hooks/pre-receive");
+        if conflict {
+            rig.github.answer_merges(MergeAnswer::Refuse(405));
+        } else {
+            std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+            std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        }
+        let layer = agent_runtime::history::HistoryLayer::deferred(
+            agent_core::log::LogLevel::Info,
+            rig.history_test_clock(),
+            agent_core::config::Secrets::default(),
+        );
+        rig.start_with_log_layer(layer).await;
+        let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+        let task = tasks[0].clone();
+        if conflict {
+            rig.state_where("merge conflict pass", |state| {
+                state.teams()[0].items()[0].merge_conflict().is_some()
+            })
+            .await;
+            move_base(&rig);
+            std::fs::write(&hook, "#!/bin/sh\nexit 1\n").unwrap();
+            std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+            std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+        }
+        rig.wait_for("corrective publication run is held", || {
+            rig.worktree(&task).join(".fake-publication-running").exists()
+        })
+        .await;
+        let state = rig.state();
+        assert_eq!(state.teams()[0].items()[0].publish_tries(), 3);
+        assert_eq!(state.find_task(&task).unwrap().member.status(), TaskStatus::Running);
+        assert_eq!(state.find_task(&task).unwrap().member.open_question(), None);
+        let reader = agent_runtime::history::Reader::open(&rig.home.history_file()).unwrap();
+        let logs = reader.daemon_logs().unwrap();
+        let attempts: Vec<_> = logs
+            .iter()
+            .filter(|entry| entry.event() == agent_core::log::LogEvent::GithubCallFailed)
+            .filter(|entry| entry.fields().contains_key("tries"))
+            .collect();
+        assert_eq!(attempts.len(), 2, "only attempts below the default limit are retried");
+        assert_eq!(attempts[0].fields().get("tries"), Some(&serde_json::json!(1)));
+        assert_eq!(attempts[1].fields().get("tries"), Some(&serde_json::json!(2)));
+        let gap = attempts[1].first_at().as_utc() - attempts[0].first_at().as_utc();
+        assert!(
+            gap.whole_seconds() >= 50,
+            "conflict={conflict}: retry must honor a minute's backoff: {gap}"
+        );
+        rig.advance_history_days(1);
+        rig.state_where("running lead remains undisturbed after backoff", |state| {
+            state.find_task(&task).unwrap().member.status() == TaskStatus::Running
+        })
+        .await;
+        assert_eq!(rig.state().teams()[0].items()[0].publish_tries(), 3);
+        assert!(!rig.home.questions_file(&task, n(1)).exists());
+        std::fs::write(rig.worktree(&task).join(".fake-publication-release"), "").unwrap();
+        rig.status_is(&task, TaskStatus::Questions).await;
+        assert_eq!(rig.state().teams()[0].items()[0].publish_tries(), 4);
+        assert!(!rig.home.questions_file(&task, n(2)).exists());
+        rig.stop().await.unwrap();
+    }
+}
