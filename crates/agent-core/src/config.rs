@@ -210,6 +210,20 @@ pub struct RepoConfig {
     /// What the round checks before its review look at; without the table a round goes straight to review.
     #[serde(default)]
     pub checks: Option<Checks>,
+    /// Whether the early refusal of a commit that changes a frozen test is on for this repository.
+    #[serde(skip)]
+    pub commit_guard: CommitGuard,
+}
+
+/// Whether the hook of an agent's runs refuses a commit that takes lines out of a test a `RED:` commit froze, outside a
+/// `TEST-FIX:` commit.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CommitGuard {
+    /// It does (the default).
+    #[default]
+    Enabled,
+    /// It does not: every commit is made, and the checks before a review look at it afterwards.
+    Disabled,
 }
 
 /// `[repos.NAME.checks]`: which paths of a repository are tests, which are production code and which judge a round.
