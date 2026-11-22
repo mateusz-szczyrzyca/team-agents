@@ -822,6 +822,9 @@ mod round_records_tests;
 mod split_status_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "rounds/tests/worker_steps.rs"]
+mod worker_steps_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/handover.rs"]
