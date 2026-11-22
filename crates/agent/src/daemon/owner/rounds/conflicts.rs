@@ -478,7 +478,6 @@ impl Owner {
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         self.refund_conflict_pass_on_exit(target.site.team, target.items, target.pr, "failed")?;
-        self.save().await?;
         self.publish_failed(target.site, target.publication, error, now, look)
             .await
     }
