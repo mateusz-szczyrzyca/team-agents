@@ -1,6 +1,6 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::dispatch::{dispatch_with_candidates, required_tier};
+use agent_core::decide::assign::dispatch::{dispatch_with_candidates, required_tier, reusable_split_member};
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
@@ -122,19 +122,8 @@ pub(in crate::daemon) fn assignable_with_candidates(
                 .find(|(name, _)| *name == member)
                 .map(|(_, task)| *task)
                 .or_else(|| {
-                    // Outside replacements keep the preceding member's task and its durable history.
-                    team.rounds()
-                        .iter()
-                        .rev()
-                        .find(|round| round.item() == Some(item))
-                        .and_then(|round| {
-                            team.members_in(round.id())
-                                .into_iter()
-                                .find(|(role, _)| {
-                                    matches!(role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Member)
-                                })
-                                .map(|(_, member)| member.task())
-                        })
+                    // Share dispatch's choice of the preceding holder's durable task.
+                    reusable_split_member(team, item).map(|member| member.task())
                 })
                 .ok_or_else(|| AssignmentError::UnknownMember { member: member.clone() })?;
             let branch = match team.next_part(item) {

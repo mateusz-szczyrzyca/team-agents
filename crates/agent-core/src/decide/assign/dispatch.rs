@@ -147,8 +147,34 @@ pub fn dispatch_with_candidates(
 ///
 /// A recorded holder also identifies a round that opened before its first run.
 #[must_use]
-pub fn reusable_split_member(_team: &Team, _item: ItemId) -> Option<&Member> {
-    None
+pub fn reusable_split_member(team: &Team, item: ItemId) -> Option<&Member> {
+    let round = team.rounds().iter().rev().find(|round| round.item() == Some(item))?;
+    let members = team.members_in(round.id());
+    members
+        .iter()
+        .find(|(role, _)| matches!(role, Role::Solo | Role::Member))
+        .or_else(|| members.iter().find(|(role, _)| matches!(role, Role::Coordinator)))
+        .map(|(_, member)| *member)
+        .or_else(|| {
+            let holder = team.part_assignments().get(round.id())?;
+            let roster = team.crew().roster();
+            roster
+                .iter()
+                .find(|(role, member)| {
+                    matches!(role, Role::Solo | Role::Member | Role::Coordinator)
+                        && member.agent().name() == holder.as_str()
+                })
+                .map(|(_, member)| *member)
+                .or_else(|| {
+                    // A handover can retire the recorded agent's name before a run.
+                    // A sole work member still identifies the durable carrier task.
+                    let mut workers = roster
+                        .iter()
+                        .filter(|(role, _)| matches!(role, Role::Solo | Role::Member));
+                    let (_, member) = workers.next()?;
+                    workers.next().is_none().then_some(*member)
+                })
+        })
 }
 
 /// Immutable assignment facts shared by the ready split parts.
@@ -192,28 +218,7 @@ fn dispatch_split_item<'a>(
         handed_over: member.owes_lead(),
         busy: busy_on_other(member.agent().name()),
     };
-    let prev_round = ctx.team.rounds().iter().rev().find(|r| r.item() == Some(item));
-    let prev_task = prev_round.and_then(|round| {
-        ctx.team
-            .members_in(round.id())
-            .into_iter()
-            .find(|(role, _)| matches!(role, Role::Solo | Role::Member))
-            .or_else(|| {
-                ctx.team
-                    .members_in(round.id())
-                    .into_iter()
-                    .find(|(role, _)| matches!(role, Role::Coordinator))
-            })
-            .map(|(_, m)| m.task().clone())
-    });
-    let prev_member = prev_task.as_ref().and_then(|task| {
-        ctx.team
-            .crew()
-            .roster()
-            .iter()
-            .find(|(_, m)| m.task() == task)
-            .map(|(_, m)| *m)
-    });
+    let prev_member = reusable_split_member(ctx.team, item);
     let is_coord = |m: &Member| ctx.team.crew().coordinator().is_some_and(|c| c.task() == m.task());
     let (previous, replacements, lead): (
         Option<crate::decide::part::Candidate<'_>>,
@@ -232,6 +237,11 @@ fn dispatch_split_item<'a>(
                     .iter()
                     .find(|p| p.agent.name() == rep_name.as_str())
                 {
+                    // An outside agent needs the preceding holder's durable task.
+                    // Without it, normal capability waiting asks the human once.
+                    if prev_member.is_none() {
+                        continue;
+                    }
                     reps.push(crate::decide::part::Candidate {
                         agent: p.agent,
                         status: p.status,
