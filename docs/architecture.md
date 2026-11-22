@@ -1268,7 +1268,8 @@ socket. One owner, no file races (CON-3).
 ## A request to a worker of a run that keeps a plan
 
 `agentbus` has no plan reader and reads no worktree. A run whose role is in `[plan] roles` is started with
-`agentbus serve --plan <worktree>/.agent/plan.md` (the daemon's MCP configuration adds it; `start::keeps_plan` decides
+`agentbus serve --plan <worktree>/.agent/plan.md --agent-cmd agent` (the daemon's MCP configuration adds both; the bus
+finds `agent` on the run's `PATH`, whose first directory is the daemon's own; `start::keeps_plan` decides
 by the run's role, so an investigator that coordinates or is a member keeps its plan, and a worker, a reviewer or an
 investigator answering an investigation request has none), and `delegate` then asks the harness's hidden
 `agent _delegation-check --plan … --for … --files … --check … --do …` at the moment of the request — the plan is read
@@ -1278,7 +1279,10 @@ the step and the request's own `Request files:`, `Request check:` and `Do:`, `RE
 what to add, or `NO-PLAN` for an agent without a plan (the old form, for look-ups). The bus maps each keyword to its own
 `delegate` cause (`MissingFor`, `NoSuchStep`, `StepClosed`, `MissingFiles`, `PathOutside`, `MissingCheck`,
 `CheckRefused`, `MissingDo`, `PlanUnreadable`) and a harness that cannot answer to `CheckFailed`; a refused request
-queues nothing and starts no worker, and the accepted text is what the worker's prompt holds.
+queues nothing and starts no worker, and the accepted text is what the worker's prompt holds. In the transaction that
+would queue it, a request of a member of a team is refused (`NoFreeWorker`) when `freeWorkers` — the team's workers
+that can run and serve no request, less the team's requests still queued — leaves none: the requester does the step
+itself instead of leaving it to a worker that comes later.
 
 ## Plan-step judgements
 

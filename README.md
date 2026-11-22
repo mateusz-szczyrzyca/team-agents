@@ -898,10 +898,14 @@ check_refuse`); and `do`, what to do in the requester's words. The bus asks the 
 the moment of the request, which reads `.agent/plan.md` of the requester's worktree: a request that lacks one of the
 four, names a step the plan does not have or that is done or given up, a path outside the repository, or a refused
 check is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
-`MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. The
-worker's request then quotes the step in full, then `Request files:`, `Request check:` and `Do:`. An agent without a
-plan — a worker, a reviewer, an investigator answering an investigation request, or a run of a home that keeps no plan
-— sends the old form, which is for look-ups only.
+`MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. In a
+team, such a request is also refused at once (`NoFreeWorker`) when no worker of the team is free to take it — none in
+the team, or every one serving or promised to an earlier request — and the requester does the step itself; it is never
+served by a higher tier. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
+and `Do:`, and the bus records the step's ID with the request (`step` in the bus state; a request recorded before has
+none and is served as before). An agent without a plan — a worker, a reviewer, an investigator answering an
+investigation request, or a run of a home that keeps no plan — sends the old form, which is for look-ups only and waits
+in the queue as before.
 
 **An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
 session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session
