@@ -155,6 +155,19 @@ pub enum Settlement {
     },
 }
 
+impl Settlement {
+    /// What became of the result, as one word for the daemon's log.
+    #[must_use]
+    pub const fn outcome(&self) -> &'static str {
+        match self {
+            Self::Report => "report",
+            Self::Brought { .. } => "brought",
+            Self::Conflict { .. } => "conflict",
+            Self::Returned { .. } => "returned",
+        }
+    }
+}
+
 /// The file of `request` in the task directory `task_dir`.
 #[must_use]
 pub fn pending_path(task_dir: &Path, request: RequestId) -> PathBuf {

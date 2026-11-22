@@ -179,8 +179,9 @@ facts only: its result goes to the requester as before, and its check, when it h
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.
 
-The keys are read and checked at load. The daemon does not apply them yet: until it brings a worker's result to the
-requester's branch, a worker's result reaches the requester as it always did.
+The keys are read and checked at load. `seconds` is applied: a worker's run that lasted longer is a wrong result, and the
+step is returned to the requester. `tries` is applied with the second try of a request, in the next version: until then a
+wrong result is returned to the requester at once, whatever `tries` says.
 
 ### `[split]`
 

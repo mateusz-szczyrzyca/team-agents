@@ -383,9 +383,12 @@ impl Owner {
             self.record_confirmed(pending, checked, step, commit).await?;
         }
         tracing::info!(
-            event = LogEvent::RequestDelegated.as_str(),
             request = %pending.request,
             worker = %pending.worker,
+            requester = %pending.requester,
+            step = ?checked.step.map(|step| step.to_string()),
+            outcome = settlement.outcome(),
+            run_seconds = pending.run_seconds,
             "the result of a worker is settled"
         );
         let jobs = [

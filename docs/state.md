@@ -455,6 +455,14 @@ Each is derived or lives elsewhere, so that there is one place for it:
   a `clean` tree is a pass of `head`. The previous record, in the same format, is retained in optional
   `tasks/<task>/gate-previous.json` before replacing the latest record. This lets descriptions disclose a pass
   after a failure at the same commit. An older task directory without it reads as before.
+- **The request of a worker whose run has ended** — optional `tasks/<worker task>/worker-request-<n>.json`, written by the
+  daemon when a worker's run ends `STATUS: DONE` and replaced, through a temporary file, after each stage of settling its
+  result: `{"request": n, "team", "requester", "requester_task", "worker", "worker_task", "summary", "run_seconds", "base",
+  "stage": {"stage": "ended" | "checked" | "settled", ...}}`. `checked` holds what the request asked, the worker's commit, the
+  files outside the request's `files` and what the check found; `settled` adds what became of the result (`report`, `brought`
+  with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons). The daemon removes the
+  file when the requester is told. A daemon that starts finds the files of the team's workers and goes on from their
+  stages; an unknown field is refused. A task directory without such files reads as before.
 - **Lead contribution to the PR description** — optional `tasks/<lead>/description.md`, outside the repository,
   read as UTF-8 with a 1 MiB limit. The harness combines it with its own header, measured Size, recorded Gate
   and TEST-FIX disclosure. Missing or empty text does not block a round. It is not part of `state.json`.

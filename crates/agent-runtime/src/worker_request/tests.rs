@@ -162,3 +162,16 @@ fn a_file_cannot_be_written_to_a_directory_that_is_not_there() {
 
     assert!(matches!(error, PendingError::Write { .. }), "{error:?}");
 }
+
+#[test]
+fn every_settlement_has_its_word_for_the_log() {
+    let words: Vec<&str> = every_stage()
+        .into_iter()
+        .filter_map(|stage| match stage {
+            Stage::Settled { settlement, .. } => Some(settlement.outcome()),
+            Stage::Ended | Stage::Checked(_) => None,
+        })
+        .collect();
+
+    assert_eq!(words, vec!["brought", "conflict", "returned", "report"]);
+}
