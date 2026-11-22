@@ -204,3 +204,12 @@ async fn running_with_task_names_every_task_under_its_team() {
         "{text}"
     );
 }
+
+// Rule: `--json` is the bare array of teams as before, with and without `--task`: the flag is taken with `--json` and
+// changes nothing in what it prints.
+#[test]
+fn json_is_taken_with_and_without_task() {
+    assert!(Cli::try_parse_from(["agent", "status", "--json"]).is_ok());
+    assert!(Cli::try_parse_from(["agent", "status", "--json", "--task"]).is_ok());
+    assert!(Cli::try_parse_from(["agent", "status", "--investigators", "--task"]).is_err());
+}
