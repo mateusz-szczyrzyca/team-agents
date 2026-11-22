@@ -16,8 +16,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Bug fixes
 - [agent] [agent-runtime] Only what the worker committed since its request is brought over, not the commits its branch already had from earlier requests.
 - [agent] A result the daemon cannot judge (the starting commit or the worker's files cannot be read, a requested file was left uncommitted) is returned to the requester and never brought over.
+- [agent] [agent-runtime] A worker whose result is being checked is no longer given the next request in the same worktree; it is busy until its result is settled.
+- [agent] A request is answered once: a file of a request the bus has answered already, one that holds another request than its name says, or one that cannot be written back is no longer settled again at every look, and the answer of the bus is not overwritten.
 - [agent] A long check no longer stops the daemon from serving other tasks: it runs in the background.
-- [agent] [agent-runtime] A worker's request file that is cut short, has an unknown field, cannot be read or cannot be written no longer stops the daemon: the file is kept aside as `worker-request-<n>.json.damaged`, logged as `restart_corrected` with its name, the requester is told that the result could not be judged, and the other requests go on; a restart does not meet the file again.
+- [agent] [agent-runtime] A worker's request file that is cut short, has an unknown field, holds another request than its name says, cannot be read or cannot be written no longer stops the daemon: the file is kept aside as `worker-request-<n>.json.damaged`, logged as `restart_corrected` with its name, the requester is told that the result could not be judged, and the other requests go on; a restart does not meet the file again.
 - [agent] A request the bus no longer knows has its file removed; an answer the bus cannot take now is tried again at the next look.
 - [agent] A result of a worker for a request that names files and a check is no longer given to the requester unchecked as `done`; a worker that commits nothing for such a request has its step returned.
 

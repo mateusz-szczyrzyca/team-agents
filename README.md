@@ -933,12 +933,14 @@ not applied: the requester is told, with the files. A result that is wrong — t
 file the request did not name, it left a file the request names uncommitted, it committed nothing, its run lasted past
 `[workers] seconds`, or the daemon cannot read what it left (the commit the worker started from, its commits) — is returned
 to the requester with the reasons, and the request is answered as `failed`; what cannot be judged is never brought over. The
-check runs beside the daemon, which goes on with the other tasks meanwhile. A good result is told to the requester with the step,
+check runs beside the daemon, which goes on with the other tasks meanwhile; a worker whose result is not settled yet (its file is
+still in its task directory) is busy and is not given the next request, and only a request the bus still has running for that
+worker's task is settled from a file. A good result is told to the requester with the step,
 the commit, the files and the end of the check's output, and the step is recorded `confirmed` in the history with the
 worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.json` before the next starts, so that a
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
 A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
-`worker-request-<n>.json` that is cut short, has a field this version does not know, cannot be read, or a stage that cannot
+`worker-request-<n>.json` that is cut short, has a field this version does not know, holds another request than its name says, cannot be read, or a stage that cannot
 be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
 as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
 the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
