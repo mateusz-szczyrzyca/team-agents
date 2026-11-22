@@ -110,7 +110,7 @@ fn reviewers(state: &agent_core::state::State, team: &TeamId) -> Vec<String> {
 async fn while_a_round_goes_through_its_reviews_the_reviewers_lines_say_what_they_did() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,fix-work-pushed"),
+            normal("claude-1", "work,sleep"),
             investigator("inv-r1", "structured-commit:REQUEST_CHANGES"),
             investigator("inv-r2", "late-structured-commit:REQUEST_CHANGES"),
         ],
@@ -176,7 +176,7 @@ fn printed_all(teams: &[TeamSummary], team: &TeamId) -> String {
 async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,fix-work-pushed"),
+            normal("claude-1", "work,sleep,fix-work-pushed,sleep"),
             investigator("inv-r1", "rotating-verify"),
             investigator("inv-r2", "rotating-verify"),
         ],
@@ -185,7 +185,7 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
     )
     .await;
     rig.start().await;
-    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let first = rig
         .item_where("1.1", "a fix pass", |phase| matches!(phase, ItemPhase::Fixing { .. }))
         .await;
@@ -193,6 +193,8 @@ async fn after_the_fix_pass_the_verifiers_line_says_the_second_review_finished()
         reviews_reported(listed, 2)
     })
     .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.resume(&tasks[0]).await;
     // With two investigators, the verification of the fix is the pair of the first pass again; it is in when both
     // reports of it are, and the daemon may ask for the next pass right after.
     let later_teams = listed_when(&rig, &team, "the two reports of the verification in", |listed| {
