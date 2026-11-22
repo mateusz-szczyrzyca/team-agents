@@ -66,6 +66,7 @@ If another pull request of this team already contains an item's or part's delive
 empty pull request for that item. This applies to any deliverable, including documents and images. Report only
 one current item, with no commits of its own outside that pull request or the base branch, and a clean member
 worktree. For a split part, the reported pull request must be on the task branch or the current part's branch.
+For a split part, the pull request must already be merged; an open claim is refused.
 Foreign branches, other repositories, and pull requests of earlier split parts are refused. Put this exact standalone
 line before your final `STATUS: DONE`, replacing N with its number:
 
