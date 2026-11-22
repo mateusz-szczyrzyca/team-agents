@@ -52,6 +52,7 @@
 #                   otherwise integrates like `integrate`
 #   return:M:TEXT   as a lead that sends the work of its member M back: tells M TEXT on the bus (TEXT has no quotes), then ends
 #                   with the line `RETURNED: 1.1` and STATUS: SLEEPING
+#   return-silent   as a lead that sends the work back with the line `RETURNED: 1.1` and no message to the member
 #   say:M:TEXT      as a lead that only answers its member M: tells M TEXT on the bus and ends with STATUS: SLEEPING, with no
 #                   RETURNED line
 #   integrate       merges every other local branch of the form agents/*/task-*-N.N into the worktree's branch, records
@@ -454,6 +455,9 @@ case $action in
   return:*)
     spec=${action#return:}
     send_to "${spec%%:*}" "${spec#*:}"
+    result 'Not accepted.\nRETURNED: 1.1\nSTATUS: SLEEPING'
+    ;;
+  return-silent)
     result 'Not accepted.\nRETURNED: 1.1\nSTATUS: SLEEPING'
     ;;
   say:*)

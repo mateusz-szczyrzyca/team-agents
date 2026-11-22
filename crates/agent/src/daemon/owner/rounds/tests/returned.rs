@@ -251,3 +251,25 @@ async fn a_return_is_saved_with_the_end_of_the_run_that_made_it() {
 
     assert!(seen > 0);
 }
+
+// Rule: the reason is what the lead said during the run that returned the work; a return with no message of its own has
+// no reason of an earlier return.
+#[tokio::test]
+async fn a_return_with_no_message_of_its_own_has_no_reason_of_an_earlier_return() {
+    let (mut rig, team) = team_of("sleep,return:claude-1:the first reason,return-silent,sleep", "").await;
+
+    let state = rig
+        .state_where("two returns recorded", |state| {
+            reasons(state, &team).len() == 2
+                && state.team(&team).unwrap().crew().roster().iter().any(|(_, member)| {
+                    member.agent().name() == "claude-1" && member.status() == agent_core::status::TaskStatus::Waiting
+                })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let reasons = reasons(&state, &team);
+    assert!(reasons[0].contains("the first reason"), "{reasons:?}");
+    assert!(!reasons[1].contains("the first reason"), "{reasons:?}");
+    assert!(reasons[1].contains("left no message"), "{reasons:?}");
+}
