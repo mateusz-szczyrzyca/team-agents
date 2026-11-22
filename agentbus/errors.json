@@ -962,6 +962,12 @@
    ]
   },
   {
+   "type": "CmdHelperDump",
+   "op": "helper-dump",
+   "what": "the subcommand helper-dump",
+   "causes": []
+  },
+  {
    "type": "CmdHelperList",
    "op": "helper-list",
    "what": "the subcommand helper-list",

@@ -1662,6 +1662,32 @@ func (c CmdHelperGetCause) info() causeInfo { return cmdHelperGetCauses[c] }
 // String returns the cause name.
 func (c CmdHelperGetCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- helper-dump
+
+// CmdHelperDumpCause is a reason why the subcommand helper-dump failed.
+type CmdHelperDumpCause int
+
+const (
+	CmdHelperDumpStorage CmdHelperDumpCause = iota // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdHelperDumpError is the error of the subcommand helper-dump.
+type CmdHelperDumpError = OpError[CmdHelperDumpCause]
+
+// cmdHelperDumpCauses describes the CmdHelperDumpCause values (same order as the constants).
+var cmdHelperDumpCauses = [...]causeInfo{
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdHelperDumpCause) op() string { return "helper-dump" }
+
+// info implements opCause.
+func (c CmdHelperDumpCause) info() causeInfo { return cmdHelperDumpCauses[c] }
+
+// String returns the cause name.
+func (c CmdHelperDumpCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- helper-list
 
 // CmdHelperListCause is a reason why the subcommand helper-list failed.

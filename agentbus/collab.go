@@ -1562,5 +1562,28 @@ func workerWaits(state MemberState) bool {
 
 // helpersOfTask lists the worker requests that runs of task made, oldest first.
 func helpersOfTask(st *State, task string) []*Helper {
-	return nil
+	var out []*Helper
+	for _, h := range sortedHelpers(st) {
+		if h.FromTask == task {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// helper-dump: the worker requests of a task as a JSON array, oldest first (for agent status and the description of a
+// pull request); an empty array for a task without requests.
+func cmdHelperDump(args []string) {
+	fs := newFlagSet("helper-dump")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	task := fs.String("task", "", "the task whose requests are listed")
+	parseFlags(fs, args)
+	b := &Bus{dir: *dir}
+	exitOn(transact(b, CmdHelperDumpStorage, func(st *State) *CmdHelperDumpError {
+		helpers := helpersOfTask(st, *task)
+		if helpers == nil {
+			helpers = []*Helper{}
+		}
+		return fromStorage(CmdHelperDumpStorage, printJSON(helpers))
+	}).asError())
 }
