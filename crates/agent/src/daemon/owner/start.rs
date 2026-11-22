@@ -11,8 +11,7 @@ use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValu
 use agent_core::decide::outcome::{NO_STATUS_RETRIES, consecutive_no_status};
 use agent_core::history::RunWhy;
 use agent_core::ids::{BranchName, GenerateIdError, InvalidBranchName, InvalidName, RunId, TaskId};
-use agent_core::kinds::Role;
-use agent_core::kinds::{CliKind, Tier};
+use agent_core::kinds::{CliKind, Role};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::state::{
@@ -21,7 +20,7 @@ use agent_core::state::{
 };
 use agent_core::status::RunOutcome;
 use agent_core::task_list::Item;
-use agent_runtime::agentbus::{AgentBus, BusTier};
+use agent_runtime::agentbus::AgentBus;
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 use agent_runtime::checks_prompts::ChecksPrompts;
 use agent_runtime::clock::SharedClock;
@@ -42,12 +41,6 @@ use super::briefing::BriefingFacts;
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
-
-/// The value of the `--role` of `agentbus serve` for a run of an investigator.
-const BUS_ROLE_INVESTIGATOR: &str = "investigator";
-
-/// The value of the `--role` of `agentbus serve` for every other run.
-const BUS_ROLE_WORKER: &str = "worker";
 
 /// Why a run cannot be made ready.
 #[derive(Debug, thiserror::Error)]
@@ -621,11 +614,6 @@ fn mcp_servers(
     let home = absolute(ctx.home.root())?;
     let bus_dir = AgentBus::new(binaries.agentbus.clone(), home).bus_dir();
     let task = member.task();
-    let (tier, bus_role) = match member.agent().tier() {
-        Tier::Normal => (BusTier::Normal, BUS_ROLE_WORKER),
-        Tier::Worker => (BusTier::Worker, BUS_ROLE_WORKER),
-        Tier::Investigator => (BusTier::Normal, BUS_ROLE_INVESTIGATOR),
-    };
     let text = |path: &std::path::Path| {
         path.to_str().map(str::to_owned).ok_or_else(|| StartProblem::Path {
             path: path.to_path_buf(),
@@ -649,18 +637,18 @@ fn mcp_servers(
         branch.to_string(),
         "--team".to_owned(),
         team.id().to_string(),
-        "--tier".to_owned(),
-        tier.to_string(),
-        "--role".to_owned(),
-        bus_role.to_owned(),
         "--home".to_owned(),
         text(ctx.home.root())?,
         "--dir".to_owned(),
         text(&bus_dir)?,
     ];
-    // The tier and role of the run on the bus, and the plan file of a run that keeps a plan.
-    let facts = plan_flag::bus_words(role, ctx.settings.config.plan().roles(), member.agent().tier(), working);
-    words.extend(facts.into_iter().skip(2));
+    // `working` is UTF-8 (`text` above), so the plan file under it is too.
+    words.extend(plan_flag::bus_words(
+        role,
+        ctx.settings.config.plan().roles(),
+        member.agent().tier(),
+        working,
+    ));
     let mut servers = BTreeMap::new();
     if !crate::daemon::review::independent_first_review(team, task)
         && crate::daemon::review::pending_opinion(team, task).is_none()
