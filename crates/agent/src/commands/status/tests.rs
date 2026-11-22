@@ -1648,3 +1648,21 @@ fn clock_time_and_clock_of_format_moments_with_the_offset_of_their_day_in_zone()
     assert_eq!(clock_of(winter, cet_cest), "2026-11-21 17:29:53 +01:00");
     assert_eq!(clock_time(winter_system, cet_cest), "2026-11-21 17:29:53 +01:00");
 }
+
+#[test]
+fn a_queued_task_waiting_for_its_agent_names_the_agent_and_the_team_it_runs_in() {
+    let mut teams = sample();
+    teams[0].members[1].waits_for = Some(agent_core::protocol::RunElsewhere {
+        team: "team-20261111-150000-busy".parse().expect("valid team"),
+        task: "task-20261111-150001-busy".parse().expect("valid task"),
+    });
+
+    let text = render(&teams);
+
+    assert!(
+        text.contains(
+            "  task-20261111-153002-k3x9  member       claude-1   queued, waits for claude-1, running in team-20261111-150000-busy\n"
+        ),
+        "{text}"
+    );
+}

@@ -27,6 +27,7 @@ pub mod replacement;
 pub mod retry;
 pub mod reviewer;
 pub mod round;
+pub mod slot;
 pub mod split;
 pub mod team;
 

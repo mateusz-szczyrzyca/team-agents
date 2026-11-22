@@ -69,4 +69,6 @@ mod plans_before;
 #[cfg(test)]
 mod split_proposals;
 #[cfg(test)]
+mod wait_events;
+#[cfg(test)]
 mod writer_plans;

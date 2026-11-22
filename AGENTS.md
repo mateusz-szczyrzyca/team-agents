@@ -293,8 +293,8 @@ under `crates/`: its layout, its process model and the rules every item of the p
   every lint suppression, and anything the reviewer should look at first.
 - **Say what the new version brings.** A PR that raises the version adds its entry at the top of
   [`WhatsNew.md`](WhatsNew.md), in the commit that raises the version: a heading with the version, the date and the
-  PR, then its lines under `### New features`, `### Bug fixes` and `### Enhancements` — only the headings that have
-  something under them. Every line starts with the tags of the crates or modules whose code the change is in, so
+  PR, then its lines under `### New features`, `### Bug fixes`, `### Enhancements` and `### Configuration` — only the
+  headings that have something under them. Every line starts with the tags of the crates or modules whose code the change is in, so
   that the reader knows where to look: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]` —
   one tag per crate, in this order, no other tags (a change of the prompts or of the workspace's `Cargo.toml` alone
   carries the tag of the crate whose behaviour it changes). Write simply and briefly, for the human who restarts
@@ -303,7 +303,11 @@ under `crates/`: its layout, its process model and the rules every item of the p
   and where it helps one example of a command, a line of output or a configuration key. A new feature is something
   the human can now do or see; a bug fix says what went wrong before; an enhancement makes something that existed
   better. A change the human must act on (a new key, a changed command, a migration) starts with **Action:** after
-  its tags. The example to follow:
+  its tags. **Every key of `agents.toml` or `secrets.toml` that the version adds, changes (its meaning, its default,
+  its bounds) or removes has a line under `### Configuration`**, the last heading of the entry — also when the same
+  change is told under another heading: the tags, then `new`, `changed` or `removed`, the key with its section, its
+  default and what it does, so that the human can bring his own `agents.toml` up to date from this section alone.
+  The example to follow:
 
   ```markdown
   ## 0.17.0 — 19.11.2026 — PR #131
@@ -311,6 +315,9 @@ under `crates/`: its layout, its process model and the rules every item of the p
   ### Bug fixes
   - [agent] A message sent to a lead during a fix pass no longer loses the lead's fix response.
   - [agent] [agent-core] A lead is woken at most twice for the same message, also after a restart of the daemon.
+
+  ### Configuration
+  - [agent-core] new: `[limits] wake_ups_per_message` (default `2`) — how many runs a task is woken for one unread message.
   ```
 
 ## Rounds
@@ -330,7 +337,8 @@ code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tes
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
 - [ ] README, `config/agents.example.toml`, `docs/` and prompts updated where the change is visible to users or agents.
-- [ ] `WhatsNew.md` says, simply and briefly, what the new version brings ("Commits and pull requests").
+- [ ] `WhatsNew.md` says, simply and briefly, what the new version brings, and names every configuration key added,
+      changed or removed under `### Configuration` ("Commits and pull requests").
 - [ ] Compatibility of on-disk formats, subcommand output and exit codes kept (or migrated, tested and
       documented).
 - [ ] The report and the PR description explain what was done, why, and what is left.

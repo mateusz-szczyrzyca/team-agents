@@ -1,5 +1,7 @@
 //! The obligation that can advance an idle round, independent of I/O and scheduling.
 
+use crate::ids::{AgentName, TeamId};
+
 /// Whether a round still needs work and whether an agent can currently do it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Activity {
@@ -101,6 +103,14 @@ pub enum Waiting {
     Defect,
 }
 
+/// The end of a wait line of a queued run that goes after the run of `agent` in `team`: the wait line says which run.
+#[must_use]
+pub fn behind_run(agent: &AgentName, team: &TeamId) -> String {
+    include_str!("../../../../prompts/harness/pr/wait-behind.md")
+        .replace("{{agent}}", agent.as_str())
+        .replace("{{team}}", team.as_str())
+}
+
 impl Waiting {
     /// The short status text, shared with the harness's prompt catalog.
     #[must_use]
@@ -137,6 +147,19 @@ impl Waiting {
             .replace("{{wait}}", self.text())
             .replace("{{owner}}", obligation.owner().text())
             .replace("{{since}}", since.unwrap_or_default())
+    }
+
+    /// The wait as a line that also names the active run `(agent, team)` holding a queued task of the round at its
+    /// run limit. Only [`Obligation::QueuedRun`] carries a holding run; any other wait state ignores `holder`.
+    #[must_use]
+    pub fn line_with_holder(self, since: Option<&str>, holder: Option<(&AgentName, &TeamId)>) -> String {
+        let base = self.line(since);
+        match (self, holder) {
+            (Self::For(Obligation::QueuedRun), Some((agent, team))) => {
+                format!("{base}{}", behind_run(agent, team))
+            }
+            _ => base,
+        }
     }
 }
 
