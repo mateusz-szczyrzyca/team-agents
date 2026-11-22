@@ -749,7 +749,7 @@ async fn lead_done_blocked_notice_dedup_resume_member_with_status_then_pr() {
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "sleep,done,integrate"),
-            normal("claude-1", "fail,work"),
+            normal("claude-1", "fail-first-tool:member failed,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
