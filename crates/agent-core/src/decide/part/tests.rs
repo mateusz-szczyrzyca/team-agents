@@ -208,15 +208,33 @@ fn who_gets_part_in_mode_respects_replacement_modes() {
     let lead = Candidate::available(&normal_lead);
 
     assert_eq!(
-        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Auto),
+        who_gets_part_in_mode(
+            Tier::Normal,
+            Some(stopped_prev),
+            &[rep],
+            Some(lead),
+            ReplacementMode::Auto
+        ),
         PartChoice::Replacement(&normal_rep)
     );
     assert_eq!(
-        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Lead),
+        who_gets_part_in_mode(
+            Tier::Normal,
+            Some(stopped_prev),
+            &[rep],
+            Some(lead),
+            ReplacementMode::Lead
+        ),
         PartChoice::Lead(&normal_lead)
     );
     assert_eq!(
-        who_gets_part_in_mode(Tier::Normal, Some(stopped_prev), &[rep], Some(lead), ReplacementMode::Off),
+        who_gets_part_in_mode(
+            Tier::Normal,
+            Some(stopped_prev),
+            &[rep],
+            Some(lead),
+            ReplacementMode::Off
+        ),
         PartChoice::Nobody
     );
 }

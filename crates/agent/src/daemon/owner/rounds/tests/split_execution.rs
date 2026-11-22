@@ -543,7 +543,10 @@ async fn earlier_split_part_pr_is_refused_for_next_part_as_foreign_branch() {
                 "inv-lead",
                 "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #1,sleep",
             ),
-            normal("claude-1", "clean-done:already delivered,clean-done:already delivered,sleep"),
+            normal(
+                "claude-1",
+                "clean-done:already delivered,clean-done:already delivered,sleep",
+            ),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),
         ],
