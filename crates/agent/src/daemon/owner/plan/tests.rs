@@ -882,3 +882,103 @@ fn edited_recovered_steps_discard_every_previous_judgement_state() {
         assert_eq!((summary.state, summary.reason), (None, None), "{state:?}");
     }
 }
+
+/// The judgement the history kept for step `id` of task 1, read after the daemon stopped.
+fn judgement_of(daemon: &Daemon, id: &str) -> agent_runtime::history::JudgementRecord {
+    let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    reader
+        .latest_judgements(&task(1))
+        .unwrap()
+        .get(&id.parse::<ItemId>().unwrap())
+        .cloned()
+        .expect("a judgement of the step")
+}
+
+#[tokio::test]
+async fn a_done_step_with_a_passing_command_is_judged_confirmed_by_the_daemon() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'exit 0'\n"),
+    )
+    .await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_done_step_with_a_failing_command_is_judged_mismatch_and_keeps_its_output() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'echo failing-output; exit 3'\n"),
+    )
+    .await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let judgement = judgement_of(&daemon, "1.1");
+    assert_eq!(judgement.state, agent_core::plan::judge::JudgementState::Mismatch);
+    assert!(
+        judgement.reason.as_deref().unwrap_or_default().contains("exit code 3"),
+        "reason: {:?}",
+        judgement.reason
+    );
+    let output = judgement.output_path.expect("the output of the check is kept");
+    let text = std::fs::read_to_string(daemon.home.task_dir(&task(1)).join(output)).unwrap();
+    assert!(text.contains("failing-output"), "output: {text:?}");
+}
+
+#[tokio::test]
+async fn a_command_check_runs_with_the_environment_of_the_agents_runs() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'test -n \"$AGENTS_HOME\"'\n"),
+    )
+    .await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_command_check_is_declared_when_check_seconds_is_zero() {
+    let state = solo_state();
+    let daemon = with_bounces(&state, 0);
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 0\ncheck_seconds = 0\n"),
+    )
+    .unwrap();
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'exit 3'\n",
+    )
+    .unwrap();
+    let mut daemon = daemon;
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Declared
+    );
+}
