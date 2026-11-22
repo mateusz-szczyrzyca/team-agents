@@ -1565,7 +1565,7 @@ impl ItemProgress {
     pub fn conflict_accounted_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Accounted(head)) => Some(head),
-            Some(ConflictPassHead::Provisional(_)) | Some(ConflictPassHead::Refunded(_)) | None => None,
+            Some(ConflictPassHead::Provisional(_) | ConflictPassHead::Refunded(_)) | None => None,
         }
     }
 
@@ -1574,7 +1574,7 @@ impl ItemProgress {
     pub fn conflict_refunded_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Refunded(head)) => Some(head),
-            Some(ConflictPassHead::Provisional(_)) | Some(ConflictPassHead::Accounted(_)) | None => None,
+            Some(ConflictPassHead::Provisional(_) | ConflictPassHead::Accounted(_)) | None => None,
         }
     }
 
@@ -1583,7 +1583,7 @@ impl ItemProgress {
     pub fn conflict_provisional_head(&self) -> Option<&CommitId> {
         match &self.conflict_head {
             Some(ConflictPassHead::Provisional(head)) => Some(head),
-            Some(ConflictPassHead::Refunded(_)) | Some(ConflictPassHead::Accounted(_)) | None => None,
+            Some(ConflictPassHead::Refunded(_) | ConflictPassHead::Accounted(_)) | None => None,
         }
     }
 
