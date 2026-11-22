@@ -813,13 +813,43 @@ async fn an_owed_notice_with_no_matching_item_is_settled() {
 }
 
 /// Queues a normal notice whose accepted text proves that the outbox got past a settled busy notice.
-fn tell_later_marker(owner: &mut crate::daemon::owner::Owner, team: &agent_core::ids::TeamId) {
+async fn tell_later_marker(owner: &mut crate::daemon::owner::Owner, team: &agent_core::ids::TeamId) {
     use crate::daemon::team::{BusJob, BusNotice};
+    use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
 
+    owner
+        .parts
+        .bus
+        .team_create(&NewTeam {
+            id: team.clone(),
+            repo: crate::fixtures::repo(),
+            lead: None,
+            members: std::collections::BTreeMap::from([(
+                "claude-1".parse().unwrap(),
+                NewMember {
+                    task: crate::fixtures::task(2),
+                    branch: "agents/claude-1/1.1".parse().unwrap(),
+                    worktree: owner
+                        .parts
+                        .store
+                        .home()
+                        .worktree_dir(&crate::fixtures::repo(), &crate::fixtures::task(2))
+                        .to_str()
+                        .unwrap()
+                        .parse()
+                        .unwrap(),
+                    tier: BusTier::Normal,
+                    state: MemberState::Sleeping,
+                    provider: Some("claude".to_owned()),
+                },
+            )]),
+        })
+        .await
+        .unwrap();
     owner.tell_bus(
         team,
         BusJob::Tell {
-            to: "inv-opus".parse().unwrap(),
+            to: "claude-1".parse().unwrap(),
             notice: BusNotice::MemberFinished {
                 member: "claude-1".parse().unwrap(),
                 item: Some("1.1".parse().unwrap()),
@@ -843,8 +873,8 @@ async fn a_permanent_bus_refusal_settles_the_notice_and_lets_later_jobs_run() {
     .unwrap();
     std::fs::write(daemon.home.root().join("flaky-bus-refuse-once"), "send").unwrap();
     let (mut owner, _sinks) = daemon.bare_owner().await;
-    owner.queue_busy_handover_notices();
-    tell_later_marker(&mut owner, &team);
+    owner.queue_busy_handover_notices().await.unwrap();
+    tell_later_marker(&mut owner, &team).await;
     owner.look_at_every_team();
 
     owner.team_life().await.unwrap();
@@ -882,8 +912,8 @@ async fn an_unrenderable_notice_settles_the_obligation_and_lets_later_jobs_run()
         .unwrap()
         .advance(agent_core::state::ItemPhase::Pending)
         .unwrap();
-    tell_later_marker(&mut owner, &team);
     std::fs::remove_file(&down).unwrap();
+    tell_later_marker(&mut owner, &team).await;
     owner.look_at_every_team();
 
     owner.team_life().await.unwrap();
