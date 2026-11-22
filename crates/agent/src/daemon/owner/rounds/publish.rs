@@ -1442,7 +1442,7 @@ impl Owner {
     }
 
     /// Registers a question file left between atomic creation and the state commit.
-    async fn recover_publish_question(
+    pub(super) async fn recover_publish_question(
         &mut self,
         site: Site<'_>,
         publication: &Publication,

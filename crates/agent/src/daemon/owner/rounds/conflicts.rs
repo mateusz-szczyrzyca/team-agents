@@ -171,6 +171,26 @@ impl Owner {
                 .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
+        let publication = Publication {
+            head_branch: pr.branch.clone(),
+            publish: Publish::Open {
+                items: items
+                    .iter()
+                    .map(|id| Joining {
+                        item: *id,
+                        branch: pr.branch.clone(),
+                    })
+                    .collect(),
+            },
+        };
+        let site = Site {
+            pulls,
+            lead: &lead,
+            team,
+        };
+        if self.recover_publish_question(site, &publication, now).await? {
+            return Ok(());
+        }
         let judged = match self.judge_tip(&lead, &approved_head).await {
             Ok(judged) => judged,
             Err(error) => {
@@ -196,23 +216,6 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                let publication = Publication {
-                    head_branch: pr.branch.clone(),
-                    publish: Publish::Open {
-                        items: items
-                            .iter()
-                            .map(|id| Joining {
-                                item: *id,
-                                branch: pr.branch.clone(),
-                            })
-                            .collect(),
-                    },
-                };
-                let site = Site {
-                    pulls,
-                    lead: &lead,
-                    team,
-                };
                 return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
