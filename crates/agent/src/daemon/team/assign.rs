@@ -1,6 +1,6 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::dispatch::{dispatch_in_policy, required_tier};
+use agent_core::decide::assign::dispatch::{dispatch_with_candidates, required_tier};
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
@@ -78,6 +78,19 @@ pub(in crate::daemon) fn assignable_in_policy(
     mode: ReplacementMode,
     configured_replacements: &[AgentName],
 ) -> Result<Vec<Assigned>, AssignmentError> {
+    assignable_with_candidates(team, mode, configured_replacements, &[])
+}
+
+/// Assigns split parts using real outside participants and their availability.
+///
+/// # Errors
+/// [`AssignmentError`] if the selected participant has no reusable task or branch.
+pub(in crate::daemon) fn assignable_with_candidates(
+    team: &Team,
+    mode: ReplacementMode,
+    configured_replacements: &[AgentName],
+    outside: &[agent_core::decide::part::Candidate<'_>],
+) -> Result<Vec<Assigned>, AssignmentError> {
     let takers = team
         .crew()
         .roster()
@@ -85,7 +98,7 @@ pub(in crate::daemon) fn assignable_in_policy(
         .map(|(_, member)| Ok((agent_name(member.agent())?, member.task())))
         .collect::<Result<Vec<_>, InvalidName>>()?;
     let available: Vec<AgentName> = takers.iter().map(|(name, _)| name.clone()).collect();
-    let decided = dispatch_in_policy(team, mode, configured_replacements).assigned;
+    let decided = dispatch_with_candidates(team, mode, configured_replacements, outside).assigned;
     if !decided.is_empty() {
         let span = tracing::error_span!("team", team = %team.id());
         let _entered = span.enter();
@@ -101,18 +114,37 @@ pub(in crate::daemon) fn assignable_in_policy(
         for (item, agent) in &decided {
             if let Some((part, _)) = team.next_part(*item) {
                 let required = required_tier(team, *item);
-                let choice = if team
+                let previous = team
+                    .rounds()
+                    .iter()
+                    .rev()
+                    .find(|round| round.item() == Some(*item))
+                    .and_then(|round| {
+                        team.members_in(round.id())
+                            .into_iter()
+                            .find(|(role, _)| {
+                                matches!(role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Member)
+                            })
+                            .map(|(_, member)| member)
+                    });
+                let choice = if previous.is_some_and(|member| member.agent() == agent) {
+                    agent_core::decide::part::PartChoice::PreviousMember(agent)
+                } else if team
                     .crew()
                     .coordinator()
                     .is_some_and(|c| c.agent().name() == agent.name())
                 {
-                    "lead"
-                } else if configured_replacements.iter().any(|r| r.as_str() == agent.name()) {
-                    "replacement"
+                    agent_core::decide::part::PartChoice::Lead(agent)
                 } else {
-                    "previous_member"
+                    agent_core::decide::part::PartChoice::Replacement(agent)
                 };
-                let reason = format!("assigned {choice} {} for part {part} under mode {mode:?}", agent.name());
+                let previous = previous.map(|member| agent_core::decide::part::Candidate {
+                    agent: member.agent(),
+                    status: member.status(),
+                    handed_over: member.owes_lead(),
+                    busy: false,
+                });
+                let reason = choice.explanation(previous.as_ref());
                 agent_runtime::history::log_decision(
                     "who_gets_part",
                     &serde_json::json!({
@@ -124,7 +156,7 @@ pub(in crate::daemon) fn assignable_in_policy(
                     }),
                     &serde_json::json!({
                         "agent": agent.to_string(),
-                        "choice": choice,
+                        "choice": choice.choice_name(),
                         "reason": reason,
                     }),
                 );
@@ -139,6 +171,21 @@ pub(in crate::daemon) fn assignable_in_policy(
                 .iter()
                 .find(|(name, _)| *name == member)
                 .map(|(_, task)| *task)
+                .or_else(|| {
+                    // Outside replacements keep the preceding member's task and its durable history.
+                    team.rounds()
+                        .iter()
+                        .rev()
+                        .find(|round| round.item() == Some(item))
+                        .and_then(|round| {
+                            team.members_in(round.id())
+                                .into_iter()
+                                .find(|(role, _)| {
+                                    matches!(role, agent_core::kinds::Role::Solo | agent_core::kinds::Role::Member)
+                                })
+                                .map(|(_, member)| member.task())
+                        })
+                })
                 .ok_or_else(|| AssignmentError::UnknownMember { member: member.clone() })?;
             let branch = match team.next_part(item) {
                 Some((part, _)) => format!("agents/{member}/{task}-{part}").parse(),

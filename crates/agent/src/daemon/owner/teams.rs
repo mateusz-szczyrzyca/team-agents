@@ -37,7 +37,7 @@ use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
-    assignable_in_policy, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for,
+    assignable_with_candidates, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for,
     reconcile, render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
@@ -708,14 +708,65 @@ impl Owner {
             return Ok(());
         };
         let replacement = self.parts.settings.config.replacement();
-        let given = assignable_in_policy(team, replacement.mode(), replacement.agents()).map_err(|source| {
-            OwnerError::Assign {
+        let crew = team.crew().roster();
+        let outside: Vec<_> = replacement
+            .agents()
+            .iter()
+            .filter(|name| {
+                !crew.iter().any(|(_, member)| member.agent().name() == name.as_str())
+                    && !team
+                        .reviewers()
+                        .iter()
+                        .any(|member| member.agent().name() == name.as_str())
+            })
+            .filter_map(|name| self.participant_of(name))
+            .collect();
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
+        let given = assignable_with_candidates(team, replacement.mode(), replacement.agents(), &candidates).map_err(
+            |source| OwnerError::Assign {
                 team: team_id.clone(),
                 source,
-            }
-        })?;
+            },
+        )?;
         let repo = team.repo().clone();
         for assigned in given {
+            let found = self
+                .parts
+                .state
+                .find_task(&assigned.task)
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: assigned.task.clone(),
+                })?;
+            if found.member.agent().name() != assigned.agent.as_str() {
+                let from = found.member.agent().name().to_owned();
+                let holder = self
+                    .participant_of(&assigned.agent)
+                    .ok_or_else(|| OwnerError::LostTask {
+                        task: assigned.task.clone(),
+                    })?;
+                let now = Timestamp::now(&self.parts.clock)?;
+                self.parts
+                    .state
+                    .hand_over_task(&assigned.task, holder, now)
+                    .map_err(|source| OwnerError::HandOver {
+                        task: assigned.task.clone(),
+                        source,
+                    })?;
+                self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
+                look.changed = true;
+                tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
+                    task = %assigned.task, from, to = %assigned.agent,
+                    "the next split part goes to a configured replacement in a fresh session");
+            }
             let Some(base) = self
                 .parts
                 .settings
