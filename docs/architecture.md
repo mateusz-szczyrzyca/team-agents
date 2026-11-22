@@ -1287,6 +1287,14 @@ worker that comes later. An agent may be in several teams, so a request belongs 
 a worker serves in the task the request was given to. The harness is asked before the four pieces are required: its
 `NO-PLAN` makes the request an old-form one, with no step.
 
+The requests are read back with `agentbus helper-dump --task <task>` (a JSON array, oldest first) into
+`agent_runtime::agentbus::TaskRequest` (number, step, worker, state). `agent status` reads them on the client side when
+the tasks are shown with their plans (`commands::status::requests`); the publication of a pull request reads those of
+every task of the team's crew and adds the section of the steps done by a worker
+(`daemon::pr::description::worker_steps_section`); a bus that does not answer fails the publication with
+`PublishError::Bus`, which is tried again later. A plan's step meant for a worker carries the line `By: worker`, kept in
+its note (`Step::doer`).
+
 ## Plan-step judgements
 
 `agent-core::plan::judge` selects done steps that need judgement and defines `confirmed`, `declared` and `mismatch`.
