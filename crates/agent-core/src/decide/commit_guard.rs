@@ -7,7 +7,7 @@
 //! the staged change; the daemon's checks stay the second look, where a commit slipped through (`--no-verify`).
 
 use crate::config::Checks;
-use crate::decide::checks::{CommitFacts, FileChange};
+use crate::decide::checks::{Change, CommitFacts, FileChange, Lines, RED_PREFIX, TEST_FIX_PREFIX};
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
@@ -23,8 +23,19 @@ pub struct FrozenTest {
 /// The test files that the `RED:` commits among `commits` touched, each once, with the first such commit, in the order
 /// the files first appear.
 #[must_use]
-pub fn frozen_tests(_rules: &Checks, _commits: &[CommitFacts]) -> Vec<FrozenTest> {
-    Vec::new()
+pub fn frozen_tests(rules: &Checks, commits: &[CommitFacts]) -> Vec<FrozenTest> {
+    let mut frozen: Vec<FrozenTest> = Vec::new();
+    for red in commits.iter().filter(|commit| commit.subject.starts_with(RED_PREFIX)) {
+        for file in red.files.iter().filter(|file| rules.test_paths.matches(&file.path)) {
+            if !frozen.iter().any(|known| known.path == file.path) {
+                frozen.push(FrozenTest {
+                    path: file.path.clone(),
+                    red: red.id.clone(),
+                });
+            }
+        }
+    }
+    frozen
 }
 
 /// The commit that is about to be made: its subject and what it changes against its parent.
@@ -75,8 +86,45 @@ pub enum Verdict {
 
 /// Whether `commit` may be made, given the test files `frozen` by the round's `RED:` commits.
 #[must_use]
-pub fn judge_commit(_rules: &Checks, _frozen: &[FrozenTest], _commit: &PendingCommit<'_>) -> Verdict {
-    Verdict::Allowed
+pub fn judge_commit(rules: &Checks, frozen: &[FrozenTest], commit: &PendingCommit<'_>) -> Verdict {
+    let edited: Vec<Refusal> = commit
+        .files
+        .iter()
+        .filter(|file| file.takes_lines_out())
+        .filter_map(|file| {
+            let test = frozen.iter().find(|test| test.path == file.path)?;
+            Some(Refusal::FrozenTestEdited {
+                path: test.path.clone(),
+                red: test.red.clone(),
+                taken: taken_by(file),
+            })
+        })
+        .collect();
+    if edited.is_empty() {
+        return Verdict::Allowed;
+    }
+    if !commit.subject.starts_with(TEST_FIX_PREFIX) {
+        return Verdict::Refused(edited);
+    }
+    let others: Vec<RepoPath> = commit
+        .files
+        .iter()
+        .filter(|file| !rules.test_paths.matches(&file.path))
+        .map(|file| file.path.clone())
+        .collect();
+    if others.is_empty() {
+        Verdict::Allowed
+    } else {
+        Verdict::Refused(vec![Refusal::TestFixTouchesOtherFiles { others }])
+    }
+}
+
+/// What `file`, which takes lines out of its file, takes out of it.
+const fn taken_by(file: &FileChange) -> Taken {
+    match (&file.change, file.lines) {
+        (Change::Deleted, _) | (_, Lines::Binary) => Taken::WholeFile,
+        (_, Lines::Text { removed, .. }) => Taken::Lines(removed),
+    }
 }
 
 #[cfg(test)]
