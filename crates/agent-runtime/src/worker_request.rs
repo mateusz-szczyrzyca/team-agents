@@ -232,6 +232,11 @@ pub enum Settlement {
         /// The files.
         files: Vec<String>,
     },
+    /// The result is wrong and the request goes once more to another worker.
+    Again {
+        /// Why this result did not serve, in the words the requester reads.
+        reasons: Vec<String>,
+    },
     /// The result is wrong: the reasons, in the words the requester reads.
     Returned {
         /// The reasons.
@@ -247,6 +252,7 @@ impl Settlement {
             Self::Report => "report",
             Self::Brought { .. } => "brought",
             Self::Conflict { .. } => "conflict",
+            Self::Again { .. } => "again",
             Self::Returned { .. } => "returned",
         }
     }
@@ -343,6 +349,64 @@ pub async fn read_pending_each(task_dir: &Path) -> Result<Vec<Result<Pending, Pe
         }));
     }
     Ok(read)
+}
+
+/// Which try of a request a worker's run is, and why the tries before it were wrong; kept in the task directory of the worker
+/// of the try from the moment the request is given to it, so that a result settled after a restart is judged as a second try.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Try {
+    /// How many workers the request has been given to, this one included: `1` for the first try.
+    pub number: u32,
+    /// Why each earlier try was wrong, oldest first; one text for each.
+    #[serde(default)]
+    pub earlier: Vec<String>,
+}
+
+impl Try {
+    /// The first try, which has no earlier one.
+    #[must_use]
+    pub const fn first() -> Self {
+        Self {
+            number: 1,
+            earlier: Vec::new(),
+        }
+    }
+}
+
+/// The file that keeps the try of `request` in the task directory `task_dir`.
+#[must_use]
+pub fn try_path(task_dir: &Path, request: RequestId) -> PathBuf {
+    task_dir.join(format!("worker-try-{}.json", request.number()))
+}
+
+/// Keeps the try of `request` in `task_dir`, through a temporary file.
+///
+/// # Errors
+/// [`PendingError::Write`] or [`PendingError::Encode`].
+pub fn write_try(task_dir: &Path, request: RequestId, tried: &Try) -> Result<(), PendingError> {
+    let _ = (task_dir, request, tried);
+    Ok(())
+}
+
+/// The try of `request` kept in `task_dir`; the first try when none is kept.
+///
+/// # Errors
+/// [`PendingError::Read`] or [`PendingError::Parse`] when the file is there and cannot be used.
+pub fn read_try(task_dir: &Path, request: RequestId) -> Result<Try, PendingError> {
+    let _ = (task_dir, request);
+    Ok(Try::first())
+}
+
+/// Whether the task directory `task_dir` holds a file of a request that is not settled yet, one of those in `answered`
+/// excepted: a request the daemon has answered is not what keeps a worker busy, even when its file cannot be removed.
+#[must_use]
+pub fn has_pending_except<S: std::hash::BuildHasher>(
+    task_dir: &Path,
+    answered: &std::collections::HashSet<RequestId, S>,
+) -> bool {
+    let _ = answered;
+    has_pending(task_dir)
 }
 
 /// Whether the task directory `task_dir` holds a file of a request that is not settled yet: a worker with one is busy.

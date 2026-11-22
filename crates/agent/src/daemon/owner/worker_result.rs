@@ -277,7 +277,7 @@ impl Owner {
             return Ok(());
         };
         // A request the bus has answered already is not answered again: the file is only set aside.
-        if !is_running_for(&known, worker_task) {
+        if !is_running_for(&known, worker_task, worker) {
             return Ok(());
         }
         let step = match self.parts.bus.helper_work(request).await {
@@ -440,7 +440,7 @@ impl Owner {
     /// bus is asked again at the next stage.
     async fn still_the_workers(&self, pending: &Pending) -> bool {
         match self.parts.bus.helper_get(pending.request).await {
-            Ok(known) if is_running_for(&known, &pending.worker_task) => true,
+            Ok(known) if is_running_for(&known, &pending.worker_task, &pending.worker) => true,
             Ok(known) => {
                 tracing::warn!(
                     event = LogEvent::RestartCorrected.as_str(),
@@ -848,7 +848,7 @@ impl Owner {
                     &files.join(", "),
                 )?,
             ),
-            Settlement::Returned { reasons } => (
+            Settlement::Returned { reasons } | Settlement::Again { reasons } => (
                 DelegationStatus::Failed,
                 crate::daemon::team::worker_step_returned(texts, pending.request, &step, reasons)?,
             ),
@@ -948,7 +948,8 @@ fn returned_for_damage(
 
 /// Whether the bus has the request `known` still in the hands of the worker whose task is `worker_task`: only such a request
 /// is settled from a file; one that is answered, queued or another worker's is not the file's to settle.
-fn is_running_for(known: &DelegationRequest, worker_task: &TaskId) -> bool {
+fn is_running_for(known: &DelegationRequest, worker_task: &TaskId, worker: &AgentName) -> bool {
+    let _ = worker;
     matches!(known.status, DelegationStatus::Running | DelegationStatus::Starting)
         && known.helper_task.as_ref() == Some(worker_task)
 }

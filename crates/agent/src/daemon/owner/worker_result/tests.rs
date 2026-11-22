@@ -5,7 +5,10 @@
 use agent_core::decide::worker_result::{CheckOutcome, Elsewhere, Scope, WorkerEnding, Wrong};
 use agent_runtime::worker_request::{Checked, Found};
 
-use super::{facts_of, reasons_of, scope_of};
+use agent_core::ids::{AgentName, TaskId};
+use agent_runtime::agentbus::{DelegationRequest, DelegationStatus};
+
+use super::{facts_of, is_running_for, reasons_of, scope_of};
 
 fn found(outcome: CheckOutcome) -> Found {
     Found {
@@ -148,4 +151,49 @@ fn every_reason_a_result_is_wrong_has_its_words() {
         reasons_of(&without, &[Wrong::CheckFailed], 0),
         vec!["the check failed".to_owned()]
     );
+}
+
+/// The request `1` of the requester `claude-1` as the bus has it: `status`, with `helper_task` and `worker` as given.
+fn known(status: &str, helper_task: Option<&str>, worker: Option<&str>) -> DelegationRequest {
+    serde_json::from_value(serde_json::json!({
+        "id": 1, "from": "claude-1", "from_task": "task-20261122-120000-aaaa", "repo": "example",
+        "branch": "agents/claude-1/task-20261122-120000-aaaa", "worktree": "/tmp/example", "request": "Do it.",
+        "context": "", "status": status, "worker": worker, "helper_task": helper_task, "summary": "",
+    }))
+    .expect("a request of the bus")
+}
+
+#[test]
+fn a_request_is_the_workers_while_the_bus_has_it_running_for_its_task_or_for_its_name_before_the_task_is_known() {
+    let task: TaskId = "task-20261122-120001-bbbb".parse().expect("a task");
+    let other: TaskId = "task-20261122-120002-cccc".parse().expect("a task");
+    let glm1: AgentName = "glm-1".parse().expect("a name");
+    let table = [
+        ("running", Some(&task), Some("glm-1"), true, "running for its task"),
+        ("starting", Some(&task), Some("glm-1"), true, "starting for its task"),
+        (
+            "running",
+            Some(&other),
+            Some("glm-1"),
+            false,
+            "running for another task",
+        ),
+        (
+            "running",
+            None,
+            Some("glm-1"),
+            true,
+            "the update of the task has not landed: the worker's name holds",
+        ),
+        ("running", None, Some("glm-2"), false, "another worker's name"),
+        ("running", None, None, false, "nobody's"),
+        ("done", Some(&task), Some("glm-1"), false, "answered"),
+        ("failed", Some(&task), Some("glm-1"), false, "answered as failed"),
+        ("queued", None, None, false, "queued"),
+    ];
+    for (status, helper_task, worker, expected, why) in table {
+        let request = known(status, helper_task.map(TaskId::as_str), worker);
+        assert_eq!(is_running_for(&request, &task, &glm1), expected, "{why}");
+    }
+    assert_eq!(known("running", None, None).status, DelegationStatus::Running);
 }
