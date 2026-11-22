@@ -2577,7 +2577,7 @@ mod tests {
         item.spend_merge_pass();
         assert_eq!(item.merge_passes(), 2);
         let head: CommitId = "4444444444444444444444444444444444444444".parse().unwrap();
-        item.set_conflict_approved_head(head);
+        item.set_conflict_approved_head(head.clone());
         item.ask_human_about_merge_conflict(at(50));
         assert!(!item.has_provisional_conflict_pass());
 
@@ -2589,10 +2589,19 @@ mod tests {
         assert_eq!(item.refund_conflict_pass(), 2);
         assert_eq!(item.merge_passes(), 2);
 
+        // State must remain unrefunded (no Refunded head created without provisional reservation):
+        assert_eq!(item.conflict_refunded_head(), None);
+
+        // A subsequent successful publication for the legacy head must NOT increment merge_passes:
+        assert_eq!(item.record_published_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+        assert_eq!(item.conflict_accounted_head(), Some(&head));
+
         // Survives round-trip deserialization without losing pass count:
         let serialized = serde_json::to_string(&item).unwrap();
         let mut recovered: ItemProgress = serde_json::from_str(&serialized).unwrap();
         assert_eq!(recovered.merge_passes(), 2);
+        assert_eq!(recovered.conflict_accounted_head(), Some(&head));
         assert_eq!(recovered.refund_conflict_pass(), 2);
         assert_eq!(recovered.merge_passes(), 2);
     }
