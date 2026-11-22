@@ -305,7 +305,7 @@ pub(super) async fn plan(
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, member, &working, &work_branch(team, member)?)?;
+    let mcp_servers = mcp_servers(ctx, team, member, role, &working, &work_branch(team, member)?)?;
     let identity = CommitIdentity::for_agent(config.git(), &participant.name().parse()?);
     Ok(Plan {
         run: run.clone(),
@@ -600,12 +600,20 @@ const UUID_LEN: usize = 36;
 /// The positions of the hex digits of a UUID before which a dash stands.
 const UUID_DASHES: [usize; 4] = [8, 12, 16, 20];
 
+/// Whether a run of `role` keeps a plan: its role is one of `[plan] roles`. The tier says nothing here: an investigator
+/// that coordinates or is a member keeps that role's plan.
+pub(super) fn keeps_plan(roles: &[Role], role: Role) -> bool {
+    roles.contains(&role)
+}
+
 /// The MCP servers of the run of `member`'s task: the agentbus, and Serena when the configuration has it. On the bus the
-/// run acts under the name its task has there, the agent it was first given to, with the tier of the agent that runs.
+/// run acts under the name its task has there, the agent it was first given to, with the tier of the agent that runs;
+/// a run of a role that keeps a plan is given the plan file of its worktree.
 fn mcp_servers(
     ctx: &Context<'_>,
     team: &Team,
     member: &Member,
+    role: Role,
     working: &std::path::Path,
     branch: &BranchName,
 ) -> Result<BTreeMap<McpServerKind, CommandLine>, StartProblem> {
@@ -613,7 +621,7 @@ fn mcp_servers(
     let home = absolute(ctx.home.root())?;
     let bus_dir = AgentBus::new(binaries.agentbus.clone(), home).bus_dir();
     let task = member.task();
-    let (tier, role) = match member.agent().tier() {
+    let (tier, bus_role) = match member.agent().tier() {
         Tier::Normal => (BusTier::Normal, BUS_ROLE_WORKER),
         Tier::Worker => (BusTier::Worker, BUS_ROLE_WORKER),
         Tier::Investigator => (BusTier::Normal, BUS_ROLE_INVESTIGATOR),
@@ -624,7 +632,7 @@ fn mcp_servers(
             source: None,
         })
     };
-    let words = vec![
+    let mut words = vec![
         text(binaries.agentbus.as_path())?,
         "serve".to_owned(),
         "--agent".to_owned(),
@@ -644,12 +652,15 @@ fn mcp_servers(
         "--tier".to_owned(),
         tier.to_string(),
         "--role".to_owned(),
-        role.to_owned(),
+        bus_role.to_owned(),
         "--home".to_owned(),
         text(ctx.home.root())?,
         "--dir".to_owned(),
         text(&bus_dir)?,
     ];
+    // The tier and role of the run on the bus, and the plan file of a run that keeps a plan.
+    let facts = plan_flag::bus_words(role, ctx.settings.config.plan().roles(), member.agent().tier(), working);
+    words.extend(facts.into_iter().skip(2));
     let mut servers = BTreeMap::new();
     if !crate::daemon::review::independent_first_review(team, task)
         && crate::daemon::review::pending_opinion(team, task).is_none()
@@ -669,6 +680,8 @@ fn mcp_servers(
     }
     Ok(servers)
 }
+
+mod plan_flag;
 
 #[cfg(test)]
 mod tests;
