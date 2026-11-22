@@ -46,12 +46,7 @@ fn time(text: &str) -> crate::state::Timestamp {
 #[test]
 fn a_lead_run_is_judged_only_when_it_started_after_the_verdict() {
     let verdict = Some(time("2026-11-22T01:00:00Z"));
-    let run = |started: &str, ended: &str| {
-        Some(LeadRun {
-            started: time(started),
-            ended: time(ended),
-        })
-    };
+    let run = |started: &str, _ended: &str| Some(LeadRun::started_at(time(started)));
     let cases = [
         (None, verdict, Response::None, "no completed run"),
         (
