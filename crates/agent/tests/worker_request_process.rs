@@ -1184,6 +1184,127 @@ Integrate the guide.
         assert!(output.status.success(), "the daemon still answers");
     }
 
+    /// How the file of request 1 is damaged by the test.
+    #[derive(Clone, Copy, Debug)]
+    enum Damage {
+        /// Cut in the middle of its text.
+        Truncated,
+        /// Complete, with a field this version does not know.
+        UnknownField,
+        /// Cannot be read at all: a directory stands where the file is.
+        Unreadable,
+    }
+
+    /// Damages the file of request 1 as `damage` says; returns what the file held before.
+    fn damage_the_file(path: &Path, damage: Damage) -> String {
+        let text = std::fs::read_to_string(path).unwrap();
+        match damage {
+            Damage::Truncated => std::fs::write(path, &text[..text.len() / 2]).unwrap(),
+            Damage::UnknownField => {
+                let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+                value["surprise"] = serde_json::json!(1);
+                std::fs::write(path, value.to_string()).unwrap();
+            }
+            Damage::Unreadable => {
+                std::fs::remove_file(path).unwrap();
+                std::fs::create_dir(path).unwrap();
+            }
+        }
+        text
+    }
+
+    /// The entries of the task directory of `worker` that keep the damaged file of request 1 aside.
+    fn kept_aside(world: &World, worker: &str) -> Vec<PathBuf> {
+        let dir = world.home.join("tasks").join(worker);
+        std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("worker-request-1.json") && name != "worker-request-1.json")
+            })
+            .collect()
+    }
+
+    /// Request 1 of a worker has a damaged file, request 2 of the same team a good one: both are answered as wrong results
+    /// and told to the requester, the damaged file is kept aside under another name and logged, and a restart of the daemon
+    /// does not meet it again.
+    fn a_damaged_file_is_settled_as_a_wrong_result_and_set_aside(damage: Damage) {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+        let task_dir = world.home.join("tasks").join(&worker);
+        let second = answers(&world.delegate_as(&member, MEMBER_REQUEST));
+        assert!(!second[0].0, "{second:?}");
+        world.bus_cli(&["helper-set", "--id", "2", "--status", "running", "--task", &worker]);
+        let mut pending: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(task_dir.join("worker-request-1.json")).unwrap()).unwrap();
+        pending["request"] = serde_json::json!(2);
+        std::fs::write(task_dir.join("worker-request-2.json"), pending.to_string()).unwrap();
+        let before = damage_the_file(&pending_file(&world, &worker), damage);
+
+        world.start();
+
+        world.request_is("1", "failed");
+        world.request_is("2", "failed");
+        let first = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(
+            first.contains("worker-request-1.json"),
+            "the requester is told which file: {first}"
+        );
+        world.told("claude-1", "Your request H2 to the workers is back with you");
+        assert!(
+            output_of(&world.agent(&["status"])).contains("claude-1"),
+            "the daemon still answers"
+        );
+        assert!(
+            !pending_file(&world, &worker).exists(),
+            "the damaged file is not met again"
+        );
+        let aside = kept_aside(&world, &worker);
+        assert_eq!(aside.len(), 1, "{aside:?}");
+        if !matches!(damage, Damage::UnknownField | Damage::Truncated) {
+            assert!(aside[0].is_dir(), "kept as it was");
+        } else if matches!(damage, Damage::Truncated) {
+            assert_eq!(std::fs::read_to_string(&aside[0]).unwrap(), &before[..before.len() / 2]);
+        }
+        eventually("the damaged file to be logged with its name", || {
+            output_of(&world.agent(&["log", "--json", "--event", "restart_corrected"]))
+                .contains("worker-request-1.json")
+        });
+
+        world.stop();
+        world.start();
+        std::thread::sleep(Duration::from_millis(500));
+        let told = world
+            .messages_to("claude-1")
+            .iter()
+            .filter(|text| text.contains("Your request H1 to the workers is back with you"))
+            .count();
+        assert_eq!(told, 1, "a restart does not settle the damaged file again");
+        assert_eq!(kept_aside(&world, &worker).len(), 1);
+    }
+
+    /// What a command printed on its standard output.
+    fn output_of(output: &Output) -> String {
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    #[test]
+    fn a_truncated_file_of_a_request_is_settled_as_a_wrong_result_and_set_aside() {
+        a_damaged_file_is_settled_as_a_wrong_result_and_set_aside(Damage::Truncated);
+    }
+
+    #[test]
+    fn a_file_of_a_request_with_an_unknown_field_is_settled_as_a_wrong_result_and_set_aside() {
+        a_damaged_file_is_settled_as_a_wrong_result_and_set_aside(Damage::UnknownField);
+    }
+
+    #[test]
+    fn an_unreadable_file_of_a_request_is_settled_as_a_wrong_result_and_set_aside() {
+        a_damaged_file_is_settled_as_a_wrong_result_and_set_aside(Damage::Unreadable);
+    }
+
     #[test]
     fn a_request_the_bus_no_longer_has_has_its_file_dropped() {
         let (mut world, _member, worker) = world_with_a_served_request();
