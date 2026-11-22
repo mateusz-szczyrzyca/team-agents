@@ -70,6 +70,10 @@ The developer rules each role is given say it in full (TDD-1 to TDD-14). What di
   `#[ignore]` or loosen one. A test that was itself wrong is corrected by a commit of its own that touches tests
   only — `TEST-FIX: <what was wrong>` — listed in the PR under `## Tests changed after RED`. Check it:
   `git diff <red> HEAD -- <its test files>` shows added lines only, or the lines of a listed `TEST-FIX`.
+- **Every change to a test after its `RED:` commit is a `TEST-FIX:` commit of its own** — also formatting, a refactor, a
+  removed debug line — with test files only. The `commit-msg` hook of an agent's runs refuses a commit that takes lines out
+  of such a test and is not one, and says how to make the right commit; the checks before the review find what slipped
+  through and ask the human, because the published commit cannot be undone.
 - **The unit tests of a new module live in its `tests.rs`** (`#[cfg(test)] mod tests;`), so a change of the tests is
   a change of test files. An inline `mod tests { }` that is already there stays and may grow.
 

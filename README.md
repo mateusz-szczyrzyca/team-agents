@@ -154,6 +154,20 @@ never on the orchestrator's host or a network with anything you care about.
 - Be wary of tasks that feed agents **untrusted input** (issues written by strangers, scraped web pages) while they
   hold write access: that is the classic prompt-injection path.
 
+### The commit hook of the runs
+
+Every run of an agent gets the harness's hooks directory **through its environment**: the `git` the CLI starts has
+`core.hooksPath` set in `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, for that run only. **Nothing is written into the
+repository** — not its `.git/hooks`, not its configuration — and your own checkout is not touched. The directory holds a
+`commit-msg` hook that runs `agent guard-commit` (see "What the daemon does", the checks before a review) and then the
+repository's own `commit-msg`, and links the repository's other hooks (its `hooks` directory, or the directory of its own
+`core.hooksPath`), so a hook of the repository still runs in an agent's run, and one that fails still fails the commit. An
+agent that wants to skip the hook can use `git commit --no-verify`; the checks before the review find the commit then.
+To turn the early refusal off for a repository, set `commit_guard = false` under its `[repos.NAME.checks]` table (on by
+default; the checks before a review stay as they are): `docs/configuration.md` has the table. The hooks directory acts for the
+repository it was made for only: a commit that the agent makes in another repository during a run runs that repository's own
+hooks, and the hooks path of an outer run (a `cargo test` started by an agent) is not taken for a repository's own.
+
 ### Monitoring and response
 
 - Ship the daemon's log ([`docs/log.md`](docs/log.md)) somewhere you look at, and alert on warnings and errors.
@@ -782,6 +796,21 @@ before. A file you allowed or refused before this was so (`checks.json` of an ea
 the round then, and no later one. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
 no test fix: it is such a finding too. Answer with `allow` or `refuse`; `allow except` names paths and does not apply to
 commits.
+**A commit of a frozen test is refused while it can still be undone.** The `git` of every run an agent starts is given a
+`commit-msg` hook (through `core.hooksPath` in the run's environment: nothing is written into the repository, and the
+repository's own hooks keep running). The hook runs `agent guard-commit`, which asks the rule above while the commit is only
+staged: a commit that takes lines out of a test a `RED:` commit of the branch froze, and is not a `TEST-FIX:` commit of test
+files only, is not made. The agent is told the rule, which file and which `RED:` commit, and how to make the commit that is
+allowed (a `TEST-FIX:` commit of the test files; the rest in a commit of its own). The hook costs no question to you, works
+for every CLI that commits through `git`, reads the branch and writes nothing, so a commit that is already made — on the remote
+or not — is never touched, and it never tells anyone to rewrite published history. Commits made by a merge, a cherry-pick, a
+revert or a rebase are not judged, an amend is judged against the parent of the commit it replaces, and the worktree of a
+repository with no `[repos.NAME.checks]` table or with `commit_guard = false`, a directory that is no task's worktree and a
+home that cannot be read are not judged (the last one says so). Only the guard's refusal, which has a status of its own
+(86), stops a commit; any other status of `agent` lets it through. An amend is recognised from the command line of `git`
+(`--amend` and its abbreviations, a value of `-m` is not an option); an alias that hides `--amend` in its definition is
+judged as a new commit. `git commit --no-verify` skips the hook; the checks
+before the review find the commit then, as before.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):

@@ -23,6 +23,8 @@
 #   env-git               ends like `done` after writing to .fake-git who a commit would be by and how git would sign it
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
 #   commit                commits work.txt in the repository it runs in, leaves left.txt uncommitted, ends like `done`
+#   commit-frozen-test    rewrites tests/a.rs, tries to commit it with `git commit`, writes git's exit status to
+#                         .fake-commit-code and what git said to .fake-commit-err, ends like `done`
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
 #
 # Every run records its arguments, one a line, in `.fake-args`.
@@ -168,6 +170,16 @@ case $scenario in
     init
     leave_work
     say "committed"
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  commit-frozen-test)
+    init
+    printf 'REWRITTEN\n' > tests/a.rs
+    git add tests/a.rs
+    code=0
+    git commit -q -m "Format the test" 2> .fake-commit-err || code=$?
+    printf '%s\n' "$code" > .fake-commit-code
+    say "tried to commit"
     result false 'Finished the item.\nSTATUS: DONE'
     ;;
   commit-busy)

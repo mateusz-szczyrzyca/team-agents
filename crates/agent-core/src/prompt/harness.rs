@@ -103,6 +103,16 @@ pub enum HarnessPrompt {
     NoticePlanQuestion,
     /// The question to the human what becomes of a task after the last step of the ladder went bad too.
     NoticeLastStep,
+    /// What the hook of `git commit` tells an agent whose commit it refused: the findings, and how to make the commit
+    /// the rule allows. Its only variable holds the lines of [`HarnessPrompt::CommitRefusedLines`],
+    /// [`HarnessPrompt::CommitRefusedWhole`] and [`HarnessPrompt::CommitRefusedMixed`].
+    CommitRefused,
+    /// The finding of a refused commit that takes some lines out of a frozen test.
+    CommitRefusedLines,
+    /// The finding of a refused commit that takes a whole frozen test out: deletes it, or replaces a binary one.
+    CommitRefusedWhole,
+    /// The finding of a refused `TEST-FIX:` commit that also changes files that are not tests.
+    CommitRefusedMixed,
 }
 
 impl HarnessPrompt {
@@ -153,6 +163,10 @@ impl HarnessPrompt {
         Self::PlanGateRefused,
         Self::NoticePlanQuestion,
         Self::NoticeLastStep,
+        Self::CommitRefused,
+        Self::CommitRefusedLines,
+        Self::CommitRefusedWhole,
+        Self::CommitRefusedMixed,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -300,6 +314,18 @@ impl HarnessPrompt {
                 &["task", "agent", "count", "reason"],
             ),
             Self::NoticeLastStep => last_step_spec(),
+            Self::CommitRefused => PromptSpec::new("harness/run/commit-refused.md", Audience::Model, &["findings"]),
+            Self::CommitRefusedLines => PromptSpec::new(
+                "harness/run/commit-refused-lines.md",
+                Audience::Model,
+                &["path", "red", "count"],
+            ),
+            Self::CommitRefusedWhole => {
+                PromptSpec::new("harness/run/commit-refused-whole.md", Audience::Model, &["path", "red"])
+            }
+            Self::CommitRefusedMixed => {
+                PromptSpec::new("harness/run/commit-refused-mixed.md", Audience::Model, &["files"])
+            }
         }
     }
 }
