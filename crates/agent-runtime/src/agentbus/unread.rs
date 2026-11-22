@@ -141,6 +141,53 @@ impl AgentBus {
     }
 }
 
+/// A direct message a sender wrote to a session, with the whole text the sender wrote.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Said {
+    /// Its number on the bus.
+    pub id: NonZeroU64,
+    /// What it says, whole.
+    pub text: String,
+}
+
+/// The notice of the bus that tells a lead that a member finished, which the messages a lead writes back are counted from.
+#[derive(Debug, Clone, Copy)]
+pub struct Finished<'a> {
+    /// The lead the notice was written to, by its name on the bus.
+    pub lead: &'a str,
+    /// The member that finished, by its agent name.
+    pub member: &'a str,
+    /// The item the member reported `DONE` on.
+    pub item: &'a str,
+}
+
+impl AgentBus {
+    /// What `sender` wrote directly to the session of `reader` after the newest notice that `finished` names: the answer of
+    /// a lead to the work of a member it was told of. Messages to everybody or to the team, and those written before
+    /// the notice, are not the answer. `None` when the bus holds no such notice.
+    ///
+    /// # Errors
+    /// [`UnreadMessagesError`].
+    pub async fn said_since_finished(
+        &self,
+        reader: Reader<'_>,
+        sender: &str,
+        finished: Finished<'_>,
+    ) -> Result<Option<Vec<Said>>, UnreadMessagesError> {
+        said_since_finished(&self.bus_dir(), reader, sender, finished).await
+    }
+}
+
+/// See [`AgentBus::said_since_finished`]; `bus_dir` is the directory of the bus.
+async fn said_since_finished(
+    _bus_dir: &Path,
+    _reader: Reader<'_>,
+    _sender: &str,
+    _finished: Finished<'_>,
+) -> Result<Option<Vec<Said>>, UnreadMessagesError> {
+    Ok(None)
+}
+
 /// See [`AgentBus::last_message_from`]; `bus_dir` is the directory of the bus.
 async fn last_message_from(
     bus_dir: &Path,
@@ -206,6 +253,12 @@ struct Line {
     /// The task a direct message is for; empty when it is for any session of the agent.
     #[serde(default)]
     task: String,
+    /// The kind of event the message is; empty in messages of older versions.
+    #[serde(default)]
+    kind: String,
+    /// The fields of the event, as JSON; null in messages of older versions.
+    #[serde(default)]
+    data: serde_json::Value,
 }
 
 impl Line {
@@ -372,6 +425,8 @@ async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError>
     Ok(Some(Window { bytes, from, cut }))
 }
 
+#[cfg(test)]
+mod finished_tests;
 #[cfg(test)]
 mod said_tests;
 #[cfg(test)]

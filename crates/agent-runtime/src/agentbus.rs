@@ -36,7 +36,8 @@ mod unread;
 
 pub use latest::{LatestMessageError, MessageNote};
 pub use unread::{
-    Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, UnreadMessage, UnreadMessages, UnreadMessagesError,
+    Completeness, Finished, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, Said, UnreadMessage, UnreadMessages,
+    UnreadMessagesError,
 };
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, capture, capture_with_input};
