@@ -918,7 +918,7 @@ section from marker disclosures. The CLI prints the original directives and revi
 |---|---|
 | an existing test file is changed other than by added lines, removed or renamed — a change of its mode (an executable bit) is a change too, with lines added or none (the facts read it with `git diff --raw`) | only the human |
 | a protected file is changed in any way | only the human |
-| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts only its diff against its first parent, when that parent has the `RED:` commit, and only paths that the round changes against its base. Incoming base changes and `git merge -s ours` do not edit a frozen test; an edit inside a merge or a conflict resolution that drops a frozen line still does | the team, or the human |
+| a test file a `RED:` commit of the round touched has lines removed or replaced by a later commit (a descendant of it in the history), unless that commit touches test files only, its subject starts with `TEST-FIX:` and the description names it, by its ID or at least seven digits, under `## Tests changed after RED` (TDD-14). A later merge counts only its diff against its first parent, when that parent has the `RED:` commit, and only paths that the round changes against its base. Incoming base changes and `git merge -s ours` do not edit a frozen test; an edit inside a merge or a conflict resolution that drops a frozen line still does | only the human: the commit is in the branch for good, so it is a finding about a commit (below) |
 | the round changes production code and adds no line to a test file, and none of its commits has a line `Test-First: not possible — <reason>` (TDD-1) | the team, or the human |
 | an added line skips a test, suppresses a lint or asks whether the code runs under test, in a file the description does not name (TDD-11, LINT-3, TDD-12). A suppression in Rust is `#[allow(…)]` and `#[expect(…)]` alike: the allowed spelling has to be named too. An attribute that `#[cfg_attr(…)]` applies counts as if it stood alone (`#[cfg_attr(not(test), expect(…))]`, `#[cfg_attr(miri, ignore)]`), also when rustfmt wraps it over several lines, and also when the round changes only one line of an attribute that was wrapped already: the daemon reads all the unchanged lines of a Rust file that has added ones, and an attribute with an added line is read as a whole, whatever its length. A file whose diff is too long to be read whole (over `8` MiB) cannot be checked: the round is not published and the human is told, as for any other failure to read the facts. `cfg!(test)` and `cfg!(not(test))` both ask whether the code runs under test. The description names a file with its whole path — `crates/other/src/a.rs` does not name `src/a.rs`, nor does `src/a.rs~` or `src/a.rs@backup`: a path is named as a whole token between delimiters (white space, quotes, brackets, `,;:#=*|`), and the dots and marks of a sentence may follow it | the team, or the human |
 
@@ -935,6 +935,26 @@ tests of `RoundState` list its phases and events):
 - both kinds, with team passes left — the human is asked about only the human-only findings first; after the answer,
   the remaining findings go to the team. Asking the human spends no team pass;
 - both kinds, with team passes used up — the human is asked about all findings.
+- a finding about a commit — a frozen test that a commit edited outside a named `TEST-FIX:` commit of test files only (a
+  `TEST-FIX:` that also changes a file that is not a test is one too) — is only the human's and is asked at once, whatever
+  the passes are; it is never sent back to the team and spends none of its passes. A question about commits alone leaves the
+  count of passes as it is.
+
+**Findings about commits** (`agent_core::decide::checks::commits`). The only finding that names a commit is the edit of a
+frozen test, and the team cannot repair it: the commit is in the branch for good and published history is never rewritten.
+`split` takes it out of the issues; `settle` leaves what nobody has answered: not the commit and path the human allowed or
+refused for the item, not a path the task list allows, not a path the human allowed or refused before the findings had a
+subject (`Subject::Commit`), up to the head they did it at (no head recorded: the commits that are in the round now,
+`commits::inherit_refusals` for a refusal and `settle` for an allowance). Those commits are recorded as allowed or refused
+subjects of their own, and for a file with no head the head they are covered up to is snapshotted (`covered_at`), so that
+a commit added later is a finding of its own and the old allowance may be taken back when the file changes again without
+asking about them again. The checks ask about what is left in one question, after those of the other issues, with each
+commit's subject, its author (`git log --format=%an`) and the lines it added to and took out of the test
+(`decide::checks::commits::describe`), and say what was allowed before. The allowance is kept by the commit and the path in
+`checks.json` and is never taken back; a new commit is a new finding, and an item's parts, which use the original item ID,
+share it. `refuse` is kept in `refused` and sends nothing back: the team cannot undo a commit, so a refusal holds no round
+and spends no pass (`Checking::conclude_with_commits`); the same commit is neither asked nor sent back again. A refusal of a file or of the missing tests is kept as well, and sends
+the round back each time the file is still changed.
 
 **The message to the team.** The lead is woken (`Why::Checks`) and told the reasons — one for each issue, from
 `prompts/harness/checks/` — with the pull request, the pass and what to do: settle every finding, get the gate green, end with
@@ -973,7 +993,8 @@ same per-subject `Decisions` used by the owner.
   for example a lint suppression added to an allowed protected file. The lead, resumed with the answers, is told to change nothing and end with `STATUS: DONE`. The checks run
   again: the review starts when nothing remains, otherwise the team receives its remaining findings.
 - *Refused* — back to the team, with what the human refused named, as the next pass; the lead's resumed run is told to undo
-  what was refused.
+  what was refused. What was refused is kept for the item: a file is not asked about again, and the round goes back while it
+  is still changed; a refused commit sends nothing back.
 - A lead that ends without putting the question is woken again, twice; then the human is told directly (`notice-not-asked`).
 
 **The record** is `tasks/<lead>/checks.json` ([`state.md`](state.md)): the passes and what was allowed for each item, the

@@ -51,6 +51,16 @@ pub enum ChecksPrompt {
     QuestionTitleNoTests,
     /// The title of a question about several paths of one kind.
     QuestionTitleGroup,
+    /// The title of the question about the commits that changed frozen tests.
+    QuestionTitleCommits,
+    /// The line of that question about a commit that took lines out of a test.
+    QuestionCommit,
+    /// The line of that question about a commit that replaced a binary test.
+    QuestionCommitBinary,
+    /// The text of that question: why the human is asked, the commits and how to answer.
+    QuestionBodyCommits,
+    /// The part of that question that says what was settled for the item before.
+    QuestionBefore,
     /// The explicit-verdict instructions for a grouped checks file.
     QuestionsInstructions,
     /// The text of a question: why the human is asked, the issues and how to answer.
@@ -89,6 +99,11 @@ impl ChecksPrompt {
         Self::QuestionTitlePath,
         Self::QuestionTitleNoTests,
         Self::QuestionTitleGroup,
+        Self::QuestionTitleCommits,
+        Self::QuestionCommit,
+        Self::QuestionCommitBinary,
+        Self::QuestionBodyCommits,
+        Self::QuestionBefore,
         Self::QuestionsInstructions,
         Self::QuestionBody,
         Self::QuestionInvalidVerdict,
@@ -153,6 +168,28 @@ impl ChecksPrompt {
                 &["questions_file", "number", "task"],
             ),
             Self::Answered => PromptSpec::new("harness/checks/answered.md", Audience::Model, &[]),
+            Self::QuestionsTitle
+            | Self::QuestionTitlePath
+            | Self::QuestionTitleNoTests
+            | Self::QuestionInvalidVerdict
+            | Self::QuestionTitleGroup
+            | Self::QuestionTitleCommits
+            | Self::QuestionCommit
+            | Self::QuestionCommitBinary
+            | Self::QuestionBodyCommits
+            | Self::QuestionBefore
+            | Self::QuestionsInstructions
+            | Self::QuestionBody
+            | Self::QuestionRecommend
+            | Self::WhyOnlyHuman
+            | Self::WhyPassesUsed
+            | Self::NoticeNotAsked => self.question_spec(),
+        }
+    }
+
+    /// [`Self::spec`] of the texts the human reads: the questions, their parts and the notification.
+    const fn question_spec(self) -> PromptSpec {
+        match self {
             Self::QuestionsTitle => {
                 PromptSpec::new("harness/checks/questions-title.md", Audience::Human, &["team", "task"])
             }
@@ -167,6 +204,27 @@ impl ChecksPrompt {
             }
             Self::QuestionTitleGroup => {
                 PromptSpec::new("harness/checks/question-title-group.md", Audience::Human, &["count"])
+            }
+            Self::QuestionTitleCommits => {
+                PromptSpec::new("harness/checks/question-title-commits.md", Audience::Human, &["count"])
+            }
+            Self::QuestionCommit => PromptSpec::new(
+                "harness/checks/question-commit.md",
+                Audience::Human,
+                &["commit", "subject", "author", "path", "red", "added", "removed"],
+            ),
+            Self::QuestionCommitBinary => PromptSpec::new(
+                "harness/checks/question-commit-binary.md",
+                Audience::Human,
+                &["commit", "subject", "author", "path", "red"],
+            ),
+            Self::QuestionBodyCommits => PromptSpec::new(
+                "harness/checks/question-body-commits.md",
+                Audience::Human,
+                &["why", "commits", "before", "allow", "refuse"],
+            ),
+            Self::QuestionBefore => {
+                PromptSpec::new("harness/checks/question-before.md", Audience::Human, &["subjects"])
             }
             Self::QuestionsInstructions => {
                 PromptSpec::new("harness/checks/questions-instructions.md", Audience::Human, &["task"])
@@ -184,6 +242,21 @@ impl ChecksPrompt {
             Self::NoticeNotAsked => {
                 PromptSpec::new("harness/checks/notice-not-asked.md", Audience::Human, &["team", "task"])
             }
+            Self::IssueTestDeleted
+            | Self::IssueTestRenamed
+            | Self::IssueTestEdited
+            | Self::IssueTestBinary
+            | Self::IssueTestMode
+            | Self::IssueProtected
+            | Self::IssueRedEdited
+            | Self::IssueNoTests
+            | Self::IssueSkipsTest
+            | Self::IssueSuppressesLint
+            | Self::IssueChecksUnderTest
+            | Self::TeamPass
+            | Self::Refused
+            | Self::AskRelay
+            | Self::Answered => self.spec(),
         }
     }
 }

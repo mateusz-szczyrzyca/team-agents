@@ -345,7 +345,7 @@ async fn after_its_passes_the_human_is_asked_and_their_answer_starts_the_review(
 // ---- a test that was frozen -------------------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_team_with_the_commit_and_the_file() {
+async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_to_the_human_with_the_commit_and_the_file() {
     let mut rig = checking_rig("script:red-green,done", 2, SILENT, SILENT).await;
     script(
         &rig,
@@ -355,7 +355,13 @@ async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_t
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let back = rig.prompt(&tasks[0], 2).await;
+    // The team cannot repair a commit that is in its branch: the human is asked at once, and the question names it.
+    rig.wait_for("the question of the checks", || {
+        rig.home.questions_file(&tasks[0], NonZeroU32::MIN).exists()
+    })
+    .await;
+    let back = questions_of(&rig, &tasks[0], 1).entries()[0].body().to_owned();
+    let told = rig.prompt(&tasks[0], 2).await;
     // A commit is named by its first seven digits.
     let short = |grep: &str| -> String {
         git(&rig.worktree(&tasks[0]), &["log", "-1", "--format=%H", grep])
@@ -370,6 +376,7 @@ async fn a_green_commit_that_edits_the_test_of_its_red_commit_goes_back_to_the_t
     assert!(back.contains(&green), "{back}");
     assert!(back.contains(&red), "{back}");
     assert!(back.contains("TEST-FIX:"), "{back}");
+    assert!(!told.contains("THE ROUND IS NOT READY"), "{told}");
     assert_eq!(rig.state().team(&team).unwrap().reviewers(), []);
     assert_eq!(rig.github.calls("POST", "/graphql"), []);
 }
@@ -1417,4 +1424,653 @@ async fn a_path_the_team_changes_again_after_the_human_allowed_it_is_asked_again
     );
     assert_eq!(after.allowed_of(&["1.1".parse().unwrap()]), []);
     assert_eq!(reviews, 0);
+}
+
+// ---- findings about commits: asked once, kept for the item ------------------------------------------------------------
+
+/// The scripts of the commits that take lines out of a test that a `RED:` commit froze: two commits, neither of them a
+/// `TEST-FIX:`, then a third that a fix pass adds, and code that touches no test.
+fn frozen_test_scripts(rig: &Rig) {
+    script(
+        rig,
+        "two-edits",
+        "printf 'x\\ny\\nz\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'RED: a test'\necho 'fn a() {}' > src/a.txt\nsed -i 1d tests/new.txt\ngit add src/a.txt tests/new.txt\ncommit -m 'GREEN: code a, tidied test'\nsed -i 1d tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the test once more'\n",
+    );
+    script(
+        rig,
+        "third-edit",
+        "printf 'w\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the test a third time'\n",
+    );
+    script(
+        rig,
+        "more-code",
+        "echo 'fn b() {}' > src/b.txt\ngit add src/b.txt\ncommit -m 'Add more code'\n",
+    );
+}
+
+/// Whether the second question of `task` is written and the record already waits on it: the daemon writes the file before
+/// it saves the record, so a test that reads the record must wait for both.
+fn second_question_recorded(rig: &Rig, task: &TaskId) -> bool {
+    let second = NonZeroU32::new(2).unwrap();
+    rig.home.questions_file(task, second).exists()
+        && std::fs::read_to_string(rig.home.checks_file(task)).is_ok_and(|text| {
+            serde_json::from_str::<ChecksRecord>(&text)
+                .is_ok_and(|record| record.asked.is_some_and(|asked| asked.number == second))
+        })
+}
+
+/// The commit of `task`'s worktree whose subject starts with `subject`.
+fn commit_of(rig: &Rig, task: &TaskId, subject: &str) -> agent_core::state::CommitId {
+    git(
+        &rig.worktree(task),
+        &["log", "-1", "--format=%H", &format!("--grep=^{subject}")],
+    )
+    .parse()
+    .unwrap()
+}
+
+/// The findings about the commits `commits` that took lines out of `tests/new.txt`, in the order the record keeps them.
+fn edits_of(commits: &[&agent_core::state::CommitId]) -> Vec<Subject> {
+    let mut edits: Vec<Subject> = commits.iter().map(|commit| edit_of(commit)).collect();
+    edits.sort();
+    edits
+}
+
+/// The finding about the commit `commit` that took lines out of `tests/new.txt`.
+fn edit_of(commit: &agent_core::state::CommitId) -> Subject {
+    Subject::Commit {
+        commit: commit.clone(),
+        path: "tests/new.txt".parse().unwrap(),
+    }
+}
+
+// Rule: the commits a team cannot repair are asked at once, all in one question, and the round is not sent back for them.
+#[tokio::test]
+async fn two_published_commits_that_edit_a_frozen_test_get_one_question_and_no_bounce() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let (first, second) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+    );
+    let file = questions_of(&rig, &tasks[0], 1);
+    let kept = record(&rig, &tasks[0]).await;
+    let second_prompt = rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    // One question names both commits, with the subject and the author of each.
+    assert_eq!(file.entries().len(), 1);
+    assert_eq!(file.entries()[0].title(), "Commits that changed frozen tests: 2");
+    let body = file.entries()[0].body();
+    assert!(
+        body.contains("Tidy the test once more\" by claude-1 (team-agents)"),
+        "{body}"
+    );
+    assert!(
+        body.contains("GREEN: code a, tidied test\" by claude-1 (team-agents)"),
+        "{body}"
+    );
+    assert_eq!(
+        kept.asked.as_ref().unwrap().subjects,
+        [edit_of(&first), edit_of(&second)]
+    );
+    // The team was not sent back, and no pass was spent.
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.sent, None);
+    assert!(!second_prompt.contains("THE ROUND IS NOT READY"), "{second_prompt}");
+    assert_eq!(rig.runs(&tasks[0]), 2);
+    assert_eq!(rig.state().team(&team).unwrap().reviewers(), []);
+    assert_eq!(rig.github.calls("POST", "/graphql"), []);
+}
+
+// Rule: `allow` lets the round go to its review, and the commits and their paths are kept for the item.
+#[tokio::test]
+async fn allowing_the_commits_starts_the_review_and_keeps_each_commit_and_path_for_the_item() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let (first, second) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+    );
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.github.pulls()[0].draft);
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
+    assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), []);
+    assert_eq!(kept.asked, None);
+    assert_eq!(rig.runs(&tasks[0]), 3);
+}
+
+// Rule: what was allowed holds through a fix pass with new commits elsewhere: no second question, no bounce.
+#[tokio::test]
+async fn a_fix_pass_with_other_commits_asks_nothing_again_and_sends_nothing_back() {
+    let mut rig = checking_rig(
+        "script:two-edits,questions,done,fix-script:more-code",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.item_where("1.1", "approved or merged", |phase| {
+        matches!(phase, ItemPhase::Approved { .. } | ItemPhase::Done { .. })
+    })
+    .await;
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+    assert_eq!(kept.asked, None);
+    assert_eq!(kept.sent, None);
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]).len(), 2);
+}
+
+// Rule: a new commit that edits a frozen test is a new finding: it is asked alone, and says what was allowed before.
+#[tokio::test]
+async fn a_new_commit_in_a_fix_pass_is_asked_alone_and_the_question_says_what_was_allowed_before() {
+    let mut rig = checking_rig(
+        "script:two-edits,questions,done,fix-script:third-edit,questions,done",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    let (first, second, third) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+        commit_of(&rig, &tasks[0], "Tidy the test a third time"),
+    );
+    let file = questions_of(&rig, &tasks[0], 2);
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
+    assert_eq!(file.entries().len(), 1);
+    let body = file.entries()[0].body();
+    assert!(body.contains("Already settled for this item"), "{body}");
+    for earlier in [&first, &second] {
+        let short: String = earlier.as_str().chars().take(7).collect();
+        assert!(body.contains(&format!("- commit {short} in `tests/new.txt`")), "{body}");
+    }
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+}
+
+// Rule: the answer is kept in the record, so a daemon that restarts before the answer takes it all the same.
+#[tokio::test]
+async fn the_answer_about_commits_is_kept_across_a_restart_of_the_daemon() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]).len(), 2);
+    assert_eq!(kept.asked, None);
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+}
+
+// Rule: a refusal about commits is kept and sends nothing back: the team cannot undo a commit that is in the branch.
+#[tokio::test]
+async fn a_refusal_about_commits_sends_nothing_back_and_is_kept() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let (first, second) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+    );
+    answer(&rig, &tasks[0], 1, "refuse").await;
+    reviews_asked(&rig).await;
+    let answered = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        answered.contains("THE HUMAN ANSWERED THE QUESTIONS OF THE ROUND CHECKS"),
+        "{answered}"
+    );
+    assert!(!answered.contains("THE ROUND IS NOT READY"), "{answered}");
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), edits_of(&[&first, &second]));
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), []);
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.sent, None);
+    assert_eq!(rig.runs(&tasks[0]), 3);
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+    assert!(!rig.github.pulls()[0].draft);
+}
+
+// Rule: a file the human allowed before findings had a subject of their own — a record that an earlier daemon wrote —
+// covers the commits that were in the round then: they are kept as they are, not asked again.
+#[tokio::test]
+async fn a_file_allowed_in_a_record_of_an_earlier_daemon_covers_the_commits_already_in_the_round() {
+    let mut rig = checking_rig("script:two-edits,questions,done", 2, SILENT, SILENT).await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let (first, second) = (
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+    );
+    rig.stop().await.unwrap();
+    // What the earlier daemon had written: the file is allowed, with no head, and no question waits.
+    std::fs::write(
+        rig.home.checks_file(&tasks[0]),
+        r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"}]}}}"#,
+    )
+    .unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    let kept = record(&rig, &tasks[0]).await;
+    assert_eq!(
+        kept.allowed_of(&["1.1".parse().unwrap()]),
+        [
+            Subject::Path("tests/new.txt".parse().unwrap()),
+            edits_of(&[&first, &second])[0].clone(),
+            edits_of(&[&first, &second])[1].clone(),
+        ]
+    );
+    assert_eq!(kept.asked, None);
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+}
+
+// Rule: a `TEST-FIX:` commit that also touches a file that is not a test is no test fix: it is a finding about its commit.
+#[tokio::test]
+async fn a_test_fix_that_also_changes_code_is_a_finding_about_its_commit_and_is_asked() {
+    let mut rig = checking_rig("script:fix-with-code,questions,done", 2, SILENT, SILENT).await;
+    script(
+        &rig,
+        "fix-with-code",
+        "printf 'x\\ny\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'RED: a test'\nprintf 'x\\nz\\n' > tests/new.txt\necho 'fn a() {}' > src/a.txt\ngit add tests/new.txt src/a.txt\ncommit -m 'TEST-FIX: the second line was wrong, and the code'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let fix = commit_of(&rig, &tasks[0], "TEST-FIX");
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&fix)]);
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+}
+
+/// What a record of an earlier daemon decides: the round of `two-edits` is asked, the daemon stops, `legacy` is the
+/// record it finds in its place, the human answers and the review starts; then the team adds a third edit of the frozen
+/// test in a fix pass. Returns the record and the question that the third edit raised.
+async fn a_legacy_record_and_then_a_new_edit(
+    legacy: &str,
+) -> (ChecksRecord, QuestionsFile, [agent_core::state::CommitId; 3]) {
+    let mut rig = checking_rig(
+        "script:two-edits,questions,done,fix-script:third-edit,questions,done",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    frozen_test_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    std::fs::write(rig.home.checks_file(&tasks[0]), legacy).unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    let commits = [
+        commit_of(&rig, &tasks[0], "GREEN"),
+        commit_of(&rig, &tasks[0], "Tidy the test once more"),
+        commit_of(&rig, &tasks[0], "Tidy the test a third time"),
+    ];
+    let file = questions_of(&rig, &tasks[0], 2);
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+    (kept, file, commits)
+}
+
+// Rule (review finding 6): what a file's allowance written before commit subjects covers is the commits that were in the
+// round then; a commit added after it is a new finding and is asked alone.
+#[tokio::test]
+async fn a_file_allowed_without_a_head_covers_the_commits_of_that_day_and_not_a_later_one() {
+    let (kept, file, [first, second, third]) =
+        a_legacy_record_and_then_a_new_edit(r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"}]}}}"#)
+            .await;
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
+    assert_eq!(file.entries().len(), 1);
+    let allowed = kept.allowed_of(&["1.1".parse().unwrap()]);
+    assert!(
+        allowed.contains(&edit_of(&first)) && allowed.contains(&edit_of(&second)),
+        "{allowed:?}"
+    );
+    assert!(!allowed.contains(&edit_of(&third)));
+}
+
+// Rule (review finding 7): a file refused before commit subjects is a refusal of the commits that were in the round
+// then, which are neither asked again nor sent back, and a commit added after it is asked alone.
+#[tokio::test]
+async fn a_file_refused_without_a_head_is_a_refusal_of_the_commits_of_that_day_and_not_a_later_one() {
+    let (kept, file, [first, second, third]) = a_legacy_record_and_then_a_new_edit(
+        r#"{"items":{"1.1":{"passes":0,"allowed":[],"refused":[{"path":"tests/new.txt"}]}}}"#,
+    )
+    .await;
+
+    assert_eq!(kept.asked.as_ref().unwrap().subjects, [edit_of(&third)]);
+    assert_eq!(file.entries().len(), 1);
+    let refused = kept.refused_of(&["1.1".parse().unwrap()]);
+    assert!(
+        refused.contains(&edit_of(&first)) && refused.contains(&edit_of(&second)),
+        "{refused:?}"
+    );
+    assert_eq!(kept.sent, None);
+}
+
+// ---- findings about commits across the parts of a split ---------------------------------------------------------------
+
+/// Whether question number `number` of `task` is written and the record already waits on it.
+fn question_recorded(rig: &Rig, task: &TaskId, number: u32) -> bool {
+    let number = NonZeroU32::new(number).unwrap();
+    rig.home.questions_file(task, number).exists()
+        && std::fs::read_to_string(rig.home.checks_file(task)).is_ok_and(|text| {
+            serde_json::from_str::<ChecksRecord>(&text)
+                .is_ok_and(|record| record.asked.is_some_and(|asked| asked.number == number))
+        })
+}
+
+/// The text a human answers the lead's question with to split item 1.1 into two parts.
+fn two_part_split() -> String {
+    let parts = (0..2)
+        .map(|index| {
+            serde_json::json!({
+                "title": format!("Part {index}"), "delivers": format!("Independent part {index}"),
+                "checks": format!("Read part {index}"), "depends_on": if index == 0 { vec![] } else { vec!["a"] }
+            })
+        })
+        .collect::<Vec<_>>();
+    format!(
+        "split\n```json\n{}\n```",
+        serde_json::json!({"parent": "1.1", "parts": parts})
+    )
+}
+
+// Rule: what the human allowed for the item holds in the next part of a split, and a commit that part adds is asked alone,
+// with what was allowed before said in the question.
+#[tokio::test]
+async fn what_was_allowed_in_one_part_holds_in_the_next_and_a_new_commit_is_asked_alone() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,checks-lead"),
+            normal("claude-1", "script:part-a,script:part-b"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let text = text.replace("fix_passes = 5", "fix_passes = 5\ncheck_passes = 2");
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{text}[repos.example.checks]\ntest_paths = [\"tests/\"]\ncode_paths = [\"src/\"]\nprotected_paths = [\"ci/\"]\n"
+        ),
+    )
+    .unwrap();
+    for (name, body) in [("tests/existing.txt", "a\nb\nc\n"), ("src/code.txt", "code\n")] {
+        let file = rig.repo.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed the tests and the code"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    for (name, file) in [("part-a", "tests/new.txt"), ("part-b", "tests/other.txt")] {
+        script(
+            &rig,
+            name,
+            &format!(
+                "printf 'x\\ny\\nz\\n' > {file}\ngit add {file}\ncommit -m 'RED: a test of {name}'\nsed -i 1d {file}\ngit add {file}\ncommit -m 'Tidy the test of {name}'\n"
+            ),
+        );
+    }
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers: crate::daemon::owner::fixture::answers(&[(1, &two_part_split())]),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    // The first part is asked about its one commit that edits a frozen test, and the human allows it.
+    rig.wait_for("the question about the first part", || {
+        question_recorded(&rig, &tasks[0], 2)
+    })
+    .await;
+    let first_part = record(&rig, &tasks[0]).await.asked.unwrap().subjects;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 2, "allow").await;
+    // The second part has a commit of its own that edits a frozen test: that one alone is asked, and the question says
+    // what was allowed in the first part.
+    rig.wait_for("the question about the second part", || {
+        question_recorded(&rig, &tasks[0], 3)
+    })
+    .await;
+    let kept = record(&rig, &tasks[0]).await;
+    let file = questions_of(&rig, &tasks[0], 3);
+    rig.stop().await.unwrap();
+
+    assert_eq!(first_part.len(), 1, "{first_part:?}");
+    let asked = kept.asked.as_ref().unwrap().subjects.clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_ne!(asked, first_part);
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), first_part);
+    let body = file.entries()[0].body();
+    assert!(body.contains("Already settled for this item"), "{body}");
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+}
+
+/// A team of a lead and a member whose item 1.1 is split into two parts, with the checks table: the member's first part
+/// edits a frozen test of `tests/new.txt` and its second one a frozen test of `tests/other.txt`, each in a commit of its own.
+async fn team_with_two_parts_and_the_checks() -> Rig {
+    let rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,checks-lead"),
+            normal("claude-1", "script:part-a,script:part-b"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let text = text.replace("fix_passes = 5", "fix_passes = 5\ncheck_passes = 2");
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{text}[repos.example.checks]\ntest_paths = [\"tests/\"]\ncode_paths = [\"src/\"]\nprotected_paths = [\"ci/\"]\n"
+        ),
+    )
+    .unwrap();
+    for (name, body) in [("tests/existing.txt", "a\nb\nc\n"), ("src/code.txt", "code\n")] {
+        let file = rig.repo.join(name);
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(file, body).unwrap();
+    }
+    git(&rig.repo, &["add", "-A"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Seed the tests and the code"]);
+    git(&rig.repo, &["push", "-q", "origin", "main"]);
+    for (name, file) in [("part-a", "tests/new.txt"), ("part-b", "tests/other.txt")] {
+        script(
+            &rig,
+            name,
+            &format!(
+                "printf 'x\\ny\\nz\\n' > {file}\ngit add {file}\ncommit -m 'RED: a test of {name}'\nsed -i 1d {file}\ngit add {file}\ncommit -m 'Tidy the test of {name}'\n"
+            ),
+        );
+    }
+    rig
+}
+
+// Rule (review finding 8): what the human refused in one part is kept in the next, and a commit that part adds is asked alone.
+#[tokio::test]
+async fn what_was_refused_in_one_part_is_kept_in_the_next_and_a_new_commit_is_asked_alone() {
+    let mut rig = team_with_two_parts_and_the_checks().await;
+    rig.start().await;
+
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: NonZeroU32::MIN,
+                answers: crate::daemon::owner::fixture::answers(&[(1, &two_part_split())]),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    rig.wait_for("the question about the first part", || {
+        question_recorded(&rig, &tasks[0], 2)
+    })
+    .await;
+    let first_part = record(&rig, &tasks[0]).await.asked.unwrap().subjects;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 2, "refuse").await;
+    rig.wait_for("the question about the second part", || {
+        question_recorded(&rig, &tasks[0], 3)
+    })
+    .await;
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(first_part.len(), 1, "{first_part:?}");
+    let asked = kept.asked.as_ref().unwrap().subjects.clone();
+    assert_eq!(asked.len(), 1, "{asked:?}");
+    assert_ne!(asked, first_part);
+    assert_eq!(kept.refused_of(&["1.1".parse().unwrap()]), first_part);
+    assert_eq!(kept.allowed_of(&["1.1".parse().unwrap()]), []);
+    // Nothing was sent back to the team for the refusal: no pass was spent.
+    assert_eq!(kept.passes_of(&["1.1".parse().unwrap()]), 0);
+    assert_eq!(kept.sent, None);
+}
+
+// Rule (review findings 13 and 14): an answer an earlier daemon wrote for a file that has no finding at the first look is
+// bounded at that look too, so that a frozen-test commit added to that file later is asked and not inherited.
+#[tokio::test]
+async fn a_legacy_answer_about_a_file_with_no_finding_yet_does_not_cover_a_commit_added_later() {
+    let mut rig = checking_rig(
+        "script:edit-other,questions,done,fix-script:edit-new,questions,done",
+        2,
+        CHANGES_ONCE,
+        APPROVE,
+    )
+    .await;
+    script(
+        &rig,
+        "edit-other",
+        "printf 'x\\ny\\nz\\n' > tests/other.txt\ngit add tests/other.txt\ncommit -m 'RED: another test'\nsed -i 1d tests/other.txt\ngit add tests/other.txt\ncommit -m 'Tidy the other test'\n",
+    );
+    script(
+        &rig,
+        "edit-new",
+        "printf 'x\\ny\\nz\\n' > tests/new.txt\ngit add tests/new.txt\ncommit -m 'RED: a new test'\nsed -i 1d tests/new.txt\ngit add tests/new.txt\ncommit -m 'Tidy the new test'\n",
+    );
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    // What an earlier daemon had written: both files allowed with no head. At the first look only `tests/other.txt` has a
+    // finding; `tests/new.txt` has none yet.
+    std::fs::write(
+        rig.home.checks_file(&tasks[0]),
+        r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/new.txt"},{"path":"tests/other.txt"}]}}}"#,
+    )
+    .unwrap();
+    rig.start().await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    let added = commit_of(&rig, &tasks[0], "Tidy the new test");
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        kept.asked.as_ref().unwrap().subjects,
+        [Subject::Commit {
+            commit: added,
+            path: "tests/new.txt".parse().unwrap()
+        }]
+    );
 }

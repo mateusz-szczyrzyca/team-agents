@@ -144,7 +144,7 @@ impl From<SessionId> for String {
 
 /// A git commit ID: 40 (SHA-1) or 64 (SHA-256) lowercase hexadecimal digits.
 #[doc = include_str!("../../tests/docs/commit-id.md")]
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 #[serde(try_from = "String")]
 pub struct CommitId(String);
 

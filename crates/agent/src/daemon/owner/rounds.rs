@@ -307,6 +307,9 @@ enum PublishError {
     /// Git refused.
     #[error("git failed")]
     Git(#[from] GitError),
+    /// A finding about a commit cannot be described to the human.
+    #[error("cannot describe a commit of the round")]
+    Commit(#[from] agent_core::decide::checks::commits::NoteError),
     /// The origin of the repository is not a repository on GitHub.
     #[error("the origin of the repository is not a repository on GitHub")]
     Origin(#[from] InvalidRepoSlug),

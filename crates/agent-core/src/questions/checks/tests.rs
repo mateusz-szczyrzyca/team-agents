@@ -128,3 +128,68 @@ fn a_marked_checks_file_cannot_silently_treat_an_unlabelled_question_as_legacy()
         )]
     );
 }
+
+fn commit_subject(digit: char, path: &str) -> Subject {
+    Subject::Commit {
+        commit: digit.to_string().repeat(40).parse().unwrap(),
+        path: path.parse().unwrap(),
+    }
+}
+
+#[test]
+fn a_commit_subject_is_told_apart_from_other_commits_and_from_the_same_path_in_a_group() {
+    let (first, second) = (commit_subject('a', "tests/a.rs"), commit_subject('b', "tests/a.rs"));
+    let mut file = QuestionsFile::new(
+        "Checks [checks:v1]",
+        vec![
+            Entry::new(NonZeroU32::MIN, "First commit")
+                .unwrap()
+                .with_check_subjects(std::slice::from_ref(&first)),
+            Entry::new(NonZeroU32::new(2).unwrap(), "Second commit")
+                .unwrap()
+                .with_check_subjects(std::slice::from_ref(&second)),
+        ],
+    )
+    .unwrap();
+    file.set_verdict(NonZeroU32::MIN, Verdict::from_text("allow").unwrap())
+        .unwrap();
+    file.set_verdict(NonZeroU32::new(2).unwrap(), Verdict::from_text("refuse").unwrap())
+        .unwrap();
+    let parsed = QuestionsFile::parse(&file.render()).unwrap();
+
+    let allowed = parsed
+        .allowed_check_subjects(&[
+            first.clone(),
+            second.clone(),
+            Subject::Path("tests/a.rs".parse().unwrap()),
+        ])
+        .unwrap();
+
+    assert_eq!(allowed, HashSet::from([first]));
+}
+
+#[test]
+fn a_commit_subject_in_a_path_with_spaces_survives_a_round_trip_of_the_file() {
+    let subject = commit_subject('c', "tests/with space.rs");
+    let mut file = QuestionsFile::new(
+        "Checks [checks:v1]",
+        vec![
+            Entry::new(NonZeroU32::MIN, "A commit")
+                .unwrap()
+                .with_check_subjects(std::slice::from_ref(&subject)),
+        ],
+    )
+    .unwrap();
+    file.set_verdict(NonZeroU32::MIN, Verdict::from_text("allow").unwrap())
+        .unwrap();
+
+    let parsed = QuestionsFile::parse(&file.render()).unwrap();
+
+    assert!(parsed.entries()[0].checks_contains(&subject));
+    assert_eq!(
+        parsed
+            .allowed_check_subjects(&[subject.clone(), Subject::NoTests])
+            .unwrap(),
+        HashSet::from([subject])
+    );
+}

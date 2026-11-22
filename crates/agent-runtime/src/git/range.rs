@@ -6,7 +6,7 @@
 //! commits and the added lines are read as text with the bytes that are not UTF-8 replaced: only ASCII words and
 //! markers are looked for in them.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use agent_core::decide::checks::{
     AddedLine, Change, CommitFacts, FileChange, Lines, RoundFacts, UnchangedLine, markers,
@@ -135,6 +135,24 @@ impl Git {
             }
         }
         Ok(commits)
+    }
+
+    /// The name of the author of each of `commits`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when a commit is not in the repository; [`GitError::Unexpected`] and [`GitError::NotUtf8`]
+    /// for output that is not what git prints; [`GitError::Run`] and [`GitError::OutputTooLong`].
+    pub async fn commit_authors(&self, commits: &[CommitId]) -> Result<BTreeMap<CommitId, String>, GitError> {
+        if commits.is_empty() {
+            return Ok(BTreeMap::new());
+        }
+        let operation = GitOperation::Log;
+        let ids: Vec<String> = commits.iter().map(ToString::to_string).collect();
+        let mut args = vec![arg("log"), arg("--no-walk=unsorted"), arg("--format=%H%x00%an%x00")];
+        args.extend(ids.iter().map(|id| arg(id)));
+        args.push(arg("--"));
+        let captured = self.run_ok(operation, Reach::Local, &args).await?;
+        parse_authors(operation, whole(operation, &captured.stdout, self.limits)?)
     }
 
     /// The lines added between `base` and `head` to each of `paths`, with their numbers in the file at `head`. A file
@@ -453,6 +471,29 @@ fn parse_log(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitFacts>, 
         });
     }
     Ok(commits)
+}
+
+/// Reads the output of `git log --format=%H%x00%an%x00`: the ID and the author's name of each commit, each ended by a
+/// NUL, and a line break after the commit. A name that is not UTF-8 is read with its bad bytes replaced: it is shown to
+/// the human, who can still tell whose it is.
+fn parse_authors(operation: GitOperation, bytes: &[u8]) -> Result<BTreeMap<CommitId, String>, GitError> {
+    let mut fields: Vec<&[u8]> = bytes.split(|byte| *byte == 0).collect();
+    match fields.pop() {
+        Some(rest) if rest.iter().all(u8::is_ascii_whitespace) => {}
+        Some(rest) => return Err(unexpected(operation, rest)),
+        None => return Ok(BTreeMap::new()),
+    }
+    let mut authors = BTreeMap::new();
+    for record in fields.chunks(2) {
+        let &[id, name] = record else {
+            return Err(unexpected(operation, &record.concat()));
+        };
+        authors.insert(
+            commit_id(operation, &utf8(operation, id)?)?,
+            String::from_utf8_lossy(name).trim().to_owned(),
+        );
+    }
+    Ok(authors)
 }
 
 /// Reads the output of `git diff-tree -r -z --no-renames --raw --numstat`: the raw entries (`:modes ids status`, then the

@@ -442,10 +442,12 @@ Each is derived or lives elsewhere, so that there is one place for it:
   and TEST-FIX disclosure. Missing or empty text does not block a round. It is not part of `state.json`.
 - **The checks before a review** — `tasks/<lead>/checks.json`, the **checks record** of a team's lead, written by the daemon only:
   `{"items": {"<item id>": {"passes": N, "allowed": [<subject>, ...]}}, "asked": {...}, "sent": {...}}`. For each item the passes the
-  checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}` or `"no_tests"`). Three optional
+  checks sent its round back and what the human allowed (a subject is `{"path": "tests/a.rs"}`, `"no_tests"` or, since 0.54.0, a commit — see `refused`). Five optional
   keys, left out when empty and absent from a record an earlier daemon wrote (it loads, and its allowances hold as before):
+  `refused`, the subjects the human refused for the item, kept until it is closed (a subject can be `{"commit": {"commit": "<id>", "path": "tests/a.rs"}}`, a commit that took lines out of a frozen test, kept by the commit and the path; one in `allowed` is never revoked, because a commit never changes; a record without `refused` loads as it did);
   `human_only`, the subjects of `allowed` that the human allowed in answer to a question about the issues they alone may allow,
-  which does not cover an issue of the team's about the same file; `allowed_at`, a map from a file the human allowed to the head
+  which does not cover an issue of the team's about the same file; `covered_at`, a map from a file the human allowed or refused before commits had subjects to the head up to which that answer covers its commits (a commit added after it is asked on its own);
+  `allowed_at`, a map from a file the human allowed to the head
   the checks looked at then — the allowance ends when the round changes that file again, and the file is asked about again; and,
   beside `asked`, `basis` (`{"head": ..., "covers": "everything" | "human_part"}`), what the question waited on was put about: a
   question about the human's part alone, put while the team still has passes, leaves the count of passes as it is when answered.
