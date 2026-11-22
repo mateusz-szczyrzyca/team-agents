@@ -355,3 +355,16 @@ fn wait_line_formats_next_try_with_the_offset_of_that_minute_in_zone() {
         "prepare a second opinion #138, tried 1 time, next try 2026-11-21 01:07 +01:00"
     );
 }
+
+#[test]
+fn a_bus_that_cannot_list_the_requests_of_a_task_may_answer_at_a_later_try() {
+    let publish = crate::daemon::owner::rounds::PublishError::Bus {
+        task: "task-20261122-084934-hogq".parse().unwrap(),
+        source: agent_runtime::agentbus::AgentBusError::Killed {
+            command: agent_runtime::agentbus::BusCommand::HelperDump,
+            signal: 9,
+        },
+    };
+
+    assert_eq!(outlook_of(&publish), Outlook::MayPass);
+}

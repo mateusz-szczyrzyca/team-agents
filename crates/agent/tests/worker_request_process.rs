@@ -576,4 +576,34 @@ Integrate the guide.
         );
         assert_eq!(world.requests().len(), 1);
     }
+
+    #[test]
+    fn agent_status_of_a_task_shows_its_request_with_its_step_its_worker_and_its_state() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,done:Result: done."),
+        ]);
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(task(&tasks, "glm-1"), 1);
+        world.sleeps_on_the_bus("glm-1");
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+        eventually("the request to be done", || {
+            world
+                .requests()
+                .get("1")
+                .is_some_and(|request| request["status"] == "done")
+        });
+
+        let output = world.agent(&["status", member]);
+
+        let status = String::from_utf8(output.stdout).unwrap();
+        assert!(
+            status.contains("    request H1  step 1.1  worker glm-1  done"),
+            "{status}"
+        );
+    }
 }

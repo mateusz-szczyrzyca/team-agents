@@ -1,8 +1,10 @@
 //! Harness-owned description sections and the lead's editable contribution.
 
 use super::PullTextError;
+use agent_core::ids::AgentName;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::state::GateRecord;
+use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 
 /// The lead contribution lives in the task directory, outside the worktree.
@@ -13,7 +15,17 @@ pub(crate) const MAX_DESCRIPTION_BYTES: usize = 1 << 20;
 
 /// Removes harness-owned sections from the lead's contribution.
 pub(crate) fn lead_sections(text: &str) -> String {
-    without_sections(text, &["Size", "Gate", "Allowed beforehand", "Unpushed base", "Split"])
+    without_sections(
+        text,
+        &[
+            "Size",
+            "Gate",
+            "Allowed beforehand",
+            "Unpushed base",
+            "Split",
+            "Steps done by a worker",
+        ],
+    )
 }
 
 /// Excludes task permissions from marker justifications supplied by the lead or the remote description.
@@ -129,5 +141,40 @@ pub(crate) fn allowed_section(
     Ok(Some(texts.render(
         AutopilotPrompt::PrAllowedBeforehand,
         &Variables::new().with("paths", rows)?,
+    )?))
+}
+
+/// The section of the steps of the plans that workers did: each request of `requests` (a requester and the requests
+/// of its task, as the bus lists them) that is done and names a step and a worker. `None` when there is none.
+///
+/// # Errors
+/// [`PullTextError`] if template rendering or variable construction fails.
+pub(crate) fn worker_steps_section(
+    texts: &AutopilotPrompts,
+    requests: &[(AgentName, Vec<TaskRequest>)],
+) -> Result<Option<String>, PullTextError> {
+    let rows: Vec<String> = requests
+        .iter()
+        .flat_map(|(requester, of_task)| of_task.iter().map(move |request| (requester, request)))
+        .filter_map(|(requester, request)| match request.status {
+            DelegationStatus::Done => request.step.zip(request.worker.as_ref()).map(|(step, worker)| {
+                format!(
+                    "- step {step} of {requester}'s plan — done by {worker} ({})",
+                    request.id
+                )
+            }),
+            DelegationStatus::Queued
+            | DelegationStatus::Starting
+            | DelegationStatus::Running
+            | DelegationStatus::Failed
+            | DelegationStatus::Unclear => None,
+        })
+        .collect();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(texts.render(
+        AutopilotPrompt::PrWorkerSteps,
+        &Variables::new().with("steps", rows.join("\n"))?,
     )?))
 }

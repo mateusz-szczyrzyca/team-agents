@@ -2,6 +2,7 @@
 use super::*;
 use agent_core::config::Language;
 use agent_core::state::{GateOutcome, GateResult, GateTree};
+use agent_runtime::agentbus::DelegationStatus;
 use std::num::NonZeroI32;
 use std::path::Path;
 
@@ -126,4 +127,57 @@ async fn measured_sections_in_formats_gate_finished_time_in_the_daemon_zone() {
     let rendered = measured_sections_in(&texts, 42, &gate, None, east).unwrap();
 
     assert!(rendered.contains("Finished: 2026-11-19 10:30:00 +01:00."), "{rendered}");
+}
+
+/// A request of a task as the bus lists it.
+fn request(id: u64, step: Option<&str>, worker: Option<&str>, status: DelegationStatus) -> TaskRequest {
+    TaskRequest {
+        id: agent_runtime::agentbus::RequestId::new(std::num::NonZeroU64::new(id).unwrap()),
+        step: step.map(|step| step.parse().unwrap()),
+        worker: worker.map(|worker| worker.parse().unwrap()),
+        status,
+    }
+}
+
+#[tokio::test]
+async fn the_steps_a_worker_did_are_listed_by_the_harness_and_nothing_else_is() {
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let requests = [
+        (
+            "claude-1".parse().unwrap(),
+            vec![
+                request(3, Some("1.2"), Some("glm-1"), DelegationStatus::Done),
+                request(4, None, Some("glm-1"), DelegationStatus::Done),
+                request(5, Some("1.3"), Some("glm-2"), DelegationStatus::Failed),
+                request(6, Some("1.4"), Some("glm-2"), DelegationStatus::Running),
+            ],
+        ),
+        (
+            "inv-opus".parse().unwrap(),
+            vec![request(7, Some("2.1"), Some("glm-2"), DelegationStatus::Done)],
+        ),
+    ];
+
+    let section = worker_steps_section(&texts, &requests).unwrap();
+    let none = worker_steps_section(&texts, &[("claude-1".parse().unwrap(), vec![])]).unwrap();
+
+    assert_eq!(
+        section.as_deref(),
+        Some(
+            "## Steps done by a worker\n\n- step 1.2 of claude-1's plan — done by glm-1 (H3)\n- step 2.1 of inv-opus's plan — done by glm-2 (H7)\n"
+        )
+    );
+    assert_eq!(none, None);
+}
+
+#[test]
+fn the_lead_cannot_supply_the_steps_done_by_a_worker() {
+    let input = "## What and why\n\nWhy.\n\n## Steps done by a worker\n\n- step 9.9 — done by nobody\n";
+
+    assert_eq!(lead_sections(input), "## What and why\n\nWhy.");
 }

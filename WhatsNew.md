@@ -5,12 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.65.0 — 22.11.2026 — PR #182
+## 0.65.0 — 22.11.2026 — PR #183
 
 ### New features
-- [agent] [agent-core] [agent-runtime] A run of a role in `[plan] roles` that ends `STATUS: DONE` while a step it marked done fails its check (`mismatch`) now goes back to the same agent with the step, its check, the reason and up to 40 trailing lines of the check's output (counting against `[plan] bounces`, and combined in one send-back when an unfinished or lost step is present at the same time); after `[plan] bounces` send-backs you are asked once, in the task's questions file, whether to go on as it is or send it back once more.
-- [agent] [agent-core] A step whose check matches `[plan] check_refuse` (`agent gate`, `make gate`) stays `declared`, and the task's next run is told once in its prompt that the gate is never a step's check.
-- [agent] [agent-core] **Action:** the first run after this update may send a `STATUS: DONE` run back for a failed step check (up to `[plan] bounces`, default `3`); set `[plan] check_seconds = 0` in `agents.toml` to disable command checks, or `[plan] bounces = 0` to record plans and judgements without sending runs back.
+- [agent] [agent-core] [agentbus] The member, the coordinator and the solo agent, and an investigator through the bus, are told when to give a step to a worker and when not to: a step with one result, named files and a check a machine runs, never a decision, a design or a step a reviewer judges; a refused or failed request they do themselves.
+- [agent-core] A plan can mark a step for a worker with the line `By: worker` in its text; plans without it read as before.
+- [agent] [agent-runtime] [agentbus] `agent status <task>` lists the task's requests for workers under its plan, for example `request H3  step 1.2  worker glm-1  done`.
+- [agent] The description of a pull request gets a section of the harness, "Steps done by a worker", for example `- step 1.2 of claude-1's plan — done by glm-1 (H3)`.
 
 ## 0.64.0 — 22.11.2026 — PR #181
 

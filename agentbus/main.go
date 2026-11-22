@@ -1151,6 +1151,11 @@ func (s *Server) instructions() string {
 	if has["request_investigation"] {
 		text += " A hard problem can be handed to an investigator: request_investigation."
 	}
+	if has["delegate"] {
+		text += " A step with one result, named files and a check a machine runs can go to a worker: delegate it " +
+			"(for, files, check, do) — never a decision, a design or a step whose check is reviewer; do a refused " +
+			"or failed step yourself."
+	}
 	if has["notebook_read"] {
 		text += " Persistent repository knowledge: notebook_read."
 	}
@@ -1586,7 +1591,7 @@ func main() {
   agentbus lead    --listen TAILSCALE:PORT --node NAME [--dir D] [--allow DEVICE]... [--ttl 90s]   the lead's HTTP listener (agent lead)
   agentbus lead-answer [--dir D] --node N --task T --file F   queue an answer from stdin
   agentbus lead-kick   [--dir D] --node N --task T            queue a kick request
-  agentbus helper-list [--all] | helper-next|helper-set|helper-get|board-dump   (used by the agent script)
+  agentbus helper-list [--all] | helper-next|helper-set|helper-get|helper-dump|board-dump   (used by the agent script)
   agentbus checkpoint-get|cancel-pending|board-release-agent   (used by the agent script)`)
 		os.Exit(2)
 	}
@@ -1668,6 +1673,8 @@ func main() {
 		cmdHelperSet(os.Args[2:])
 	case "helper-get":
 		cmdHelperGet(os.Args[2:])
+	case "helper-dump":
+		cmdHelperDump(os.Args[2:])
 	case "helper-list":
 		cmdHelperList(os.Args[2:])
 	case "board-dump":

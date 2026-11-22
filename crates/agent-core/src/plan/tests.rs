@@ -871,3 +871,47 @@ fn a_check_read_alone_is_one_line() {
         Ok(Check::Command("cargo test".to_owned()))
     );
 }
+
+/// A plan with a step marked for a worker, one that is not, and one whose `By:` line is only a note.
+const MARKED: &str = "\
+Publish the guide.
+
+1. Draft
+[ ] 1.1 Count the headings of the guide
+    By: worker
+    Files: docs/guide.md
+    Check: test -s docs/count.txt
+[ ] 1.2 Write the walkthrough
+    Check: reviewer
+[ ] 1.3 Translate it
+    By: the lead, after the review
+";
+
+#[test]
+fn a_step_marked_by_worker_is_meant_for_a_worker_and_the_mark_is_written_back() {
+    let plan = parsed(MARKED);
+
+    assert_eq!(step(&plan, "1.1").doer(), Doer::Worker);
+    assert_eq!(step(&plan, "1.1").note(), "By: worker");
+    assert!(
+        plan.to_text()
+            .contains("[ ] 1.1 Count the headings of the guide\n    By: worker\n")
+    );
+    assert_eq!(parsed(&plan.to_text()), plan);
+}
+
+#[test]
+fn a_step_without_the_mark_or_with_another_by_line_is_done_by_its_holder() {
+    let plan = parsed(MARKED);
+
+    assert_eq!(step(&plan, "1.2").doer(), Doer::Holder);
+    assert_eq!(step(&plan, "1.3").doer(), Doer::Holder);
+    assert_eq!(step(&plan, "1.3").note(), "By: the lead, after the review");
+}
+
+#[test]
+fn a_plan_written_before_the_mark_reads_with_every_step_done_by_its_holder() {
+    let plan = parsed("Fix the typo.\n\n1. Fix\n[x] 1.1 Find it\n    Check: exists README.md\n[>] 1.2 Fix it\n");
+
+    assert!(plan.steps().all(|step| step.doer() == Doer::Holder));
+}
