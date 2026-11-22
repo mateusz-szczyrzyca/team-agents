@@ -162,7 +162,7 @@ mod history_process {
         }
 
         fn status(&self) -> String {
-            let output = self.agent(&["status"]);
+            let output = self.agent(&["status", "--task"]);
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             String::from_utf8(output.stdout).unwrap()
         }

@@ -191,7 +191,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         }
 
         fn status(&self) -> String {
-            let output = self.agent(&["status"]);
+            let output = self.agent(&["status", "--task"]);
             assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             String::from_utf8(output.stdout).unwrap()
         }
@@ -334,7 +334,13 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             "{}",
             stderr(&crowded)
         );
-        assert_eq!(world.status(), "no teams\n");
+        let version = env!("CARGO_PKG_VERSION");
+        assert_eq!(
+            world.status(),
+            format!(
+                "agent {version} · agent-core {version} · agent-runtime {version} · agent-web {version}\nno teams\n"
+            )
+        );
         assert!(
             !world.home.join("worktrees").exists()
                 || std::fs::read_dir(world.home.join("worktrees/example"))

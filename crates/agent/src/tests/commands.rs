@@ -74,7 +74,7 @@ async fn status_prints_the_teams_the_daemon_lists() {
         Command::Status(StatusArgs {
             target: None,
             running: false,
-            task: false,
+            task: true,
             investigators: false,
             json: false,
         }),
@@ -83,7 +83,12 @@ async fn status_prints_the_teams_the_daemon_lists() {
     .await;
 
     result.unwrap();
-    assert_eq!(String::from_utf8(out).unwrap(), crate::commands::status::render(&teams));
+    // The versions of this command come first; the daemon of this test tells none.
+    let versions = crate::commands::status::versions::block(&crate::versions::of_this_build(), None);
+    assert_eq!(
+        String::from_utf8(out).unwrap(),
+        format!("{versions}{}", crate::commands::status::render(&teams))
+    );
     assert_eq!(
         daemon.requests()[0].command,
         Request::Status(StatusRequest { target: None })

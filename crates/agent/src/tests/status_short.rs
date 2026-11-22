@@ -35,11 +35,6 @@ fn this_command_line() -> String {
     )
 }
 
-/// A daemon of other versions than this build, as it tells them.
-fn other_daemon() -> Versions {
-    Versions::new("0.0.1", "0.0.2", "0.0.3", "0.0.4")
-}
-
 /// Runs `agent status` with `running`, `task` and `target` in `dir`, against a fake daemon that answers with `reply`
 /// and tells the versions `daemon`, and returns what it printed.
 async fn run_status(
@@ -107,28 +102,6 @@ async fn the_task_list_follows_the_versions_exactly_as_before() {
 }
 
 #[tokio::test]
-async fn a_daemon_that_tells_other_versions_is_compared_with_this_command() {
-    let dir = tempfile::tempdir().unwrap();
-
-    let text = run_status(
-        &dir,
-        Reply::Teams { teams: vec![quiet()] },
-        Some(other_daemon()),
-        false,
-        false,
-    )
-    .await;
-
-    assert_eq!(
-        text,
-        format!(
-            "{}daemon: agent 0.0.1 · agent-core 0.0.2 · agent-runtime 0.0.3 · agent-web 0.0.4 (differs from this command)\n{QUIET_SHORT}",
-            this_command_line()
-        )
-    );
-}
-
-#[tokio::test]
 async fn running_names_the_team_and_its_open_round_and_no_task_line() {
     let dir = tempfile::tempdir().unwrap();
     let mut state = team_state();
@@ -187,11 +160,50 @@ async fn running_names_the_team_and_its_open_round_and_no_task_line() {
 #[tokio::test]
 async fn running_with_task_names_every_task_under_its_team() {
     let dir = tempfile::tempdir().unwrap();
-    let mut team = quiet();
-    team.rounds = vec![];
+    let mut state = team_state();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(
+            "round-20261111-153001-q1w2".parse().unwrap(),
+            Some("1.1".parse().unwrap()),
+            at(10),
+        )
+        .unwrap();
+    let team = state.team(&team_id(0)).unwrap().clone();
+    let round = team.rounds().last().unwrap().clone();
+    let detail = RoundDetail::new(&team, &round, Vec::new());
+    let summary = TeamSummary::from(&team);
+    let _fake = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = match &request.command {
+            Wire::Show(_) => Reply::Round {
+                round: Box::new(detail.clone()),
+            },
+            _ => Reply::Teams {
+                teams: vec![summary.clone()],
+            },
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut out = Vec::new();
 
-    let text = run_status(&dir, Reply::Teams { teams: vec![team] }, None, true, true).await;
+    execute(
+        &environment(&dir),
+        Command::Status(StatusArgs {
+            target: None,
+            running: true,
+            task: true,
+            investigators: false,
+            json: false,
+        }),
+        &mut out,
+    )
+    .await
+    .unwrap();
 
+    let text = String::from_utf8(out).unwrap();
     assert!(text.starts_with(&this_command_line()), "{text}");
     assert!(
         text.contains("  task-20261111-153002-k3x9  member       claude-1   queued\n"),

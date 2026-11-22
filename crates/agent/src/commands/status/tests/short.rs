@@ -103,7 +103,7 @@ fn every_question_that_waits_is_named_and_the_others_are_not() {
         text,
         format!(
             "{HEADER}\n  tasks: 2 with questions, 2 queued; questions number 2 wait for answers (claude-1, {member}); \
-             questions number 3 wait for answers (worker-1, {worker})\n",
+             questions number 3 wait for answers (glm-1, {worker})\n",
             member = task(2),
             worker = task(3),
         )
