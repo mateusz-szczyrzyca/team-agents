@@ -12,8 +12,8 @@ use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::plan::judge::{JudgementState, steps_to_judge_with};
-use agent_core::plan::{PLAN_FILE, Plan, PlanError, StepState, parse_plan};
+use agent_core::plan::judge::{CheckRun, JudgementState, check_run, steps_to_judge_with};
+use agent_core::plan::{PLAN_FILE, Plan, PlanError, Step, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
@@ -27,13 +27,15 @@ use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::history::{
     JudgementRecord, PlanRead as HistoryPlanRead, PlanRecord, ReadError, Reader, log_decision,
 };
-use agent_runtime::plan::check::{CheckContext, JudgementResult, execute_step_check};
+use agent_runtime::plan::check::{
+    CheckContext, CheckError, JudgementResult, execute_command_check, execute_step_check, recover_checks,
+};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
 
 use super::start::next_number;
-use super::{Located, Owner, OwnerError};
+use super::{FinishedRun, Located, Owner, OwnerError};
 use crate::daemon::settle::Settled;
 
 /// Why the plan of a task cannot be taken out of its branch.
@@ -219,11 +221,117 @@ pub(super) enum PlanHeld {
 }
 
 /// What the end of a run found of the plan: what the decision reads, and the text as the task wrote it.
-struct Found {
+pub(super) struct Found {
     /// What the decision reads.
     read: PlanRead,
     /// The text of a plan that parses, as written; `None` otherwise.
     text: Option<String>,
+}
+
+/// The judgement of the steps of a plan at the end of a run: either all known now, or waiting for the command checks.
+enum Judged {
+    /// Every step is judged: the latest judgement of each step.
+    Known(HashMap<ItemId, JudgementRecord>),
+    /// The steps that run no command are judged (`inline`); the command checks of the others (`commands`, by step with
+    /// the command) run in the background and the run waits for them.
+    Waiting {
+        /// The judgements that were made without a command.
+        inline: Vec<(ItemId, JudgementResult)>,
+        /// The run whose end the judgements belong to.
+        run: Option<RunId>,
+        /// The steps whose commands run, in the order of the plan, with their commands.
+        commands: Vec<(ItemId, String)>,
+    },
+}
+
+/// The decision on the plan of a run that waits for command checks: what the end of the run had to decide with.
+pub(super) struct PlanWait {
+    /// What the end of the run comes to without its plan.
+    pub(super) settled: Settled,
+    /// What the end found of the plan.
+    pub(super) found: Found,
+    /// The versions of the plan the history kept from runs before this one.
+    pub(super) earlier: Vec<Plan>,
+    /// The run whose end is judged.
+    pub(super) run: Option<RunId>,
+    /// The judgements made without a command.
+    pub(super) inline: Vec<(ItemId, JudgementResult)>,
+    /// The steps whose commands run in the background, in the order of the plan, with their commands.
+    pub(super) commands: Vec<(ItemId, String)>,
+}
+
+/// What the plan of a finished run leaves to do: the end of the run is settled now, or it waits for command checks.
+pub(super) enum PlanStep {
+    /// The run's end is settled with this status and plan outcome.
+    Done(Settled, PlanHeld),
+    /// The run's end waits for its command checks, which run in the background.
+    Waiting(Box<PlanWait>),
+}
+
+/// A finished run whose end waits for its command checks, held by the owner until the checks end.
+pub(super) struct Parked {
+    /// The task's facts, as the run ended.
+    pub(super) located: Located,
+    /// The run that ended.
+    pub(super) run: FinishedRun,
+    /// What the end of the run waits to decide with.
+    pub(super) wait: PlanWait,
+}
+
+/// What a command check batch runs: the commands of one run, with what each needs, owned so that it runs in the
+/// background. The batch runs them one after another.
+pub(super) struct CheckJob {
+    /// The task's worktree: where the commands run.
+    worktree: PathBuf,
+    /// The task's directory in the store: where the output and the record of the checks are kept.
+    task_dir: PathBuf,
+    /// The run whose end the checks judge.
+    run: Option<RunId>,
+    /// The time limit of each command, in seconds.
+    check_seconds: u64,
+    /// The prefixes of commands that are refused as checks.
+    refuse: Vec<String>,
+    /// The environment of each command.
+    envs: Vec<(String, String)>,
+    /// The steps to run, in the order of the plan, with their commands.
+    commands: Vec<(Step, String)>,
+}
+
+/// The results of a command check batch, one per command, in the order of the commands.
+pub(super) struct CheckBatch {
+    /// The result of each command, by its step.
+    results: Vec<(ItemId, Result<JudgementResult, CheckError>)>,
+}
+
+/// Runs the commands of `job` one after another, in the background, and returns their results.
+async fn run_command_checks(job: CheckJob) -> CheckBatch {
+    let mut results = Vec::with_capacity(job.commands.len());
+    for (step, command) in &job.commands {
+        let context = CheckContext {
+            worktree: &job.worktree,
+            task_dir: &job.task_dir,
+            run: job.run.as_ref(),
+            check_seconds: job.check_seconds,
+            check_refuse: &job.refuse,
+            envs: &job.envs,
+        };
+        let result = execute_command_check(&context, step, command).await;
+        results.push((step.id(), result));
+    }
+    CheckBatch { results }
+}
+
+/// A judgement of a step that failed, with the check it failed on, if any, and why.
+fn mismatch(check: Option<String>, reason: String) -> JudgementResult {
+    JudgementResult {
+        state: JudgementState::Mismatch,
+        check_line: check,
+        reason: Some(reason),
+        duration_ms: 0,
+        output_path: None,
+        tail: String::new(),
+        gate_refused: false,
+    }
 }
 
 /// What the human's answer to the question about a task's plan says.
@@ -336,19 +444,20 @@ impl Owner {
 }
 
 impl Owner {
-    /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, and a
-    /// run that reported `DONE` against its plan is sent back or the human asked, by [`decide_plan`].
-    /// `settled` is what the run's end comes to otherwise; the result is what it comes to now.
+    /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, its
+    /// command checks are started in the background, and a run that reported `DONE` against its plan is sent back or the
+    /// human asked, by [`decide_plan`]. `settled` is what the run's end comes to otherwise. The decision is
+    /// [`PlanStep::Waiting`] while command checks run: [`Owner::check_batch_done`] makes it when they have ended.
     ///
     /// # Errors
     /// [`OwnerError`] when the task is gone or has no questions number left.
-    pub(super) async fn plan_at_end(
+    pub(super) async fn plan_step_at_end(
         &mut self,
         task: &TaskId,
         located: &Located,
         end: &RunEnd,
         settled: Settled,
-    ) -> Result<(Settled, PlanHeld), OwnerError> {
+    ) -> Result<PlanStep, OwnerError> {
         let worktree = match self.worktree_of(task, located) {
             Ok(worktree) => worktree,
             Err(error) => {
@@ -358,7 +467,7 @@ impl Owner {
                     error = %error_chain(&error),
                     "the plan of the task cannot be looked for"
                 );
-                return Ok((settled, PlanHeld::No));
+                return Ok(PlanStep::Done(settled, PlanHeld::No));
             }
         };
         let found = read_plan(&worktree.as_path().join(PLAN_FILE)).await;
@@ -373,21 +482,76 @@ impl Owner {
             (Vec::new(), HashMap::new())
         };
         self.keep_plan(task, located, run.clone(), &found)?;
-        if let PlanRead::Parsed(plan) = &found.read {
-            let latest = self
+        if let PlanRead::Parsed(_) = &found.read {
+            let judged = self
                 .judge_steps_at_end(
                     task,
                     located,
                     run.as_ref(),
-                    plan,
+                    &found,
                     &worktree,
                     (earlier.last(), &earlier_by_run),
                 )
                 .await?;
-            self.refresh_task_plan(task, plan, &latest);
+            match judged {
+                Judged::Known(latest) => {
+                    if let PlanRead::Parsed(plan) = &found.read {
+                        self.refresh_task_plan(task, plan, &latest);
+                    }
+                }
+                Judged::Waiting { inline, run, commands } => {
+                    return Ok(PlanStep::Waiting(Box::new(PlanWait {
+                        settled,
+                        found,
+                        earlier,
+                        run,
+                        inline,
+                        commands,
+                    })));
+                }
+            }
         } else {
             self.invalidate_task_plan(task);
         }
+        let (settled, held) = self
+            .decide_at_end(task, located, end, &found, &earlier, settled)
+            .await?;
+        Ok(PlanStep::Done(settled, held))
+    }
+
+    /// What [`Owner::plan_step_at_end`] comes to for a caller that cannot wait for command checks: the status and the
+    /// plan outcome, with the run held (`PlanHeld::Yes`) while its checks run.
+    ///
+    /// # Errors
+    /// [`OwnerError`] as [`Owner::plan_step_at_end`].
+    #[cfg(test)]
+    pub(super) async fn plan_at_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        settled: Settled,
+    ) -> Result<(Settled, PlanHeld), OwnerError> {
+        match self.plan_step_at_end(task, located, end, settled).await? {
+            PlanStep::Done(settled, held) => Ok((settled, held)),
+            PlanStep::Waiting(wait) => Ok((wait.settled, PlanHeld::Yes)),
+        }
+    }
+
+    /// The decision on the plan of a run of `task` that ended with `end`, once its judgements are known: a run that
+    /// reported `DONE` against a plan that does not say so is sent back, and after the limit the human is asked.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone or has no questions number left.
+    async fn decide_at_end(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        found: &Found,
+        earlier: &[Plan],
+        settled: Settled,
+    ) -> Result<(Settled, PlanHeld), OwnerError> {
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -409,7 +573,7 @@ impl Owner {
                 role: located.role,
                 end,
                 read: &found.read,
-                earlier: &earlier,
+                earlier,
                 keeping: member.plan(),
                 policy: self.parts.settings.config.plan(),
             })
@@ -470,18 +634,22 @@ impl Owner {
         (plans, by_run)
     }
 
-    /// Executes and records the step checks of `plan` that are to be judged at the end of `run`.
+    /// Judges the steps of `found`'s plan that are to be judged at the end of `run`: the steps that run no command are
+    /// judged now and recorded; the command checks of the others start in the background, and the run waits for them.
     async fn judge_steps_at_end(
         &mut self,
         task: &TaskId,
         located: &Located,
         run: Option<&RunId>,
-        plan: &Plan,
+        found: &Found,
         worktree: &AbsolutePath,
         earlier: (Option<&Plan>, &HashMap<RunId, Plan>),
-    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+    ) -> Result<Judged, OwnerError> {
+        let PlanRead::Parsed(plan) = &found.read else {
+            return Ok(Judged::Known(HashMap::new()));
+        };
         let (earlier_plan, earlier_by_run) = earlier;
-        let mut previous = self.latest_judgements(task).await;
+        let previous = self.latest_judgements(task).await;
         let to_judge = steps_to_judge_with(
             plan,
             |id| {
@@ -499,6 +667,9 @@ impl Owner {
             },
             |id| previous.get(id).map(|j| j.state),
         );
+        let config = self.parts.settings.config.plan();
+        let check_seconds = config.check_seconds();
+        let refuse = config.check_refuse().to_vec();
         let task_dir = self.parts.store.home().task_dir(task);
         let context = CheckContext {
             worktree: worktree.as_path(),
@@ -508,25 +679,189 @@ impl Owner {
             check_refuse: &[],
             envs: &[],
         };
-        let mut records = Vec::new();
+        let mut inline = Vec::new();
+        let mut commands: Vec<(Step, String)> = Vec::new();
         for step in to_judge {
-            let result = match execute_step_check(&context, step).await {
-                Ok(res) => res,
-                Err(error) => JudgementResult {
-                    state: JudgementState::Mismatch,
-                    check_line: step.check().map(ToString::to_string),
-                    reason: Some(format!("cannot run check: {}", error_chain(&error))),
-                    duration_ms: 0,
-                    output_path: None,
-                    tail: String::new(),
-                    gate_refused: false,
-                },
-            };
-            let at = Timestamp::now(&self.parts.clock)?;
-            records.push(result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step.id()));
+            match check_run(step.check(), check_seconds, &refuse) {
+                CheckRun::Run(command) => commands.push((step.clone(), command.to_owned())),
+                CheckRun::Inline | CheckRun::Refused | CheckRun::Disabled => {
+                    let result = match execute_step_check(&context, step).await {
+                        Ok(result) => result,
+                        Err(error) => mismatch(
+                            step.check().map(ToString::to_string),
+                            format!("cannot run check: {}", error_chain(&error)),
+                        ),
+                    };
+                    inline.push((step.id(), result));
+                }
+            }
         }
+        if commands.is_empty() {
+            let records = self.records_of(task, located, run, inline)?;
+            return Ok(Judged::Known(self.record_judgements(task, records).await));
+        }
+        match self.check_environment(located) {
+            Ok(envs) => {
+                let ids = commands
+                    .iter()
+                    .map(|(step, command)| (step.id(), command.clone()))
+                    .collect();
+                self.start_command_checks(
+                    task,
+                    CheckJob {
+                        worktree: worktree.as_path().to_path_buf(),
+                        task_dir,
+                        run: run.cloned(),
+                        check_seconds,
+                        refuse,
+                        envs,
+                        commands,
+                    },
+                );
+                Ok(Judged::Waiting {
+                    inline,
+                    run: run.cloned(),
+                    commands: ids,
+                })
+            }
+            Err(reason) => {
+                for (step, command) in &commands {
+                    inline.push((
+                        step.id(),
+                        mismatch(
+                            Some(command.clone()),
+                            format!("cannot prepare the environment of the check: {reason}"),
+                        ),
+                    ));
+                }
+                let records = self.records_of(task, located, run, inline)?;
+                Ok(Judged::Known(self.record_judgements(task, records).await))
+            }
+        }
+    }
+
+    /// The environment command checks of the task of `located` run with: what a run of its agent gets from the daemon.
+    ///
+    /// # Errors
+    /// The reason the environment cannot be made: the agent's name, the daemon's executable, the `PATH` or the home.
+    fn check_environment(&self, located: &Located) -> Result<Vec<(String, String)>, String> {
+        let agent: AgentName = located
+            .agent
+            .parse()
+            .map_err(|error: InvalidName| error_chain(&error))?;
+        let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), &agent);
+        let binary_dir = crate::daemon::resolve_agent_binary_dir().map_err(|error| error_chain(&error))?;
+        agent_runtime::run::check_environment(
+            &self.parts.settings.secrets,
+            &binary_dir,
+            &self.parts.settings.config.binaries().agent_path,
+            self.parts.store.home().root(),
+            &identity,
+        )
+        .map_err(|error| error_chain(&error))
+    }
+
+    /// Starts the command checks of a run in the background: the owner goes on while they run, and their batch is
+    /// taken by [`Owner::check_batch_done`] when it ends.
+    fn start_command_checks(&mut self, task: &TaskId, job: CheckJob) {
+        let id = self.checks.spawn(run_command_checks(job)).id();
+        self.checking.insert(id, task.clone());
+    }
+
+    /// Takes the command checks of a run that ended: their results are recorded, and the run is ended with its plan's
+    /// decision, as if no check had waited.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the batch belongs to no task that waits, or the run cannot be ended.
+    pub(super) async fn check_batch_done(
+        &mut self,
+        joined: Result<(tokio::task::Id, CheckBatch), tokio::task::JoinError>,
+    ) -> Result<(), OwnerError> {
+        let (id, outcome) = match joined {
+            Ok((id, batch)) => (id, Ok(batch)),
+            Err(error) => (error.id(), Err(error)),
+        };
+        let task = self.checking.remove(&id).ok_or(OwnerError::UnknownCheck { id })?;
+        let parked = self
+            .parked
+            .remove(&task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let PlanWait {
+            settled,
+            found,
+            earlier,
+            run,
+            inline,
+            commands,
+        } = parked.wait;
+        let mut results = inline;
+        match outcome {
+            Ok(batch) => {
+                for ((step, command), (_id, result)) in commands.iter().zip(batch.results) {
+                    let judged = match result {
+                        Ok(result) => result,
+                        Err(error) => mismatch(
+                            Some(command.clone()),
+                            format!("cannot run check: {}", error_chain(&error)),
+                        ),
+                    };
+                    results.push((*step, judged));
+                }
+            }
+            Err(error) => {
+                // The batch ended without its results: every command of it is a mismatch, with the reason.
+                for (step, command) in &commands {
+                    let reason = format!("the check did not finish: {}", error_chain(&error));
+                    results.push((*step, mismatch(Some(command.clone()), reason)));
+                }
+            }
+        }
+        let run_id = run;
+        let records = self.records_of(&task, &parked.located, run_id.as_ref(), results)?;
+        let latest = self.record_judgements(&task, records).await;
+        if let PlanRead::Parsed(plan) = &found.read {
+            self.refresh_task_plan(&task, plan, &latest);
+        }
+        let (settled, held) = self
+            .decide_at_end(
+                &task,
+                &parked.located,
+                &parked.run.classified.end,
+                &found,
+                &earlier,
+                settled,
+            )
+            .await?;
+        self.finish(&task, parked.located, parked.run, settled, held).await
+    }
+
+    /// The judgement records of `results` of a run of `task`, stamped now.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the clock cannot give the time.
+    fn records_of(
+        &self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        results: Vec<(ItemId, JudgementResult)>,
+    ) -> Result<Vec<JudgementRecord>, OwnerError> {
+        let at = Timestamp::now(&self.parts.clock)?;
+        Ok(results
+            .into_iter()
+            .map(|(step, result)| result.into_record(task.clone(), located.team.clone(), run.cloned(), at, step))
+            .collect())
+    }
+
+    /// Keeps `records` in the history and returns the latest judgement of every step of `task`, as known now.
+    async fn record_judgements(
+        &mut self,
+        task: &TaskId,
+        records: Vec<JudgementRecord>,
+    ) -> HashMap<ItemId, JudgementRecord> {
+        let mut latest = self.latest_judgements(task).await;
         for record in &records {
-            previous.insert(record.step, record.clone());
+            latest.insert(record.step, record.clone());
         }
         if !records.is_empty() && self.history.is_writing() {
             match self.history.persist_judgements(records).await {
@@ -542,7 +877,60 @@ impl Owner {
                 }
             }
         }
-        Ok(previous)
+        latest
+    }
+
+    /// Ends the command checks still running when the daemon stops: each is aborted, and the process group it started is
+    /// ended from its record, so that no check outlives the daemon.
+    pub(super) async fn stop_checks(&mut self) {
+        self.checks.abort_all();
+        while let Some(joined) = self.checks.join_next_with_id().await {
+            if let Err(error) = joined
+                && !error.is_cancelled()
+            {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    error = %error_chain(&error),
+                    "a command check ended with an error when the daemon stopped"
+                );
+            }
+        }
+        for (_id, task) in self.checking.drain() {
+            let task_dir = self.parts.store.home().task_dir(&task);
+            if let Err(error) = recover_checks(&task_dir) {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the process of a command check could not be ended when the daemon stopped"
+                );
+            }
+        }
+        self.parked.clear();
+    }
+
+    /// Ends the command checks that a daemon which died left running, from their records, before any run is looked at.
+    /// Each ended check is reported; a record that cannot be used is reported too, and the daemon starts anyway.
+    pub(super) fn end_leftover_checks(&self) {
+        let Ok(entries) = std::fs::read_dir(self.parts.store.home().tasks_dir()) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let Ok(name) = entry.file_name().into_string() else {
+                continue;
+            };
+            let Ok(task) = TaskId::from_str(&name) else {
+                continue;
+            };
+            if let Err(error) = recover_checks(&self.parts.store.home().task_dir(&task)) {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "a command check left by a dead daemon could not be ended"
+                );
+            }
+        }
     }
 
     /// The latest judgements of steps of `task` kept in history, keyed by step ID.

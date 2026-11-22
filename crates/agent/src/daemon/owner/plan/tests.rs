@@ -982,3 +982,104 @@ async fn a_command_check_is_declared_when_check_seconds_is_zero() {
         agent_core::plan::judge::JudgementState::Declared
     );
 }
+
+/// The process group ID a command check of task 1 wrote to its record while it runs, once it is written.
+async fn running_check_group(daemon: &Daemon) -> u32 {
+    let record = daemon.home.task_dir(&task(1)).join("checks").join("running");
+    loop {
+        if let Ok(text) = std::fs::read_to_string(&record)
+            && let Ok(pid) = text.trim().parse::<u32>()
+        {
+            return pid;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
+/// Whether a process with `pid` is still running (a zombie has ended).
+fn process_runs(pid: u32) -> bool {
+    std::fs::read_to_string(format!("/proc/{pid}/stat")).is_ok_and(|stat| {
+        let state = stat
+            .rsplit(')')
+            .next()
+            .and_then(|rest| rest.trim_start().chars().next());
+        !matches!(state, None | Some('Z' | 'X'))
+    })
+}
+
+#[tokio::test]
+async fn the_daemon_answers_while_a_command_check_runs() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'sleep 5'\n"),
+    )
+    .await;
+
+    let _group = running_check_group(&daemon).await;
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(4),
+        daemon.ask(agent_core::protocol::Command::Status(
+            agent_core::protocol::StatusRequest { target: None },
+        )),
+    )
+    .await;
+    assert!(answered.is_ok(), "the status request is answered while the check runs");
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn stopping_the_daemon_ends_the_process_of_a_running_command_check() {
+    let mut daemon = running_with_plan(
+        &solo_state(),
+        0,
+        Some("Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: /bin/sh -c 'sleep 300'\n"),
+    )
+    .await;
+
+    let group = running_check_group(&daemon).await;
+    daemon.stop().await.unwrap();
+
+    assert!(
+        !process_runs(group),
+        "the process group {group} of the check outlives the daemon"
+    );
+    assert!(!daemon.home.task_dir(&task(1)).join("checks").join("running").exists());
+}
+
+#[tokio::test]
+async fn a_daemon_that_starts_ends_the_check_a_dead_daemon_left_running() {
+    use std::os::unix::process::CommandExt;
+
+    let mut daemon = with_bounces(&solo_state(), 0);
+    let checks = daemon.home.task_dir(&task(1)).join("checks");
+    std::fs::create_dir_all(&checks).unwrap();
+    let mut left = std::process::Command::new("sleep")
+        .arg("300")
+        .process_group(0)
+        .spawn()
+        .unwrap();
+    std::fs::write(checks.join("running"), format!("{}\n", left.id())).unwrap();
+
+    daemon.start().await;
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while process_runs(left.id()) && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let ended = !process_runs(left.id());
+    left.wait().unwrap();
+    daemon.stop().await.unwrap();
+
+    assert!(
+        ended,
+        "the check a dead daemon left running is ended when the daemon starts"
+    );
+    assert!(!checks.join("running").exists());
+}

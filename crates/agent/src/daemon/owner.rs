@@ -271,6 +271,12 @@ pub(crate) enum OwnerError {
         /// The task's ID in the runtime.
         id: JoinId,
     },
+    /// A batch of command checks ended that the owner did not start.
+    #[error("the command check task {id} is not one the owner started")]
+    UnknownCheck {
+        /// The task's ID in the runtime.
+        id: tokio::task::Id,
+    },
     /// A name in the state is not an agent name.
     #[error("a name in the state is not an agent name")]
     Name(#[from] InvalidName),
@@ -509,6 +515,12 @@ pub(super) struct Owner {
     was_min_space: bool,
     /// Cached plan summaries of tasks, refreshed when a run ends.
     task_plans: HashMap<TaskId, Vec<PlanStepSummary>>,
+    /// The command checks of finished runs that run in the background, one batch per run.
+    checks: JoinSet<plan::CheckBatch>,
+    /// The task whose run each batch of command checks judges, by the batch's task ID in the runtime.
+    checking: HashMap<tokio::task::Id, TaskId>,
+    /// The finished runs whose end waits for their command checks, by task: each is finished when its batch ends.
+    parked: HashMap<TaskId, plan::Parked>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -569,6 +581,9 @@ impl Owner {
             pending_removals: disk::PendingRemovals::default(),
             was_min_space: false,
             task_plans: HashMap::new(),
+            checks: JoinSet::new(),
+            checking: HashMap::new(),
+            parked: HashMap::new(),
         }
     }
 
@@ -626,12 +641,14 @@ impl Owner {
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
+                Some(joined) = self.checks.join_next_with_id() => self.check_batch_done(joined).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
                 }
             }
         }
+        self.stop_checks().await;
         let stopped = self.stop_runs().await;
         // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
         // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
@@ -655,6 +672,8 @@ impl Owner {
 
     /// Ends the runs a restart left going and finds the pauses to wake.
     async fn recover(&mut self) -> Result<(), OwnerError> {
+        // A command check a dead daemon left running is ended before any run is looked at: nothing runs without its daemon.
+        self.end_leftover_checks();
         let now = Timestamp::now(&self.parts.clock)?;
         let recovery = recover(&mut self.parts.state, now, self.parts.settings.config.limits())?;
         for (at, task) in recovery.wakes {
@@ -1133,13 +1152,11 @@ impl Owner {
         Ok(())
     }
 
-    /// A run that went to its end: its task goes where the end says.
+    /// A run that went to its end: its task goes where the end says. The end waits for the command checks of the plan
+    /// when there are some: the run is then parked, and [`Owner::check_batch_done`] finishes it.
     async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         self.keep_plan_out_of_delivery(task, &located).await;
-        let now = Timestamp::now(&self.parts.clock)?;
-        let mut events = Vec::new();
-        let settle_span = self.settle_span_of(task, &located.team);
         self.attach_session(task, run.session.clone())?;
         self.remember_fix_message(&located, run.final_message.as_deref())?;
         let settled = settle(
@@ -1152,8 +1169,41 @@ impl Owner {
         let settled = self.reviewer_waits(located.role, &located.team, settled);
         let (settled, held) = match self.split_at_end(task, &located, run.final_message.as_deref()).await? {
             Some(settled) => (settled, plan::PlanHeld::Yes),
-            None => self.plan_at_end(task, &located, &run.classified.end, settled).await?,
+            None => match self
+                .plan_step_at_end(task, &located, &run.classified.end, settled)
+                .await?
+            {
+                plan::PlanStep::Done(settled, held) => (settled, held),
+                plan::PlanStep::Waiting(wait) => {
+                    // The command checks run in the background: the owner goes on, and the run ends when they have.
+                    self.parked.insert(
+                        task.clone(),
+                        plan::Parked {
+                            located,
+                            run,
+                            wait: *wait,
+                        },
+                    );
+                    return Ok(());
+                }
+            },
         };
+        self.finish(task, located, run, settled, held).await
+    }
+
+    /// Ends a run of `task` that went to its end, with what its end and its plan decided: the status of the task, the
+    /// commit of its state and the report of the end.
+    async fn finish(
+        &mut self,
+        task: &TaskId,
+        located: Located,
+        run: FinishedRun,
+        settled: Settled,
+        held: plan::PlanHeld,
+    ) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let mut events = Vec::new();
+        let settle_span = self.settle_span_of(task, &located.team);
         {
             let _entered = settle_span.enter();
             log_decision(
