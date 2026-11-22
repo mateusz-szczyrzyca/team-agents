@@ -239,7 +239,7 @@ pub(crate) enum PlanJudgementsError {
         task: TaskId,
         /// The underlying history reader failure.
         #[source]
-        source: ReadError,
+        source: Box<ReadError>,
     },
     /// Joining the blocking history reader task failed.
     #[error("cannot join step judgements reader task for {task}")]
@@ -1338,7 +1338,7 @@ impl Owner {
             Ok(Err(source)) => {
                 let error = PlanJudgementsError::Read {
                     task: task.clone(),
-                    source,
+                    source: Box::new(source),
                 };
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
