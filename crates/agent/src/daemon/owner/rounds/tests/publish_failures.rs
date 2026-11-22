@@ -202,11 +202,11 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     // Remove the blocking hook so push can succeed:
     std::fs::remove_file(&hook).unwrap();
 
-    // Restart daemon:
-    rig.start().await;
-
     // Allow merge:
     rig.github.answer_merges(MergeAnswer::Allow);
+
+    // Restart daemon:
+    rig.start().await;
 
     // Wait until part 1.1a PR merges and advances:
     let state = rig
@@ -224,6 +224,132 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     assert_eq!(team.splits().len(), 1, "split part PR should complete and merge");
     let pr = team.rounds()[0].part_pull_request().unwrap();
     assert_eq!(pr.number.get().get(), 1);
+    let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
+    assert_eq!(
+        remote_head, gated_commit,
+        "remote PR branch must carry the exact gated commit hash"
+    );
+}
+
+#[tokio::test]
+async fn split_part_non_conflict_refusal_stays_held_without_bypassing_refusal() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,work"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge with 403 (non-conflict):
+    rig.github.answer_merges(MergeAnswer::Refuse(403));
+
+    // Wait until refusal is recorded; it must NOT start a merge conflict pass:
+    let state = rig
+        .state_where("non-conflict refusal is held", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            matches!(item.phase(), ItemPhase::Approved { .. }) && item.merge_conflict().is_none()
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.merge_passes(), 0, "non-conflict refusal spends no conflict passes");
+    assert!(
+        item.merge_conflict().is_none(),
+        "non-conflict refusal must not enter merge conflict pass"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_with_open_human_question_stays_held_without_bypassing_question() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,work"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge for conflict with limit 0 (asks human directly):
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+
+    // Wait until conflict is in AskingHuman:
+    let state = rig
+        .state_where("conflict asks human", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            matches!(
+                item.merge_conflict(),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. })
+            )
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "item must be in AskingHuman phase"
+    );
+
+    // Verify round stays held and does not merge prematurely:
+    rig.stop().await.unwrap();
 }
 
 #[tokio::test]
