@@ -1265,6 +1265,21 @@ socket. One owner, no file races (CON-3).
   count outside the team warns that reviewer rotation may be unavailable, but the team starts. "Changes requested" goes back
   to the team at most 5 times; after that the human is asked.
 
+## A request to a worker of a run that keeps a plan
+
+`agentbus` has no plan reader and reads no worktree. A run whose role is in `[plan] roles` is started with
+`agentbus serve --plan <worktree>/.agent/plan.md` (the daemon's MCP configuration adds it; `start::keeps_plan` decides
+by the run's role, so an investigator that coordinates or is a member keeps its plan, and a worker, a reviewer or an
+investigator answering an investigation request has none), and `delegate` then asks the harness's hidden
+`agent _delegation-check --plan … --for … --files … --check … --do …` at the moment of the request — the plan is read
+then, because the requester edits it during a run. The command reads the plan with `agent_core::plan::parse_plan`, the
+paths with `RepoPath`, the check with `Check`'s rules and `[plan] check_refuse` of the home, and answers `ACCEPTED` with
+the step and the request's own `Request files:`, `Request check:` and `Do:`, `REFUSED <KEYWORD>` with a line that says
+what to add, or `NO-PLAN` for an agent without a plan (the old form, for look-ups). The bus maps each keyword to its own
+`delegate` cause (`MissingFor`, `NoSuchStep`, `StepClosed`, `MissingFiles`, `PathOutside`, `MissingCheck`,
+`CheckRefused`, `MissingDo`, `PlanUnreadable`) and a harness that cannot answer to `CheckFailed`; a refused request
+queues nothing and starts no worker, and the accepted text is what the worker's prompt holds.
+
 ## Plan-step judgements
 
 `agent-core::plan::judge` selects done steps that need judgement and defines `confirmed`, `declared` and `mismatch`.
