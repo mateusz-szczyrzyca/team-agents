@@ -14,6 +14,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-runtime] A daemon that stops while a worker's result is being settled goes on from the stage it reached: the check runs once and a commit is brought over once. The stage is kept in `tasks/<worker task>/worker-request-<n>.json`.
 
 ### Bug fixes
+- [agent] [agent-runtime] Only what the worker committed since its request is brought over, not the commits its branch already had from earlier requests.
+- [agent] A result the daemon cannot judge (the starting commit or the worker's files cannot be read, a requested file was left uncommitted) is returned to the requester and never brought over.
+- [agent] A long check no longer stops the daemon from serving other tasks: it runs in the background.
+- [agent] A damaged or unreadable request file, a request the bus no longer knows, or a failed write of a stage no longer stops the daemon or the requests beside it; an answer the bus cannot take now is tried again at the next look.
 - [agent] A result of a worker for a request that names files and a check is no longer given to the requester unchecked as `done`; a worker that commits nothing for such a request has its step returned.
 
 ### Configuration

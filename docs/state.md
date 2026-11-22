@@ -462,7 +462,8 @@ Each is derived or lives elsewhere, so that there is one place for it:
   files outside the request's `files` and what the check found; `settled` adds what became of the result (`report`, `brought`
   with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons). The daemon removes the
   file when the requester is told. A daemon that starts finds the files of the team's workers and goes on from their
-  stages; an unknown field is refused. A task directory without such files reads as before.
+  stages; an unknown field is refused, and the file that is refused, or damaged, is logged once and left as it is while the
+  other files are read. `base` is the commit the worker's worktree was at when the request was given to it. A task directory without such files reads as before.
 - **Lead contribution to the PR description** — optional `tasks/<lead>/description.md`, outside the repository,
   read as UTF-8 with a 1 MiB limit. The harness combines it with its own header, measured Size, recorded Gate
   and TEST-FIX disclosure. Missing or empty text does not block a round. It is not part of `state.json`.

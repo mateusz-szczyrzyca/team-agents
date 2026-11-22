@@ -927,13 +927,18 @@ the old form, and its result goes to the requester as before. When a worker's ru
 request's check in the worker's worktree (a command, with `[plan] check_seconds` as its limit, or `exists PATH`; never the
 repository's gate), decides what the result is worth, and only when it is good brings the worker's commit to the requester's
 branch: it takes a snapshot of the requester's worktree first, and the requester's uncommitted and untracked files are left
-as they were. A commit that conflicts, or one that would write over a file the requester changed or has, is not applied:
-the requester is told, with the files. A result that is wrong — the check failed or ran past its limit, the worker changed a
-file the request did not name, it committed nothing, or its run lasted past `[workers] seconds` — is returned to the
-requester with the reasons, and the request is answered as `failed`. A good result is told to the requester with the step,
+as they were. The commit that is brought over is what the worker committed since its request was given to it, not
+everything its branch holds. A commit that conflicts, or one that would write over a file the requester changed or has, is
+not applied: the requester is told, with the files. A result that is wrong — the check failed or ran past its limit, the worker changed a
+file the request did not name, it left a file the request names uncommitted, it committed nothing, its run lasted past
+`[workers] seconds`, or the daemon cannot read what it left (the commit the worker started from, its commits) — is returned
+to the requester with the reasons, and the request is answered as `failed`; what cannot be judged is never brought over. The
+check runs beside the daemon, which goes on with the other tasks meanwhile. A good result is told to the requester with the step,
 the commit, the files and the end of the check's output, and the step is recorded `confirmed` in the history with the
 worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.json` before the next starts, so that a
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
+A file that cannot be read or written is logged and left alone (it does not stop the daemon or the requests beside it); a
+request the bus no longer has has its file removed.
 A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
 returned steps, come with the next version.
 
