@@ -8,6 +8,8 @@ use std::num::NonZeroU32;
 use crate::config::Limits;
 use crate::ids::{AgentName, TaskId, TeamId};
 use crate::kinds::Tier;
+use crate::state::Team;
+use crate::status::TaskStatus;
 
 #[cfg(test)]
 mod tests;
@@ -25,16 +27,21 @@ impl RunLimit {
     /// The limit a configured number of runs means: `0` is no limit, any other number is the most runs.
     #[must_use]
     pub const fn of(configured: u32) -> Self {
-        let _ = configured;
-        Self::Unlimited
+        match NonZeroU32::new(configured) {
+            Some(most) => Self::AtMost(most),
+            None => Self::Unlimited,
+        }
     }
 }
 
 /// The limit of runs that applies to an agent of `tier`: `runs_per_worker` for a worker, `runs_per_agent` for the others.
 #[must_use]
 pub const fn limit_for(limits: &Limits, tier: Tier) -> RunLimit {
-    let _ = (limits, tier);
-    RunLimit::Unlimited
+    let configured = match tier {
+        Tier::Worker => limits.runs_per_worker,
+        Tier::Normal | Tier::Investigator => limits.runs_per_agent,
+    };
+    RunLimit::of(configured)
 }
 
 /// A run that goes: the agent that works in it, its team and its task.
@@ -51,7 +58,40 @@ pub struct Going {
 /// The first run of `going` that `agent` holds at `limit`: the agent has no run of its own to wait for when `None`.
 #[must_use]
 pub fn busy_run<'a>(agent: &AgentName, limit: RunLimit, going: &'a [Going]) -> Option<&'a Going> {
-    let _ = (agent, limit, going);
+    let RunLimit::AtMost(most) = limit else {
+        return None;
+    };
+    // The runs of `agent` are counted in order: the limit is reached at the run that makes the count `most`, and the
+    // first run of the agent is the one a waiting task is told about.
+    let mut seen: u32 = 0;
+    let mut first = None;
+    for run in going.iter().filter(|run| run.agent == *agent) {
+        seen = seen.saturating_add(1);
+        first.get_or_insert(run);
+        if seen >= most.get() {
+            return first;
+        }
+    }
     None
+}
+
+/// The runs that go over `teams`: every member whose task runs, of the crew and of the reviewers of each team, in the
+/// order of the teams and of their members.
+#[must_use]
+pub fn runs_going(teams: &[Team]) -> Vec<Going> {
+    teams
+        .iter()
+        .flat_map(|team| {
+            let crew = team.crew().roster().into_iter().map(|(_, member)| member);
+            crew.chain(team.reviewers().iter())
+                .filter(|member| member.status() == TaskStatus::Running)
+                .map(|member| Going {
+                    agent: member.agent().agent_name(),
+                    team: team.id().clone(),
+                    task: member.task().clone(),
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect()
 }
 
