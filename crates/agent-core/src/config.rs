@@ -1596,11 +1596,11 @@ cli = "claude"
     #[test]
     fn workers_tries_may_be_one_and_refuse_zero_or_a_fraction() {
         assert_eq!(config("[workers]\ntries = 1\n").workers().tries(), 1);
-        for text in [
-            "[workers]\ntries = 0\n",
-            "[workers]\ntries = 1.5\n",
-            "[workers]\nseconds = -1\n",
-        ] {
+        assert!(matches!(
+            failure("[workers]\ntries = 0\n"),
+            ConfigError::WorkersTriesZero
+        ));
+        for text in ["[workers]\ntries = 1.5\n", "[workers]\nseconds = -1\n"] {
             let error = failure(text);
 
             assert!(matches!(&error, ConfigError::Parse(_)), "{text}: {error:?}");
