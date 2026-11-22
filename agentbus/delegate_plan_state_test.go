@@ -25,6 +25,18 @@ func TestHelperStateBeforePlanStepLoads(t *testing.T) {
 	})
 }
 
+func TestServeTakesThePlanOfTheRun(t *testing.T) {
+	// serve is started by the daemon with the plan file of a run of a role that keeps a plan.
+	fs := newFlagSet("serve")
+	plan := fs.String("plan", "", "the path of the requester's plan file")
+	if err := fs.Parse([]string{"--plan", "/w/.agent/plan.md"}); err != nil {
+		t.Fatal(err)
+	}
+	if *plan != "/w/.agent/plan.md" {
+		t.Fatalf("serve should take --plan, got %q", *plan)
+	}
+}
+
 func TestHelperNextCarriesTheStepOfARequest(t *testing.T) {
 	b := newBus(t)
 	n := server(b, "n1")
