@@ -15,6 +15,7 @@ mod gate;
 mod history;
 mod last_step;
 mod plan;
+mod returned;
 mod round_state;
 mod rounds;
 mod snapshots;
@@ -166,6 +167,14 @@ pub(crate) enum OwnerError {
         item: agent_core::ids::ItemId,
         /// What the state refused.
         source: agent_core::state::NotWorkedOn,
+    },
+    /// The state refuses a rejection of an item by its lead.
+    #[error("the rejection of item {item} cannot be recorded")]
+    Rejection {
+        /// The item.
+        item: agent_core::ids::ItemId,
+        /// What the state refused.
+        source: agent_core::state::RejectionError,
     },
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
@@ -878,6 +887,8 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        // A member that is started again for items its lead returned makes those returns rejections.
+        self.confirm_returns(task, now)?;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
         // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
@@ -1248,6 +1259,14 @@ impl Owner {
             && let Some(message) = message
         {
             self.read_delivery_claim(task, &located.team, message).await?;
+        }
+        if located.role == Role::Coordinator
+            && let RunEnd::Reported {
+                outcome: outcome @ (RunOutcome::Sleeping | RunOutcome::Done),
+            } = end
+            && let Some(message) = message
+        {
+            self.read_returns(task, located, *outcome, message).await?;
         }
         if located.role == Role::Reviewer
             && held == plan::PlanHeld::No

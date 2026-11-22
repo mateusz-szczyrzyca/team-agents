@@ -233,9 +233,11 @@ impl Facts {
         held: Held,
         answered: Answered,
         runs: &[crate::state::Run],
-        _lead_started_at: crate::state::Timestamp,
+        lead_started_at: crate::state::Timestamp,
     ) -> Self {
-        Self::from_runs(held, answered, runs)
+        let before = runs.partition_point(|run| run.started_at() < lead_started_at);
+        // `partition_point` never passes the end, so the prefix is always there; the whole list is the harmless fallback.
+        Self::from_runs(held, answered, runs.get(..before).unwrap_or(runs))
     }
 
     /// The same facts with the lead's end `lead`.
@@ -288,8 +290,9 @@ pub fn run_number(position: usize) -> NonZeroU32 {
 /// The number of the member's last run when it started at `at` or later: the member was started again since the lead's
 /// run began; `None` when no run of it did.
 #[must_use]
-pub fn run_started_since(_runs: &[crate::state::Run], _at: crate::state::Timestamp) -> Option<NonZeroU32> {
-    None
+pub fn run_started_since(runs: &[crate::state::Run], at: crate::state::Timestamp) -> Option<NonZeroU32> {
+    let before = runs.partition_point(|run| run.started_at() < at);
+    (before < runs.len()).then(|| run_number(runs.len()))
 }
 
 /// What a return of `line` counts.
