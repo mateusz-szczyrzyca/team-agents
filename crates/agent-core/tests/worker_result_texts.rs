@@ -31,7 +31,7 @@ mod worker_result_texts {
     /// The text of `id` rendered with `pairs`.
     fn rendered(id: TeamPrompt, pairs: &[(&str, &str)]) -> String {
         let spec = id.spec();
-        let values = pairs.iter().fold(Variables::new(), |values, (name, value)| {
+        let values = pairs.iter().fold(Variables::new(), |values, &(name, value)| {
             values.with(name, value).unwrap()
         });
         spec.render(&read_prompt(spec.path()), &values).unwrap()
