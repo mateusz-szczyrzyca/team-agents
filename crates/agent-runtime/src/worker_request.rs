@@ -156,6 +156,7 @@ pub enum Settlement {
 }
 
 /// The file of `request` in the task directory `task_dir`.
+#[must_use]
 pub fn pending_path(task_dir: &Path, request: RequestId) -> PathBuf {
     task_dir.join(format!("{FILE_PREFIX}{}.json", request.number()))
 }
@@ -165,8 +166,16 @@ pub fn pending_path(task_dir: &Path, request: RequestId) -> PathBuf {
 /// # Errors
 /// [`PendingError`].
 pub fn write_pending(task_dir: &Path, pending: &Pending) -> Result<(), PendingError> {
-    let _ = (task_dir, pending);
-    Ok(())
+    let path = pending_path(task_dir, pending.request);
+    let text = serde_json::to_string_pretty(pending).map_err(PendingError::Encode)?;
+    let temporary = path.with_extension("json.tmp");
+    // The file is small and written from the owner's single task, outside the run engine: a blocking write is the
+    // simplest that is also atomic.
+    std::fs::write(&temporary, text).map_err(|source| PendingError::Write {
+        path: temporary.clone(),
+        source,
+    })?;
+    std::fs::rename(&temporary, &path).map_err(|source| PendingError::Write { path, source })
 }
 
 /// The requests kept in the task directory `task_dir`, oldest first.
@@ -174,8 +183,48 @@ pub fn write_pending(task_dir: &Path, pending: &Pending) -> Result<(), PendingEr
 /// # Errors
 /// [`PendingError`].
 pub async fn read_pending(task_dir: &Path) -> Result<Vec<Pending>, PendingError> {
-    let _ = task_dir;
-    Ok(Vec::new())
+    let mut entries = match tokio::fs::read_dir(task_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(PendingError::List {
+                path: task_dir.to_owned(),
+                source,
+            });
+        }
+    };
+    let mut found = Vec::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(source) => {
+                return Err(PendingError::List {
+                    path: task_dir.to_owned(),
+                    source,
+                });
+            }
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if !name.starts_with(FILE_PREFIX) || Path::new(name).extension().is_none_or(|extension| extension != "json") {
+            continue;
+        }
+        let path = entry.path();
+        let text = tokio::fs::read_to_string(&path)
+            .await
+            .map_err(|source| PendingError::Read {
+                path: path.clone(),
+                source,
+            })?;
+        let pending: Pending = serde_json::from_str(&text).map_err(|source| PendingError::Parse {
+            path: path.clone(),
+            source,
+        })?;
+        found.push(pending);
+    }
+    found.sort_by_key(|pending| pending.request);
+    Ok(found)
 }
 
 #[cfg(test)]
