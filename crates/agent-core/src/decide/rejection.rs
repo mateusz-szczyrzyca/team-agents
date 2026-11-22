@@ -16,7 +16,7 @@ const RETURNED: &str = "RETURNED";
 
 /// The items a lead's final message `message` sends back, in the order of its lines.
 ///
-/// A line is read as a return when it starts with [`RETURNED`] and a `:` once the markup characters `*` and `` ` `` are
+/// A line is read as a return when it starts with `RETURNED` and a `:` once the markup characters `*` and `` ` `` are
 /// dropped, like the `STATUS:` line, and what follows is an item number such as `1.1` or `1.1a`. A line whose answer
 /// is no item number — a title, a sentence, an item of another task list that starts differently — is skipped: the
 /// machine reads no item out of it and never guesses. An item named twice is returned once, where it is named first.
