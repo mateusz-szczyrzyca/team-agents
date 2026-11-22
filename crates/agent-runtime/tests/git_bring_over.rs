@@ -679,4 +679,30 @@ mod git_bring_over {
         assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
         assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
     }
+
+    #[tokio::test]
+    async fn an_ignored_file_in_a_directory_the_worker_replaces_by_a_file_is_in_the_way() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n"), ("node/child.txt", b"child\n")], |repo| {
+            raw(repo, &["rm", "-q", "node/child.txt"]);
+            commit(repo, &[("node", b"a file\n")], "the worker's step");
+        });
+        std::fs::write(repo.join(".git").join("info").join("exclude"), "node/mine.txt\n").expect("the exclude file");
+        write(&repo, "node/mine.txt", b"my ignored file\n");
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("an ignored file in the way is an answer");
+
+        let BringOver::InTheWay { files, .. } = outcome else {
+            panic!("an ignored file is in the way: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["node"]));
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
+        assert_eq!(
+            std::fs::read(repo.join("node/mine.txt")).expect("my file"),
+            b"my ignored file\n"
+        );
+    }
 }
