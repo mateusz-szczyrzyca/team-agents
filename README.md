@@ -917,10 +917,10 @@ the old form, which is for look-ups only and waits
 in the queue as before.
 
 **A worker's result is checked before it reaches your branch.** The bus keeps, next to the step, the paths the request
-names (`files`), its check (`check`) and what to do (`do`) — a request that names no path is a look-up, in the old form,
-and its result goes to the requester as before. From item 4.2 the harness runs the request's check in the worker's
+names (`files`), its check (`check`) and what to do (`doing`) — a request that names no path is a look-up, in the old form,
+and its result goes to the requester as before. From the version that wires it the harness runs the request's check in the worker's
 worktree, brings the worker's commit to the requester's branch only when it passes, gives a wrong request once more to a
-free worker of another CLI, and returns the step to the requester with the reasons. The decision and the texts are in
+free worker of another CLI (of the same CLI when no other is free), and returns the step to the requester with the reasons. The decision and the texts are in
 this version (`[workers]` in [`docs/configuration.md`](docs/configuration.md#workers)); the daemon uses them from the
 version that wires them.
 

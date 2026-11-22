@@ -179,6 +179,9 @@ facts only: its result goes to the requester as before, and its check, when it h
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.
 
+The keys are read and checked at load. The daemon does not apply them yet: until it brings a worker's result to the
+requester's branch, a worker's result reaches the requester as it always did.
+
 ### `[split]`
 
 These keys configure automatic coordinator proposal decisions. The daemon records the complete proposal before

@@ -8,11 +8,11 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.67.0 — 22.11.2026 — PR #184
 
 ### New features
-- [agent-core] [agent-runtime] The request a worker's result is checked with keeps the paths it may write, its check and what to do, next to its step; the daemon reads them from the bus (`files`, `check`, `doing` in the bus state).
-- [agent-core] [agentbus] **Action:** `[workers]` in `agents.toml` says how many tries a request for a worker gets and how long its run may last — `tries = 2` and `seconds = 0` (no limit) unless you set them. A file without `[workers]` keeps these defaults.
+- [agentbus] The bus keeps, next to the step of a request for a worker, the paths the worker may write, the request's check and what to do (`files`, `check`, `doing` in the bus state); a request in the old form has none, and a bus state written before loads as it was. The daemon does not read them yet.
+- [agent-core] `[workers]` in `agents.toml` says how many tries a request for a worker gets and how long its run may last — `tries = 2` and `seconds = 0` (no limit) unless you set them; `tries = 0` is refused. A file without `[workers]` keeps these defaults. The daemon does not apply the keys yet.
 
 ### Enhancements
-- [agent-core] The harness decides, in one pure decision, whether a worker's result serves the request: accept it, give the request once more to a free worker of another CLI, or return the step to the requester with every reason. The requester is told each of those in its own text; the daemon uses them from the version that wires them.
+- [agent-core] The harness decides, in one pure decision, whether a worker's result serves the request: accept it, give the request once more to a free worker of another CLI (of the same CLI when no other is free), or return the step to the requester with every reason. The requester is told each of those in its own text; the daemon uses them from the version that wires them.
 
 ## 0.66.0 — 22.11.2026 — PR #182
 
