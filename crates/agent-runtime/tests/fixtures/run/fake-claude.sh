@@ -200,10 +200,15 @@ case $scenario in
     ;;
   done-on-resume-after\ *)
     path=${scenario#done-on-resume-after }
+    init
     if [[ $resumed == yes ]]; then
-      while [[ ! -f $path ]]; do sleep 0.01; done
+      while [[ ! -f $path ]]; do
+        say "working"
+        sleep 0.02
+      done
     fi
-    finish_done
+    say "working"
+    result false 'Finished the item.\nSTATUS: DONE'
     ;;
   *) echo "unknown scenario: $scenario" >&2; exit 64 ;;
 esac
