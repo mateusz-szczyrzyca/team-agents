@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.63.0 — 22.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] A run that ends `STATUS: DONE` while a step it marked done fails its check goes back to its agent, with the step, its check, the reason and the last lines of the check's output; after `[plan] bounces` such send-backs the human is asked, in a questions file that names the step and its check.
+- [agent] [agent-core] A step whose check is the repository's gate command (`make gate`, `agent gate`) is not run; the agent is told once, in the prompt of its next run, that the gate is never a step's check.
+
+Action: a run that ends `DONE` with a failing command or file check is now sent back for its plan (up to `[plan] bounces`, default 3). To keep the old behaviour, set `bounces = 0` under `[plan]`.
+
 ## 0.62.0 — 22.11.2026 — PR #177
 
 ### New features
