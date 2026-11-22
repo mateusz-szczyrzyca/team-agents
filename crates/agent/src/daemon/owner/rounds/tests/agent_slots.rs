@@ -1061,3 +1061,94 @@ async fn a_busy_investigator_is_not_given_a_review_while_free_investigators_exis
     std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_existing_reviewer_keeps_its_holder_while_the_investigator_runs_elsewhere() {
+    use agent_core::state::ItemPhase;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-2", "work"),
+            investigator("inv-r1", "sleep-or-hold"),
+            investigator("inv-r2", SILENT),
+            investigator("inv-r3", "sleep-or-hold"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config + "\n[replacement]\nagents = [\"inv-r3\"]\nbusy_after = 3600\n",
+    )
+    .unwrap();
+    rig.start().await;
+
+    // Keep the replacement out of the initial reviewer selection, then free it for the hand-over decision.
+    let held_list = ONE.replace("The first item", "Holds the agent");
+    let (_, candidate) = rig.run(&["inv-r3"], &held_list, MergeMode::NoMerge, None).await;
+    rig.status_is(&candidate[0], TaskStatus::Running).await;
+    let (review_team, _) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let ready = rig
+        .state_where("both real reviewers to finish their turns without verdicts", |state| {
+            state.team(&review_team).is_some_and(|team| {
+                team.reviewers().len() == 2
+                    && team
+                        .reviewers()
+                        .iter()
+                        .all(|member| member.status() == TaskStatus::Waiting)
+                    && team
+                        .items()
+                        .iter()
+                        .any(|item| matches!(item.phase(), ItemPhase::InReview { .. }))
+            })
+        })
+        .await;
+    let team = ready.team(&review_team).unwrap();
+    let reviewer = team
+        .reviewers()
+        .iter()
+        .find(|member| member.agent().name() == "inv-r1")
+        .unwrap();
+    let reviewer_task = reviewer.task().clone();
+    let review_before = team.items()[0].phase().clone();
+    let reviewer_runs = reviewer.runs().len();
+    std::fs::write(rig.worktree(&candidate[0]).join(".fake-continue"), "").unwrap();
+    rig.status_is(&candidate[0], TaskStatus::Waiting).await;
+
+    let (_, holder) = rig.run(&["inv-r1"], &held_list, MergeMode::NoMerge, None).await;
+    rig.status_is(&holder[0], TaskStatus::Running).await;
+    let (_, queued) = rig.run(&["inv-r1"], ONE, MergeMode::NoMerge, None).await;
+    rig.state_where("the positive control to wait for its busy investigator", |state| {
+        state
+            .find_task(&queued[0])
+            .is_some_and(|found| found.member.waiting_since().is_some())
+    })
+    .await;
+    rig.advance_history_days(1);
+    let state = rig
+        .state_where(
+            "the positive control to finish its hand-over to the free investigator",
+            |state| {
+                state.find_task(&queued[0]).is_some_and(|found| {
+                    found.member.agent().name() == "inv-r3" && found.member.status() == TaskStatus::Waiting
+                })
+            },
+        )
+        .await;
+
+    let reviewer_after = state.find_task(&reviewer_task).unwrap();
+    assert_eq!(reviewer_after.role, agent_core::kinds::Role::Reviewer);
+    assert_eq!(reviewer_after.member.agent().name(), "inv-r1");
+    assert_eq!(reviewer_after.member.status(), TaskStatus::Waiting);
+    assert!(reviewer_after.member.past_holders().is_empty());
+    assert_eq!(reviewer_after.member.runs().len(), reviewer_runs);
+    assert_eq!(state.team(&review_team).unwrap().items()[0].phase(), &review_before);
+    assert_eq!(
+        state.find_task(&holder[0]).unwrap().member.status(),
+        TaskStatus::Running
+    );
+    std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
+    rig.stop().await.unwrap();
+}
