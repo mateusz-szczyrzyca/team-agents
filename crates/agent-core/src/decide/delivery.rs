@@ -157,8 +157,19 @@ pub struct DeliveryReportFacts<'a> {
 /// a branch that is neither the task's nor the part's branch.
 #[must_use]
 pub fn evaluate_delivery_report(facts: DeliveryReportFacts<'_>) -> DeliveryVerdict {
-    let _ = facts;
-    DeliveryVerdict::Accepted
+    if !facts.same_repo {
+        return DeliveryVerdict::RefusedForeignRepository;
+    }
+    let branch_fits = facts.pr_branch == facts.task_branch
+        || facts.part_branch.is_some_and(|part| facts.pr_branch == part);
+    if !branch_fits {
+        return DeliveryVerdict::RefusedForeignBranch;
+    }
+    match facts.state {
+        DeliveryObservation::Merged => DeliveryVerdict::Accepted,
+        DeliveryObservation::Open => DeliveryVerdict::RefusedOpen,
+        DeliveryObservation::Closed => DeliveryVerdict::RefusedClosed,
+    }
 }
 
 #[cfg(test)]
