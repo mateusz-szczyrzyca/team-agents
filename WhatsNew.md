@@ -7,9 +7,9 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ## 0.57.0 — 22.11.2026 — PR #174
 
-### Bug fixes
-- [agent-core] Conflict pass accounting and split round recovery ensure unpublished conflict results do not consume conflict passes, repeated failures cannot refund earlier published passes, and open split pull requests with valid gated commits recover from interrupted or legacy exhausted rounds.
-
+### New features
+- [agent] [agent-core] [agent-runtime] A commit that takes lines out of a test its `RED:` commit froze is now refused while it can still be undone: the `git` of every run an agent starts has a `commit-msg` hook that tells the agent the rule, which file and which `RED:` commit, and to make a `TEST-FIX:` commit of the test files instead. It costs no question to you, works for every CLI that commits through `git`, reads the branch and changes nothing (a commit that is already made is never touched), and keeps the repository's own hooks running. The hook reaches the run through its environment: nothing is written into the repository, and a commit the agent makes in another repository during a run runs that repository's own hooks. `commit_guard = false` under `[repos.NAME.checks]` turns the refusal off for a repository (the checks before a review stay); a repository without the table is not judged.
+- [agent-core] The roles of a member, a coordinator and a solo agent say in one line that every change to a test after its `RED:` commit — also formatting, a refactor, a removed debug line — is a `TEST-FIX:` commit of its own, test files only.
 ## 0.56.0 — 22.11.2026 — PR #173
 
 ### Bug fixes

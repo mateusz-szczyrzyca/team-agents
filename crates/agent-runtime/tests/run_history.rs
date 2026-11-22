@@ -296,7 +296,9 @@ mod run_history {
                 "GIT_COMMITTER_NAME",
                 "GIT_CONFIG_COUNT",
                 "GIT_CONFIG_KEY_0",
+                "GIT_CONFIG_KEY_1",
                 "GIT_CONFIG_VALUE_0",
+                "GIT_CONFIG_VALUE_1",
                 "PATH",
             ]
         );

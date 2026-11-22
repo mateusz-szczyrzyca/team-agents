@@ -1,0 +1,1 @@
+- `{{path}}`: this commit deletes it or replaces it as a binary file; the `RED:` commit {{red}} froze it.
