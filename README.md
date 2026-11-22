@@ -224,7 +224,7 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 ```
 agent daemon                      runs the daemon: the owner of the state and of every model run
 agent run ...                     starts a task or a team on the repository the current directory is in
-agent status [--running]          the teams the daemon knows and what each of their tasks is doing
+agent status [--running] [--task] the teams the daemon knows, their rounds and a count of their tasks; --task adds the tasks
 agent answer <task> [-f <file>]   answers the questions of a task; it goes on with the answers
 agent say <task|team> <text>      says something to a task or a team, through the bus
 agent stop | pause | unpause | resume <task|team>
@@ -467,8 +467,14 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
-| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The parts of a split are the same as in `agent status`, except that the parts of an item whose every part merged are left out, its work being over |
-| `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed |
+| `agent status` | every team with its rounds and a count of its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks, their plans and the parts of a split are not listed; a question that waits for the human is named with its number |
+| `agent status --task` | as `agent status`, with the lines of the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
+| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
+| `agent status --running --task` | as `agent status --running`, with the tasks, their plans and the parts |
+| `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
+| `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
+
+Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
 
 Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
 `done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it

@@ -22,7 +22,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
     Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Reply, Response, ReviewPass,
-    RoundDetail, RoundItem, RoundTask, SharedAgent, TeamSummary,
+    RoundDetail, RoundItem, RoundTask, SharedAgent, TeamSummary, Versions,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
@@ -42,6 +42,9 @@ pub const PLAN_PROTOCOL_VERSION: u32 = 5;
 /// The negotiated version carrying split executors and capability waits.
 pub const EXECUTOR_PROTOCOL_VERSION: u32 = 6;
 
+/// The negotiated version carrying the daemon's crate versions on status replies.
+pub const VERSIONS_PROTOCOL_VERSION: u32 = 7;
+
 /// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -53,6 +56,8 @@ pub enum ReplyFormat {
     Plan,
     /// Version six, including split executors and capability waits.
     Executor,
+    /// Version seven, including the daemon's crate versions on status replies.
+    Versions,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -165,11 +170,21 @@ fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     encode(&value)
 }
 
-/// Serializes executor-aware messages without downgrading their metadata.
+/// Serializes executor-aware messages for protocol-six clients, stripping fields introduced in protocol seven.
 fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_versions_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(EXECUTOR_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Serializes version-seven messages without downgrading their metadata.
+fn encode_versions<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(VERSIONS_PROTOCOL_VERSION);
     }
     encode(&value)
 }
@@ -214,6 +229,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
                 .map(|message| (message, ReplyFormat::Executor))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
+        version if version == u64::from(VERSIONS_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Versions))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
         found => Err(UnsupportedVersion { found }.into()),
     }
 }
@@ -224,6 +249,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
         serde_json::Value::Object(object) => {
             let mut changed = false;
             for key in [
+                "daemon_versions",
                 "short_desc",
                 "split",
                 "splits",
@@ -278,12 +304,17 @@ fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
     }
 }
 
-/// Removes metadata introduced by protocol six from older negotiated formats.
+/// Removes metadata introduced by protocol six from older negotiated formats: the executor fields and the versions of
+/// the daemon, which only the answers to a status request carry.
 fn strip_executor_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
             object.retain(|key, _| {
-                key != "part_assignments" && key != "tier_waits" && key != "tier_questions" && key != "short_desc"
+                key != "part_assignments"
+                    && key != "tier_waits"
+                    && key != "tier_questions"
+                    && key != "short_desc"
+                    && key != "daemon_versions"
             });
             for nested in object.values_mut() {
                 strip_executor_fields(nested);
@@ -292,6 +323,27 @@ fn strip_executor_fields(value: &mut serde_json::Value) {
         serde_json::Value::Array(values) => {
             for nested in values {
                 strip_executor_fields(nested);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Removes metadata introduced by protocol seven from protocol-six replies.
+fn strip_versions_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.remove("daemon_versions");
+            for nested in object.values_mut() {
+                strip_versions_fields(nested);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for nested in values {
+                strip_versions_fields(nested);
             }
         }
         serde_json::Value::Null
@@ -342,6 +394,7 @@ impl Frame {
             ReplyFormat::Split => encode_split(self),
             ReplyFormat::Plan => encode_plan(self),
             ReplyFormat::Executor => encode_executor(self),
+            ReplyFormat::Versions => encode_versions(self),
         }
     }
 

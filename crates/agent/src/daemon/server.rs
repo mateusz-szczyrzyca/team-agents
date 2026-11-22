@@ -401,6 +401,8 @@ async fn answer(
         let id = request.id;
         tracing::Span::current().record("request_id", id.0);
         let client = request.client;
+        // The answer to a status request tells the daemon's versions: the command shows them before the teams.
+        let tells_versions = matches!(request.command, Command::Status(_));
         let result = match request.command {
             Command::Subscribe(subscribe) => subscribe_to(inbox, subscribe.team, subscription, format)
                 .await
@@ -418,6 +420,9 @@ async fn answer(
             Ok((reply, split)) => {
                 let mut response = Response::ok(id, reply);
                 response.split = split;
+                if tells_versions && format == ReplyFormat::Versions {
+                    response.daemon_versions = Some(crate::versions::of_this_build());
+                }
                 response
             }
             Err(failure) => Response::error(id, failure),

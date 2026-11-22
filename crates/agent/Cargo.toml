@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 agent-core.workspace = true
 agent-runtime.workspace = true
+agent-web.workspace = true
 clap.workspace = true
 # The daemon watches the questions files for the human's saves: inotify only, without the default features.
 notify.workspace = true

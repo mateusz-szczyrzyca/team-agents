@@ -181,7 +181,7 @@ mod gate_process {
             let worktree = PathBuf::from(line.split_whitespace().last().unwrap());
             eventually("the stand-in to run", || worktree.join(".fake-runs").is_file());
             eventually("the task to wait", || {
-                let status = self.agent_in(&self.repo, &["status"]).output().unwrap();
+                let status = self.agent_in(&self.repo, &["status", "--task"]).output().unwrap();
                 stdout(&status)
                     .lines()
                     .any(|line| line.contains(&task) && line.contains("waiting"))

@@ -45,11 +45,15 @@ mod split_context;
 #[path = "tests/status_json.rs"]
 mod status_json_tests;
 #[cfg(test)]
+#[path = "tests/status_short.rs"]
+mod status_short_tests;
+#[cfg(test)]
 #[path = "tests/steer_commands.rs"]
 mod steer_command_tests;
 #[cfg(test)]
 #[path = "tests/testing.rs"]
 mod testing;
+mod versions;
 
 use crate::client::{ClientError, Connection};
 use crate::commands::answer::{AnswerError, Source, answer};
@@ -64,7 +68,7 @@ use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
 use crate::commands::status::{
-    Activity, StatusError, status_active, status_investigators, status_json, status_running,
+    Activity, Detail, StatusError, status_investigators, status_json, status_running_shown, status_shown,
 };
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
@@ -88,7 +92,7 @@ struct Cli {
 enum Command {
     /// Runs the daemon: the owner of the state and of every model run, which the other commands talk to.
     Daemon(DaemonArgs),
-    /// Shows the teams the daemon knows and what each of their tasks is doing.
+    /// Shows the crate versions, the teams the daemon knows, their rounds and a count of their tasks (--task adds the tasks, plans and parts).
     Status(StatusArgs),
 }
 
@@ -391,6 +395,10 @@ struct DaemonArgs {
 
 /// The arguments of `agent status`.
 #[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one switch of `agent status`: --running, --task, --investigators, --json"
+)]
 struct StatusArgs {
     /// A team (`team-…`), a task (`task-…`) or a round (`round-…`) to show; every team without one.
     #[arg(value_parser = parse_view_target)]
@@ -398,6 +406,10 @@ struct StatusArgs {
     /// Only the teams that have a round that goes on, with those rounds: what is being worked on now.
     #[arg(long, conflicts_with = "target")]
     running: bool,
+    /// With the teams, also the lines of their tasks, with their plans and parts, as `agent status` printed them before
+    /// the short view. With `--json` it changes nothing: the JSON array already carries every task.
+    #[arg(long, conflicts_with_all = ["target", "investigators"])]
+    task: bool,
     /// What every configured investigator is doing: its last two activities in the teams that are not closed.
     #[arg(long, conflicts_with = "target")]
     investigators: bool,
@@ -734,14 +746,15 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
             let activity = Activity::new(home.clone(), environment.zone());
+            let detail = if args.task { Detail::Tasks } else { Detail::Short };
             if args.json {
                 status_json(&mut connection, args.target, out).await?;
             } else if args.investigators {
                 status_investigators(&mut connection, &home, environment.zone(), out).await?;
             } else if args.running {
-                status_running(&mut connection, &activity, out).await?;
+                status_running_shown(&mut connection, &activity, detail, out).await?;
             } else {
-                status_active(&mut connection, args.target, &activity, out).await?;
+                status_shown(&mut connection, args.target, &activity, detail, out).await?;
             }
             Ok(())
         }

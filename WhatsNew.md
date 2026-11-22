@@ -14,6 +14,14 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Enhancements
 - [agent] [agent-core] Every wait line of a round (`agent status`, `agent status --json`) now says who owes it and since when: `an answer of the human, owed by the human since 2026-11-22T03:59:28Z` (the `waiting` field is the same, with longer text; `agent status` shows the time in your zone). The start is the question's for your answer and the end of the round's last run otherwise.
 - [agent-core] A lead's response is judged only when it was given in a run that started at or after the review's verdict, never a message from before the review.
+## 0.58.0 — 22.11.2026 — PR #175
+
+### New features
+- [agent] `agent status` and `agent status --running` print each team with its rounds and a count of its tasks by what they do: `tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`. A task that waits for the human's answer is named with the number of its questions file.
+- [agent] [agent-core] [agent-runtime] [agent-web] Every list of `agent status` starts with the versions of the four crates, `agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`. When the daemon runs another build, a second line shows its versions and says that they differ; a daemon that tells none is shown as `daemon: version unknown`.
+- [agent] `agent status --task` (and `agent status --running --task`) prints the task lines, their plans and their parts, as `agent status` printed them before.
+- [agent] **Action:** a script that reads the text of `agent status` or `agent status --running` for the task lines must add `--task`; `agent status --json` is unchanged.
+- [agent] `agent status --task` is refused with a team, a task or a round, which already show their tasks, and with `--investigators`; with `--json` it is accepted and changes nothing.
 
 ## 0.57.0 — 22.11.2026 — PR #174
 
