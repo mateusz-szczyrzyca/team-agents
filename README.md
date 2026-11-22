@@ -449,7 +449,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status` | every team with its rounds and a count of its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks, their plans and the parts of a split are not listed; a question that waits for the human is named with its number |
-| `agent status --task` | as `agent status`, with the lines of the tasks, their plans and the parts of a split, as `agent status` printed them before 0.56.0 |
+| `agent status --task` | as `agent status`, with the lines of the tasks, their plans and the parts of a split, as `agent status` printed them before 0.56.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
 | `agent status --running --task` | as `agent status --running`, with the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
