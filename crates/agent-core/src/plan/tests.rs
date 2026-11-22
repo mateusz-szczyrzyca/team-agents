@@ -892,7 +892,7 @@ fn a_step_marked_by_worker_is_meant_for_a_worker_and_the_mark_is_written_back() 
     let plan = parsed(MARKED);
 
     assert_eq!(step(&plan, "1.1").doer(), Doer::Worker);
-    assert_eq!(step(&plan, "1.1").note(), "");
+    assert_eq!(step(&plan, "1.1").note(), "By: worker");
     assert!(
         plan.to_text()
             .contains("[ ] 1.1 Count the headings of the guide\n    By: worker\n")
