@@ -5,7 +5,7 @@ use serde_json::json;
 use super::{MemberSummary, RunElsewhere, mark_runs_elsewhere};
 use crate::config::Limits;
 use crate::decide::slot::Going;
-use crate::ids::{AgentName, TaskId, TeamId};
+use crate::ids::{AgentName, TaskId};
 use crate::kinds::Role;
 use crate::state::Participant;
 use crate::status::TaskStatus;
