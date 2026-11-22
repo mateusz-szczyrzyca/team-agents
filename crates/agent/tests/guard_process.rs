@@ -10,6 +10,7 @@ mod guard_process {
     use std::str::FromStr;
 
     use agent_core::config::AbsolutePath;
+    use agent_runtime::commit_guard::COMMIT_REFUSED_STATUS;
     use agent_runtime::commit_guard::hooks::install_hooks;
     use agent_runtime::git::{CommitIdentity, Git};
 
@@ -249,5 +250,39 @@ mod guard_process {
 
         assert!(output.status.success(), "{}", stderr(&output));
         assert!(stderr(&output).contains("guard-commit"), "{}", stderr(&output));
+    }
+
+    // Rule: the command refuses with a status of its own, which is not the general failure status of `agent`, and ends
+    // with 0 where it allows the commit or cannot judge.
+    #[tokio::test]
+    async fn the_command_refuses_with_a_status_of_its_own() {
+        let world = World::new(true).await;
+        world.red();
+        std::fs::write(world.worktree.join("tests/a.rs"), "one\nTWO\nthree\n").unwrap();
+        assert!(world.git(&world.worktree, &["add", "-A"]).status.success());
+        let message = world.worktree.join("message.txt");
+        std::fs::write(&message, "Format the test\n").unwrap();
+        let ask = |dir: &Path| {
+            Command::new(env!("CARGO_BIN_EXE_agent"))
+                .arg("guard-commit")
+                .arg(&message)
+                .current_dir(dir)
+                .env("AGENTS_HOME", &world.home)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .output()
+                .unwrap()
+        };
+
+        let refused = ask(&world.worktree);
+        let elsewhere = ask(&world.repo);
+
+        assert_eq!(refused.status.code(), Some(i32::from(COMMIT_REFUSED_STATUS)));
+        assert_ne!(refused.status.code(), Some(1), "{}", stderr(&refused));
+        assert!(
+            stderr(&refused).contains("agent: the commit is refused"),
+            "{}",
+            stderr(&refused)
+        );
+        assert_eq!(elsewhere.status.code(), Some(0));
     }
 }

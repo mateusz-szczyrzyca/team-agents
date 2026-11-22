@@ -352,4 +352,28 @@ mod commit_guard_hooks {
         assert_eq!(std::fs::read_to_string(&seen).unwrap_or_default(), "pre\nmsg\npost\n");
         assert!(!calls.exists());
     }
+
+    // Rule: only the status of the refusal stops a commit; the general failure status of the program (1: it cannot start, it
+    // cannot write) and its usage status (2) let it through, as a crash does.
+    #[tokio::test]
+    async fn the_general_failure_statuses_of_the_program_do_not_stop_the_commit() {
+        let world = repository();
+        let calls = world.root.join("calls");
+        for (n, status) in [1, 2, 126, 127].into_iter().enumerate() {
+            assert_ne!(status, refusal(), "the refusal has a status of its own");
+            let agent = stand_in(&world.root, &calls, status);
+            let hooks = install_hooks(&handle(&world.repo), &world.root.join(format!("hooks{n}")), &agent)
+                .await
+                .unwrap();
+
+            let output = commit(&world.repo, &hooks, &format!("Commit {n}"));
+
+            assert!(
+                output.status.success(),
+                "status {status}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        assert_eq!(commits(&world.repo), 4);
+    }
 }
