@@ -130,3 +130,86 @@ fn only_the_changed_files_of_the_lead_are_listed_in_their_order() {
         vec![path("a.rs"), path("c.rs")]
     );
 }
+
+#[test]
+fn an_unpublished_conflict_result_consumes_no_conflict_pass() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Failed, false),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn successful_publication_records_conflict_pass_exactly_once() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Published, false),
+        ConflictAccountingStep::SpendPass
+    );
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Published, true),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn repeated_failures_of_same_result_cannot_refund_earlier_passes() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Failed, true),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn recover_exhausted_split_round_table() {
+    // 1. Merged PR recovers to CompleteMerged
+    let merged = SplitRoundFacts {
+        is_merged: true,
+        has_gated_commit: true,
+        is_open: false,
+        spent_passes: 2,
+        limit: 2,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(&merged),
+        ExhaustedRoundRecovery::CompleteMerged
+    );
+
+    // 2. Open PR with valid gated commit and unexhausted passes recovers to ResumeMerge
+    let open_ready = SplitRoundFacts {
+        is_merged: false,
+        has_gated_commit: true,
+        is_open: true,
+        spent_passes: 1,
+        limit: 2,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(&open_ready),
+        ExhaustedRoundRecovery::ResumeMerge
+    );
+
+    // 3. Open PR with exhausted passes waits for human
+    let exhausted = SplitRoundFacts {
+        is_merged: false,
+        has_gated_commit: true,
+        is_open: true,
+        spent_passes: 2,
+        limit: 2,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(&exhausted),
+        ExhaustedRoundRecovery::WaitHuman
+    );
+
+    // 4. Open PR without gated commit waits for human
+    let ungated = SplitRoundFacts {
+        is_merged: false,
+        has_gated_commit: false,
+        is_open: true,
+        spent_passes: 0,
+        limit: 2,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(&ungated),
+        ExhaustedRoundRecovery::WaitHuman
+    );
+}

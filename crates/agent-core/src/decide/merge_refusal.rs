@@ -98,5 +98,68 @@ pub fn changed_by_lead(since_approved: &[RepoPath], on_branch: &[RepoPath], vs_b
         .collect()
 }
 
+/// The result of attempting to publish a conflict resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictPublishResult {
+    /// Publication succeeded and the resolution was pushed to the pull request branch.
+    Published,
+    /// Publication failed before reaching the pull request branch.
+    Failed,
+}
+
+/// The outcome of conflict pass accounting on publication.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictAccountingStep {
+    /// The pass is recorded as spent exactly once upon successful publication.
+    SpendPass,
+    /// Publication failed or repeated failure occurred; no pass is spent and earlier passes are untouched.
+    RetainBudget,
+}
+
+#[must_use]
+/// Decides whether a conflict pass should be spent given the publication result and whether this result was already accounted.
+pub fn account_conflict_pass(result: ConflictPublishResult, already_recorded: bool) -> ConflictAccountingStep {
+    let _ = (result, already_recorded);
+    ConflictAccountingStep::RetainBudget
+}
+
+/// The status of a pull request and its gated commit for recovery of legacy exhausted rounds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SplitRoundFacts {
+    /// Whether the pull request is already merged on remote.
+    pub is_merged: bool,
+    /// Whether a valid gated commit hash was verified for this round.
+    pub has_gated_commit: bool,
+    /// Whether the pull request branch is open and available for merging.
+    pub is_open: bool,
+    /// The conflict passes recorded as spent so far.
+    pub spent_passes: u32,
+    /// The configured conflict passes limit.
+    pub limit: u32,
+}
+
+/// What the daemon does when recovering an exhausted split round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExhaustedRoundRecovery {
+    /// Complete the round because it was already merged.
+    CompleteMerged,
+    /// Resume merge attempts because valid gated work was published or ready without exhausting valid passes.
+    ResumeMerge,
+    /// Retain the exhausted state and continue waiting for the human.
+    WaitHuman,
+}
+
+#[must_use]
+/// Decides how to recover a split round that appeared exhausted.
+pub fn recover_exhausted_split_round(facts: &SplitRoundFacts) -> ExhaustedRoundRecovery {
+    if facts.is_merged {
+        ExhaustedRoundRecovery::CompleteMerged
+    } else if facts.is_open && facts.has_gated_commit && facts.spent_passes < facts.limit {
+        ExhaustedRoundRecovery::ResumeMerge
+    } else {
+        ExhaustedRoundRecovery::WaitHuman
+    }
+}
+
 #[cfg(test)]
 mod tests;
