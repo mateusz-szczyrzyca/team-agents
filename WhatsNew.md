@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.57.0 — 22.11.2026 — PR #174
+
+### Bug fixes
+- [agent-core] Conflict pass accounting and split round recovery ensure unpublished conflict results do not consume conflict passes, repeated failures cannot refund earlier published passes, and open split pull requests with valid gated commits recover from interrupted or legacy exhausted rounds.
+
 ## 0.56.0 — 22.11.2026 — PR #173
 
 ### Bug fixes
