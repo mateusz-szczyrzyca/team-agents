@@ -198,32 +198,104 @@ pub struct InvestigatorConfig {
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RawRepoConfig")]
 pub struct RepoConfig {
     /// The branch pull requests are made against.
     pub base_branch: BranchName,
     /// The gate: the command that must pass before a pull request is opened, run in the worktree.
     pub gate: CommandLine,
     /// How long the gate may run before it is stopped and counts as failed.
-    #[serde(default = "default_gate_timeout")]
     pub gate_timeout_minutes: Minutes,
     /// What the round checks before its review look at; without the table a round goes straight to review.
-    #[serde(default)]
     pub checks: Option<Checks>,
-    /// Whether the early refusal of a commit that changes a frozen test is on for this repository.
-    #[serde(skip)]
+    /// Whether the early refusal of a commit that changes a frozen test is on for this repository: the key
+    /// `commit_guard` of `[repos.NAME.checks]`, on by default.
     pub commit_guard: CommitGuard,
 }
 
+/// What `[repos.NAME]` says in the file: [`RepoConfig`] before the switch of the table `checks` is told apart from its
+/// lists.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawRepoConfig {
+    /// See [`RepoConfig::base_branch`].
+    base_branch: BranchName,
+    /// See [`RepoConfig::gate`].
+    gate: CommandLine,
+    /// See [`RepoConfig::gate_timeout_minutes`].
+    #[serde(default = "default_gate_timeout")]
+    gate_timeout_minutes: Minutes,
+    /// See [`RepoConfig::checks`].
+    #[serde(default)]
+    checks: Option<RawChecks>,
+}
+
+/// `[repos.NAME.checks]` as the file has it: the three lists of [`Checks`] and the switch of the early refusal.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields, default)]
+struct RawChecks {
+    /// See [`Checks::test_paths`].
+    test_paths: PathPatterns,
+    /// See [`Checks::code_paths`].
+    code_paths: PathPatterns,
+    /// See [`Checks::protected_paths`].
+    protected_paths: PathPatterns,
+    /// See [`RepoConfig::commit_guard`].
+    commit_guard: CommitGuard,
+}
+
+impl Default for RawChecks {
+    fn default() -> Self {
+        let Checks {
+            test_paths,
+            code_paths,
+            protected_paths,
+        } = Checks::default();
+        Self {
+            test_paths,
+            code_paths,
+            protected_paths,
+            commit_guard: CommitGuard::default(),
+        }
+    }
+}
+
+impl From<RawRepoConfig> for RepoConfig {
+    fn from(raw: RawRepoConfig) -> Self {
+        let commit_guard = raw
+            .checks
+            .as_ref()
+            .map_or_else(CommitGuard::default, |checks| checks.commit_guard);
+        Self {
+            base_branch: raw.base_branch,
+            gate: raw.gate,
+            gate_timeout_minutes: raw.gate_timeout_minutes,
+            checks: raw.checks.map(|checks| Checks {
+                test_paths: checks.test_paths,
+                code_paths: checks.code_paths,
+                protected_paths: checks.protected_paths,
+            }),
+            commit_guard,
+        }
+    }
+}
+
 /// Whether the hook of an agent's runs refuses a commit that takes lines out of a test a `RED:` commit froze, outside a
-/// `TEST-FIX:` commit.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+/// `TEST-FIX:` commit. In the file it is a boolean.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(from = "bool")]
 pub enum CommitGuard {
     /// It does (the default).
     #[default]
     Enabled,
     /// It does not: every commit is made, and the checks before a review look at it afterwards.
     Disabled,
+}
+
+impl From<bool> for CommitGuard {
+    fn from(on: bool) -> Self {
+        if on { Self::Enabled } else { Self::Disabled }
+    }
 }
 
 /// `[repos.NAME.checks]`: which paths of a repository are tests, which are production code and which judge a round.
