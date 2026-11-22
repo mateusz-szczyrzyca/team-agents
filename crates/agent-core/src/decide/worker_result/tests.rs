@@ -219,6 +219,70 @@ fn every_wrong_of_a_request_has_its_row() {
     }
 }
 
+#[test]
+fn a_retry_goes_to_a_same_provider_worker_when_no_other_is_free() {
+    let same_provider = |tries: u32, try_number: u32| Facts {
+        check: CheckOutcome::Failed,
+        elsewhere: Elsewhere::SameProvider,
+        tries,
+        try_number,
+        ..passing()
+    };
+    let table = [
+        (
+            "first try, two tries",
+            same_provider(2, 1),
+            give(vec![Wrong::CheckFailed]),
+        ),
+        (
+            "first try, tries = 1",
+            same_provider(1, 1),
+            ret(vec![Wrong::CheckFailed]),
+        ),
+        ("second try", same_provider(2, 2), ret(vec![Wrong::CheckFailed])),
+    ];
+    for (what, facts, verdict) in table {
+        assert_eq!(decide(&facts), verdict, "{what}");
+    }
+}
+
+#[test]
+fn a_retry_with_no_free_worker_returns_the_step_at_once() {
+    let facts = Facts {
+        check: CheckOutcome::Failed,
+        elsewhere: Elsewhere::None,
+        ..passing()
+    };
+
+    assert_eq!(decide(&facts), ret(vec![Wrong::CheckFailed]));
+}
+
+#[test]
+fn a_request_for_files_without_a_check_is_never_accepted_and_one_for_facts_is() {
+    let no_check = |scope: Scope, try_number: u32| Facts {
+        check: CheckOutcome::Absent,
+        scope,
+        try_number,
+        ..passing()
+    };
+    let table = [
+        (
+            "files, first try",
+            no_check(Scope::Files, 1),
+            give(vec![Wrong::NoCheck]),
+        ),
+        (
+            "files, second try",
+            no_check(Scope::Files, 2),
+            ret(vec![Wrong::NoCheck]),
+        ),
+        ("facts only", no_check(Scope::Facts, 1), Verdict::Accept),
+    ];
+    for (what, facts, verdict) in table {
+        assert_eq!(decide(&facts), verdict, "{what}");
+    }
+}
+
 /// The name of a worker of the second table.
 fn worker(name: &str) -> AgentName {
     name.parse().unwrap_or_else(|error| panic!("{name}: {error}"))
