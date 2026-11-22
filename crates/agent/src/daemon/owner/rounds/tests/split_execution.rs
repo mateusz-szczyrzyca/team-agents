@@ -1405,12 +1405,11 @@ async fn split_part_with_failed_prior_member_opens_for_lead() {
     rig.stop().await.unwrap();
     {
         let mut state = rig.state();
-        let team = state.team_mut(&team_id).unwrap();
-        team.find_mut(&tasks[1])
-            .unwrap()
-            .1
-            .transition(TaskStatus::Failed)
-            .unwrap();
+        let mut team = state.team_mut(&team_id).unwrap();
+        let mut member = team.find_mut(&tasks[1]).unwrap().1;
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
         std::fs::write(rig.home.state_file(), serde_json::to_string_pretty(&state).unwrap()).unwrap();
     }
     rig.start().await;
@@ -1476,11 +1475,13 @@ async fn split_part_with_handed_over_prior_member_opens_for_lead() {
     rig.stop().await.unwrap();
     {
         let mut state = rig.state();
-        let team = state.team_mut(&team_id).unwrap();
-        team.find_mut(&tasks[1]).unwrap().1.held_task(
-            Participant::Normal("inv-lead".parse().unwrap()),
-            agent_core::time::Timestamp::from_seconds(100),
-        );
+        state
+            .owe_lead(
+                &tasks[1],
+                agent_core::decide::ladder::Trouble::NoStatus,
+                "2026-12-01T00:00:00Z".parse().unwrap(),
+            )
+            .unwrap();
         std::fs::write(rig.home.state_file(), serde_json::to_string_pretty(&state).unwrap()).unwrap();
     }
     rig.start().await;
@@ -1691,11 +1692,10 @@ async fn split_part_restart_between_prior_merge_and_next_opening() {
     })
     .await;
 
-    // Part A merges:
-    rig.github.merged_by_a_human(1);
-
-    // Stop daemon immediately after merge:
+    // Keep the next round unopened until recovery observes the merged pull request.
     rig.stop().await.unwrap();
+    assert_eq!(rig.state().team(&team_id).unwrap().rounds().len(), 1);
+    rig.github.merged_by_a_human(1);
 
     // Restart daemon:
     rig.start().await;
