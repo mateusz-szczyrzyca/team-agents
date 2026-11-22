@@ -2006,37 +2006,16 @@ async fn completed_check_batch_after_halt_parked_check_is_ignored_without_unknow
 }
 
 #[tokio::test]
-async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgement_read_source() {
+async fn recovered_run_preserves_original_ended_at_and_judgement_read_error_preserves_source() {
     use std::error::Error as _;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
-    use agent_core::ids::Clock;
     use agent_core::state::{NewRun, RunEnd, RunState, RunningPlanCheck};
     use agent_core::status::RunOutcome;
-    use agent_runtime::clock::SharedClock;
-    use agent_runtime::run::{FinishedRun, Progress};
-
-    struct FailOnSecondRead(AtomicUsize);
-    impl Clock for FailOnSecondRead {
-        fn now(&self) -> time::UtcDateTime {
-            let call = self.0.fetch_add(1, Ordering::SeqCst);
-            if call < 2 {
-                at(210).as_utc()
-            } else {
-                time::UtcDateTime::MIN
-            }
-        }
-    }
 
     let daemon = with_bounces(&solo_state(), 0);
     let dir = daemon.scenario(1, "done");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
-    std::fs::write(
-        dir.join(".agent/plan.md"),
-        "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'exit 0'\n",
-    )
-    .unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
 
     // Part 1: typed source on PlanJudgementsRead.
     std::fs::write(daemon.home.history_file(), b"corrupt-sqlite-header").unwrap();
@@ -2082,7 +2061,6 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
             ended_at: Some(at(123)),
         }));
     }
-    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
     owner.recover_plan_checks().await.unwrap();
     let ended_state = owner
         .parts
@@ -2105,10 +2083,34 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
         },
         "settled recovered run must record its original ended_at timestamp"
     );
-    drop(owner);
+}
 
-    // Part 3: clock failure inside run_command_checks propagates through check_batch_done as OwnerError::Clock.
-    std::fs::write(daemon.home.state_file(), solo_state().to_json().unwrap()).unwrap();
+#[tokio::test]
+async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgement_read_source() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_core::ids::Clock;
+    use agent_core::state::{NewRun, RunEnd};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::clock::SharedClock;
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    struct FailOnThirdRead(AtomicUsize);
+    impl Clock for FailOnThirdRead {
+        fn now(&self) -> time::UtcDateTime {
+            let call = self.0.fetch_add(1, Ordering::SeqCst);
+            if call < 2 {
+                at(210).as_utc()
+            } else {
+                time::UtcDateTime::MIN
+            }
+        }
+    }
+
+    let daemon = with_bounces(&solo_state(), 0);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
     std::fs::write(
         dir.join(".agent/plan.md"),
         "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'exit 0'\n",
@@ -2133,7 +2135,7 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
         let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
         member.transition(TaskStatus::Running).unwrap();
     }
-    owner.parts.clock = SharedClock::new(FailOnSecondRead(AtomicUsize::new(0)));
+    owner.parts.clock = SharedClock::new(FailOnThirdRead(AtomicUsize::new(0)));
     owner
         .finished(
             &task(1),
