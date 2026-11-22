@@ -14,7 +14,7 @@
 //! untracked files, and refuses rather than overwrite a file the requester changed.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::str::FromStr;
 
 use agent_core::config::EnvName;
@@ -24,7 +24,8 @@ use agent_core::state::CommitId;
 
 use super::changes::{close_scratch, make_scratch};
 use super::snapshot::Snapshot;
-use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, whole};
+use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, whole};
+use crate::process::{CaptureLimits, capture_with_input};
 
 /// The name of the environment variable that points git at the index of a merge.
 const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
@@ -269,7 +270,7 @@ impl Git {
         worker: &CommitId,
     ) -> Result<Settled, GitError> {
         let base = match self
-            .merge_base(&Revision::Head, &Revision::Commit(worker.clone()))
+            .merge_base(&Revision::Commit(head.clone()), &Revision::Commit(worker.clone()))
             .await
         {
             Ok(base) => base.to_string(),
@@ -296,11 +297,8 @@ impl Git {
             } else if their_side == base_side {
                 // Only the requester changed it, or only the requester has it.
                 our_side.cloned()
-            } else if our_side.is_none() || their_side.is_none() {
-                // Each side changed it, one of them by removing it: nothing shows which change wins.
-                conflicts.push(path_of(GitOperation::Diff, path)?);
-                None
             } else {
+                // Each side changed it, one of them perhaps by removing it: nothing shows which change wins.
                 conflicts.push(path_of(GitOperation::Diff, path)?);
                 None
             };
@@ -308,7 +306,19 @@ impl Git {
                 merged.insert(path.clone(), entry);
             }
         }
+        // A file where the other side has a directory of that name cannot be written as a tree: both paths are named.
+        for path in merged.keys() {
+            for (slash, _) in path.match_indices('/') {
+                let directory = path.get(..slash).unwrap_or_default();
+                if merged.contains_key(directory) {
+                    conflicts.push(path_of(GitOperation::Diff, directory)?);
+                    conflicts.push(path_of(GitOperation::Diff, path)?);
+                }
+            }
+        }
         if !conflicts.is_empty() {
+            conflicts.sort();
+            conflicts.dedup();
             return Ok(Settled::Conflicts(conflicts));
         }
         let tree = self.scratch_index_from(&merged, overrides).await?;
@@ -340,7 +350,7 @@ impl Git {
                     output: diagnostic(line),
                 });
             };
-            let path = String::from_utf8_lossy(path).into_owned();
+            let path = String::from_utf8(path.to_vec()).map_err(|source| GitError::NotUtf8 { operation, source })?;
             let entry = Entry {
                 mode: mode.to_owned(),
                 object: object.to_owned(),
@@ -360,18 +370,47 @@ impl Git {
         let operation = GitOperation::ReadTree;
         self.run_scratch(operation, overrides, &[arg("read-tree"), arg("--empty")])
             .await?;
+        // One process for the whole tree: a line for each entry, ended by a NUL so that no name needs quoting.
+        let mut lines = Vec::new();
         for (path, entry) in entries {
-            let cacheinfo = format!("{},{},{path}", entry.mode, entry.object);
-            let operation = GitOperation::UpdateIndex;
-            self.run_scratch(
-                operation,
-                overrides,
-                &[arg("update-index"), arg("--add"), arg("--cacheinfo"), arg(&cacheinfo)],
-            )
-            .await?;
+            lines.extend_from_slice(format!("{} {} 0\t{path}", entry.mode, entry.object).as_bytes());
+            lines.push(0);
         }
+        self.run_scratch_fed(
+            GitOperation::UpdateIndex,
+            overrides,
+            &[arg("update-index"), arg("--add"), arg("-z"), arg("--index-info")],
+            &lines,
+        )
+        .await?;
         self.scratch_text(GitOperation::WriteTree, overrides, &[arg("write-tree")])
             .await
+    }
+
+    /// Runs a scratch-index command and gives it `input` on its standard input.
+    async fn run_scratch_fed(
+        &self,
+        operation: GitOperation,
+        overrides: &[OsString],
+        args: &[&OsStr],
+        input: &[u8],
+    ) -> Result<(), GitError> {
+        let args: Vec<&OsStr> = overrides
+            .iter()
+            .map(OsString::as_os_str)
+            .chain(args.iter().copied())
+            .collect();
+        let limits = CaptureLimits {
+            timeout: self.limits.local_timeout,
+            max_bytes: self.limits.max_output_bytes,
+        };
+        let captured = capture_with_input(self.command(&args), limits, input)
+            .await
+            .map_err(|source| GitError::Run { operation, source })?;
+        if captured.exit.succeeded() {
+            return Ok(());
+        }
+        Err(failed(operation, &captured))
     }
 
     /// Brings `commit` to the requester's branch after a snapshot of the requester's worktree: the snapshot is taken
