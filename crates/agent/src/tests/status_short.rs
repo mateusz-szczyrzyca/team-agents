@@ -459,3 +459,142 @@ async fn json_output_is_identical_with_and_without_task() {
     assert_eq!(without_task, with_task);
     assert_eq!(without_task, crate::commands::status::render_json(&teams).unwrap());
 }
+
+/// The sample team with an open round of item 1.1 that is split into two parts, whose coordinator and member run and
+/// whose member has a plan of one step, and what the daemon shows of that round.
+fn team_at_work() -> (TeamSummary, RoundDetail) {
+    let mut state = team_state();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(
+            "round-20261111-153001-q1w2".parse().unwrap(),
+            Some("1.1".parse().unwrap()),
+            at(10),
+        )
+        .unwrap();
+    let team = state.team(&team_id(0)).unwrap().clone();
+    let round = team.rounds().last().unwrap().clone();
+    let detail = RoundDetail::new(&team, &round, Vec::new());
+    let mut wire = serde_json::to_value(TeamSummary::from(&team)).unwrap();
+    wire["splits"] = serde_json::json!([{
+        "parent": "1.1",
+        "approved_by": "harness",
+        "parts": [
+            {"title": "First", "delivers": "Guide", "checks": "Read", "depends_on": []},
+            {"title": "Second", "delivers": "Bundle", "checks": "Read", "depends_on": ["a"]}
+        ]
+    }]);
+    let mut summary: TeamSummary = serde_json::from_value(wire).unwrap();
+    summary.members[0].status = agent_core::status::TaskStatus::Running;
+    summary.members[1].status = agent_core::status::TaskStatus::Running;
+    summary.task_plans.insert(
+        crate::fixtures::task(2),
+        vec![agent_core::protocol::PlanStepSummary {
+            id: "1.1".parse().unwrap(),
+            mark: serde_json::from_value(serde_json::json!("x")).unwrap(),
+            title: "First step".to_owned(),
+            state: None,
+            reason: None,
+        }],
+    );
+    (summary, detail)
+}
+
+/// A daemon on the socket of `dir` that lists `summary` and shows `detail` for every round, answering each request in
+/// the format it asks for: the plans and the parts of a team travel only in the newer formats.
+fn serve_negotiating(
+    dir: &tempfile::TempDir,
+    summary: TeamSummary,
+    detail: RoundDetail,
+) -> tokio::task::JoinHandle<()> {
+    let listener = UnixListener::bind(socket(dir)).unwrap();
+    tokio::spawn(async move {
+        loop {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (read, mut write) = stream.into_split();
+            let mut reader = BufReader::new(read);
+            let mut line = String::new();
+            while reader.read_line(&mut line).await.unwrap() != 0 {
+                let (request, format) = Request::from_line_negotiated(&line).unwrap();
+                let reply = match &request.command {
+                    Wire::Show(_) => Reply::Round {
+                        round: Box::new(detail.clone()),
+                    },
+                    _ => Reply::Teams {
+                        teams: vec![summary.clone()],
+                    },
+                };
+                let wire = Frame::Response(Response::ok(request.id, reply))
+                    .to_line_for(format)
+                    .unwrap();
+                write.write_all(wire.as_bytes()).await.unwrap();
+                line.clear();
+            }
+        }
+    })
+}
+
+/// What `agent status --running` prints in `env`, with `--task` when `task`.
+async fn running_text(env: &Environment, task: bool) -> String {
+    let mut out = Vec::new();
+    execute(
+        env,
+        Command::Status(StatusArgs {
+            target: None,
+            running: true,
+            task,
+            investigators: false,
+            json: false,
+        }),
+        &mut out,
+    )
+    .await
+    .unwrap();
+    String::from_utf8(out).unwrap()
+}
+
+// Rule: `agent status --running` shows who is in the team and what each one does: a line for the coordinator, the
+// member, the worker and the reviewer whose review is not over, as `--task` writes them — a task that runs with its
+// last activity, read from the output of its runs in the home — and then the count. The plans of the tasks and the
+// parts of a split stay behind `--task`.
+#[tokio::test]
+async fn running_lists_the_tasks_of_the_team_with_their_last_activity_and_no_plan_or_part() {
+    let dir = tempfile::tempdir().unwrap();
+    let env = environment(&dir);
+    HistoryDb::open(&env.home().unwrap().history_file(), MaxTextBytes::default()).unwrap();
+    let (summary, detail) = team_at_work();
+    // The coordinator and the member run; only the member's run has written output, which tells its last activity.
+    let output = dir
+        .path()
+        .join("tasks/task-20261111-153002-k3x9/runs/run-20261111-153005-k3x9/out.jsonl");
+    std::fs::create_dir_all(output.parent().unwrap()).unwrap();
+    std::fs::write(&output, "{}\n").unwrap();
+    let changed = std::fs::metadata(&output).unwrap().modified().unwrap();
+    let server = serve_negotiating(&dir, summary, detail);
+
+    let short = running_text(&env, false).await;
+    let full = running_text(&env, true).await;
+    server.abort();
+
+    assert_eq!(
+        short,
+        format!(
+            "{}daemon: version unknown\n\
+             team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done\n  \
+             round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   running\n  \
+             task-20261111-153002-k3x9  member       claude-1   running, last activity {}\n  \
+             task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+             tasks: 2 running, 2 queued\n",
+            this_command_line(),
+            crate::commands::status::clock_time(changed, Zone::Fixed(UtcOffset::UTC)),
+        )
+    );
+    // What the short view leaves out is there with `--task`: the fixture has a plan and parts to leave out.
+    assert!(full.contains("    [x] 1.1 First step\n"), "{full}");
+    assert!(full.contains("    1.1a  "), "{full}");
+    assert!(!short.contains("    ["), "{short}");
+    assert!(!short.contains("1.1a"), "{short}");
+}

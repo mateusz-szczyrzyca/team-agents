@@ -6,7 +6,6 @@ use std::time::SystemTime;
 
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
-use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::{
@@ -573,9 +572,7 @@ fn render_in(
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
-    let members = || teams.iter().flat_map(|team| team.members.iter());
-    let role_width = members().map(|member| member.role.to_string().len()).max().unwrap_or(0);
-    let agent_width = members().map(|member| member.agent.name().len()).max().unwrap_or(0);
+    let columns = members::Columns::of(teams);
     let mut lines: Vec<String> = Vec::new();
     for team in teams {
         let items = &team.items;
@@ -617,37 +614,18 @@ fn render_in(
             lines.push(format!("    {item}  waiting for {tier} agent"));
         }
         if detail == Detail::Short {
+            // The tasks that are alive, each as the full view writes it, without its plan; the count ends the team.
+            lines.extend(
+                team.members
+                    .iter()
+                    .filter(|member| members::listed(member, &team.activities))
+                    .map(|member| members::line(member, team, columns, activity, zone)),
+            );
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            let waiting = member.open_question.map_or_else(String::new, |number| {
-                format!(", questions number {number} wait for answers")
-            });
-            let renewed = member
-                .new_sessions
-                .map_or_else(String::new, |_| ", in a new session".to_owned());
-            let taken_over = member
-                .held_by
-                .as_ref()
-                .map_or_else(String::new, |held| format!(", for {held}"));
-            // Only a task that runs is active now: what a task that waits last did is in its log.
-            let active = (member.status == TaskStatus::Running)
-                .then(|| activity(&member.task))
-                .flatten()
-                .map_or_else(String::new, |said| format!(", {said}"));
-            let status = match member.role {
-                Role::Reviewer => {
-                    reviewer::status(member, &team.activities, zone).unwrap_or_else(|| member.status.to_string())
-                }
-                Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
-            };
-            lines.push(format!(
-                "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{active}{waiting}",
-                member.task,
-                member.role.to_string(),
-                member.agent.name(),
-            ));
+            lines.push(members::line(member, team, columns, activity, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -909,6 +887,7 @@ const NO_TEAMS: &str = "no teams\n";
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
+mod members;
 mod reviewer;
 mod rounds;
 mod snapshots;
@@ -940,6 +919,10 @@ mod part_state_tests;
 #[cfg(test)]
 #[path = "status/tests/short.rs"]
 mod short_tests;
+
+#[cfg(test)]
+#[path = "status/tests/short_members.rs"]
+mod short_members_tests;
 
 #[cfg(test)]
 #[path = "status/tests/versions.rs"]
