@@ -143,11 +143,34 @@ impl AgentBus {
 
 /// See [`AgentBus::last_message_from`]; `bus_dir` is the directory of the bus.
 async fn last_message_from(
-    _bus_dir: &Path,
-    _reader: Reader<'_>,
-    _sender: &str,
+    bus_dir: &Path,
+    reader: Reader<'_>,
+    sender: &str,
 ) -> Result<Option<UnreadMessage>, UnreadMessagesError> {
-    Ok(None)
+    let path = bus_dir.join(LOG_FILE);
+    let Some(window) = read_window(&path).await? else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
+        path: path.clone(),
+        source,
+    })?;
+    let mut newest = None;
+    for (index, text) in text.lines().enumerate().filter(|(_, text)| !text.trim().is_empty()) {
+        let line: Line = serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
+            path: path.clone(),
+            line: index.saturating_add(1),
+            source,
+        })?;
+        if line.from == sender && line.is_for(reader) {
+            newest = Some(UnreadMessage {
+                id: line.id,
+                from: line.from,
+                text: line.text.chars().take(MAX_TEXT_CHARS).collect(),
+            });
+        }
+    }
+    Ok(newest)
 }
 
 /// The file of the bus that holds the messages, one JSON object a line.
