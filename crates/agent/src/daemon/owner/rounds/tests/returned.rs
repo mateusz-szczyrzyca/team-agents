@@ -151,3 +151,98 @@ async fn a_lead_that_only_answers_its_member_is_not_counted() {
     assert_eq!(progress.rejections(), None);
     assert!(!text.contains("returned"), "{text}");
 }
+
+/// The reasons the state of `team` keeps for item 1.1, oldest first.
+fn reasons(state: &State, team: &TeamId) -> Vec<String> {
+    state
+        .team(team)
+        .unwrap()
+        .item(item())
+        .unwrap()
+        .rejections()
+        .unwrap_or_default()
+        .iter()
+        .map(|rejection| rejection.reason().to_owned())
+        .collect()
+}
+
+// Rule: the reason of a rejection is what the lead told the member after the notice of this hand-over, directly; a
+// remark it made after an earlier hand-over is not the reason.
+#[tokio::test]
+async fn the_reason_is_what_the_lead_said_after_the_notice_of_this_hand_over() {
+    let (mut rig, team) = team_of(
+        "sleep,say:claude-1:an unrelated remark,return:claude-1:the real reason,sleep",
+        "",
+    )
+    .await;
+
+    let state = rig
+        .state_where("one return counted", |state| settled(state, &team, 1))
+        .await;
+    rig.stop().await.unwrap();
+
+    let reasons = reasons(&state, &team);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(reasons[0].contains("the real reason"), "{reasons:?}");
+    assert!(!reasons[0].contains("unrelated"), "{reasons:?}");
+}
+
+// Rule: the reason is kept whole, however long: only what is shown is shortened.
+#[tokio::test]
+async fn a_long_reason_is_kept_whole() {
+    let long = "y".repeat(1600);
+    let scenario: &'static str = Box::leak(format!("sleep,return:claude-1:{long},sleep").into_boxed_str());
+    let (mut rig, team) = team_of(scenario, "").await;
+
+    let state = rig
+        .state_where("one return counted", |state| settled(state, &team, 1))
+        .await;
+    rig.stop().await.unwrap();
+
+    let reasons = reasons(&state, &team);
+    assert_eq!(reasons.len(), 1, "{reasons:?}");
+    assert!(
+        reasons[0].contains(&long),
+        "the reason has {} characters",
+        reasons[0].len()
+    );
+}
+
+// Rule: the state that says the lead's run ended already holds the return: whenever the lead's second run is saved as
+// ended, the first return is saved with it, and so for the third (best effort: the two saves were one a moment apart).
+#[tokio::test]
+async fn a_return_is_saved_with_the_end_of_the_run_that_made_it() {
+    let (mut rig, team) = team_of(
+        "sleep,return:claude-1:fix the reader first,return:claude-1:add the tests too,sleep",
+        "",
+    )
+    .await;
+
+    let mut seen = 0;
+    while counted(&rig.state(), &team) < 2 {
+        let state = rig.state();
+        let team_state = state.team(&team).unwrap();
+        let lead_ended = team_state
+            .crew()
+            .roster()
+            .iter()
+            .filter(|(role, _)| *role == agent_core::kinds::Role::Coordinator)
+            .map(|(_, lead)| lead.runs().iter().filter(|run| !run.is_running()).count())
+            .sum::<usize>();
+        let recorded = team_state
+            .item(item())
+            .unwrap()
+            .rejections()
+            .map_or(0, <[agent_core::state::Rejection]>::len);
+        // Runs 1 to 3 of the lead: nothing to return, the first return, the second.
+        assert!(
+            recorded + 1 >= lead_ended.min(3),
+            "{lead_ended} runs ended, {recorded} returns saved"
+        );
+        seen += 1;
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    rig.stop().await.unwrap();
+
+    assert!(seen > 0);
+}
