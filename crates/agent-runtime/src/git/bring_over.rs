@@ -9,7 +9,8 @@
 //! change is changed uncommitted, and the requester goes on working in that worktree. [`Git::merge_into_scratch`]
 //! settles the merge of the worker's commit into the requester's head in a scratch directory and writes it as a commit
 //! on the head; the requester's worktree is neither read nor written, so a conflict cannot touch it. [`Git::bring_over`]
-//! takes the snapshot of the requester's worktree first, then merges, then moves the worktree and the branch to the merge
+//! takes the snapshot of the requester's worktree first, then merges on the head the snapshot was taken at, then, if the
+//! branch is still there, moves the worktree and the branch to the merge
 //! with `git read-tree -m -u`, which writes only the files the merge changes, keeps the requester's uncommitted and
 //! untracked files, and refuses rather than overwrite a file the requester changed.
 
@@ -159,10 +160,11 @@ impl Git {
         Ok(changed.into_iter().filter(|path| !allowed.contains(path)).collect())
     }
 
-    /// Merges `commit` into the requester's head with an index and an object directory in a scratch directory, and
-    /// returns the commit that holds the merged tree on the head: the requester's worktree and its index are neither read
-    /// nor written, so nothing of the merge is written when it conflicts, and then the files it could not settle are
-    /// returned instead.
+    /// Merges `commit` into `head`, the head the requester is at, with an index of its own in a scratch directory, and
+    /// returns the commit that holds the merged tree on `head`: the merge's trees and commit are written in the
+    /// repository's own objects, under a reference of the round and the task. The requester's worktree and its index are
+    /// neither read nor written, so nothing of the merge is written when it conflicts, and then the files it could not
+    /// settle are returned instead. [`Git::write_merged`] writes the merge to the worktree.
     ///
     /// # Errors
     /// [`GitError::Failed`] when the commit or the head is not in the repository; [`GitError::Scratch`] when the scratch
@@ -463,9 +465,10 @@ impl Git {
     /// and then to the branch, so the head moves to the merge commit and `git status` shows nothing of it.
     ///
     /// # Errors
-    /// The errors of [`Git::snapshot`] and [`Git::merge_into_scratch`]; [`GitError::Failed`] when writing the merge
-    /// would overwrite a file the requester changed or an untracked file in its way, or the branch moved meanwhile; in
-    /// both cases the worktree is as it was.
+    /// The errors of [`Git::snapshot`], [`Git::merge_into_scratch`] and [`Git::write_merged`]: among them
+    /// [`GitError::NotUtf8`] for a name that is not UTF-8, and [`GitError::HeadMoved`] when the requester committed while
+    /// the merge was made. Files of the merge that the requester changed or has untracked are an answer, not an error:
+    /// [`BringOver::InTheWay`]. Whatever the outcome, an error leaves the worktree and the branch as they were.
     pub async fn bring_over(&self, commit: &CommitId, round: &RoundId, task: &TaskId) -> Result<BringOver, GitError> {
         let snapshot = self.snapshot(round, task).await?;
         match self.merge_into_scratch(&snapshot.head, commit, round, task).await? {
@@ -581,10 +584,10 @@ impl Git {
             };
             touched.insert(path);
             // A rename or a copy is followed by the path it came from.
-            if matches!(field.first(), Some(b'R' | b'C')) || matches!(field.get(1), Some(b'R' | b'C')) {
-                if let Some(origin) = fields.next() {
-                    touched.insert(origin);
-                }
+            if (matches!(field.first(), Some(b'R' | b'C')) || matches!(field.get(1), Some(b'R' | b'C')))
+                && let Some(origin) = fields.next()
+            {
+                touched.insert(origin);
             }
         }
         let mut files = Vec::new();
