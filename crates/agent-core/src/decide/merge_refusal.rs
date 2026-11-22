@@ -119,8 +119,10 @@ pub enum ConflictAccountingStep {
 #[must_use]
 /// Decides whether a conflict pass should be spent given the publication result and whether this result was already accounted.
 pub fn account_conflict_pass(result: ConflictPublishResult, already_recorded: bool) -> ConflictAccountingStep {
-    let _ = (result, already_recorded);
-    ConflictAccountingStep::RetainBudget
+    match result {
+        ConflictPublishResult::Published if !already_recorded => ConflictAccountingStep::SpendPass,
+        ConflictPublishResult::Published | ConflictPublishResult::Failed => ConflictAccountingStep::RetainBudget,
+    }
 }
 
 /// The status of a pull request and its gated commit for recovery of legacy exhausted rounds.
