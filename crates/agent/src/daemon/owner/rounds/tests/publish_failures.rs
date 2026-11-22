@@ -318,7 +318,7 @@ fn setup_gated_split_worktree(rig: &Rig, task_id: &agent_core::ids::TaskId, bran
 
     let config_file = rig.home.config_file();
     let mut config_text = std::fs::read_to_string(&config_file).unwrap();
-    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
+    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[merge]\nconflict_passes = 2\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
     std::fs::write(&config_file, config_text).unwrap();
 
     let repo_name: agent_core::config::RepoName = "team-agents".parse().unwrap();
@@ -413,18 +413,29 @@ async fn split_part_with_open_human_question_stays_held_without_bypassing_questi
         "task must have an open question established for the human"
     );
 
-    // Verify item stays held in AskingHuman while question is open:
-    let state = rig
-        .state_where("open question stays open and round remains held", |state| {
-            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            let member = &state.find_task(&task_id).unwrap().member;
-            member.open_question().is_some()
-                && matches!(
-                    item.merge_conflict(),
-                    Some(agent_core::state::MergeConflict::AskingHuman { .. })
-                )
-        })
-        .await;
+    // Synchronize on observed daemon evaluation: wait until daemon processes evaluation cycle
+    rig.wait_for("daemon evaluation cycle observed while question is open", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "item must remain held in AskingHuman while question is open"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "merge must not be attempted while question is open"
+    );
 
     rig.stop().await.unwrap();
 
@@ -547,7 +558,7 @@ async fn split_part_legitimate_exhaustion_stays_held_without_bypassing() {
     // Configure repo team-agents and debug logging in agents.toml:
     let config_file = rig.home.config_file();
     let mut config_text = std::fs::read_to_string(&config_file).unwrap();
-    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
+    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[merge]\nconflict_passes = 2\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
     std::fs::write(&config_file, config_text).unwrap();
 
     // Set up task worktree with gated tip:
@@ -604,16 +615,36 @@ async fn split_part_legitimate_exhaustion_stays_held_without_bypassing() {
 
     rig.start().await;
 
-    // Verify item stays held in AskingHuman and does not merge:
-    let state = rig
-        .state_where("legitimately exhausted round stays held", |state| {
-            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            matches!(
-                item.merge_conflict(),
-                Some(agent_core::state::MergeConflict::AskingHuman { .. })
-            )
+    // Synchronize on observed recovery evaluation:
+    rig.wait_for("recovery decision evaluated for legitimately exhausted round", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| {
+            logs.iter().any(|e| {
+                e.event() == agent_core::log::LogEvent::DecisionTaken
+                    && e.fields()
+                        .get("decision")
+                        .is_some_and(|d| d == "recover_exhausted_split_round")
+            })
         })
-        .await;
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "legitimately exhausted round must remain held in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "no merge must be attempted for legitimately exhausted round"
+    );
 
     rig.stop().await.unwrap();
 
@@ -643,7 +674,7 @@ async fn split_part_ungated_correction_stays_held_without_bypassing() {
     // Configure repo team-agents and debug logging in agents.toml:
     let config_file = rig.home.config_file();
     let mut config_text = std::fs::read_to_string(&config_file).unwrap();
-    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
+    config_text.push_str("\n[log]\nlevel = \"debug\"\n\n[merge]\nconflict_passes = 2\n\n[repos.team-agents]\nbase_branch = \"main\"\ngate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]\n");
     std::fs::write(&config_file, config_text).unwrap();
 
     // Set up task worktree WITHOUT a valid gate record:
@@ -672,16 +703,36 @@ async fn split_part_ungated_correction_stays_held_without_bypassing() {
 
     rig.start().await;
 
-    // Verify item stays held in AskingHuman because of insufficient evidence (ungated):
-    let state = rig
-        .state_where("ungated split round stays held", |state| {
-            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            matches!(
-                item.merge_conflict(),
-                Some(agent_core::state::MergeConflict::AskingHuman { .. })
-            )
+    // Synchronize on observed recovery evaluation:
+    rig.wait_for("recovery decision evaluated for ungated correction", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| {
+            logs.iter().any(|e| {
+                e.event() == agent_core::log::LogEvent::DecisionTaken
+                    && e.fields()
+                        .get("decision")
+                        .is_some_and(|d| d == "recover_exhausted_split_round")
+            })
         })
-        .await;
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "ungated split round must remain held in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "no merge must be attempted for ungated correction"
+    );
 
     rig.stop().await.unwrap();
 
@@ -2251,5 +2302,248 @@ async fn conflict_publication_adopts_an_answer_saved_before_question_registratio
         |phase| matches!(phase, ItemPhase::Done { .. }),
     )
     .await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_running_corrective_lead_waits_for_completion() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, _gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    rig.github.answer_merges(MergeAnswer::Allow);
+
+    // Load fixture with member in Running status:
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    let mut state_json: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("running");
+    state_json["teams"][0]["crew"]["member"]["runs"] = serde_json::json!([
+        {
+            "id": "run-20261122-001600-k3x9",
+            "started_at": "2026-11-22T00:16:00Z",
+            "state": {
+                "status": "running"
+            }
+        }
+    ]);
+    std::fs::write(
+        rig.home.state_file(),
+        serde_json::to_string_pretty(&state_json).unwrap(),
+    )
+    .unwrap();
+
+    rig.start().await;
+
+    // Synchronize: wait until daemon processes at least one cycle
+    rig.wait_for("daemon loop observed while lead running", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+    })
+    .await;
+
+    // Verify item stays held in AskingHuman and no merge was attempted:
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "running lead must hold conflict in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "no merge must be attempted while lead is running"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_queued_corrective_lead_waits_for_completion() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, _gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    rig.github.answer_merges(MergeAnswer::Allow);
+
+    // Load fixture with member in Queued status:
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    let mut state_json: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
+    std::fs::write(
+        rig.home.state_file(),
+        serde_json::to_string_pretty(&state_json).unwrap(),
+    )
+    .unwrap();
+
+    rig.start().await;
+
+    rig.wait_for("daemon loop observed while lead queued", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "queued lead must hold conflict in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "no merge must be attempted while lead is queued"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_corrupt_gate_record_does_not_collapse_to_ungated_and_waits() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, _gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    // Corrupt gate record file:
+    std::fs::write(rig.home.gate_record_file(&task_id), "NOT_VALID_JSON{{{").unwrap();
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    rig.github.answer_merges(MergeAnswer::Allow);
+
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    std::fs::write(rig.home.state_file(), fixture).unwrap();
+
+    rig.start().await;
+
+    // Wait until notification of refusal or failure is written:
+    rig.wait_for("notification of gate record failure is written", || {
+        rig.notifications()
+            .iter()
+            .any(|text| text.contains("gate record") && text.contains("cannot be used"))
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "corrupt gate record must prevent recovery and hold in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "corrupt gate record must not merge"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_restart_after_push_preserves_fallback_approved_head() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    std::fs::write(rig.home.state_file(), fixture).unwrap();
+
+    rig.start().await;
+
+    // Wait until recovery runs and persists fallback approved head:
+    let state = rig
+        .state_where("fallback approved head persisted", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.conflict_approved_head().is_some()
+        })
+        .await;
+
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    let approved_head = item.conflict_approved_head().unwrap().clone();
+
+    // Wait until gated tip is pushed to origin:
+    rig.wait_for("gated commit pushed to origin", || {
+        git(&rig.origin, &["rev-parse", branch]).trim() == gated_tip
+    })
+    .await;
+
+    // Restart daemon after push:
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    // Verify after restart the persisted approved_head is still preserved across push:
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(
+        item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
+        Some(approved_head.as_str()),
+        "persisted fallback approved head must survive restart after push"
+    );
+
     rig.stop().await.unwrap();
 }
