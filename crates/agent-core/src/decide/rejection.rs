@@ -39,5 +39,40 @@ pub fn returned_items(message: &str) -> Vec<ItemId> {
     returned
 }
 
+/// How many times a lead returned an item, and the limit `[replacement] rejections` it is compared with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rejections {
+    /// How many rejections the machine counted for the item.
+    counted: u32,
+    /// The limit `[replacement] rejections`: `0` never replaces the agent.
+    limit: u32,
+}
+
+impl Rejections {
+    /// `counted` rejections against `limit`.
+    #[must_use]
+    pub const fn new(counted: u32, limit: u32) -> Self {
+        Self { counted, limit }
+    }
+
+    /// How many rejections the machine counted.
+    #[must_use]
+    pub const fn get(self) -> u32 {
+        self.counted
+    }
+
+    /// The limit it is compared with.
+    #[must_use]
+    pub const fn limit(self) -> u32 {
+        self.limit
+    }
+
+    /// No rejection counted, against `limit`.
+    #[must_use]
+    pub const fn none(limit: u32) -> Self {
+        Self { counted: 0, limit }
+    }
+}
+
 #[cfg(test)]
 mod tests;
