@@ -226,6 +226,12 @@ and a member are started anew; a worker and a reviewer are not.
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
 
+The same `mode` and ordered `agents` list apply when the next part of a split needs a new holder because
+its previous member stopped, failed or handed over the task. `auto` tries qualified configured replacements,
+then the lead; `lead` tries the lead; `off` asks you. If no eligible holder can take the part, the harness asks
+you once rather than leaving the part waiting silently. A replacement must meet both the part's required tier
+and the previous holder's tier; a busy eligible agent waits until it is available.
+
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
 the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator
 above a normal agent, which is above a worker. It works in the same worktree, on the same branch and on the same task, and
