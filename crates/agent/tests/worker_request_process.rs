@@ -632,6 +632,32 @@ Integrate the guide.
             String::from_utf8(output.stdout).unwrap().trim_end().to_owned()
         }
 
+        /// The texts of the messages the bus holds for the agent `name`.
+        fn messages_to(&self, name: &str) -> Vec<String> {
+            let text = std::fs::read_to_string(self.home.join("bus/messages.jsonl")).unwrap_or_default();
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+                .filter(|message| message["to"] == name)
+                .filter_map(|message| message["text"].as_str().map(str::to_owned))
+                .collect()
+        }
+
+        /// The text of the message to `name` that holds `needle`, once the bus has it.
+        fn told(&self, name: &str, needle: &str) -> String {
+            let deadline = Instant::now() + PATIENCE;
+            loop {
+                let messages = self.messages_to(name);
+                if let Some(text) = messages.iter().find(|text| text.contains(needle)) {
+                    return text.clone();
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "timed out waiting for {name} to be told {needle:?}; its messages: {messages:#?}"
+                );
+                std::thread::sleep(Duration::from_millis(20));
+            }
+        }
+
         /// Waits until the request `number` of the bus has the status `status`.
         fn request_is(&self, number: &str, status: &str) {
             eventually(&format!("request H{number} to be {status}"), || {
@@ -656,8 +682,7 @@ Integrate the guide.
 
     /// Starts a team of a member that asks for its step 1.1 with `request` once the test says so, and a worker whose
     /// second run is `scenario`; returns the world and the tasks, with the request answered.
-    fn answered_request(world: &mut World, request: &str, scenario_after: &str) -> Vec<(String, String)> {
-        let _ = scenario_after;
+    fn answered_request(world: &mut World, request: &str) -> Vec<(String, String)> {
         world.asks("member", Some(MEMBER_PLAN), &[request]);
         world.start();
         let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
@@ -675,7 +700,7 @@ Integrate the guide.
             ("glm-1", "worker", "sleep,script:guide"),
         ]);
         world.script("guide", &commit_script("the walkthrough", &[]));
-        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
         let member = task(&tasks, "claude-1");
         // The requester has uncommitted work of its own, which the bringing over must leave as it is.
         std::fs::write(world.worktree(member).join("scratch.txt"), "my notes\n").unwrap();
@@ -688,12 +713,15 @@ Integrate the guide.
         let message = world.git_output(member, &["log", "-1", "--format=%B"]);
         assert!(message.contains("Write the walkthrough"), "{message}");
         assert!(message.contains("Brought over from"), "{message}");
-        world.ended(member, 2);
-        let prompt = world.file(member, ".fake-prompt-2");
-        assert!(prompt.contains("did step 1.1 of your plan, and its commit"), "{prompt}");
-        assert!(prompt.contains("Files: docs/guide.md"), "{prompt}");
+        let told = world.told("claude-1", "did step 1.1 of your plan, and its commit");
+        assert!(told.contains("Files: docs/guide.md"), "{told}");
         assert_eq!(world.requests().len(), 1, "the result is answered once");
-        assert_eq!(prompt.matches("did step 1.1 of your plan").count(), 1, "{prompt}");
+        let answers = world
+            .messages_to("claude-1")
+            .iter()
+            .filter(|text| text.contains("did step 1.1 of your plan"))
+            .count();
+        assert_eq!(answers, 1);
     }
 
     #[test]
@@ -706,14 +734,13 @@ Integrate the guide.
         world.script("guide", &commit_script("wrong text", &[]));
         let mut request: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
         request["check"] = serde_json::Value::String("grep -q walkthrough docs/guide.md".to_owned());
-        let tasks = answered_request(&mut world, &request.to_string(), "");
+        let tasks = answered_request(&mut world, &request.to_string());
         let member = task(&tasks, "claude-1");
 
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
 
         world.request_is("1", "failed");
-        world.ended(member, 2);
-        let prompt = world.file(member, ".fake-prompt-2");
+        let prompt = world.told("claude-1", "is back with you");
         assert!(prompt.contains("is back with you"), "{prompt}");
         assert!(
             prompt.contains("the check `grep -q walkthrough docs/guide.md` failed"),
@@ -732,14 +759,13 @@ Integrate the guide.
             ("glm-1", "worker", "sleep,script:guide"),
         ]);
         world.script("guide", &commit_script("the walkthrough", &["docs/notes.md"]));
-        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
         let member = task(&tasks, "claude-1");
 
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
 
         world.request_is("1", "failed");
-        world.ended(member, 2);
-        let prompt = world.file(member, ".fake-prompt-2");
+        let prompt = world.told("claude-1", "is back with you");
         assert!(
             prompt.contains("changed files the request did not name: docs/notes.md"),
             "{prompt}"
@@ -754,15 +780,14 @@ Integrate the guide.
             ("claude-1", "agent", "ask-worker-after:member,sleep"),
             ("glm-1", "worker", "sleep,done:Result: done."),
         ]);
-        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
         let member = task(&tasks, "claude-1");
 
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
 
         world.request_is("1", "failed");
-        world.ended(member, 2);
-        let prompt = world.file(member, ".fake-prompt-2");
-        assert!(prompt.contains("is back with you"), "{prompt}");
+        let prompt = world.told("claude-1", "is back with you");
+        assert!(prompt.contains("the check `exists docs/guide.md` failed"), "{prompt}");
     }
 
     #[test]
@@ -772,8 +797,8 @@ Integrate the guide.
             ("claude-1", "agent", "ask-worker-after:member,sleep"),
             ("glm-1", "worker", "sleep,script:guide"),
         ]);
-        world.script("guide", &commit_script("the worker's text", &[]));
-        let tasks = answered_request(&mut world, MEMBER_REQUEST, "");
+        world.script("guide", &commit_script("the worker version", &[]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
         let member = task(&tasks, "claude-1");
         // The requester wrote the same file differently and committed it meanwhile.
         let worktree = world.worktree(member);
@@ -786,8 +811,7 @@ Integrate the guide.
         std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
 
         world.request_is("1", "failed");
-        world.ended(member, 2);
-        let prompt = world.file(member, ".fake-prompt-2");
+        let prompt = world.told("claude-1", "does not apply to your branch as it is now");
         assert!(
             prompt.contains("does not apply to your branch as it is now"),
             "{prompt}"
