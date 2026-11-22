@@ -3,7 +3,9 @@
 use std::collections::BTreeSet;
 
 use agent_core::decide::split::approval::{AskReason, ProposalDecision, ProposalFault, ProposalRead, decide_proposal};
-use agent_core::decide::split::submission::{Refusal, Submission, judge_submission};
+use agent_core::decide::split::submission::{
+    Ending, Refusal, Sent, Submission, Telling, Wake, judge_submission, telling, wake_after,
+};
 use agent_core::history::{HistoryEvent, SplitDecision};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -165,7 +167,7 @@ impl Owner {
             .render(id, &values.map_err(ProposalError::Variables)?)
             .map_err(ProposalError::Render)?;
         let reason = text.trim().to_owned();
-        let told = refused <= limit;
+        let told = telling(refused, limit) == Telling::Tell;
         agent_runtime::history::log_decision(
             "split_proposal",
             &serde_json::json!({"task": task, "item": item.map(|item| item.to_string()), "corrections": refused}),
@@ -201,15 +203,22 @@ impl Owner {
         }
         let to = self.recipient_of(task)?;
         let from = "agentbus".parse()?;
+        let mut sent = Sent::Delivered;
         if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
             tracing::warn!(event = LogEvent::BusDown.as_str(), %task, error = %agent_runtime::process::error_chain(&error),
                 "cannot tell the author of a refused split why");
-            // Nothing wakes a coordinator that sleeps and was not told: it runs again, within the bound above.
-            if matches!(own, Settled::Status(TaskStatus::Waiting)) {
-                return Ok(Some(Settled::Status(TaskStatus::Queued)));
-            }
+            sent = Sent::Failed;
         }
-        Ok(None)
+        // Nothing wakes a coordinator that sleeps and was not told: it runs again, within the bound above.
+        let ending = if matches!(own, Settled::Status(TaskStatus::Waiting)) {
+            Ending::Sleeping
+        } else {
+            Ending::Other
+        };
+        Ok(match wake_after(sent, ending) {
+            Wake::Queue => Some(Settled::Status(TaskStatus::Queued)),
+            Wake::KeepStatus => None,
+        })
     }
 
     /// Applies one saved pending proposal; all outcomes are committed with the task status.

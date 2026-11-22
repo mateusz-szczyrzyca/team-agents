@@ -86,8 +86,12 @@ pub enum Telling {
 /// corrections`). It is always told once, also when the configuration corrects nothing: a coordinator that is never told
 /// why would repeat the line.
 #[must_use]
-pub fn telling(_refused: u32, _limit: u32) -> Telling {
-    Telling::Tell
+pub fn telling(refused: u32, limit: u32) -> Telling {
+    if refused <= limit.max(1) {
+        Telling::Tell
+    } else {
+        Telling::LeaveToStatus
+    }
 }
 
 /// Whether the text of a refusal reached the bus.
@@ -120,8 +124,11 @@ pub enum Wake {
 /// What follows a refusal that was meant to be told: the run's own status stands, except that a sleeping coordinator the bus
 /// could not tell is run again.
 #[must_use]
-pub fn wake_after(_sent: Sent, _ending: Ending) -> Wake {
-    Wake::KeepStatus
+pub fn wake_after(sent: Sent, ending: Ending) -> Wake {
+    match (sent, ending) {
+        (Sent::Failed, Ending::Sleeping) => Wake::Queue,
+        (Sent::Delivered, Ending::Sleeping | Ending::Other) | (Sent::Failed, Ending::Other) => Wake::KeepStatus,
+    }
 }
 
 #[cfg(test)]
