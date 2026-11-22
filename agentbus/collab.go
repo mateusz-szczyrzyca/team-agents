@@ -872,20 +872,28 @@ func (s *Server) delegateFields(f DelegateFields) (string, *DelegateError) {
 			"H%d's request:\n%s\n\nIts worker's questions:\n%s\n\nThe answers:\n%s", follows, follows,
 			trunc(first.Request, 2000), trunc(first.Summary, 2000), strings.TrimSpace(f.Answers))
 	}
-	named := DelegateFields{Step: strings.TrimSpace(f.Step)}
+	// Only a request the harness accepted for a step carries it; after NO-PLAN the request is in the old form.
+	var named DelegateFields
+	if step != "" {
+		named.Step = strings.TrimSpace(f.Step)
+	}
 	return s.delegateWith(request, context, follows, named, f.Requires...)
 }
 
 // acceptedKeyword is what `agent _delegation-check` prints first when it accepts a request.
 const acceptedKeyword = "ACCEPTED"
 
+// noPlanKeyword is what `agent _delegation-check` prints when the requester's plan file is not there: the request is
+// one of an agent without a plan.
+const noPlanKeyword = "NO-PLAN"
+
 // acceptedLine starts what planCheck keeps of an accepted answer: the harness's output, quoted as it came.
 const acceptedLine = acceptedKeyword + "\n"
 
 // planCheck asks the harness, at the moment of the request, whether the request names a step of the requester's
 // plan: agent _delegation-check reads the plan file and the [plan] check_refuse then. It returns what the worker
-// reads — the step quoted as the plan has it, then the request's own pieces — or the cause of the first missing or
-// wrong one. A harness that gives no answer is a failure of the check, never an accepted request: nothing is queued
+// reads — the step quoted as the plan has it, then the request's own pieces —, nothing when the plan file is not there
+// (the request is in the old form), or the cause of the first missing or wrong one. A harness that gives no answer is a failure of the check, never an accepted request: nothing is queued
 // when it cannot say the request is complete.
 func (s *Server) planCheck(f DelegateFields) (string, *DelegateError) {
 	if s.agentCmd == "" || s.home == "" {
@@ -893,9 +901,8 @@ func (s *Server) planCheck(f DelegateFields) (string, *DelegateError) {
 			"the request cannot be checked against your plan — end this run and start it again from `agent`")
 	}
 	step, files, check, doing := strings.TrimSpace(f.Step), strings.TrimSpace(f.Files), strings.TrimSpace(f.Check), strings.TrimSpace(f.Doing)
-	if why := delegatePlanMissing(step, files, check, doing); why != nil {
-		return "", why
-	}
+	// The harness is asked first: only it knows whether the plan file is there, and a run without one sends the old
+	// form, whose four pieces are not required.
 	verdict, out, perr := agentCheckFn(s.agentCmd, s.home, "_delegation-check", "--plan", s.plan, "--for", step,
 		"--files", files, "--check", check, "--do", doing)
 	switch verdict {
@@ -910,9 +917,13 @@ func (s *Server) planCheck(f DelegateFields) (string, *DelegateError) {
 	if len(lines) > 1 {
 		advice = strings.TrimSpace(strings.Join(lines[1:], " "))
 	}
-	switch head {
-	case "NO-PLAN":
+	if head == noPlanKeyword {
 		return "", nil
+	}
+	if why := delegatePlanMissing(step, files, check, doing); why != nil {
+		return "", why
+	}
+	switch head {
 	case acceptedKeyword:
 		// Everything the harness printed after ACCEPTED is the step and the request's pieces, quoted as they came; the
 		// step the request is for is its own `for`.
