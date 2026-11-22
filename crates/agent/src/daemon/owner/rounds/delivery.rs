@@ -236,7 +236,7 @@ impl Owner {
         let base = Revision::RemoteBranch(base);
         git.verify_delivery(&item, &remote.head_branch, &base).await?;
         verify_published_tip(&git, &item, &base, &remote.head).await?;
-        if parent_branch != item {
+        if parent_branch != item && remote.head_branch == parent_branch {
             verify_published_tip(&git, &parent_branch, &base, &remote.head).await?;
         }
 
