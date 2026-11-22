@@ -283,3 +283,126 @@ async fn a_restart_during_the_busy_hand_over_keeps_the_new_holder_and_briefing()
     assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
     assert!(prompt.contains("`busy`"), "{prompt}");
 }
+
+/// A waiting member and an item of another member in review, with a free investigator as candidate.
+fn state_with_another_item_in_review() -> (agent_core::state::State, agent_core::ids::TeamId, TaskId) {
+    let mut state = crate::fixtures::team_state();
+    let team = crate::fixtures::team_id(0);
+    let task = crate::fixtures::task(2);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        for (round, item, agent, branch) in [
+            ("round-20261111-153101-q1w1", "1.1", "claude-1", "agents/claude-1/1.1"),
+            (
+                "round-20261111-153102-q1w2",
+                "1.2",
+                "inv-opus",
+                "agents/codex-1/item-1-2",
+            ),
+        ] {
+            found
+                .open_round(
+                    round.parse().unwrap(),
+                    Some(item.parse().unwrap()),
+                    crate::fixtures::at(1),
+                )
+                .unwrap();
+            found
+                .advance_item(
+                    item.parse().unwrap(),
+                    agent_core::state::ItemPhase::InProgress {
+                        assignee: agent.parse().unwrap(),
+                        branch: branch.parse().unwrap(),
+                    },
+                )
+                .unwrap();
+        }
+        found
+            .advance_item(
+                "1.2".parse().unwrap(),
+                agent_core::state::ItemPhase::InReview {
+                    pr: crate::fixtures::pr(1),
+                    reviews: Vec::new(),
+                },
+            )
+            .unwrap();
+    }
+    state.start_waiting(&task, crate::fixtures::at(0));
+    (state, team, task)
+}
+
+#[tokio::test]
+async fn a_review_of_another_members_item_does_not_block_a_busy_hand_over() {
+    use super::super::fixture::Daemon;
+
+    let (state, _team, task) = state_with_another_item_in_review();
+    let daemon = Daemon::new(&state, None);
+    daemon.configure("\n[replacement]\nagents = [\"inv-1\"]\nbusy_after = 1\n");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(changed, "another item's review does not stop the hand-over");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "inv-1"
+    );
+}
+
+#[tokio::test]
+async fn a_waiting_members_own_review_is_not_handed_over() {
+    use super::super::fixture::Daemon;
+    use agent_core::state::{ItemPhase, NewRun, RunEnd};
+    use agent_core::status::RunOutcome;
+
+    let (mut state, team, task) = state_with_another_item_in_review();
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        found
+            .begin_run(
+                &task,
+                NewRun {
+                    id: crate::fixtures::run(1),
+                    at: crate::fixtures::at(2),
+                    session: None,
+                    rounds: vec!["round-20261111-153101-q1w1".parse().unwrap()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .end_run(
+                crate::fixtures::at(3),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done,
+                },
+            )
+            .unwrap();
+        member.transition(TaskStatus::Waiting).unwrap();
+        let mut pr = crate::fixtures::pr(2);
+        pr.branch = "agents/claude-1/1.1".parse().unwrap();
+        found
+            .advance_item(
+                "1.1".parse().unwrap(),
+                ItemPhase::InReview {
+                    pr,
+                    reviews: Vec::new(),
+                },
+            )
+            .unwrap();
+    }
+    let daemon = Daemon::new(&state, None);
+    daemon.configure("\n[replacement]\nagents = [\"inv-1\"]\nbusy_after = 1\n");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "a task waiting for its item's review stays with its holder");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
