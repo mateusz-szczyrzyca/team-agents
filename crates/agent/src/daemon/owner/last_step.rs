@@ -211,7 +211,6 @@ impl Owner {
             })
             .unwrap_or_default();
         if !matching_items.is_empty() {
-            self.watch.publish_question.remove(task);
             let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
             log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
             let matching_branches: std::collections::HashSet<agent_core::ids::BranchName> =
@@ -253,9 +252,6 @@ impl Owner {
                 agent_core::decide::publish::PublishAnswer::Retry => {
                     self.watch
                         .retry_at
-                        .retain(|(t, b), _| !(t == &located.team && matching_branches.contains(b)));
-                    self.watch
-                        .publish_tries
                         .retain(|(t, b), _| !(t == &located.team && matching_branches.contains(b)));
                     Ok(TaskStatus::Queued)
                 }

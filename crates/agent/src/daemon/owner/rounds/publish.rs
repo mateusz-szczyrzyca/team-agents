@@ -391,8 +391,6 @@ impl Owner {
                 Ok(Attempt::Nothing) => {}
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
-                    self.watch.publish_tries.remove(&key);
-                    self.watch.publish_question.remove(&lead.task);
                     self.watch.gate_sent_back.remove(&lead.task);
                     self.watch.own_gates.remove(&lead.task);
                     self.each_item(team_id, &published.items, |item| {
@@ -1668,7 +1666,6 @@ impl Owner {
             })? {
             super::super::Asked::Recorded(notice) | super::super::Asked::Unusable(notice) => notice,
         };
-        self.watch.publish_question.insert(site.lead.task.clone(), number);
         let item_ids = item_ids_of(publication);
         self.each_item(site.team, &item_ids, |item| {
             item.record_publish_question_branch(site.lead.task.clone(), number, now, publication.head_branch.clone());
