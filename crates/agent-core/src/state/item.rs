@@ -613,11 +613,6 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.reset_publish_tries();
     }
 
-    /// See [`ItemProgress::record_publish_question`].
-    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
-        self.value.record_publish_question(task, number, at);
-    }
-
     /// See [`ItemProgress::record_publish_question_branch`].
     pub fn record_publish_question_branch(
         &mut self,
@@ -1096,16 +1091,6 @@ impl ItemProgress {
     #[must_use]
     pub fn publish_question_branch(&self) -> Option<&BranchName> {
         self.publish_question.as_ref().and_then(|q| q.branch.as_ref())
-    }
-
-    /// Records a complete question identity from a caller without a destination.
-    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
-        self.publish_question = Some(PublishQuestion {
-            task,
-            number,
-            at,
-            branch: None,
-        });
     }
 
     /// Records the exact publication destination with its question identity.
