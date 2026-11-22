@@ -1002,3 +1002,61 @@ async fn a_member_whose_item_waits_for_a_review_is_not_handed_over_while_a_free_
     std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
     rig.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_busy_investigator_is_not_given_a_review_while_free_investigators_exist() {
+    use agent_core::state::ItemPhase;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-2", "work"),
+            investigator("inv-r1", "hold"),
+            investigator("inv-r2", SILENT),
+            investigator("inv-r3", SILENT),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    // inv-r1 runs its own task, so it is busy when the review of claude-2's item is asked for.
+    let (_, holder) = rig.run(&["inv-r1"], ONE, MergeMode::NoMerge, None).await;
+    rig.status_is(&holder[0], TaskStatus::Running).await;
+    // inv-r2 and inv-r3 finish their own tasks after it: the oldest activity of the three is inv-r1's.
+    for free in ["inv-r2", "inv-r3"] {
+        let (_, own) = rig.run(&[free], ONE, MergeMode::NoMerge, None).await;
+        rig.status_is(&own[0], TaskStatus::Waiting).await;
+    }
+    let (review_team, _) = rig.run(&["claude-2"], ONE, MergeMode::Autopilot, None).await;
+    let item_id = "1.1".parse().unwrap();
+    let state = rig
+        .state_where(
+            "the item of claude-2 to be asked for two reviews of free investigators",
+            |state| {
+                state.team(&review_team).is_some_and(|team| {
+                    team.reviewers().len() == 2
+                        && team
+                            .item(item_id)
+                            .is_some_and(|progress| matches!(progress.phase(), ItemPhase::InReview { .. }))
+                })
+            },
+        )
+        .await;
+
+    let reviewers: Vec<String> = state
+        .team(&review_team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .map(|member| member.agent().name().to_owned())
+        .collect();
+    assert_eq!(
+        reviewers,
+        ["inv-r2", "inv-r3"],
+        "the busy investigator is not a reviewer"
+    );
+
+    std::fs::write(rig.worktree(&holder[0]).join(".fake-continue"), "").unwrap();
+    rig.stop().await.unwrap();
+}
