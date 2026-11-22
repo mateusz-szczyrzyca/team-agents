@@ -32,6 +32,18 @@ pub enum AutopilotPrompt {
     WaitGate,
     /// Describe an idle round whose queued run has not started yet.
     WaitQueued,
+    /// The wait of a round with its owner and the time since which it is owed.
+    WaitOwned,
+    /// The wait of a round with its owner, when the time since which it is owed is not known.
+    WaitOwnedUndated,
+    /// The name of the lead as the owner of a wait.
+    WaitOwnerLead,
+    /// The name of the human as the owner of a wait.
+    WaitOwnerHuman,
+    /// The name of the reviewers as the owner of a wait.
+    WaitOwnerReviewers,
+    /// The name of the harness as the owner of a wait.
+    WaitOwnerHarness,
     /// Ask an independent investigator to check one finding at the handed-over commit.
     ReviewOpinionRequest,
     /// Return an unchanged fix pass that requires a commit.
@@ -188,6 +200,8 @@ pub enum AutopilotPrompt {
     ReviewFixResponse,
     /// Tell a lead woken during an open fix pass that the pass is still open and its response is due.
     ReviewFixPassOpen,
+    /// The line that names the file holding the full text of the findings of the fix pass, for every later prompt of it.
+    ReviewFixPassFile,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -242,6 +256,12 @@ impl AutopilotPrompt {
         Self::WaitMerge,
         Self::WaitGate,
         Self::WaitQueued,
+        Self::WaitOwned,
+        Self::WaitOwnedUndated,
+        Self::WaitOwnerLead,
+        Self::WaitOwnerHuman,
+        Self::WaitOwnerReviewers,
+        Self::WaitOwnerHarness,
         Self::WaitReview,
         Self::WaitInvestigator,
         Self::WaitOpinion,
@@ -325,6 +345,7 @@ impl AutopilotPrompt {
         Self::ReviewResponseFixed,
         Self::ReviewFixResponse,
         Self::ReviewFixPassOpen,
+        Self::ReviewFixPassFile,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -401,6 +422,12 @@ impl AutopilotPrompt {
             Self::WaitReview => "harness/pr/wait-review.md",
             Self::WaitGate => "harness/pr/wait-gate.md",
             Self::WaitQueued => "harness/pr/wait-queued.md",
+            Self::WaitOwned => "harness/pr/wait-owned.md",
+            Self::WaitOwnedUndated => "harness/pr/wait-owned-undated.md",
+            Self::WaitOwnerLead => "harness/pr/wait-owner-lead.md",
+            Self::WaitOwnerHuman => "harness/pr/wait-owner-human.md",
+            Self::WaitOwnerReviewers => "harness/pr/wait-owner-reviewers.md",
+            Self::WaitOwnerHarness => "harness/pr/wait-owner-harness.md",
             Self::ReviewFixNoCommit => "harness/review/fix-no-commit.md",
             Self::ReviewFixNoCommitReason => "harness/review/fix-no-commit-reason.md",
             Self::ReviewFixNoCommitUndone => "harness/review/fix-no-commit-undone.md",
@@ -456,6 +483,7 @@ impl AutopilotPrompt {
             Self::ReviewFixPass => "harness/review/fix-pass.md",
             Self::ReviewFixResponse => "harness/review/fix-response.md",
             Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
+            Self::ReviewFixPassFile => "harness/review/fix-pass-file.md",
             Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
             Self::ReviewResponseExplain => "harness/review/response-explain.md",
             Self::ReviewResponseFixed => "harness/review/response-fixed.md",
@@ -524,6 +552,10 @@ impl AutopilotPrompt {
             | Self::WaitReview
             | Self::WaitGate
             | Self::WaitQueued
+            | Self::WaitOwnerLead
+            | Self::WaitOwnerHuman
+            | Self::WaitOwnerReviewers
+            | Self::WaitOwnerHarness
             | Self::ReviewOpinionCorrection
             | Self::ReviewOpinionOffer
             | Self::ReviewResponseOpinion
@@ -593,6 +625,9 @@ impl AutopilotPrompt {
             Self::ReviewMemberFix => &["integration"],
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
             Self::ReviewFixPassOpen => &["pr", "pass"],
+            Self::ReviewFixPassFile => &["path"],
+            Self::WaitOwned => &["wait", "owner", "since"],
+            Self::WaitOwnedUndated => &["wait", "owner"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],
             Self::ReviewResponseForm | Self::ReviewVerifierAnswer => &["number", "allowed"],
             Self::ReviewAnswerDiagnostic => &["number", "source", "mistake", "forms"],

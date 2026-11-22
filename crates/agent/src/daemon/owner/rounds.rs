@@ -153,6 +153,9 @@ pub(super) struct PullWatch {
     asleep_wakes: HashMap<TeamId, u32>,
     /// How many times in a row each lead was sent back because the gate had not passed at the tip of its branch.
     gate_sent_back: HashMap<TaskId, u32>,
+    /// How many times in a row each coordinator ended a run with a `SPLIT:` line the harness refused: it is told as often
+    /// as a proposal is corrected, and then its own status decides. A restart counts again from none.
+    pub(in crate::daemon::owner) split_refusals: HashMap<TaskId, u32>,
     /// The pull requests whose merge GitHub refused: they are not merged again, only looked at for the human's merge.
     refused: HashSet<(TeamId, PrNumber)>,
     /// The steps that call GitHub or git and failed: what each waits for, and until when.
@@ -938,6 +941,14 @@ mod delivery_restart_tests;
 #[cfg(test)]
 #[path = "rounds/tests/proposal_execution.rs"]
 mod proposal_execution_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/split_refusal.rs"]
+mod split_refusal_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/fix_pass_findings.rs"]
+mod fix_pass_findings_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
