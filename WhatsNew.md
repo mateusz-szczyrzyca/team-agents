@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.55.0 — 22.11.2026 — PR #172
+
+### New features
+- [agent] [agent-core] `agent status` writes every time in the zone of this machine, with the date and the offset valid at that moment, in the same form as `agent log` (`2026-11-21 17:28:53 +01:00 command: git status` instead of `2026-11-21T16:28:53Z command: git status`): `started 2026-11-21 13:29 +01:00` instead of `started 21-11-2026 13:29`, `last activity 2026-11-21 17:28:53 +01:00`, and in `agent status <round>` the round, run and snapshot times (`opened 2026-11-21 13:29:09 +01:00`). `agent status --json` and the files of the harness stay in UTC (RFC 3339).
+- [agent] [agent-core] Every notification's `Time:` line and a waiting step's `next try` time are written in the daemon's local time zone with the offset of that moment: `Time: 2026-11-21 17:30 +01:00` instead of `Time: 2026-11-21 16:30`.
+- [agent] [agent-core] [agent-runtime] `agent debug` writes every timestamp in `SUMMARY.md` and in the task bundle texts (`end.md`, `questions.md`, `gate.md`) in the zone of this machine (`2026-11-21 17:28:53 +01:00`) instead of UTC with the local time in brackets.
+- [agent] **Action:** a script that reads the text of `agent status`, `agent debug` or the `Time:` line of a notification must read the new form; use `agent status --json` for machine-readable UTC status.
+
 ## 0.54.0 — 21.11.2026 — PR #171
 
 ### New features
