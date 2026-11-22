@@ -12,7 +12,7 @@ mod git_bring_over {
     use agent_core::ids::{RoundId, TaskId};
     use agent_core::repo_path::RepoPath;
     use agent_core::state::CommitId;
-    use agent_runtime::git::{BringOver, CommitIdentity, Git};
+    use agent_runtime::git::{BringOver, CommitIdentity, Git, GitError, Merged};
 
     /// The round and the task of the snapshots of these tests.
     const ROUND: &str = "round-20261122-140000-b1b1";
@@ -283,5 +283,272 @@ mod git_bring_over {
             std::fs::read(repo.join("guide.md")).expect("the file"),
             b"one\nmy edit\n"
         );
+    }
+
+    /// A repository with a base commit and the worker's branch made from it by `step`; the requester is on `main`.
+    fn with_worker(base: &[(&str, &[u8])], step: impl FnOnce(&Path)) -> (tempfile::TempDir, PathBuf, CommitId) {
+        let (tmp, repo) = repository();
+        commit(&repo, base, "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
+        step(&repo);
+        let worker: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        raw(&repo, &["switch", "-q", "main"]);
+        (tmp, repo, worker)
+    }
+
+    #[tokio::test]
+    async fn a_merge_made_on_an_older_head_is_not_written_after_the_requester_committed() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        });
+        let git = handle(&repo);
+        let made_on: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        let Merged::Clean(applied) = git
+            .merge_into_scratch(&made_on, &worker, &round(), &task())
+            .await
+            .expect("the merge")
+        else {
+            panic!("the merge applies");
+        };
+        // The requester commits while the merge waits to be written.
+        let moved = commit(&repo, &[("mine.txt", b"mine\n")], "the requester's own step");
+        let before = state(&repo, &["guide.md", "mine.txt"]);
+
+        let error = git
+            .write_merged(&made_on, &applied)
+            .await
+            .expect_err("the branch is not where the merge was made");
+
+        assert!(
+            matches!(&error, GitError::HeadMoved { expected, found } if *expected == made_on && *found == moved),
+            "{error:?}"
+        );
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), moved.to_string());
+        assert_eq!(state(&repo, &["guide.md", "mine.txt"]), before);
+        assert_eq!(std::fs::read(repo.join("mine.txt")).expect("mine"), b"mine\n");
+    }
+
+    #[tokio::test]
+    async fn the_files_of_a_worker_history_of_two_commits_are_all_named() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("secret.md", b"secret\n")], "the first commit");
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the second commit");
+        });
+
+        let outside = handle(&repo)
+            .outside(&worker, &paths(&["guide.md"]))
+            .await
+            .expect("the files outside the request");
+
+        assert_eq!(outside, paths(&["secret.md"]));
+    }
+
+    #[tokio::test]
+    async fn the_files_of_a_worker_merge_commit_are_named() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+            raw(repo, &["switch", "-q", "-c", "side", "main"]);
+            commit(repo, &[("side.md", b"side\n")], "a side step");
+            raw(repo, &["switch", "-q", "worker"]);
+            raw(repo, &["merge", "-q", "--no-ff", "-m", "merge the side", "side"]);
+        });
+
+        let outside = handle(&repo)
+            .outside(&worker, &paths(&["guide.md"]))
+            .await
+            .expect("the files outside the request");
+
+        assert_eq!(outside, paths(&["side.md"]));
+    }
+
+    #[tokio::test]
+    async fn a_path_that_is_not_utf8_is_refused_and_nothing_is_written() {
+        use std::os::unix::ffi::OsStrExt;
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n")], "base");
+        let odd = repo.join(std::ffi::OsStr::from_bytes(b"caf\xe9.txt"));
+        std::fs::write(&odd, b"latin\n").expect("the file");
+        raw(&repo, &["add", "-A"]);
+        raw(
+            &repo,
+            &["commit", "-q", "-m", "the requester's file with a latin-1 name"],
+        );
+        let base = raw(&repo, &["rev-parse", "HEAD"]);
+        raw(&repo, &["switch", "-q", "-c", "worker", &format!("{base}~1")]);
+        let worker = commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        raw(&repo, &["switch", "-q", "main"]);
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+
+        let error = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect_err("the name is not UTF-8");
+
+        assert!(matches!(error, GitError::NotUtf8 { .. }), "{error:?}");
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
+        assert_eq!(std::fs::read(&odd).expect("the file"), b"latin\n");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\n");
+    }
+
+    #[tokio::test]
+    async fn a_file_where_the_other_side_has_a_directory_is_a_conflict_in_both_directions() {
+        // The worker adds a file in a directory where the requester has a file of that name, and the other way round.
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("node/child.txt", b"child\n")], "the worker's step");
+        });
+        commit(&repo, &[("node", b"file\n")], "the requester's own step");
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("a conflict is an answer");
+        let BringOver::Conflicted { files, .. } = outcome else {
+            panic!("a file and a directory of one name conflict: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["node", "node/child.txt"]));
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
+
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("node", b"file\n")], "the worker's step");
+        });
+        commit(&repo, &[("node/child.txt", b"child\n")], "the requester's own step");
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("a conflict is an answer");
+        let BringOver::Conflicted { files, .. } = outcome else {
+            panic!("a file and a directory of one name conflict: {outcome:?}");
+        };
+        assert_eq!(files, paths(&["node", "node/child.txt"]));
+    }
+
+    #[tokio::test]
+    async fn a_tracked_edit_and_a_staged_change_that_the_merge_does_not_touch_stay_as_they_were() {
+        let (_tmp, repo, worker) = with_worker(
+            &[
+                ("guide.md", b"one\n"),
+                ("other.txt", b"other\n"),
+                ("staged.txt", b"staged\n"),
+            ],
+            |repo| {
+                commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+            },
+        );
+        write(&repo, "other.txt", b"my edit\n");
+        write(&repo, "staged.txt", b"my staged edit\n");
+        raw(&repo, &["add", "staged.txt"]);
+        let status = raw(&repo, &["status", "--porcelain=v1", "-z"]);
+        assert_eq!(status, " M other.txt\0M  staged.txt\0");
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), status);
+        assert_eq!(std::fs::read(repo.join("other.txt")).expect("mine"), b"my edit\n");
+        assert_eq!(raw(&repo, &["show", ":staged.txt"]), "my staged edit");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
+    }
+
+    #[tokio::test]
+    async fn a_worker_history_with_no_commit_in_common_is_brought_over() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n")], "base");
+        raw(&repo, &["switch", "-q", "--orphan", "worker"]);
+        let worker = commit(&repo, &[("orphan.md", b"orphan\n")], "the worker's own history");
+        raw(&repo, &["switch", "-q", "main"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(std::fs::read(repo.join("orphan.md")).expect("the file"), b"orphan\n");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\n");
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn a_file_the_worker_deleted_and_a_mode_it_changed_are_brought_over() {
+        let (_tmp, repo, worker) = with_worker(&[("other.txt", b"other\n"), ("run.sh", b"echo\n")], |repo| {
+            raw(repo, &["rm", "-q", "other.txt"]);
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(repo.join("run.sh"), std::fs::Permissions::from_mode(0o755))
+                    .expect("the mode");
+            }
+            raw(repo, &["add", "-A"]);
+            raw(repo, &["commit", "-q", "-m", "the worker's step"]);
+        });
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert!(!repo.join("other.txt").exists());
+        assert!(raw(&repo, &["ls-tree", "HEAD", "run.sh"]).starts_with("100755 "));
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn the_commit_brought_over_keeps_the_workers_author_and_message() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            write(repo, "guide.md", b"one\ntwo\n");
+            raw(repo, &["add", "-A"]);
+            raw(
+                repo,
+                &[
+                    "commit",
+                    "-q",
+                    "--author=Worker Name <worker@example.com>",
+                    "-m",
+                    "Write the second line",
+                    "-m",
+                    "The body of the worker's message.",
+                ],
+            );
+        });
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        let BringOver::Applied { commit, .. } = outcome else {
+            panic!("the commit applies: {outcome:?}");
+        };
+        let log = raw(&repo, &["log", "-1", "--format=%an <%ae>%n%B", &commit.to_string()]);
+        assert!(
+            log.starts_with("Worker Name <worker@example.com>\nWrite the second line\n"),
+            "{log}"
+        );
+        assert!(log.contains("The body of the worker's message."), "{log}");
+        assert!(log.contains(&worker.to_string()), "{log}");
+    }
+
+    #[tokio::test]
+    async fn an_untracked_file_in_the_way_of_a_file_the_worker_adds_is_a_typed_outcome() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("notes.md", b"the worker's notes\n")], "the worker's step");
+        });
+        write(&repo, "notes.md", b"my own notes\n");
+        let files = ["guide.md", "notes.md"];
+        let before = state(&repo, &files);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("an untracked file in the way is an answer");
+
+        let BringOver::InTheWay { files: in_the_way, .. } = outcome else {
+            panic!("an untracked file is in the way: {outcome:?}");
+        };
+        assert_eq!(in_the_way, paths(&["notes.md"]));
+        assert_eq!(state(&repo, &files), before);
     }
 }
