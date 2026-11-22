@@ -988,12 +988,20 @@ async fn running_check_group(daemon: &Daemon) -> u32 {
     let record = daemon.home.task_dir(&task(1)).join("checks").join("running");
     loop {
         if let Ok(text) = std::fs::read_to_string(&record)
-            && let Ok(pid) = text.trim().parse::<u32>()
+            && let Some((pid, ticks)) = text.trim().split_once(' ')
+            && let (Ok(pid), Ok(_ticks)) = (pid.parse::<u32>(), ticks.parse::<u64>())
         {
             return pid;
         }
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
+}
+
+/// Reads the kernel start time (field 22 of `/proc/<pid>/stat`) of `pid`.
+fn process_start_ticks(pid: u32) -> u64 {
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+    let (_, rest) = stat.rsplit_once(')').unwrap();
+    rest.split_whitespace().nth(19).unwrap().parse().unwrap()
 }
 
 /// Whether a process with `pid` is still running (a zombie has ended).
@@ -1065,7 +1073,8 @@ async fn a_daemon_that_starts_ends_the_check_a_dead_daemon_left_running() {
         .process_group(0)
         .spawn()
         .unwrap();
-    std::fs::write(checks.join("running"), format!("{}\n", left.id())).unwrap();
+    let ticks = process_start_ticks(left.id());
+    std::fs::write(checks.join("running"), format!("{} {ticks}\n", left.id())).unwrap();
 
     daemon.start().await;
 

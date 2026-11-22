@@ -632,6 +632,18 @@ fn running_record(task_dir: &std::path::Path) -> std::path::PathBuf {
     task_dir.join("checks").join("running")
 }
 
+/// Reads the kernel start time (field 22 of `/proc/<pid>/stat`) of `pid`.
+fn start_ticks_of(pid: u32) -> u64 {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).expect("read proc stat");
+    let (_, after_comm) = stat.rsplit_once(')').expect("comm in parens");
+    after_comm
+        .split_whitespace()
+        .nth(19)
+        .expect("starttime field")
+        .parse()
+        .expect("starttime u64")
+}
+
 #[tokio::test]
 async fn check_command_records_its_process_while_it_runs_and_clears_the_record_when_it_ends() {
     let env = TestEnv::new();
@@ -655,15 +667,19 @@ async fn check_command_records_its_process_while_it_runs_and_clears_the_record_w
         tokio::select! {
             result = &mut running => break result.unwrap(),
             () = tokio::time::sleep(std::time::Duration::from_millis(10)), if seen.is_none() => {
-                seen = fs::read_to_string(&record).ok();
+                seen = fs::read_to_string(&record).ok().filter(|text| !text.trim().is_empty());
             }
         }
     };
 
-    let pid = seen.expect("the record of the process is written while the check runs");
+    let record_text = seen.expect("the record of the process is written while the check runs");
+    let (pid, ticks) = record_text
+        .trim()
+        .split_once(' ')
+        .expect("the record holds a process ID and start time");
     assert!(
-        pid.trim().parse::<u32>().is_ok(),
-        "the record holds a process ID: {pid:?}"
+        pid.parse::<u32>().is_ok() && ticks.parse::<u64>().is_ok(),
+        "the record holds a process ID and start time: {record_text:?}"
     );
     assert_eq!(result.state, JudgementState::Mismatch);
     assert_eq!(result.reason.as_deref(), Some("ran past 1 seconds"));
@@ -682,7 +698,8 @@ fn recover_checks_ends_the_group_of_a_check_left_by_a_dead_daemon() {
         .process_group(0)
         .spawn()
         .expect("spawn sleep");
-    fs::write(&record, format!("{}\n", child.id())).expect("write record");
+    let ticks = start_ticks_of(child.id());
+    fs::write(&record, format!("{} {ticks}\n", child.id())).expect("write record");
 
     let ended = super::recover_checks(&env.task_dir).expect("recovery");
 

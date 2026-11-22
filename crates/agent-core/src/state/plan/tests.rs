@@ -74,9 +74,9 @@ fn running_plan_check_roundtrips_and_is_omitted_when_cleared() {
         end: RunEnd::Reported {
             outcome: RunOutcome::Done,
         },
+        pause: None,
+        made_progress: true,
         final_message: Some("Finished.\nSTATUS: DONE".to_owned()),
-        step: Some(ItemId::from_str("1.1").unwrap()),
-        pid: Some(NonZeroU32::new(4242).unwrap()),
     };
     keeping.set_running_check(Some(check.clone()));
     assert_eq!(keeping.running_check(), Some(&check));
