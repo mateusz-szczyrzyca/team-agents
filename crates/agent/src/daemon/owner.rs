@@ -735,6 +735,7 @@ impl Owner {
             self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
+        self.recover_plan_checks().await?;
         Ok(())
     }
 
@@ -1179,6 +1180,18 @@ impl Owner {
                 plan::PlanStep::Done(settled, held) => (settled, held),
                 plan::PlanStep::Waiting(wait) => {
                     // The command checks run in the background: the owner goes on, and the run ends when they have.
+                    if let Some(run_id) = wait.run.clone()
+                        && let Some((_, mut member)) = self.parts.state.find_task_mut(task)
+                    {
+                        member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
+                            run: run_id,
+                            end: run.classified.end.clone(),
+                            final_message: run.final_message.clone(),
+                            step: wait.commands.first().map(|(step, _)| *step),
+                            pid: None,
+                        }));
+                        self.save().await?;
+                    }
                     self.parked.insert(
                         task.clone(),
                         plan::Parked {
@@ -1242,6 +1255,9 @@ impl Owner {
             run.final_message.as_deref(),
             &mut events,
         )?;
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            member.set_plan_running_check(None);
+        }
         let (status, notice) = if let Some(halt) = overruled {
             self.hangs.remove(task);
             self.wakes.remove(task);

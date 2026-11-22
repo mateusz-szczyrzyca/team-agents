@@ -334,6 +334,42 @@ fn mismatch(check: Option<String>, reason: String) -> JudgementResult {
     }
 }
 
+/// The steps of `plan` that still need a judgement for `run`.
+fn steps_for_run<'a>(
+    plan: &'a Plan,
+    run: Option<&RunId>,
+    earlier: (Option<&'a Plan>, &'a HashMap<RunId, Plan>),
+    previous: &HashMap<ItemId, JudgementRecord>,
+) -> Vec<&'a Step> {
+    let (earlier_plan, earlier_by_run) = earlier;
+    steps_to_judge_with(
+        plan,
+        |id| {
+            let latest_step = earlier_plan.and_then(|plan| plan.step(id));
+            if latest_step.is_none_or(|step| step.state() != StepState::Done) {
+                return latest_step;
+            }
+            if let Some(judgement) = previous.get(id)
+                && let Some(run_id) = &judgement.run
+                && let Some(plan_at_run) = earlier_by_run.get(run_id)
+            {
+                return plan_at_run.step(id);
+            }
+            earlier_plan.and_then(|p| p.step(id))
+        },
+        |id| previous.get(id).map(|j| j.state),
+    )
+    .into_iter()
+    .filter(|step| {
+        !run.is_some_and(|current_run| {
+            previous
+                .get(&step.id())
+                .is_some_and(|judgement| judgement.run.as_ref() == Some(current_run))
+        })
+    })
+    .collect()
+}
+
 /// What the human's answer to the question about a task's plan says.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum PlanAnswer {
@@ -648,25 +684,8 @@ impl Owner {
         let PlanRead::Parsed(plan) = &found.read else {
             return Ok(Judged::Known(HashMap::new()));
         };
-        let (earlier_plan, earlier_by_run) = earlier;
         let previous = self.latest_judgements(task).await;
-        let to_judge = steps_to_judge_with(
-            plan,
-            |id| {
-                let latest_step = earlier_plan.and_then(|plan| plan.step(id));
-                if latest_step.is_none_or(|step| step.state() != StepState::Done) {
-                    return latest_step;
-                }
-                if let Some(judgement) = previous.get(id)
-                    && let Some(run_id) = &judgement.run
-                    && let Some(plan_at_run) = earlier_by_run.get(run_id)
-                {
-                    return plan_at_run.step(id);
-                }
-                earlier_plan.and_then(|p| p.step(id))
-            },
-            |id| previous.get(id).map(|j| j.state),
-        );
+        let to_judge = steps_for_run(plan, run, earlier, &previous);
         let config = self.parts.settings.config.plan();
         let check_seconds = config.check_seconds();
         let refuse = config.check_refuse().to_vec();
@@ -702,6 +721,10 @@ impl Owner {
         }
         match self.check_environment(located) {
             Ok(envs) => {
+                if !inline.is_empty() {
+                    let records = self.records_of(task, located, run, std::mem::take(&mut inline))?;
+                    drop(self.record_judgements(task, records).await);
+                }
                 let ids = commands
                     .iter()
                     .map(|(step, command)| (step.id(), command.clone()))
@@ -751,14 +774,22 @@ impl Owner {
             .map_err(|error: InvalidName| error_chain(&error))?;
         let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), &agent);
         let binary_dir = crate::daemon::resolve_agent_binary_dir().map_err(|error| error_chain(&error))?;
-        agent_runtime::run::check_environment(
+        let mut envs = agent_runtime::run::check_environment(
             &self.parts.settings.secrets,
             &binary_dir,
             &self.parts.settings.config.binaries().agent_path,
             self.parts.store.home().root(),
             &identity,
         )
-        .map_err(|error| error_chain(&error))
+        .map_err(|error| error_chain(&error))?;
+        let incremental = if self.parts.settings.config.build().incremental {
+            "1"
+        } else {
+            "0"
+        };
+        envs.retain(|(name, _)| name != "CARGO_INCREMENTAL");
+        envs.push(("CARGO_INCREMENTAL".to_owned(), incremental.to_owned()));
+        Ok(envs)
     }
 
     /// Starts the command checks of a run in the background: the owner goes on while they run, and their batch is
@@ -861,6 +892,16 @@ impl Owner {
     ) -> HashMap<ItemId, JudgementRecord> {
         let mut latest = self.latest_judgements(task).await;
         for record in &records {
+            log_decision(
+                "plan_check",
+                &format!("task={task}, step={}", record.step),
+                &format!(
+                    "state={}, reason={:?}, output={:?}",
+                    record.state.as_str(),
+                    record.reason,
+                    record.output_path
+                ),
+            );
             latest.insert(record.step, record.clone());
         }
         if !records.is_empty() && self.history.is_writing() {
@@ -931,6 +972,86 @@ impl Owner {
                 );
             }
         }
+    }
+
+    /// Finishes the runs that had ended before a restart and were waiting for their plan command checks or settlement.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when a recovered run cannot be finished or the state cannot be saved.
+    pub(super) async fn recover_plan_checks(&mut self) -> Result<(), OwnerError> {
+        let pending: Vec<(TaskId, agent_core::state::RunningPlanCheck)> = self
+            .parts
+            .state
+            .teams()
+            .iter()
+            .flat_map(|team| {
+                let crew = team.crew().roster().into_iter().map(|(_, member)| member);
+                crew.chain(team.reviewers().iter()).filter_map(|member| {
+                    member
+                        .plan_running_check()
+                        .cloned()
+                        .map(|check| (member.task().clone(), check))
+                })
+            })
+            .collect();
+        if pending.is_empty() {
+            return Ok(());
+        }
+        let now = Timestamp::now(&self.parts.clock)?;
+        for (task, check) in pending {
+            let has_current = self
+                .parts
+                .state
+                .find_task(&task)
+                .and_then(|found| found.member.current_run())
+                .is_some_and(|run| run.id() == &check.run);
+            if !has_current {
+                if let Some((_, mut member)) = self.parts.state.find_task_mut(&task) {
+                    member.set_plan_running_check(None);
+                }
+                self.save().await?;
+                continue;
+            }
+            let pause = match &check.end {
+                RunEnd::QuotaExhausted { .. } => {
+                    crate::daemon::settle::wake_time(&check.end, now, self.parts.settings.config.limits())
+                        .ok()
+                        .flatten()
+                        .map(|until| agent_core::decide::outcome::Pause {
+                            until,
+                            reason: agent_core::decide::outcome::PauseReason::Quota,
+                            evidence: String::new(),
+                        })
+                }
+                RunEnd::RateLimited => {
+                    crate::daemon::settle::wake_time(&check.end, now, self.parts.settings.config.limits())
+                        .ok()
+                        .flatten()
+                        .map(|until| agent_core::decide::outcome::Pause {
+                            until,
+                            reason: agent_core::decide::outcome::PauseReason::RateLimit,
+                            evidence: String::new(),
+                        })
+                }
+                RunEnd::Reported { .. }
+                | RunEnd::TurnLimit
+                | RunEnd::NoStatus { .. }
+                | RunEnd::Hung
+                | RunEnd::Stopped => None,
+            };
+            let run = FinishedRun {
+                classified: agent_core::decide::outcome::Classified { end: check.end, pause },
+                finish: agent_core::decide::outcome::RunFinish {
+                    exit: agent_core::decide::outcome::ExitStatus::Code(0),
+                    stopped_by: agent_core::decide::outcome::StoppedBy::Nobody,
+                },
+                progress: agent_runtime::run::Progress::Made,
+                session: None,
+                final_message: check.final_message,
+            };
+            self.finished(&task, run).await?;
+        }
+        Ok(())
     }
 
     /// The latest judgements of steps of `task` kept in history, keyed by step ID.
