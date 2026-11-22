@@ -17,21 +17,46 @@ use agent_core::log::LogEvent;
 use agent_core::plan::Check;
 use agent_core::plan::judge::JudgementState;
 use agent_core::state::{CommitId, Timestamp};
-use agent_runtime::agentbus::{DelegationStatus, DelegationUpdate};
+use agent_runtime::agentbus::{DelegationStatus, DelegationUpdate, FailureClass, RequestId};
 use agent_runtime::git::{BringOver, CommitIdentity, Git, Revision};
 use agent_runtime::plan::check::{CheckContext, execute_request_check, read_check_tail, request_check_outcome};
 use agent_runtime::process::error_chain;
 use agent_runtime::team_prompts::TeamPrompts;
 use agent_runtime::worker_request::{
-    Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending, write_pending,
+    Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending_each, write_pending,
 };
 
-use super::teams::Served;
+use super::teams::{Outbound, Served, is_transient};
 use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, BusNotice, NoticeRenderError};
 
 /// What the requester reads of a check's output when the check printed nothing.
 const NO_OUTPUT: &str = "(the check printed nothing)";
+
+/// A request whose check runs in the background: what is kept of it until the check ends.
+#[derive(Debug)]
+pub(super) struct Checking {
+    /// The task directory of the worker, where the file of the request is.
+    task_dir: PathBuf,
+    /// The request as its file has it: the stage `Ended`.
+    pending: Pending,
+    /// What is known of the result before the check.
+    checked: Checked,
+}
+
+/// What reading a request and the worker's worktree came to.
+enum Gathered {
+    /// The bus cannot say now: the request is tried again at the next look.
+    Later,
+    /// The bus has no such request: its file is dropped.
+    Gone,
+    /// The result is wrong before any check: the reasons.
+    Wrong(Checked, Vec<String>),
+    /// The result is to be checked with `text`, for the step `step`, in the background.
+    Check(Checked, ItemId, String),
+    /// There is no check to run.
+    Checked(Checked),
+}
 
 /// What the files of a request, as the bus has them, say it asks for.
 fn scope_of(files: &[String]) -> Scope {
@@ -89,15 +114,15 @@ impl Owner {
     /// next look at the team to settle.
     ///
     /// # Errors
-    /// [`OwnerError`] when the file cannot be written or the clock gives a time that cannot be recorded.
+    /// [`OwnerError`] when the clock gives a time that cannot be recorded; [`PendingError`] when the file cannot be written.
     pub(super) fn keep_worker_result(
         &mut self,
         team: &TeamId,
         served: &Served,
         worker_task: &TaskId,
         summary: String,
-    ) -> Result<(), OwnerError> {
-        let now = Timestamp::now(&self.parts.clock)?;
+    ) -> Result<(), PendingError> {
+        let now = Timestamp::now(&self.parts.clock).map_err(|_| PendingError::Clock)?;
         let elapsed = now.as_utc() - served.started.as_utc();
         let pending = Pending {
             request: served.request,
@@ -112,8 +137,7 @@ impl Owner {
             stage: Stage::Ended,
         };
         let task_dir = self.parts.store.home().task_dir(worker_task);
-        write_pending(&task_dir, &pending)?;
-        Ok(())
+        write_pending(&task_dir, &pending)
     }
 
     /// The git handle of the worktree of `task`, a task of `team`, for `agent`; `None` when the team or the path is not
@@ -146,10 +170,11 @@ impl Owner {
     }
 
     /// Settles the requests of the workers of `team` whose runs ended: one stage after another, each written down before
-    /// the next, and the answer at the end. A stage the bus cannot take now is tried again at the next look.
+    /// the next, and the answer at the end. A stage the bus cannot take now is tried again at the next look; a file that
+    /// cannot be read is told once and left alone.
     ///
     /// # Errors
-    /// [`OwnerError`] when a file cannot be read or written.
+    /// [`OwnerError`] when the clock or the state fails.
     pub(super) async fn settle_worker_results(&mut self, team: &TeamId) -> Result<(), OwnerError> {
         let Some(found) = self.parts.state.team(team) else {
             return Ok(());
@@ -163,26 +188,63 @@ impl Owner {
             .collect();
         for task in workers {
             let task_dir = self.parts.store.home().task_dir(&task);
-            for pending in read_pending(&task_dir).await? {
-                self.settle_one(&task_dir, pending).await?;
+            let read = match read_pending_each(&task_dir).await {
+                Ok(read) => read,
+                Err(error) => {
+                    self.tell_unreadable_once(&error);
+                    continue;
+                }
+            };
+            for item in read {
+                match item {
+                    Ok(pending) => {
+                        if self
+                            .request_checking
+                            .values()
+                            .any(|checking| checking.pending.request == pending.request)
+                        {
+                            continue;
+                        }
+                        self.settle_one(&task_dir, pending).await?;
+                    }
+                    Err(error) => self.tell_unreadable_once(&error),
+                }
             }
         }
         Ok(())
+    }
+
+    /// Says once, in the log, that a request of a worker cannot be read: the daemon goes on without it.
+    fn tell_unreadable_once(&mut self, error: &PendingError) {
+        if self.unreadable_requests.insert(error.to_string()) {
+            tracing::error!(
+                error = %error_chain(error),
+                "the file of a worker's request cannot be read: it is left as it is and the daemon goes on without it"
+            );
+        }
     }
 
     /// Takes `pending` through the stages that remain.
     async fn settle_one(&mut self, task_dir: &Path, mut pending: Pending) -> Result<(), OwnerError> {
         loop {
             let next = match &pending.stage {
-                Stage::Ended => match self.check_result(&pending).await {
-                    Ok(checked) => Stage::Checked(Box::new(checked)),
-                    Err(error) => {
+                Stage::Ended => match self.gather_request(&pending).await {
+                    Gathered::Later => return Ok(()),
+                    Gathered::Gone => {
                         tracing::warn!(
-                            event = LogEvent::BusDown.as_str(),
                             request = %pending.request,
-                            error = %error_chain(&error),
-                            "what a request asks cannot be read now: it is tried again at the next look"
+                            "the bus has no such request any more: the result of the worker is dropped"
                         );
+                        self.drop_pending(task_dir, pending.request);
+                        return Ok(());
+                    }
+                    Gathered::Wrong(checked, reasons) => Stage::Settled {
+                        checked: Box::new(checked),
+                        settlement: Settlement::Returned { reasons },
+                    },
+                    Gathered::Checked(checked) => Stage::Checked(Box::new(checked)),
+                    Gathered::Check(checked, step, text) => {
+                        self.start_request_check(task_dir, pending, checked, step, text);
                         return Ok(());
                     }
                 },
@@ -194,119 +256,207 @@ impl Owner {
                     }
                 }
                 Stage::Settled { checked, settlement } => {
-                    self.answer_requester(&pending, checked, settlement).await?;
-                    // A removed file that was never there is the end the request wants.
-                    if let Err(error) = std::fs::remove_file(pending_path(task_dir, pending.request))
-                        && error.kind() != std::io::ErrorKind::NotFound
-                    {
-                        return Err(PendingError::Write {
-                            path: pending_path(task_dir, pending.request),
-                            source: error,
-                        }
-                        .into());
+                    if self.answer_requester(&pending, checked, settlement).await? {
+                        self.drop_pending(task_dir, pending.request);
                     }
                     return Ok(());
                 }
             };
             pending.stage = next;
-            write_pending(task_dir, &pending)?;
+            if let Err(error) = write_pending(task_dir, &pending) {
+                tracing::error!(
+                    request = %pending.request,
+                    error = %error_chain(&error),
+                    "the stage of a worker's request cannot be kept: it is tried again at the next look"
+                );
+                return Ok(());
+            }
         }
     }
 
-    /// Reads what the request asks and checks the worker's result.
-    ///
-    /// # Errors
-    /// [`agent_runtime::agentbus::AgentBusError`] when the bus cannot say what the request asks.
-    async fn check_result(&self, pending: &Pending) -> Result<Checked, agent_runtime::agentbus::AgentBusError> {
-        let work = self.parts.bus.helper_work(pending.request).await?;
+    /// Removes the file of `request` from `task_dir`; a file that is not there is the end the request wants.
+    fn drop_pending(&self, task_dir: &Path, request: RequestId) {
+        let path = pending_path(task_dir, request);
+        if let Err(error) = std::fs::remove_file(&path)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::error!(path = ?path, error = %error, "the file of a settled request cannot be removed");
+        }
+    }
+
+    /// Reads what the request asks and what the worker left, before the check: a result that is wrong already is told so.
+    async fn gather_request(&self, pending: &Pending) -> Gathered {
+        let work = match self.parts.bus.helper_work(pending.request).await {
+            Ok(work) => work,
+            Err(error) if error.class() == Some(FailureClass::NotFound) => return Gathered::Gone,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    request = %pending.request,
+                    error = %error_chain(&error),
+                    "what a request asks cannot be read now: it is tried again at the next look"
+                );
+                return Gathered::Later;
+            }
+        };
         let files: Vec<String> = work.files.iter().map(|path| path.as_str().to_owned()).collect();
-        let worker_git = self.git_of(&pending.team, &pending.worker_task, &pending.worker);
-        let head = match &worker_git {
-            Some(git) => git.rev_parse(&Revision::Head).await.ok(),
-            None => None,
-        };
-        let base = pending.base.as_deref().and_then(|base| CommitId::from_str(base).ok());
-        let committed = match (&head, &base) {
-            (Some(head), Some(base)) => head != base,
-            (Some(_), None) => true,
-            (None, _) => false,
-        };
-        let outside = match (&worker_git, &head, &base) {
-            (Some(git), Some(head), Some(base)) if committed => match git.changed_between(base, head).await {
-                Ok(changed) => changed
-                    .into_iter()
-                    .filter(|path| !work.files.contains(path))
-                    .map(|path| path.as_str().to_owned())
-                    .collect(),
-                Err(error) => {
-                    tracing::warn!(error = %error_chain(&error), "the files of a worker's commits cannot be listed");
-                    Vec::new()
-                }
-            },
-            _ => Vec::new(),
-        };
-        let found = match (&work.check, &work.step) {
-            (Some(text), Some(step)) => self.run_check(pending, step, text).await,
-            _ => None,
-        };
-        Ok(Checked {
+        let mut checked = Checked {
             step: work.step,
             files,
-            head: head.map(|head| head.to_string()),
-            committed,
-            outside,
-            found,
-        })
+            head: None,
+            committed: false,
+            outside: Vec::new(),
+            found: None,
+        };
+        // A request that writes files is judged by what the worker committed: whatever cannot be established is a reason to
+        // return the step, never a reason to bring something over.
+        if scope_of(&checked.files) == Scope::Files && checked.step.is_some() {
+            match self.what_the_worker_left(pending, &work.files).await {
+                Ok((head, committed, outside)) => {
+                    checked.head = Some(head);
+                    checked.committed = committed;
+                    checked.outside = outside;
+                }
+                Err(reasons) => return Gathered::Wrong(checked, reasons),
+            }
+        }
+        match (work.check, work.step) {
+            (Some(text), Some(step)) => Gathered::Check(checked, step, text),
+            _ => Gathered::Checked(checked),
+        }
     }
 
-    /// Runs the check `text` of the request in the worker's worktree.
-    async fn run_check(&self, pending: &Pending, step: &ItemId, text: &str) -> Option<Found> {
-        let Ok(check) = Check::from_str(text) else {
-            return Some(Found {
-                outcome: CheckOutcome::Failed,
-                line: text.to_owned(),
-                tail: String::new(),
-                reason: Some("the check is not one the harness can run".to_owned()),
-                duration_ms: 0,
-                output: None,
-            });
+    /// What the worker's worktree holds: its commit, whether it committed since the request was given to it, the files its
+    /// commits changed outside `allowed`; or why that cannot be established, or the worker left changes uncommitted.
+    async fn what_the_worker_left(
+        &self,
+        pending: &Pending,
+        allowed: &[agent_core::repo_path::RepoPath],
+    ) -> Result<(String, bool, Vec<String>), Vec<String>> {
+        let fail = |reason: String| vec![reason];
+        let Some(git) = self.git_of(&pending.team, &pending.worker_task, &pending.worker) else {
+            return Err(fail("the worker's worktree cannot be reached".to_owned()));
         };
-        let home = self.parts.store.home();
-        let worktree = self.worker_worktree(&pending.team, &pending.worker_task)?;
-        let task_dir = home.task_dir(&pending.worker_task);
-        let config = &self.parts.settings.config;
-        let context = CheckContext {
-            worktree: &worktree,
-            task_dir: &task_dir,
-            run: None,
-            check_seconds: config.plan().check_seconds(),
-            check_refuse: config.plan().check_refuse(),
-            envs: &[],
-        };
-        match execute_request_check(&context, step, &check).await {
-            Ok(result) => {
-                let tail = match &result.output_path {
-                    Some(path) => read_check_tail(&task_dir.join(path)).await.unwrap_or_default(),
-                    None => result.tail.clone(),
-                };
-                Some(Found {
-                    outcome: request_check_outcome(&result),
-                    line: result.check_line.clone().unwrap_or_else(|| text.to_owned()),
-                    tail,
-                    reason: result.reason.clone(),
-                    duration_ms: result.duration_ms,
-                    output: result.output_path.clone(),
-                })
-            }
-            Err(error) => Some(Found {
-                outcome: CheckOutcome::Failed,
-                line: text.to_owned(),
-                tail: String::new(),
-                reason: Some(error_chain(&error)),
-                duration_ms: 0,
-                output: None,
-            }),
+        let head = git
+            .rev_parse(&Revision::Head)
+            .await
+            .map_err(|error| fail(format!("the worker's commit cannot be read: {}", error_chain(&error))))?;
+        let base = pending
+            .base
+            .as_deref()
+            .and_then(|base| CommitId::from_str(base).ok())
+            .ok_or_else(|| {
+                fail("the commit the worker started from is not known, so what it changed cannot be told".to_owned())
+            })?;
+        let committed = head != base;
+        let mut outside = Vec::new();
+        if committed {
+            let changed = git.changed_between(&base, &head).await.map_err(|error| {
+                fail(format!(
+                    "the files the worker changed cannot be listed: {}",
+                    error_chain(&error)
+                ))
+            })?;
+            outside = changed
+                .into_iter()
+                .filter(|path| !allowed.contains(path))
+                .map(|path| path.as_str().to_owned())
+                .collect();
         }
+        let uncommitted = git.uncommitted_files().await.map_err(|error| {
+            fail(format!(
+                "the files the worker left cannot be listed: {}",
+                error_chain(&error)
+            ))
+        })?;
+        // Only what the request names matters: a file the request did not name is never brought over, so leaving it is
+        // harmless, and the files the harness itself keeps in a worktree are not the worker's work.
+        let left: Vec<&agent_core::repo_path::RepoPath> = uncommitted
+            .iter()
+            .filter(|path| {
+                allowed.iter().any(|named| {
+                    path.as_str() == named.as_str()
+                        || path
+                            .as_str()
+                            .strip_prefix(named.as_str())
+                            .is_some_and(|rest| rest.starts_with('/'))
+                })
+            })
+            .collect();
+        if !left.is_empty() {
+            let names: Vec<&str> = left.iter().map(|path| path.as_str()).collect();
+            return Err(fail(format!(
+                "the worker left files uncommitted that a commit does not hold: {}",
+                names.join(", ")
+            )));
+        }
+        Ok((head.to_string(), committed, outside))
+    }
+
+    /// Starts the check `text` of the request in the background, so that the owner goes on while it runs.
+    fn start_request_check(&mut self, task_dir: &Path, pending: Pending, checked: Checked, step: ItemId, text: String) {
+        let config = &self.parts.settings.config;
+        let job = RequestCheck {
+            worktree: self.worker_worktree(&pending.team, &pending.worker_task),
+            task_dir: task_dir.to_owned(),
+            step,
+            text,
+            seconds: config.plan().check_seconds(),
+            refuse: config.plan().check_refuse().to_vec(),
+        };
+        let abort = self.request_checks.spawn(run_request_check(job));
+        self.request_checking.insert(
+            abort.id(),
+            Checking {
+                task_dir: task_dir.to_owned(),
+                pending,
+                checked,
+            },
+        );
+    }
+
+    /// Takes the end of a check that ran in the background: the request goes on from the stage `Checked`.
+    ///
+    /// # Errors
+    /// [`OwnerError`] never today; the owner's loop takes this error type.
+    pub(super) async fn request_check_done(
+        &mut self,
+        joined: Result<(tokio::task::Id, Found), tokio::task::JoinError>,
+    ) -> Result<(), OwnerError> {
+        let (id, found) = match joined {
+            Ok(done) => done,
+            Err(error) => (
+                error.id(),
+                Found {
+                    outcome: CheckOutcome::Failed,
+                    line: String::new(),
+                    tail: String::new(),
+                    reason: Some(format!("the check could not run: {error}")),
+                    duration_ms: 0,
+                    output: None,
+                },
+            ),
+        };
+        let Some(checking) = self.request_checking.remove(&id) else {
+            return Ok(());
+        };
+        let Checking {
+            task_dir,
+            mut pending,
+            mut checked,
+        } = checking;
+        checked.found = Some(found);
+        let team = pending.team.clone();
+        pending.stage = Stage::Checked(Box::new(checked));
+        if let Err(error) = write_pending(&task_dir, &pending) {
+            tracing::error!(
+                request = %pending.request,
+                error = %error_chain(&error),
+                "the end of a check cannot be kept: the check is run again at the next look"
+            );
+        }
+        self.look_at(&team);
+        Ok(())
     }
 
     /// Decides what the checked result is worth and, when it is good, brings the worker's commit over.
@@ -328,11 +478,15 @@ impl Owner {
         }
     }
 
-    /// Brings the worker's commit to the requester's branch, once: a commit that is there already is not brought again.
+    /// Brings what the worker committed since the request was given to it to the requester's branch, once: a commit that is
+    /// there already is not brought again.
     async fn bring_over(&self, pending: &Pending, checked: &Checked) -> Settlement {
         let returned = |reason: String| Settlement::Returned { reasons: vec![reason] };
         let Some(head) = checked.head.as_deref().and_then(|head| CommitId::from_str(head).ok()) else {
             return returned("the worker's commit cannot be read".to_owned());
+        };
+        let Some(base) = pending.base.as_deref().and_then(|base| CommitId::from_str(base).ok()) else {
+            return returned("the commit the worker started from is not known".to_owned());
         };
         let Some(git) = self.git_of(&pending.team, &pending.requester_task, &pending.requester) else {
             return returned("the requester's worktree cannot be reached".to_owned());
@@ -354,7 +508,10 @@ impl Owner {
         let Some(round) = self.requester_round(&pending.team, &pending.requester_task) else {
             return returned("the requester has no round to keep a snapshot of its worktree under".to_owned());
         };
-        match git.bring_over(&head, &round, &pending.requester_task).await {
+        match git
+            .bring_over_since(&base, &head, &round, &pending.requester_task)
+            .await
+        {
             Ok(BringOver::Applied { commit, .. }) => Settlement::Brought {
                 commit: commit.to_string(),
             },
@@ -365,23 +522,35 @@ impl Owner {
         }
     }
 
-    /// Answers the requester and the bus for a settled request.
+    /// Answers the bus and tells the requester for a settled request; `true` when both are done, `false` when the bus
+    /// cannot take them now and they are tried again at the next look.
     async fn answer_requester(
         &mut self,
         pending: &Pending,
         checked: &Checked,
         settlement: &Settlement,
-    ) -> Result<(), OwnerError> {
+    ) -> Result<bool, OwnerError> {
         let (status, summary, notice) = match self.words_of(pending, checked, settlement) {
             Ok(words) => words,
             Err(error) => {
+                // The catalog's texts are checked by a test: this is a bug, and the requester is told what it can be told.
                 tracing::error!(error = %error_chain(&error), "the answer to a request cannot be worded");
-                return Ok(());
+                let text = format!(
+                    "Your request H{} to the workers is answered, but the harness could not word the answer. The worker's report:\n\n{}",
+                    pending.request.number(),
+                    pending.summary
+                );
+                (
+                    DelegationStatus::Failed,
+                    text.clone(),
+                    BusNotice::HelperFailed {
+                        request: pending.request,
+                        worker: pending.worker.clone(),
+                        reason: text,
+                    },
+                )
             }
         };
-        if let (Settlement::Brought { commit }, Some(step)) = (settlement, checked.step) {
-            self.record_confirmed(pending, checked, step, commit).await?;
-        }
         tracing::info!(
             request = %pending.request,
             worker = %pending.worker,
@@ -406,9 +575,35 @@ impl Owner {
             },
         ];
         for job in jobs {
-            self.tell_bus(&pending.team, job);
+            let outbound = Outbound {
+                team: pending.team.clone(),
+                job,
+            };
+            match self.carry_out(&outbound).await? {
+                Ok(()) => {}
+                // What the bus refuses for good would be asked for ever: it is told and let go.
+                Err(error) if !is_transient(&error) => {
+                    tracing::warn!(
+                        request = %pending.request,
+                        error = %error_chain(&error),
+                        "the bus refuses the answer to a request for good: it is dropped"
+                    );
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        request = %pending.request,
+                        error = %error_chain(&error),
+                        "the bus does not answer: the answer to a request is tried again at the next look"
+                    );
+                    return Ok(false);
+                }
+            }
         }
-        Ok(())
+        if let (Settlement::Brought { commit }, Some(step)) = (settlement, checked.step) {
+            self.record_confirmed(pending, checked, step, commit).await?;
+        }
+        Ok(true)
     }
 
     /// The status, the summary and the notice of the answer.
@@ -491,6 +686,66 @@ impl Owner {
         self.record_judgements(&pending.requester_task, vec![record])
             .await
             .map(drop)
+    }
+}
+
+/// What a check in the background needs: it runs without the owner.
+#[derive(Debug)]
+struct RequestCheck {
+    /// The worker's worktree; `None` when it is not there.
+    worktree: Option<PathBuf>,
+    /// The worker's task directory, where the output is kept.
+    task_dir: PathBuf,
+    /// The step of the requester's plan the request is for.
+    step: ItemId,
+    /// The check, as the request has it.
+    text: String,
+    /// `[plan] check_seconds`.
+    seconds: u64,
+    /// `[plan] check_refuse`.
+    refuse: Vec<String>,
+}
+
+/// Runs the check of a request in the worker's worktree.
+async fn run_request_check(job: RequestCheck) -> Found {
+    let failed = |reason: String| Found {
+        outcome: CheckOutcome::Failed,
+        line: job.text.clone(),
+        tail: String::new(),
+        reason: Some(reason),
+        duration_ms: 0,
+        output: None,
+    };
+    let Ok(check) = Check::from_str(&job.text) else {
+        return failed("the check is not one the harness can run".to_owned());
+    };
+    let Some(worktree) = &job.worktree else {
+        return failed("the worker's worktree cannot be reached".to_owned());
+    };
+    let context = CheckContext {
+        worktree,
+        task_dir: &job.task_dir,
+        run: None,
+        check_seconds: job.seconds,
+        check_refuse: &job.refuse,
+        envs: &[],
+    };
+    match execute_request_check(&context, &job.step, &check).await {
+        Ok(result) => {
+            let tail = match &result.output_path {
+                Some(path) => read_check_tail(&job.task_dir.join(path)).await.unwrap_or_default(),
+                None => result.tail.clone(),
+            };
+            Found {
+                outcome: request_check_outcome(&result),
+                line: result.check_line.clone().unwrap_or_else(|| job.text.clone()),
+                tail,
+                reason: result.reason.clone(),
+                duration_ms: result.duration_ms,
+                output: result.output_path.clone(),
+            }
+        }
+        Err(error) => failed(error_chain(&error)),
     }
 }
 

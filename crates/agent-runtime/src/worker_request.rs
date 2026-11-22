@@ -52,6 +52,9 @@ pub enum PendingError {
     /// A request cannot be written as JSON.
     #[error("the request cannot be written as JSON")]
     Encode(#[source] serde_json::Error),
+    /// The clock gives a time that cannot be recorded.
+    #[error("the clock gives a time that cannot be recorded")]
+    Clock,
 }
 
 /// A request whose worker's run has ended: who asked, who served, what the worker said and how far the harness got.
