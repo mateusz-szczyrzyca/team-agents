@@ -37,6 +37,10 @@ const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
 /// The bytes of the output of a listing of a whole tree that are kept: 64 MiB, which is a tree of about 600,000 files.
 const TREE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
+/// What the line of the message of a commit brought over starts with, before the worker's commit: how
+/// [`Git::brought_over`] finds it again.
+const BROUGHT_OVER_FROM: &str = "Brought over from";
+
 /// The ID of the tree with no file, which every repository knows without holding it: the base of a merge of two
 /// histories with no commit in common.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
@@ -163,8 +167,35 @@ impl Git {
     /// # Errors
     /// The errors of [`Git::changed_in`].
     pub async fn changed_between(&self, from: &CommitId, to: &CommitId) -> Result<Vec<RepoPath>, GitError> {
-        let _ = (from, to);
-        Ok(Vec::new())
+        self.names_between(&from.to_string(), &to.to_string()).await
+    }
+
+    /// The paths that differ between the trees `from` and `to`, sorted, each once.
+    async fn names_between(&self, from: &str, to: &str) -> Result<Vec<RepoPath>, GitError> {
+        let operation = GitOperation::DiffTree;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("diff-tree"),
+                    arg("--name-only"),
+                    arg("--no-renames"),
+                    arg("-r"),
+                    arg("-z"),
+                    arg(from),
+                    arg(to),
+                ],
+            )
+            .await?;
+        let listed = whole(operation, &captured.stdout, self.limits)?;
+        let mut paths = Vec::new();
+        for name in listed.split(|byte| *byte == 0).filter(|name| !name.is_empty()) {
+            paths.push(repo_path(operation, name)?);
+        }
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
     }
 
     /// The commit on the current branch that brought the worker's `commit` over, if there is one: the merge commit
@@ -174,8 +205,31 @@ impl Git {
     /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
     /// [`GitError::NotACommit`].
     pub async fn brought_over(&self, commit: &CommitId) -> Result<Option<CommitId>, GitError> {
-        let _ = commit;
-        Ok(None)
+        let operation = GitOperation::Log;
+        let line = format!("{BROUGHT_OVER_FROM} {commit} ");
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("log"),
+                    arg("-1"),
+                    arg("--fixed-strings"),
+                    arg("--format=%H"),
+                    arg("--grep"),
+                    arg(&line),
+                ],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        let found = printed.trim();
+        if found.is_empty() {
+            return Ok(None);
+        }
+        found
+            .parse()
+            .map(Some)
+            .map_err(|source| GitError::NotACommit { operation, source })
     }
 
     /// The files `commit` changes that `allowed` does not name: a path the request did not give the worker.
@@ -294,7 +348,7 @@ impl Git {
             .with_env(env_name("GIT_AUTHOR_EMAIL")?, email)
             .with_env(env_name("GIT_AUTHOR_DATE")?, date);
         let message = format!(
-            "{}\n\nBrought over from {worker} for {task} in round {round}",
+            "{}\n\n{BROUGHT_OVER_FROM} {worker} for {task} in round {round}",
             message.trim_end()
         );
         Ok((handle, message))
