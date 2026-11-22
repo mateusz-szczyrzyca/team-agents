@@ -283,64 +283,13 @@ impl Owner {
         }
         let key = (team.clone(), pr.number);
         if self.watch.refused.contains(&key) || self.asking_human_for_conflict(team, pr.number) {
-            let items = self
-                .parts
-                .state
-                .team(team)
-                .map_or_else(Vec::new, |found| items_of(found, pr.number));
-            let is_split_part = self
-                .parts
-                .state
-                .team(team)
-                .and_then(|t| t.rounds().iter().find(|r| r.part_pull_request().is_some_and(|p| p.number == pr.number)))
-                .is_some();
-            if is_split_part {
-                let has_gated = self
-                    .parts
-                    .state
-                    .team(team)
-                    .and_then(|t| items.first().and_then(|id| t.item(*id)))
-                    .and_then(|item| item.gate())
-                    .is_some_and(|g| g.outcome == agent_core::state::GateOutcome::Passed);
-                let gating = if has_gated {
-                    GatingStatus::Gated
-                } else {
-                    GatingStatus::Ungated
-                };
-                let budget = self.conflict_budget(team, pr.number);
-                let conflict = if self
-                    .parts
-                    .state
-                    .team(team)
-                    .and_then(|t| items.first().and_then(|id| t.item(*id)))
-                    .and_then(|item| item.conflict_approved_head())
-                    .is_some_and(|approved| approved == head)
-                {
-                    ConflictPublication::Unpublished
-                } else {
-                    ConflictPublication::Published
-                };
-                let status = SplitPullStatus::Open {
-                    gating,
-                    budget,
-                    conflict,
-                };
-                let recovery = recover_exhausted_split_round(status);
-                agent_runtime::history::log_decision(
-                    "recover_exhausted_split_round",
-                    &format!("pr={}, status={status:?}", pr.number),
-                    &format!("{recovery:?}"),
-                );
-                match recovery {
-                    ExhaustedRoundRecovery::ResumeMerge => {
-                        self.watch.refused.remove(&key);
-                    }
-                    ExhaustedRoundRecovery::CompleteMerged | ExhaustedRoundRecovery::WaitHuman => {
-                        return Ok(Merge::Waits);
-                    }
+            match self.check_exhausted_split_recovery(team, pr.number, head) {
+                Some(ExhaustedRoundRecovery::ResumeMerge) => {
+                    self.watch.refused.remove(&key);
                 }
-            } else {
-                return Ok(Merge::Waits);
+                Some(ExhaustedRoundRecovery::CompleteMerged | ExhaustedRoundRecovery::WaitHuman) | None => {
+                    return Ok(Merge::Waits);
+                }
             }
         }
         let request = MergeRequest {
@@ -386,6 +335,70 @@ impl Owner {
                 }
             },
         }
+    }
+
+    /// Evaluates whether an open split round waiting on conflict resolution or refusal can recover to resume merging.
+    fn check_exhausted_split_recovery(
+        &self,
+        team: &TeamId,
+        number: PrNumber,
+        head: &CommitId,
+    ) -> Option<ExhaustedRoundRecovery> {
+        let is_split_part = self
+            .parts
+            .state
+            .team(team)
+            .and_then(|t| {
+                t.rounds()
+                    .iter()
+                    .find(|r| r.part_pull_request().is_some_and(|p| p.number == number))
+            })
+            .is_some();
+        if !is_split_part {
+            return None;
+        }
+        let items = self
+            .parts
+            .state
+            .team(team)
+            .map_or_else(Vec::new, |found| items_of(found, number));
+        let has_gated = self
+            .parts
+            .state
+            .team(team)
+            .and_then(|t| items.first().and_then(|id| t.item(*id)))
+            .and_then(|item| item.gate())
+            .is_some_and(|g| g.outcome == agent_core::state::GateOutcome::Passed);
+        let gating = if has_gated {
+            GatingStatus::Gated
+        } else {
+            GatingStatus::Ungated
+        };
+        let budget = self.conflict_budget(team, number);
+        let conflict = if self
+            .parts
+            .state
+            .team(team)
+            .and_then(|t| items.first().and_then(|id| t.item(*id)))
+            .and_then(|item| item.conflict_approved_head())
+            .is_some_and(|approved| approved == head)
+        {
+            ConflictPublication::Unpublished
+        } else {
+            ConflictPublication::Published
+        };
+        let status = SplitPullStatus::Open {
+            gating,
+            budget,
+            conflict,
+        };
+        let recovery = recover_exhausted_split_round(status);
+        agent_runtime::history::log_decision(
+            "recover_exhausted_split_round",
+            &format!("pr={number}, status={status:?}"),
+            &format!("{recovery:?}"),
+        );
+        Some(recovery)
     }
 
     /// The conflict passes of the items of the pull request `number` of `team`: the passes spent and the configured limit.

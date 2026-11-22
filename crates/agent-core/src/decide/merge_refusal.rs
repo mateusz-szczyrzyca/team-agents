@@ -130,8 +130,9 @@ pub enum ConflictAccountingStep {
 pub fn account_conflict_pass(result: ConflictPublishResult, accounting: AccountingState) -> ConflictAccountingStep {
     match (result, accounting) {
         (ConflictPublishResult::Published, AccountingState::Unrecorded) => ConflictAccountingStep::SpendPass,
-        (ConflictPublishResult::Published, AccountingState::AlreadyRecorded)
-        | (ConflictPublishResult::Failed, _) => ConflictAccountingStep::RetainBudget,
+        (ConflictPublishResult::Published, AccountingState::AlreadyRecorded) | (ConflictPublishResult::Failed, _) => {
+            ConflictAccountingStep::RetainBudget
+        }
     }
 }
 

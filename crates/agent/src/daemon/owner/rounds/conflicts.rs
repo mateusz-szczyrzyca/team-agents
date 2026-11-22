@@ -168,18 +168,7 @@ impl Owner {
                 .start_merge_conflict(team, &items, ConflictStep::AskHuman, &approved_head, now, look)
                 .await;
         }
-        let publication = Publication {
-            head_branch: pr.branch.clone(),
-            publish: Publish::Open {
-                items: items
-                    .iter()
-                    .map(|id| Joining {
-                        item: *id,
-                        branch: pr.branch.clone(),
-                    })
-                    .collect(),
-            },
-        };
+        let publication = conflict_publication(&pr.branch, &items);
         let site = Site {
             pulls,
             lead: &lead,
@@ -213,18 +202,9 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
-                let step = account_conflict_pass(ConflictPublishResult::Failed, AccountingState::Unrecorded);
-                log_decision(
-                    "account_conflict_pass",
-                    &format!("pr={}, result=failed", pr.number),
-                    &format!("{step:?}"),
-                );
-                self.each_item(team, &items, |item| {
-                    item.refund_conflict_pass();
-                    Ok(())
-                })?;
-                self.save().await?;
-                return self.publish_failed(site, &publication, &error, now, look).await;
+                return self
+                    .handle_conflict_publish_failure(site, &publication, team, &items, pr.number, &error, now, look)
+                    .await;
             }
         };
         self.record_event_at(
@@ -238,6 +218,36 @@ impl Owner {
         );
         self.apply_lead_change(team, &items, pr.number, &approved_head, changed, now, look)
             .await
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "site, publication, team, items, PR number, error, timestamp, and look are distinct arguments"
+    )]
+    /// Handles a conflict pass publication failure by refunding the pass and delegating to `publish_failed`.
+    async fn handle_conflict_publish_failure(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        team: &TeamId,
+        items: &[ItemId],
+        pr: agent_core::state::PrNumber,
+        error: &PublishError,
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let step = account_conflict_pass(ConflictPublishResult::Failed, AccountingState::Unrecorded);
+        log_decision(
+            "account_conflict_pass",
+            &format!("pr={pr}, result=failed"),
+            &format!("{step:?}"),
+        );
+        self.each_item(team, items, |item| {
+            item.refund_conflict_pass();
+            Ok(())
+        })?;
+        self.save().await?;
+        self.publish_failed(site, publication, error, now, look).await
     }
 
     /// Holds a rejected conflict publication until its shared retry backoff has elapsed.
@@ -579,5 +589,21 @@ impl Owner {
             })?;
         }
         Ok(())
+    }
+}
+
+/// The publication configuration for a conflict pass on `branch` covering `items`.
+fn conflict_publication(branch: &agent_core::ids::BranchName, items: &[ItemId]) -> Publication {
+    Publication {
+        head_branch: branch.clone(),
+        publish: Publish::Open {
+            items: items
+                .iter()
+                .map(|id| Joining {
+                    item: *id,
+                    branch: branch.clone(),
+                })
+                .collect(),
+        },
     }
 }

@@ -1154,12 +1154,12 @@ impl ItemProgress {
 
     /// Refunds an unspent or unpublished conflict pass and returns the new count.
     pub fn refund_conflict_pass(&mut self) -> u32 {
-        if let Some(ref head) = self.conflict_approved_head.clone() {
-            if self.conflict_refunded_head.as_ref() != Some(head) {
-                self.merge_passes = self.merge_passes.saturating_sub(1);
-                self.conflict_refunded_head = Some(head.clone());
-                self.conflict_accounted_head = None;
-            }
+        if let Some(ref head) = self.conflict_approved_head.clone()
+            && self.conflict_refunded_head.as_ref() != Some(head)
+        {
+            self.merge_passes = self.merge_passes.saturating_sub(1);
+            self.conflict_refunded_head = Some(head.clone());
+            self.conflict_accounted_head = None;
         }
         self.merge_passes
     }
