@@ -7,7 +7,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ## 0.62.0 — 22.11.2026 — PR #177
 
-### New features
+### Bug fixes
 - [agent] [agent-core] An unsuccessful publication of a merge conflict resolution no longer consumes a conflict pass: only confirmed publication to the remote branch spends the pass. Legacy split rounds that appeared exhausted without recorded approved heads recover and merge when valid gated work is ready, without erasing legitimately spent passes.
 
 ## 0.61.0 — 22.11.2026 — PR #179
