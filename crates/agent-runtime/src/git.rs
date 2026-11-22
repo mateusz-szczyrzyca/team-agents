@@ -27,6 +27,7 @@ use tracing::Instrument;
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
 mod base;
+mod bring_over;
 mod changes;
 mod delivery;
 pub use delivery::{DeliveryGitError, DeliveryRead};
@@ -36,6 +37,7 @@ mod range;
 mod size;
 mod snapshot;
 
+pub use bring_over::{BringOver, ScratchMerge};
 pub use changes::WorkChanges;
 pub use range::StagedAgainst;
 pub use snapshot::Snapshot;
