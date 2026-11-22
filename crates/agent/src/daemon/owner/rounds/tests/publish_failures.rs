@@ -186,7 +186,7 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let state = rig
         .state_where("conflict publication fails and pass is refunded", |state| {
             let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            item.publish_tries() > 0 && item.merge_passes() == 0
+            item.publish_tries() >= 1 && item.merge_passes() == 0
         })
         .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
@@ -202,11 +202,57 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     // Remove the blocking hook so push can succeed:
     std::fs::remove_file(&hook).unwrap();
 
-    // Allow merge:
-    rig.github.answer_merges(MergeAnswer::Allow);
+    // Controlled refusal blocking final merge reset:
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
 
     // Restart daemon:
     rig.start().await;
+
+    // Wait until publication succeeds and push is observed on origin:
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap().to_owned();
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    rig.wait_for("gated commit pushed to origin", || {
+        git(&rig.origin, &["rev-parse", branch]).trim() == gated_commit
+    })
+    .await;
+
+    // Assert exact accounting AFTER publication before merge resets counts:
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(
+        item.merge_passes(),
+        1,
+        "successful publication must increment merge conflict pass exactly once"
+    );
+    assert_eq!(
+        item.publish_tries(),
+        0,
+        "successful publication resets publish tries"
+    );
+
+    // Restart daemon again to assert exact counts survive restart under controlled refusal:
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    // Observe daemon evaluation after restart:
+    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
+    rig.wait_for("daemon evaluation after restart", || {
+        rig.github.calls("GET", &pull_path).len() >= 1
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(
+        item.merge_passes(),
+        1,
+        "exact conflict pass count must survive restart before merge reset"
+    );
+
+    // Now allow merge:
+    rig.github.answer_merges(MergeAnswer::Allow);
 
     // Wait until part 1.1a PR merges and advances:
     let state = rig
@@ -225,9 +271,6 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let pr = team.rounds()[0].part_pull_request().unwrap();
     assert_eq!(pr.number.get().get(), 1);
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
-    let gate: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
-    let gated_commit = gate["result"]["head"].as_str().unwrap();
     assert_eq!(
         remote_head, gated_commit,
         "remote PR branch must carry the exact gated commit hash"
@@ -413,12 +456,10 @@ async fn split_part_with_open_human_question_stays_held_without_bypassing_questi
         "task must have an open question established for the human"
     );
 
-    // Synchronize on observed daemon evaluation: wait until daemon processes evaluation cycle
+    // Synchronize on observed completed evaluation: wait until daemon processes at least two looks at the pull request
+    let pull_path = format!("/repos/{}/pulls/{pr_number}", super::fake_github::SLUG);
     rig.wait_for("daemon evaluation cycle observed while question is open", || {
-        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
-            return false;
-        };
-        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+        rig.github.calls("GET", &pull_path).len() >= 2
     })
     .await;
 
@@ -2326,7 +2367,7 @@ async fn split_part_running_corrective_lead_waits_for_completion() {
     assert_eq!(pr_number, 1);
     rig.github.answer_merges(MergeAnswer::Allow);
 
-    // Load fixture with member in Running status:
+    // Load fixture with member in Running status and active current run:
     let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
     let mut state_json: serde_json::Value = serde_json::from_str(fixture).unwrap();
     state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("running");
@@ -2347,12 +2388,10 @@ async fn split_part_running_corrective_lead_waits_for_completion() {
 
     rig.start().await;
 
-    // Synchronize: wait until daemon processes at least one cycle
-    rig.wait_for("daemon loop observed while lead running", || {
-        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
-            return false;
-        };
-        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+    // Synchronize on observed completed evaluation while lead is running:
+    let pull_path = format!("/repos/{}/pulls/{pr_number}", super::fake_github::SLUG);
+    rig.wait_for("daemon evaluation cycle observed while lead running", || {
+        rig.github.calls("GET", &pull_path).len() >= 2
     })
     .await;
 
@@ -2408,11 +2447,10 @@ async fn split_part_queued_corrective_lead_waits_for_completion() {
 
     rig.start().await;
 
-    rig.wait_for("daemon loop observed while lead queued", || {
-        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
-            return false;
-        };
-        reader.daemon_logs().is_ok_and(|logs| !logs.is_empty())
+    // Synchronize on observed completed evaluation while lead is queued:
+    let pull_path = format!("/repos/{}/pulls/{pr_number}", super::fake_github::SLUG);
+    rig.wait_for("daemon evaluation cycle observed while lead queued", || {
+        rig.github.calls("GET", &pull_path).len() >= 2
     })
     .await;
 
@@ -2435,7 +2473,46 @@ async fn split_part_queued_corrective_lead_waits_for_completion() {
 }
 
 #[tokio::test]
-async fn split_part_corrupt_gate_record_does_not_collapse_to_ungated_and_waits() {
+async fn split_part_idle_lead_with_current_run_waits_for_completion() {
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    let mut state: agent_core::state::State = serde_json::from_str(fixture).unwrap();
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+
+    // Ensure member is in Waiting status with an active current_run:
+    {
+        let mut team = state.team_mut(&team_id).unwrap();
+        let (_, mut member) = team.find_mut(&task_id).unwrap();
+        member
+            .begin_run(crate::fixtures::run(1), crate::fixtures::at(20), None)
+            .unwrap();
+        assert_eq!(member.status(), agent_core::status::TaskStatus::Waiting);
+        assert!(member.current_run().is_some());
+    }
+
+    let (daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+    let repo_name: agent_core::config::RepoName = "team-agents".parse().unwrap();
+    let worktree = daemon.home.worktree_dir(&repo_name, &task_id);
+    let _tip = initial_gate_commit(&worktree);
+
+    let mut look = crate::daemon::owner::teams::Look::default();
+    let now = agent_core::state::Timestamp::now(&owner.parts.clock).unwrap();
+    owner.advance_merge_conflicts(&pulls, &team_id, &mut look, now).await.unwrap();
+
+    // Verify item stays held in AskingHuman and no conflict pass was started:
+    let item = owner.parts.state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "idle lead with active current_run must remain held in AskingHuman"
+    );
+    assert_eq!(item.merge_passes(), 2);
+}
+
+#[tokio::test]
+async fn split_part_corrupt_gate_record_propagates_typed_error_and_waits() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),
@@ -2463,11 +2540,17 @@ async fn split_part_corrupt_gate_record_does_not_collapse_to_ungated_and_waits()
 
     rig.start().await;
 
-    // Wait until notification of refusal or failure is written:
-    rig.wait_for("notification of gate record failure is written", || {
-        rig.notifications()
-            .iter()
-            .any(|text| text.contains("gate record") && text.contains("cannot be used"))
+    // Wait until recovery error is propagated and logged:
+    rig.wait_for("recovery error logged with OutsideCallCompleted on corrupt gate record", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| {
+            logs.iter().any(|e| {
+                e.event() == agent_core::log::LogEvent::OutsideCallCompleted
+                    && e.message().contains("recovery of exhausted split conflict failed")
+            })
+        })
     })
     .await;
 
@@ -2490,6 +2573,133 @@ async fn split_part_corrupt_gate_record_does_not_collapse_to_ungated_and_waits()
 }
 
 #[tokio::test]
+async fn split_part_github_error_propagates_typed_error_and_waits() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, _gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
+    rig.github.fail_calls_to("GET", &pull_path, 500);
+
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    std::fs::write(rig.home.state_file(), fixture).unwrap();
+
+    rig.start().await;
+
+    // Wait until recovery error is propagated and logged:
+    rig.wait_for("recovery error logged with OutsideCallCompleted on GitHub failure", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| {
+            logs.iter().any(|e| {
+                e.event() == agent_core::log::LogEvent::OutsideCallCompleted
+                    && e.message().contains("recovery of exhausted split conflict failed")
+            })
+        })
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "GitHub error must prevent recovery and hold in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "GitHub error must not attempt merge"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_git_error_propagates_typed_error_and_waits() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let branch = "agents/codex-1/task-20261122-120000-1.1a";
+    let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
+    let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
+    let (_refused_head, _gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+
+    // Corrupt worktree git so rev-parse fails:
+    let repo_name: agent_core::config::RepoName = "team-agents".parse().unwrap();
+    let worktree = rig.home.worktree_dir(&repo_name, &task_id);
+    let git_dir = worktree.join(".git");
+    if git_dir.is_file() {
+        std::fs::write(&git_dir, "gitdir: /nonexistent/invalid/path\n").unwrap();
+    } else {
+        std::fs::remove_dir_all(&git_dir).unwrap();
+    }
+
+    let pr_number = rig.github.foreign_pull(branch);
+    assert_eq!(pr_number, 1);
+    rig.github.answer_merges(MergeAnswer::Allow);
+
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
+    std::fs::write(rig.home.state_file(), fixture).unwrap();
+
+    rig.start().await;
+
+    // Wait until recovery error is propagated and logged:
+    rig.wait_for("recovery error logged with OutsideCallCompleted on Git failure", || {
+        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+            return false;
+        };
+        reader.daemon_logs().is_ok_and(|logs| {
+            logs.iter().any(|e| {
+                e.event() == agent_core::log::LogEvent::OutsideCallCompleted
+                    && e.message().contains("recovery of exhausted split conflict failed")
+            })
+        })
+    })
+    .await;
+
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "Git error must prevent recovery and hold in AskingHuman"
+    );
+    let merge_path = format!("/repos/{}/pulls/1/merge", super::fake_github::SLUG);
+    assert!(
+        rig.github.calls("PUT", &merge_path).is_empty(),
+        "Git error must not attempt merge"
+    );
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     let mut rig = Rig::new(
         &[
@@ -2504,7 +2714,7 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     let branch = "agents/codex-1/task-20261122-120000-1.1a";
     let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
     let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
-    let (_refused_head, gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+    let (refused_head, gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
 
     let pr_number = rig.github.foreign_pull(branch);
     assert_eq!(pr_number, 1);
@@ -2524,7 +2734,12 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
         .await;
 
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-    let approved_head = item.conflict_approved_head().unwrap().clone();
+    assert_eq!(
+        item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
+        Some(refused_head.as_str()),
+        "fallback approved head must match the original refused head identity"
+    );
+    assert_eq!(item.merge_passes(), 2, "merge passes before publication must be preserved");
 
     // Wait until gated tip is pushed to origin:
     rig.wait_for("gated commit pushed to origin", || {
@@ -2532,17 +2747,33 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     })
     .await;
 
+    // Assert exact accounting AFTER publication before restart:
+    let state = rig.state();
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(
+        item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
+        Some(refused_head.as_str()),
+        "approved head must remain original refused head after push"
+    );
+
     // Restart daemon after push:
     rig.stop().await.unwrap();
     rig.start().await;
+
+    // Observe daemon evaluation after restart:
+    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
+    rig.wait_for("daemon evaluation after restart", || {
+        rig.github.calls("GET", &pull_path).len() >= 1
+    })
+    .await;
 
     // Verify after restart the persisted approved_head is still preserved across push:
     let state = rig.state();
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
         item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
-        Some(approved_head.as_str()),
-        "persisted fallback approved head must survive restart after push"
+        Some(refused_head.as_str()),
+        "persisted fallback approved head matching refused head must survive restart after push"
     );
 
     rig.stop().await.unwrap();
