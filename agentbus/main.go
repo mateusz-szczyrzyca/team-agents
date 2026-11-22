@@ -1151,6 +1151,11 @@ func (s *Server) instructions() string {
 	if has["request_investigation"] {
 		text += " A hard problem can be handed to an investigator: request_investigation."
 	}
+	if has["delegate"] {
+		text += " A step with one result, named files and a check a machine runs can go to a worker: delegate it " +
+			"(for, files, check, do) — never a decision, a design or a step whose check is reviewer; do a refused " +
+			"or failed step yourself."
+	}
 	if has["notebook_read"] {
 		text += " Persistent repository knowledge: notebook_read."
 	}
