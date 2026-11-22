@@ -378,6 +378,15 @@ enum PublishError {
     /// The team or an item of it is not in the state any more.
     #[error("the team or an item of it is not in the state")]
     Lost,
+    /// An internal owner error.
+    #[error(transparent)]
+    Owner(#[from] Box<super::OwnerError>),
+}
+
+impl From<super::OwnerError> for PublishError {
+    fn from(error: super::OwnerError) -> Self {
+        PublishError::Owner(Box::new(error))
+    }
 }
 
 /// The facts about the lead of a team that a look at its pull requests needs.

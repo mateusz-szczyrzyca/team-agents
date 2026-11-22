@@ -167,6 +167,32 @@ impl Owner {
     /// Looks at the merge conflict pass of `team`, when one is in progress: the lead is sent again when it was not run
     /// since the pass began, the human is asked when it gave no result, and a result is gated, pushed and read.
     ///
+    /// Checks whether the lead is ready to proceed with a conflict pass.
+    fn check_lead_conflict_status(
+        &mut self,
+        lead: &Lead,
+        pass: &ConflictPass,
+        look: &mut Look,
+    ) -> Result<bool, OwnerError> {
+        if pass.recovered {
+            let member = self
+                .parts
+                .state
+                .find_task(&lead.task)
+                .map(|found| found.member)
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: lead.task.clone(),
+                })?;
+            Ok(matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed)
+                && member.current_run().is_none()
+                && !member.questions().iter().any(agent_core::state::Question::is_open))
+        } else {
+            self.check_conflict_lead_ready(lead, pass.at, look)
+        }
+    }
+
+    /// Advances merge conflict passes for teams with conflicts.
+    ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn advance_merge_conflicts(
@@ -178,35 +204,38 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let pass = match self.conflict_in_progress(team)? {
             Some(pass) => pass,
-            None => {
-                if let Some(recovered) = self.recover_exhausted_split_conflict(pulls, team).await? {
-                    recovered
-                } else {
-                    return self.wake_unasked_conflict_lead(team, look).await;
+            None => match self.recover_exhausted_split_conflict(pulls, team).await {
+                Ok(Some(recovered)) => recovered,
+                Ok(None) => return self.wake_unasked_conflict_lead(team, look).await,
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::OutsideCallCompleted.as_str(),
+                        team = %team,
+                        error = %error_chain(&error),
+                        "recovery of exhausted split conflict failed: waiting for next pass"
+                    );
+                    return Ok(());
                 }
-            }
+            },
         };
-        let ConflictPass {
-            pr,
-            approved_head,
-            at,
-            items,
-            recovered,
-        } = pass;
-        if self.conflict_publication_delayed(team, &pr, now) {
+        if self.conflict_publication_delayed(team, &pass.pr, now) {
             return Ok(());
         }
         let lead = self.lead_of(team)?;
-        if !recovered {
-            if !self.check_conflict_lead_ready(&lead, at, look)? {
-                return Ok(());
-            }
-            if !lead.done {
-                return self
-                    .handle_undone_lead(team, &items, pr.number, &approved_head, now, look)
-                    .await;
-            }
+        if !self.check_lead_conflict_status(&lead, &pass, look)? {
+            return Ok(());
         }
+        if !pass.recovered && !lead.done {
+            return self
+                .handle_undone_lead(team, &pass.items, pass.pr.number, &pass.approved_head, now, look)
+                .await;
+        }
+        let ConflictPass {
+            pr,
+            approved_head,
+            items,
+            ..
+        } = pass;
         let publication = conflict_publication(&pr.branch, &items);
         let site = Site {
             pulls,
@@ -663,12 +692,50 @@ impl Owner {
             }))
     }
 
+    /// Evaluates the split pull status for recovery from real git, gate record, and GitHub state.
+    async fn evaluate_split_pull_status(
+        &self,
+        lead: &Lead,
+        team: &TeamId,
+        pr: &PullRequest,
+        remote: &agent_runtime::github::RemotePullRequest,
+    ) -> Result<SplitPullStatus, PublishError> {
+        match remote.state {
+            PullState::Merged => Ok(SplitPullStatus::Merged),
+            PullState::Closed => Ok(SplitPullStatus::ClosedUnmerged),
+            PullState::Open => {
+                let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+                let budget = self.conflict_budget(team, pr.number);
+                let tip = git.rev_parse(&Revision::Head).await?;
+                let record = self.parts.store.load_gate_record(&lead.task).await?;
+                let is_gated = record
+                    .as_ref()
+                    .is_some_and(|r| r.result.head == tip && r.counts_as_pass());
+                let gating = if is_gated {
+                    GatingStatus::Gated
+                } else {
+                    GatingStatus::Ungated
+                };
+                let conflict = if tip == remote.head {
+                    ConflictPublication::Published
+                } else {
+                    ConflictPublication::Unpublished
+                };
+                Ok(SplitPullStatus::Open {
+                    gating,
+                    budget,
+                    conflict,
+                })
+            }
+        }
+    }
+
     /// Recovers an exhausted split round in `AskingHuman` when valid gated work is ready.
     async fn recover_exhausted_split_conflict(
         &mut self,
         pulls: &Pulls,
         team: &TeamId,
-    ) -> Result<Option<ConflictPass>, OwnerError> {
+    ) -> Result<Option<ConflictPass>, PublishError> {
         let Some((pr, at, items)) = self.conflict_asking_human(team) else {
             return Ok(None);
         };
@@ -691,47 +758,16 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTask {
                 task: lead.task.clone(),
             })?;
-        if member.questions().iter().any(agent_core::state::Question::is_open) {
+        if !matches!(member.status(), TaskStatus::Waiting | TaskStatus::Failed)
+            || member.current_run().is_some()
+            || member.questions().iter().any(agent_core::state::Question::is_open)
+        {
             return Ok(None);
         }
-        let Ok(git) = self.worktree_git(&lead.repo, &lead.task, &lead.agent) else {
-            return Ok(None);
-        };
-        let Ok(github) = self.github_for(pulls, &lead.repo, &git).await else {
-            return Ok(None);
-        };
-        let Ok(remote) = github.get_pull_request(pr.number).await else {
-            return Ok(None);
-        };
-        let status = match remote.state {
-            PullState::Merged => SplitPullStatus::Merged,
-            PullState::Closed => SplitPullStatus::ClosedUnmerged,
-            PullState::Open => {
-                let budget = self.conflict_budget(team, pr.number);
-                let tip = git.rev_parse(&Revision::Head).await.ok();
-                let record = self.parts.store.load_gate_record(&lead.task).await.ok().flatten();
-                let is_gated = tip.as_ref().is_some_and(|tip| {
-                    record
-                        .as_ref()
-                        .is_some_and(|r| r.result.head == *tip && r.counts_as_pass())
-                });
-                let gating = if is_gated {
-                    GatingStatus::Gated
-                } else {
-                    GatingStatus::Ungated
-                };
-                let conflict = if tip.as_ref() == Some(&remote.head) {
-                    ConflictPublication::Published
-                } else {
-                    ConflictPublication::Unpublished
-                };
-                SplitPullStatus::Open {
-                    gating,
-                    budget,
-                    conflict,
-                }
-            }
-        };
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+        let github = self.github_for(pulls, &lead.repo, &git).await?;
+        let remote = github.get_pull_request(pr.number).await?;
+        let status = self.evaluate_split_pull_status(&lead, team, &pr, &remote).await?;
         let recovery = recover_exhausted_split_round(status);
         log_decision(
             "recover_exhausted_split_round",
@@ -750,13 +786,22 @@ impl Owner {
                     self.save().await?;
                     Ok(None)
                 } else {
-                    let approved_head = self
+                    let mut approved_head = self
                         .parts
                         .state
                         .team(team)
                         .and_then(|t| items.first().and_then(|id| t.item(*id)))
-                        .and_then(|item| item.conflict_approved_head().cloned())
-                        .unwrap_or_else(|| remote.head.clone());
+                        .and_then(|item| item.conflict_approved_head().cloned());
+                    if approved_head.is_none() {
+                        let fallback = remote.head.clone();
+                        self.each_item(team, &items, |item| {
+                            item.set_conflict_approved_head(fallback.clone());
+                            Ok(())
+                        })?;
+                        self.save().await?;
+                        approved_head = Some(fallback);
+                    }
+                    let approved_head = approved_head.unwrap_or_else(|| remote.head.clone());
                     Ok(Some(ConflictPass {
                         pr,
                         approved_head,
