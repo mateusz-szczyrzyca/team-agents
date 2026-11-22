@@ -443,6 +443,9 @@ pub struct ItemProgress {
     /// The conflict head for which the pass was recorded as published.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     conflict_accounted_head: Option<CommitId>,
+    /// The conflict head for which a provisional pass is currently reserved; absent when none is reserved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    conflict_provisional_head: Option<CommitId>,
     /// The merge conflict pass in progress, if any; absent while the merge of the approved pull request is not in
     /// trouble.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -540,6 +543,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written without an accounted conflict head has none.
     #[serde(default)]
     conflict_accounted_head: Option<CommitId>,
+    /// See [`ItemProgress`]; a state written without a provisional conflict head has none.
+    #[serde(default)]
+    conflict_provisional_head: Option<CommitId>,
     /// See [`ItemProgress`]; a state written before merge conflicts has none.
     #[serde(default)]
     merge_conflict: Option<MergeConflict>,
@@ -585,6 +591,7 @@ impl<'de> Deserialize<'de> for ItemProgress {
             conflict_approved_head: wire.conflict_approved_head,
             conflict_refunded_head: wire.conflict_refunded_head,
             conflict_accounted_head: wire.conflict_accounted_head,
+            conflict_provisional_head: wire.conflict_provisional_head,
             merge_conflict: wire.merge_conflict,
             publish_tries: wire.publish_tries,
             publish_question,
@@ -651,6 +658,18 @@ impl CheckedMut<'_, ItemProgress> {
     /// See [`ItemProgress::refund_conflict_pass`].
     pub fn refund_conflict_pass(&mut self) -> u32 {
         self.value.refund_conflict_pass()
+    }
+
+    /// See [`ItemProgress::has_provisional_conflict_pass`].
+    #[must_use]
+    pub fn has_provisional_conflict_pass(&self) -> bool {
+        self.value.has_provisional_conflict_pass()
+    }
+
+    /// See [`ItemProgress::conflict_provisional_head`].
+    #[must_use]
+    pub fn conflict_provisional_head(&self) -> Option<&CommitId> {
+        self.value.conflict_provisional_head()
     }
 
     /// See [`ItemProgress::set_conflict_approved_head`].
@@ -1072,6 +1091,7 @@ impl ItemProgress {
             conflict_approved_head: None,
             conflict_refunded_head: None,
             conflict_accounted_head: None,
+            conflict_provisional_head: None,
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
@@ -1150,19 +1170,22 @@ impl ItemProgress {
                 self.merge_passes = self.merge_passes.saturating_add(1);
                 self.conflict_refunded_head = None;
             }
+            self.conflict_provisional_head = None;
             self.conflict_accounted_head = Some(head.clone());
         }
         self.merge_passes
     }
 
-    /// Refunds an unspent or unpublished conflict pass and returns the new count.
+    /// Refunds a demonstrably reserved conflict pass on publication failure and returns the new count.
+    /// If no provisional pass was reserved (e.g. an old state or already refunded), the count is preserved untouched.
     pub fn refund_conflict_pass(&mut self) -> u32 {
         if let Some(ref head) = self.conflict_approved_head.clone() {
             if self.conflict_accounted_head.as_ref() == Some(head) {
                 return self.merge_passes;
             }
-            if self.conflict_refunded_head.as_ref() != Some(head) {
+            if self.conflict_provisional_head.as_ref() == Some(head) {
                 self.merge_passes = self.merge_passes.saturating_sub(1);
+                self.conflict_provisional_head = None;
                 self.conflict_refunded_head = Some(head.clone());
             }
         }
@@ -1219,6 +1242,18 @@ impl ItemProgress {
         self.conflict_refunded_head.as_ref()
     }
 
+    /// The conflict head for which a provisional pass is currently reserved, if any.
+    #[must_use]
+    pub const fn conflict_provisional_head(&self) -> Option<&CommitId> {
+        self.conflict_provisional_head.as_ref()
+    }
+
+    /// Whether a provisional conflict pass is currently reserved and unconfirmed.
+    #[must_use]
+    pub const fn has_provisional_conflict_pass(&self) -> bool {
+        self.conflict_provisional_head.is_some()
+    }
+
     /// Records the approved head GitHub refused to merge before the current conflict pass or question.
     pub fn set_conflict_approved_head(&mut self, approved_head: CommitId) {
         self.conflict_approved_head = Some(approved_head);
@@ -1234,6 +1269,7 @@ impl ItemProgress {
     /// recorded at `at`. Returns the passes spent so far, this one included.
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.conflict_approved_head = Some(approved_head.clone());
+        self.conflict_provisional_head = Some(approved_head.clone());
         self.conflict_refunded_head = None;
         self.conflict_accounted_head = None;
         self.merge_conflict = Some(MergeConflict::MergingBase { approved_head, at });
@@ -1244,6 +1280,7 @@ impl ItemProgress {
     pub fn end_merge_conflict(&mut self) {
         self.merge_conflict = None;
         self.conflict_approved_head = None;
+        self.conflict_provisional_head = None;
         self.conflict_refunded_head = None;
         self.conflict_accounted_head = None;
     }
@@ -2166,6 +2203,33 @@ mod tests {
         // Subsequent refund attempt does not erase successfully published pass:
         assert_eq!(recovered.refund_conflict_pass(), 1);
         assert_eq!(recovered.merge_passes(), 1);
+    }
+
+    #[test]
+    fn asking_human_without_provisional_pass_never_refunds_passes_and_protects_legacy_counts() {
+        let mut item = progress_in(PhaseKind::Approved);
+        item.spend_merge_pass();
+        item.spend_merge_pass();
+        assert_eq!(item.merge_passes(), 2);
+        let head: CommitId = "4444444444444444444444444444444444444444".parse().unwrap();
+        item.set_conflict_approved_head(head);
+        item.ask_human_about_merge_conflict(at(50));
+        assert!(!item.has_provisional_conflict_pass());
+
+        // Calling refund on an unreserved pass never decrements passes:
+        assert_eq!(item.refund_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+
+        // Repeated refund attempts remain an idempotent no-op:
+        assert_eq!(item.refund_conflict_pass(), 2);
+        assert_eq!(item.merge_passes(), 2);
+
+        // Survives round-trip deserialization without losing pass count:
+        let serialized = serde_json::to_string(&item).unwrap();
+        let mut recovered: ItemProgress = serde_json::from_str(&serialized).unwrap();
+        assert_eq!(recovered.merge_passes(), 2);
+        assert_eq!(recovered.refund_conflict_pass(), 2);
+        assert_eq!(recovered.merge_passes(), 2);
     }
 
     #[test]

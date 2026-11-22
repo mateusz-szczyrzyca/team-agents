@@ -311,10 +311,10 @@ the `**ANSWERED**` marker, `dashboard`). **The questions and the answers are in 
 
 #### Items
 
-An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?, conflict_verifications?, conflict_approved_head?, conflict_refunded_head?, conflict_accounted_head?, merge_conflict?}`. `merge_conflict` is
+An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?, conflict_verifications?, conflict_approved_head?, conflict_refunded_head?, conflict_accounted_head?, conflict_provisional_head?, merge_conflict?}`. `merge_conflict` is
 `{status: "merging_base", approved_head, at}` while the lead merges the base after a refused merge, or `{status: "asking_human", at}` once the human is to be asked; it is absent otherwise, and an approved item without it is merged as before. `merge_passes` counts the lead passes
 spent on a merge that GitHub refused for a conflict, compared with `[merge] conflict_passes`; it is absent while none is spent,
-so states written before it read as none spent and keep the schema version. `conflict_verifications` counts how many times an approved item was reopened for a verification review after a conflict pass or an answered conflict question (absent while zero), `conflict_approved_head` keeps the approved head GitHub refused while a conflict pass or question is active (absent when none), `conflict_refunded_head` keeps the head whose provisional conflict pass was refunded on publication failure (absent when none), and `conflict_accounted_head` keeps the head whose conflict pass was accounted as spent upon confirmed publication (absent when none). The `phase` carries exactly the data of that phase:
+so states written before it read as none spent and keep the schema version. `conflict_verifications` counts how many times an approved item was reopened for a verification review after a conflict pass or an answered conflict question (absent while zero), `conflict_approved_head` keeps the approved head GitHub refused while a conflict pass or question is active (absent when none), `conflict_refunded_head` keeps the head whose provisional conflict pass was refunded on publication failure (absent when none), `conflict_accounted_head` keeps the head whose conflict pass was accounted as spent upon confirmed publication (absent when none), and `conflict_provisional_head` tracks the head for which a provisional conflict pass was reserved (absent when none or unreserved). The `phase` carries exactly the data of that phase:
 
 | `phase` | Data | Item status | Moves to |
 |---|---|---|---|

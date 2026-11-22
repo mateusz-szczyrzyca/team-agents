@@ -330,7 +330,7 @@ impl Owner {
     }
 
     /// The conflict passes of the items of the pull request `number` of `team`: the passes spent and the configured limit.
-    fn conflict_budget(&self, team: &TeamId, number: PrNumber) -> ConflictBudget {
+    pub(super) fn conflict_budget(&self, team: &TeamId, number: PrNumber) -> ConflictBudget {
         let spent = self
             .parts
             .state

@@ -3,8 +3,9 @@
 //! item says where the pass is, so a restart of the daemon goes on from it.
 
 use agent_core::decide::merge_refusal::{
-    AccountingState, AfterLead, ConflictAccountingStep, ConflictPublishResult, LeadEnd, account_conflict_pass,
-    after_lead, changed_by_lead,
+    AccountingState, AfterLead, ConflictAccountingStep, ConflictPublication, ConflictPublishResult,
+    ExhaustedRoundRecovery, GatingStatus, LeadEnd, SplitPullStatus, account_conflict_pass, after_lead, changed_by_lead,
+    recover_exhausted_split_round,
 };
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
@@ -15,6 +16,7 @@ use agent_core::state::{
 };
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
+use agent_runtime::github::PullState;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
@@ -55,32 +57,49 @@ struct ConflictPass {
     at: Timestamp,
     /// The items of the pull request.
     items: Vec<ItemId>,
+    /// Whether the pass was recovered from an exhausted split round with valid gated work ready.
+    recovered: bool,
 }
 
 /// Context for reporting a conflict publication failure.
 struct ConflictPublishSite<'a> {
+    /// The site context holding team, lead, and autopilot texts.
     site: Site<'a>,
+    /// The publication parameters for the pull request.
     publication: &'a Publication,
+    /// The items belonging to the pull request.
     items: &'a [ItemId],
+    /// The pull request number.
     pr: agent_core::state::PrNumber,
 }
 
 /// Context for pushing and recording a conflict publication.
 struct ConflictPublicationTarget<'a> {
+    /// The site context holding team, lead, and autopilot texts.
     site: Site<'a>,
+    /// The publication parameters for the pull request.
     publication: &'a Publication,
+    /// The items belonging to the pull request.
     items: &'a [ItemId],
+    /// The pull request to publish to.
     pr: &'a PullRequest,
+    /// The approved head GitHub refused to merge.
     approved_head: &'a CommitId,
+    /// The gated tip commit to push.
     tip: &'a CommitId,
 }
 
 /// Context for applying the results of a lead's conflict pass.
 struct ConflictResolution<'a> {
+    /// The team whose conflict pass is being applied.
     team: &'a TeamId,
+    /// The items belonging to the pull request.
     items: &'a [ItemId],
+    /// The pull request number.
     pr: agent_core::state::PrNumber,
+    /// The approved head GitHub refused to merge.
     approved_head: &'a CommitId,
+    /// The files changed by the lead beyond the merge of the base.
     changed: Vec<RepoPath>,
 }
 
@@ -157,26 +176,36 @@ impl Owner {
         look: &mut Look,
         now: Timestamp,
     ) -> Result<(), OwnerError> {
-        let Some(ConflictPass {
+        let pass = match self.conflict_in_progress(team)? {
+            Some(pass) => pass,
+            None => {
+                if let Some(recovered) = self.recover_exhausted_split_conflict(pulls, team).await? {
+                    recovered
+                } else {
+                    return self.wake_unasked_conflict_lead(team, look).await;
+                }
+            }
+        };
+        let ConflictPass {
             pr,
             approved_head,
             at,
             items,
-        }) = self.conflict_in_progress(team)?
-        else {
-            return self.wake_unasked_conflict_lead(team, look).await;
-        };
+            recovered,
+        } = pass;
         if self.conflict_publication_delayed(team, &pr, now) {
             return Ok(());
         }
         let lead = self.lead_of(team)?;
-        if !self.check_conflict_lead_ready(&lead, at, look)? {
-            return Ok(());
-        }
-        if !lead.done {
-            return self
-                .handle_undone_lead(team, &items, pr.number, &approved_head, now, look)
-                .await;
+        if !recovered {
+            if !self.check_conflict_lead_ready(&lead, at, look)? {
+                return Ok(());
+            }
+            if !lead.done {
+                return self
+                    .handle_undone_lead(team, &items, pr.number, &approved_head, now, look)
+                    .await;
+            }
         }
         let publication = conflict_publication(&pr.branch, &items);
         let site = Site {
@@ -393,10 +422,10 @@ impl Owner {
         reason: &'static str,
     ) -> Result<(), OwnerError> {
         self.each_item(team, items, |item| {
-            let accounting = if item.conflict_refunded_head().is_some() || item.conflict_accounted_head().is_some() {
-                AccountingState::AlreadyRecorded
-            } else {
+            let accounting = if item.has_provisional_conflict_pass() {
                 AccountingState::Unrecorded
+            } else {
+                AccountingState::AlreadyRecorded
             };
             let step = account_conflict_pass(ConflictPublishResult::Failed, accounting);
             log_decision(
@@ -404,7 +433,9 @@ impl Owner {
                 &format!("pr={pr}, result={reason}, accounting={accounting:?}"),
                 &format!("{step:?}"),
             );
-            item.refund_conflict_pass();
+            if step == ConflictAccountingStep::RetainBudget && accounting == AccountingState::Unrecorded {
+                item.refund_conflict_pass();
+            }
             Ok(())
         })
     }
@@ -513,7 +544,9 @@ impl Owner {
                 &format!("pr={pr}, result=published, accounting={accounting:?}"),
                 &format!("{step:?}"),
             );
-            item.record_published_conflict_pass();
+            if step == ConflictAccountingStep::SpendPass {
+                item.record_published_conflict_pass();
+            }
             Ok(())
         })?;
         match decided {
@@ -587,6 +620,7 @@ impl Owner {
                         approved_head: approved_head.clone(),
                         at: *at,
                         items: items_of(found, pr.number),
+                        recovered: false,
                     })
                 }
                 (ItemPhase::Approved { pr, .. }, Some(MergeConflict::AskingHuman { at })) => {
@@ -603,28 +637,16 @@ impl Owner {
                         item.findings()
                             .and_then(|ledger| ledger.verification())
                             .and_then(|context| context.reviewed_head.clone())
-                    })?;
-                    if let Some(answered_at) = answered_at {
+                    });
+                    if let Some(answered_at) = answered_at
+                        && let Some(approved_head) = approved_head
+                    {
                         return Some(ConflictPass {
                             pr: pr.clone(),
                             approved_head,
                             at: answered_at,
                             items: items_of(found, pr.number),
-                        });
-                    }
-                    if questions.iter().any(agent_core::state::Question::is_open) {
-                        return None;
-                    }
-                    let is_split_part = found.rounds().iter().any(|r| {
-                        r.part_pull_request().is_some_and(|p| p.number == pr.number)
-                            || (r.part().is_some() && items_of(found, pr.number).iter().any(|id| r.item() == Some(*id)))
-                    });
-                    if is_split_part {
-                        return Some(ConflictPass {
-                            pr: pr.clone(),
-                            approved_head,
-                            at: *at,
-                            items: items_of(found, pr.number),
+                            recovered: false,
                         });
                     }
                     None
@@ -639,6 +661,112 @@ impl Owner {
                     _,
                 ) => None,
             }))
+    }
+
+    /// Recovers an exhausted split round in `AskingHuman` when valid gated work is ready.
+    async fn recover_exhausted_split_conflict(
+        &mut self,
+        pulls: &Pulls,
+        team: &TeamId,
+    ) -> Result<Option<ConflictPass>, OwnerError> {
+        let Some((pr, at, items)) = self.conflict_asking_human(team) else {
+            return Ok(None);
+        };
+        let Some(found) = self.parts.state.team(team) else {
+            return Ok(None);
+        };
+        let is_split_part = found.rounds().iter().any(|r| {
+            r.part_pull_request().is_some_and(|p| p.number == pr.number)
+                || (r.part().is_some() && items.iter().any(|id| r.item() == Some(*id)))
+        });
+        if !is_split_part {
+            return Ok(None);
+        }
+        let lead = self.lead_of(team)?;
+        let member = self
+            .parts
+            .state
+            .find_task(&lead.task)
+            .map(|t| t.member)
+            .ok_or_else(|| OwnerError::LostTask {
+                task: lead.task.clone(),
+            })?;
+        if member.questions().iter().any(agent_core::state::Question::is_open) {
+            return Ok(None);
+        }
+        let Ok(git) = self.worktree_git(&lead.repo, &lead.task, &lead.agent) else {
+            return Ok(None);
+        };
+        let Ok(github) = self.github_for(pulls, &lead.repo, &git).await else {
+            return Ok(None);
+        };
+        let Ok(remote) = github.get_pull_request(pr.number).await else {
+            return Ok(None);
+        };
+        let status = match remote.state {
+            PullState::Merged => SplitPullStatus::Merged,
+            PullState::Closed => SplitPullStatus::ClosedUnmerged,
+            PullState::Open => {
+                let budget = self.conflict_budget(team, pr.number);
+                let tip = git.rev_parse(&Revision::Head).await.ok();
+                let record = self.parts.store.load_gate_record(&lead.task).await.ok().flatten();
+                let is_gated = tip.as_ref().is_some_and(|tip| {
+                    record
+                        .as_ref()
+                        .is_some_and(|r| r.result.head == *tip && r.counts_as_pass())
+                });
+                let gating = if is_gated {
+                    GatingStatus::Gated
+                } else {
+                    GatingStatus::Ungated
+                };
+                let conflict = if tip.as_ref() == Some(&remote.head) {
+                    ConflictPublication::Published
+                } else {
+                    ConflictPublication::Unpublished
+                };
+                SplitPullStatus::Open {
+                    gating,
+                    budget,
+                    conflict,
+                }
+            }
+        };
+        let recovery = recover_exhausted_split_round(status);
+        log_decision(
+            "recover_exhausted_split_round",
+            &format!("pr={}, status={status:?}", pr.number),
+            &format!("{recovery:?}"),
+        );
+        match recovery {
+            ExhaustedRoundRecovery::WaitHuman | ExhaustedRoundRecovery::CompleteMerged => Ok(None),
+            ExhaustedRoundRecovery::ResumeMerge => {
+                if let SplitPullStatus::Open {
+                    conflict: ConflictPublication::Published,
+                    ..
+                } = status
+                {
+                    self.end_pass(team, &items, pr.number)?;
+                    self.save().await?;
+                    Ok(None)
+                } else {
+                    let approved_head = self
+                        .parts
+                        .state
+                        .team(team)
+                        .and_then(|t| items.first().and_then(|id| t.item(*id)))
+                        .and_then(|item| item.conflict_approved_head().cloned())
+                        .unwrap_or_else(|| remote.head.clone());
+                    Ok(Some(ConflictPass {
+                        pr,
+                        approved_head,
+                        at,
+                        items,
+                        recovered: true,
+                    }))
+                }
+            }
+        }
     }
 
     /// Whether the lead's tip of `pr` is the commit to push: it merged the base, and the gate of the harness or of the
