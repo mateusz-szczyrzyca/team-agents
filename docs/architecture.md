@@ -305,8 +305,9 @@ count. A
 message that only answers the member's question, a forwarded answer of the human, a bounce of the plan, a refused gate and
 the checks before a review carry no such line and have counters of their own; a lead of an older prompt that writes no
 line is never counted by guess. The return is recorded in the item's `rejections` with what the lead told the
-member directly after the bus notice that the member finished this item, whole, as its reason
-(`AgentBus::said_since_finished`; a broadcast, a message before the notice or none gives a fixed text that says so); it is
+member directly during the run that returned the work, whole, as its reason (the daemon marks a lead's run with the
+newest message of the bus when it begins, `AgentBus::newest_message_id`, and reads the lead's direct messages to the
+member after the mark, `AgentBus::said_after`; a broadcast, an earlier message or none gives a fixed text that says so); it is
 recorded before the lead's run is saved as ended, so that a restart keeps both or neither. It counts once the member is
 started again
 for the item — at once when the lead's message started the member during the lead's run, otherwise when the member's next

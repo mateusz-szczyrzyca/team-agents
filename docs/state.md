@@ -317,7 +317,7 @@ spent on a merge that GitHub refused for a conflict, compared with `[merge] conf
 so states written before it read as none spent and keep the schema version. `conflict_verifications` counts how many times an approved item was reopened for a verification review after a conflict pass or an answered conflict question (absent while zero), and `conflict_approved_head` keeps the approved head GitHub refused while a conflict pass or question is active (absent when none). The `phase` carries exactly the data of that phase:
 
 An item's optional `rejections` lists the returns of its lead, oldest first, each `{at, reason, recorded_in?, part?, of_run?}`: when the lead's
-run ended with `RETURNED: <item>`, what the lead told the member after the notice of the hand-over as the reason, the number
+run ended with `RETURNED: <item>`, what the lead told the member directly during the run that returned the work as the reason, the number
 of the member's run that was started again after it (`recorded_in`, absent until that run starts), the part of a split item
 the work belonged to (`part`, a letter) and the run of the member that ended `DONE` and was sent back (`of_run`); the last
 two are absent in states written before and for an item that is not split. Only the returns with a `recorded_in` count

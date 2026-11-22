@@ -214,7 +214,7 @@ instead of taking the branch. A rejection is a line `RETURNED: <item>` of that m
 lead of an older prompt that writes no such line never counts one. It counts only when the harness sees that the lead
 read the member's work and sent it back: the item is held by a member's task whose last run before the lead's run ended
 `DONE`, the member is started again for it (by the lead's message, or at its next run), and the item did not move on
-(it is still in progress). The reason of a rejection is what the lead told the member directly after the notice of the hand-over, read from the bus.
+(it is still in progress). The reason of a rejection is what the lead told the member directly during the run that returned the work, read from the bus (the newest message of the bus when the lead's run began marks where the run's messages start).
 A lead returns one part of a split item with `RETURNED: 1.1a`; every part has its own count.
 A line repeated before the member ran again counts once. An answer to the member's question, a forwarded answer of
 the human, a bounce of the task's plan, a refused gate and the checks before a review are not rejections: they have
