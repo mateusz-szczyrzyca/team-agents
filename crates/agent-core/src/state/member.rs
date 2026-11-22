@@ -242,6 +242,11 @@ impl CheckedMut<'_, Member> {
         self.value.owe_lead(trouble, at)
     }
 
+    /// See [`Member::owe_busy_notice`].
+    pub(crate) fn owe_busy_notice(&mut self, owed: bool) {
+        self.value.owe_busy_notice(owed);
+    }
+
     /// See [`Member::lead_told`].
     pub(crate) fn lead_told(&mut self) {
         self.value.lead_told();
@@ -524,8 +529,8 @@ impl Member {
 
     /// Whether the team is still owed notice of this task's busy hand-over.
     #[must_use]
-    pub const fn busy_notice_owed(&self) -> bool {
-        false
+    pub fn busy_notice_owed(&self) -> bool {
+        self.renewals.as_ref().is_some_and(renewal::Renewals::busy_notice_owed)
     }
 
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
@@ -752,6 +757,13 @@ impl Member {
     pub(crate) fn lead_told(&mut self) {
         if let Some(renewals) = self.renewals.as_mut() {
             renewals.owe_lead(None);
+        }
+    }
+
+    /// Keeps or clears the team-message obligation of a busy hand-over.
+    pub(crate) fn owe_busy_notice(&mut self, owed: bool) {
+        if let Some(renewals) = self.renewals.as_mut() {
+            renewals.owe_busy_notice(owed);
         }
     }
 

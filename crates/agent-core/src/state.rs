@@ -614,9 +614,18 @@ impl State {
     /// # Errors
     /// [`RenewTaskError::NoTask`] when the task is not in the state.
     pub fn owe_busy_notice(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
-        let (_, mut _member) = self
+        let (role, mut member) = self
             .find_task_mut(task)
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => member.owe_busy_notice(true),
+            Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -625,9 +634,10 @@ impl State {
     /// # Errors
     /// [`RenewTaskError::NoTask`] when the task is not in the state.
     pub fn busy_notice_told(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
-        let (_, mut _member) = self
+        let (_, mut member) = self
             .find_task_mut(task)
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member.owe_busy_notice(false);
         Ok(())
     }
 
