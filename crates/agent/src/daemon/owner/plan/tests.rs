@@ -2209,6 +2209,8 @@ async fn async_recover_task_checks_cleans_up_group_on_blocking_pool() {
 #[tokio::test]
 async fn async_recover_leftover_checks_ends_recorded_group_on_blocking_pool() {
     use std::os::unix::process::CommandExt;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     let daemon = with_bounces(&solo_state(), 0);
     let checks_dir = daemon.home.task_dir(&task(1)).join("checks");
@@ -2217,27 +2219,53 @@ async fn async_recover_leftover_checks_ends_recorded_group_on_blocking_pool() {
 
     let mut child = std::process::Command::new("/bin/sh")
         .arg("-c")
-        .arg("rec=\"$1\"; read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && printf '%s %s\\n' \"$$\" \"${20}\" > \"$rec\" && exec sleep 30")
-        .arg("sh")
-        .arg(&record_path)
+        .arg("exec sleep 30")
         .process_group(0)
         .spawn()
         .expect("spawn leftover check group");
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    while std::fs::read_to_string(&record_path)
-        .unwrap_or_default()
-        .trim()
-        .is_empty()
-        && std::time::Instant::now() < deadline
-    {
-        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-    }
+    let pid = child.id();
+    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).expect("read child stat");
+    let (_, after_comm) = stat.rsplit_once(')').expect("child stat parens");
+    let ticks = after_comm.split_whitespace().nth(19).expect("child starttime ticks");
+    let record_line = format!("{pid} {ticks}\n");
+
+    let mkfifo = std::process::Command::new("mkfifo")
+        .arg(&record_path)
+        .status()
+        .expect("create running FIFO");
+    assert!(mkfifo.success(), "mkfifo failed: {mkfifo}");
+
+    let watchdog_unblocked = Arc::new(AtomicBool::new(false));
+    let watchdog_flag = Arc::clone(&watchdog_unblocked);
+    let watchdog_fifo = record_path.clone();
+    let watchdog_line = record_line.clone();
+    let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+    let watchdog = std::thread::spawn(move || {
+        if matches!(
+            done_rx.recv_timeout(std::time::Duration::from_millis(200)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ) {
+            watchdog_flag.store(true, Ordering::SeqCst);
+            drop(std::fs::write(&watchdog_fifo, watchdog_line));
+        }
+    });
 
     let (owner, _sinks) = daemon.bare_owner().await;
-    owner.recover_leftover_checks().await.expect("recover_leftover_checks");
+    let (recover_res, ()) = tokio::join!(owner.recover_leftover_checks(), async {
+        if !watchdog_unblocked.load(Ordering::SeqCst) {
+            drop(std::fs::write(&record_path, &record_line));
+        }
+    });
+    drop(done_tx);
+    watchdog.join().expect("join FIFO watchdog thread");
+    recover_res.expect("recover_leftover_checks");
     let record_removed = !record_path.exists();
     drop(child.kill());
     drop(child.wait());
+    assert!(
+        !watchdog_unblocked.load(Ordering::SeqCst),
+        "recover_leftover_checks blocked the async executor thread instead of offloading to spawn_blocking"
+    );
     assert!(
         record_removed,
         "recover_leftover_checks must end leftover check process groups and remove checks/running on the blocking pool"

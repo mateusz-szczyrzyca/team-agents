@@ -987,7 +987,7 @@ async fn spawning_daemon_death_during_record_rename_removes_record_and_prevents_
 
     let mut stand_in = std::process::Command::new("/bin/sh")
         .arg("-c")
-        .arg("sleep 30")
+        .arg("exec sleep 30")
         .spawn()
         .expect("spawn stand-in daemon");
     let stand_in_pid = stand_in.id();
