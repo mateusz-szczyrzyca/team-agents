@@ -735,3 +735,27 @@ async fn an_owed_busy_notice_is_retried_for_the_whole_team_after_a_restart() {
         "the coordinator did not receive the holder-change notice"
     );
 }
+
+#[tokio::test]
+async fn busy_notice_rendering_failures_are_typed_and_retained() {
+    use super::super::fixture::Daemon;
+    use crate::daemon::owner::takeover::BusyNoticeError;
+
+    let (state, _team, task) = waiting_team_state();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let missing_branch = owner.busy_handover_text(&task, "1.1".parse().unwrap()).unwrap_err();
+    assert!(matches!(
+        missing_branch,
+        BusyNoticeError::MissingBranch { item } if item == "1.1".parse().unwrap()
+    ));
+
+    let (state, _team, task) = state_with_another_item_in_review();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let missing_holder = owner.busy_handover_text(&task, "1.1".parse().unwrap()).unwrap_err();
+    assert!(matches!(
+        missing_holder,
+        BusyNoticeError::MissingPreviousHolder { task: failed } if failed == task
+    ));
+}
