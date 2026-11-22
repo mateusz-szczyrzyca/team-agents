@@ -590,6 +590,12 @@ pub enum PlanError {
         /// The line of the label.
         line: NonZeroUsize,
     },
+    /// A check read alone, outside a plan, that is more than one line: a step's `Check:` is one line.
+    #[error("line {line}: Check: is more than one line")]
+    MultilineCheck {
+        /// The line the check starts on.
+        line: NonZeroUsize,
+    },
     /// An `exists` check names a path that is not a valid path of the repository.
     #[error("line {line}: invalid path in Check: exists")]
     BadCheck {
@@ -623,6 +629,7 @@ impl PlanError {
             | Self::DuplicatePart { line, .. }
             | Self::EmptyCheck { line }
             | Self::ExistsWithoutPath { line }
+            | Self::MultilineCheck { line }
             | Self::BadCheck { line, .. } => Some(*line),
         }
     }

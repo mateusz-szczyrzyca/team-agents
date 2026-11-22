@@ -153,3 +153,62 @@ fn a_plan_that_does_not_read_is_refused() {
 
     assert_eq!(out.lines().next(), Some("REFUSED PLAN-UNREADABLE"));
 }
+
+#[test]
+fn a_value_that_starts_with_a_hyphen_is_taken_as_the_value() {
+    let (_dir, plan) = home_with_plan();
+
+    let (code, out) = check(&plan, "1.2", "-guide.md", "exists docs/guide.md", "-Write it.");
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let lines: Vec<&str> = out.lines().collect();
+    assert_eq!(lines.first(), Some(&"ACCEPTED"), "{out}");
+    assert!(lines.contains(&"Request files: -guide.md"), "{out}");
+    assert!(lines.contains(&"Do: -Write it."), "{out}");
+}
+
+#[test]
+fn an_empty_entry_in_the_files_is_refused_as_no_path() {
+    let (_dir, plan) = home_with_plan();
+
+    for files in ["README.md,,docs/guide.md", "README.md,", ", docs/guide.md"] {
+        let (_, out) = check(&plan, "1.2", files, "exists docs/guide.md", "x");
+        assert_eq!(out.lines().next(), Some("REFUSED PATH-OUTSIDE"), "{files}: {out}");
+    }
+}
+
+#[test]
+fn a_check_of_more_than_one_line_is_refused() {
+    let (_dir, plan) = home_with_plan();
+
+    for check_line in ["true\nreviewer", "true\r\nfalse", "exists docs/guide.md\nmake gate"] {
+        let (_, out) = check(&plan, "1.2", "docs/guide.md", check_line, "x");
+        assert_eq!(
+            out.lines().next(),
+            Some("REFUSED CHECK-REFUSED"),
+            "{check_line:?}: {out}"
+        );
+    }
+}
+
+#[test]
+fn a_refusal_says_the_cause_of_what_does_not_read() {
+    let (_dir, plan) = home_with_plan();
+    let path_cause = "/etc/passwd"
+        .parse::<agent_core::repo_path::RepoPath>()
+        .unwrap_err()
+        .to_string();
+
+    let (_, outside) = check(&plan, "1.2", "/etc/passwd", "exists docs/guide.md", "x");
+    std::fs::write(&plan, "1. Draft\n[?] 1.1 Not a mark\n").unwrap();
+    let plan_cause = agent_core::plan::parse_plan("1. Draft\n[?] 1.1 Not a mark\n")
+        .unwrap_err()
+        .to_string();
+    let (_, unreadable) = check(&plan, "1.1", "docs/guide.md", "exists docs/guide.md", "x");
+
+    assert!(outside.contains(&path_cause), "{path_cause:?} is not in {outside:?}");
+    assert!(
+        unreadable.contains(&plan_cause),
+        "{plan_cause:?} is not in {unreadable:?}"
+    );
+}
