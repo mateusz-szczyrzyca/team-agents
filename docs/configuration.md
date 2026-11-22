@@ -127,6 +127,13 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |
 | `limits.wake_ups_per_message` | `2` | runs a task is woken for one unread message; after that many that end without the message read, the task is not woken for it again, a `bus_down` warning names the task, the message and the count, and the message waits for the task's next run; `0` never wakes a task for a message |
+| `limits.runs_per_agent` | `1` | runs an agent may have going at once over all its teams and solo tasks, for normal agents and investigators; a task queued for an agent at its limit waits, queued, until the run that holds the agent ends (`agent status` says whom it waits for and where); `0` is no limit, as before this key |
+| `limits.runs_per_worker` | `1` | the same for the agents of `[tiers] workers`; `0` is no limit |
+
+A waiting task is never failed and is not handed to another agent by this limit: it starts when its agent is free. Waits
+of a task that is running, of a task that asks the human and of a review are not runs and do not count. A reviewer's run
+counts as a run of its investigator. Existing installations get the limit of `1` when the key is absent: an agent that
+ran two tasks at once before now runs them one after the other. Set `runs_per_agent = 0` to keep the old behaviour.
 
 A turn-limit ending queues the task and resumes the same session with a short continuation prompt. With the default
 `turn_limit_resumes = 3`, the fourth consecutive exhaustion is the end of the retries of that session: the task is started

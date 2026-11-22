@@ -50,6 +50,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         schema_version: SchemaVersion,
         teams,
         wake_deliveries: std::collections::BTreeMap::new(),
+        queued: Vec::new(),
     })?)
 }
 

@@ -422,4 +422,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 17,
         sql: include_str!("017-step-judgements.sql"),
     },
+    Migration {
+        version: 18,
+        sql: include_str!("018-wait-events.sql"),
+    },
 ];

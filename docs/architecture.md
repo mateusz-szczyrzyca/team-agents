@@ -147,6 +147,10 @@ engine relies on:
   (`claude-code`, `codex`, `antigravity`, `ide`). A server that is not in the request is not configured.
 - The error tail is the CLI's stderr followed by the lines of the stream that report an error: the classifier of run
   outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
+- An agent's runs are limited by `[limits] runs_per_agent` and `runs_per_worker` (default `1`, `0` no limit): a queued
+  task whose agent holds its limit over all teams waits, queued, for that run. The decision is
+  `decide/slot.rs`; the daemon asks it in `start_queued`, and `agent status` reads the run from the team summaries
+  (`waits_for`), so the wait survives a restart without any state of its own.
 - Claude's turn budget comes from `[limits] max_turns` (default `300`). Other quirk settings remain adapter constants: Claude's Bash timeout (20 minutes), `agy`'s
   print timeout (8 hours), opencode's Bash timeout (10 minutes). Other flags, such as `--effort high`, are the
   agent's `args`.

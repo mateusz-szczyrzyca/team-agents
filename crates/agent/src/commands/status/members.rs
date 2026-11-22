@@ -60,9 +60,13 @@ pub(super) fn line(
         Role::Reviewer => reviewer::status(member, &team.activities, zone).unwrap_or_else(|| member.status.to_string()),
         Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
     };
+    // A queued task whose agent holds its limit of runs says which run it waits for, and in which team.
+    let blocked = member.waits_for.as_ref().map_or_else(String::new, |wait| {
+        format!(", waits for {}, running in {}", member.agent.name(), wait.team)
+    });
     let (role_width, agent_width) = (columns.role, columns.agent);
     format!(
-        "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{returned}{active}{waiting}",
+        "  {}  {:<role_width$}  {:<agent_width$}  {status}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
         member.task,
         member.role.to_string(),
         member.agent.name(),

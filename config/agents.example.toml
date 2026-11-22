@@ -94,6 +94,11 @@ quota_pause_minutes = 30
 rate_limit_pause_minutes = 5
 tail_lines = 30
 wake_ups_per_message = 2
+# An agent has one run at a time over all its teams and solo tasks: a task queued for it waits until its run in the
+# other team ends. 0 lets an agent run as many tasks at once as are queued (the behaviour before this key).
+runs_per_agent = 1
+# The same for the agents of [tiers] workers, whose runs are cheap: 0 is no limit.
+runs_per_worker = 1
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
 # before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose

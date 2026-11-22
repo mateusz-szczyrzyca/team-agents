@@ -299,13 +299,27 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
 }
 
 /// A line for each agent of a team that has just started that is in another open team too: its messages there are not
-/// for its session here, and `agent say` to it names the task.
-fn render_shared(shared: &[SharedAgent]) -> String {
+/// for its session here, `agent say` to it names the task, and when its tier has a run limit its task here waits while
+/// its run there goes on.
+fn render_shared(shared: &[SharedAgent], team: &Team, limits: &agent_core::config::Limits) -> String {
+    use agent_core::decide::slot::{RunLimit, limit_for};
+    use agent_core::kinds::Tier;
+
+    let roster = team.crew().roster();
     let lines: Vec<String> = shared
         .iter()
         .map(|found| {
+            let tier = roster
+                .iter()
+                .find(|(_, member)| member.agent().name() == found.agent.as_str())
+                .map_or(Tier::Normal, |(_, member)| member.agent().tier());
+            let wait = match limit_for(limits, tier) {
+                RunLimit::Unlimited => "",
+                RunLimit::AtMost(one) if one.get() == 1 => ", and its task here waits while its run there goes on",
+                RunLimit::AtMost(_) => ", and its task here waits when its limit of runs is reached",
+            };
             format!(
-                "  {} is also in the open team {} (task {}): its messages there do not reach this team\n",
+                "  {} is also in the open team {} (task {}): its messages there do not reach this team{wait}\n",
                 found.agent, found.team, found.task
             )
         })
@@ -401,6 +415,9 @@ pub(crate) async fn start(
     out: &mut impl Write,
 ) -> Result<(), RunError> {
     let warning = rotation_warning(home, &request.agents).await?;
+    let limits = local_config(home)
+        .await?
+        .map_or_else(agent_core::config::Limits::default, |cfg| cfg.limits().clone());
     // The daemon fetches the base from `origin` before it starts anything, which may take longer than an ordinary
     // request: it bounds that wait itself, and a client that gave up first would hide a team that starts anyway.
     let reply = connection
@@ -422,7 +439,7 @@ pub(crate) async fn start(
     };
     out.write_all(render_started(home, &team).as_bytes())
         .map_err(RunError::Output)?;
-    out.write_all(render_shared(&shared).as_bytes())
+    out.write_all(render_shared(&shared, &team, &limits).as_bytes())
         .map_err(RunError::Output)?;
     if let Some(warning) = warning {
         out.write_all(warning.as_bytes()).map_err(RunError::Output)?;
@@ -430,11 +447,11 @@ pub(crate) async fn start(
     out.flush().map_err(RunError::Output)
 }
 
-/// Optional advisory for homes whose local configuration cannot provide disjoint review pairs.
+/// Reads the local configuration of `home`, when `agents.toml` exists there.
 ///
 /// # Errors
-/// [`RunError`] when the local configuration or warning cannot be read or rendered.
-async fn rotation_warning(home: &Home, agents: &AgentList) -> Result<Option<String>, RunError> {
+/// [`RunError`] when the file cannot be read or is invalid.
+async fn local_config(home: &Home) -> Result<Option<Config>, RunError> {
     let path = home.config_file();
     let file = read_text_file(&path, MAX_CONFIG_BYTES)
         .await
@@ -446,7 +463,19 @@ async fn rotation_warning(home: &Home, agents: &AgentList) -> Result<Option<Stri
     let Some(file) = file else {
         return Ok(None);
     };
-    let config = Config::from_toml_str(&file.text).map_err(|source| RunError::Config { path, source })?;
+    Config::from_toml_str(&file.text)
+        .map(Some)
+        .map_err(|source| RunError::Config { path, source })
+}
+
+/// Optional advisory for homes whose local configuration cannot provide disjoint review pairs.
+///
+/// # Errors
+/// [`RunError`] when the local configuration or warning cannot be read or rendered.
+async fn rotation_warning(home: &Home, agents: &AgentList) -> Result<Option<String>, RunError> {
+    let Some(config) = local_config(home).await? else {
+        return Ok(None);
+    };
     if !agent_core::decide::team::needs_review_rotation_warning(&config, agents) {
         return Ok(None);
     }
