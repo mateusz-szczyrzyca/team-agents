@@ -713,7 +713,7 @@ impl Owner {
         // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
         // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
         self.brief_leads().await;
-        self.queue_busy_handover_notices();
+        self.queue_busy_handover_notices().await?;
         if let Err(error) = self.flush_outbox().await {
             tracing::warn!(
                 event = LogEvent::BusDown.as_str(),

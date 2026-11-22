@@ -353,7 +353,7 @@ impl Owner {
     }
 
     /// Queues every still-owed team notice once; recovery rebuilds the outbox from the same persisted obligations.
-    pub(super) fn queue_busy_handover_notices(&mut self) {
+    pub(super) async fn queue_busy_handover_notices(&mut self) -> Result<(), OwnerError> {
         let pending: Vec<(agent_core::ids::TeamId, TaskId)> = self
             .parts
             .state
@@ -396,6 +396,10 @@ impl Owner {
                 })
                 .map(agent_core::state::ItemProgress::id)
                 .collect();
+            if items.is_empty() {
+                self.parts.state.busy_notice_told(&task)?;
+                self.save().await?;
+            }
             for item in items {
                 let queued = self.outbox.iter().any(|outbound| {
                     outbound.team == team_id
@@ -416,6 +420,7 @@ impl Owner {
                 }
             }
         }
+        Ok(())
     }
 
     /// The text of the team notice of `task`'s `item`, rendered only when the outbox is ready to send it.
