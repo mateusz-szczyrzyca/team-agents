@@ -47,7 +47,8 @@ pub(super) async fn record_task_waits_for_agent(observed: &mut std::collections:
     // The loop of the daemon looks at the queue after every message: the wait is logged before the stop is served. The
     // history is read after the stop, which writes what the layer still holds.
     rig.status_is(&second[0], TaskStatus::Queued).await;
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    rig.wait_for("the wait in the history", || !wait_rows(&rig).is_empty())
+        .await;
     rig.stop().await.unwrap();
 
     let rows = wait_rows(&rig);
