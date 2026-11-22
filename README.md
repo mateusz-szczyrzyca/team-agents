@@ -523,6 +523,14 @@ ended with its report, by your `agent stop`, or as a second opinion that was aba
 listed, since `agent resume` can start it again. `--task` lists every task, and under each its plan (`[x] 1.1 …`), and
 the parts of a split.
 
+After a split part merges, the next part uses an available, qualified previous holder, then the configured
+`[replacement]` policy: an eligible replacement in configured order, or the lead. Stopped and failed tasks are
+excluded. If no fitting participant is allowed, the human gets one capability question; a busy fitting participant
+waits until available. An outside replacement keeps the task and worktree but starts its own CLI session, retaining
+the previous holder's history. Existing states, including splits left waiting by older versions, load and resume
+this scheduling on the next daemon poll. The optional `holder_after_run` state field records the session boundary;
+older tasks omit it and retain their existing session behavior until a handover.
+
 Every view of `agent status` prints the same state for a part of a split, whether its round is open or closed:
 `done` when a round of the item merged the part's pull request, `in progress` while its round is open, `to do` when it
 is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed
@@ -728,8 +736,11 @@ When another pull request of the same team already contains an item's deliverabl
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
 line `DELIVERED: #N` before its final `STATUS: DONE`. The harness checks that the report identifies one current
 item, the PR belongs to another round of this team and uses its recorded branch, the member's worktree is clean,
-and the item has no commits outside the published PR or base branch. Git or GitHub failures refuse the claim and
-the coordinator receives a correction with the reason in its next prompt; the item stays in progress.
+and the item has no commits outside the published PR or base branch. For an approved split part, the coordinator
+can likewise deliver the part with `DELIVERED: #N` when an external or already merged PR of the same repository
+delivers the task's or part's branch, without running the round's agent or reviewers. Git or GitHub failures, unmerged or closed PRs,
+or foreign repositories and branches refuse the claim and the coordinator receives a correction with the reason in its
+next prompt; the item stays in progress.
 
 An accepted open claim says `delivered by PR #N, waits for its merge` in `agent status` and
 `agent status <round>`. It creates no separate PR and keeps waiting across daemon restarts. An already merged PR
@@ -950,13 +961,21 @@ worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
 A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
 `worker-request-<n>.json` that is cut short, has a field this version does not know, holds another request than its name says, cannot be read, or a stage that cannot
-be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
+be written: the daemon logs a `worker_request_damaged` warning that names the file (and where it is kept), moves the file aside
 as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
 the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
 cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
 log line to learn what happened to the worker's work: nothing was brought over.
-A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
-returned steps, come with the next version.
+**A wrong result is tried once elsewhere.** When the result of a run that ended `STATUS: DONE` is wrong (the check failed or
+ran past its limit, a file outside `files` was changed, nothing was committed, the run lasted past `[workers] seconds`) and
+`[workers] tries` is above 1, the request goes once more to a free worker of another CLI (of the same CLI when no other is
+free): its prompt says who served the request before and why that result did not serve, and the requester is told that the
+request went again. A second wrong result returns the step to the requester with the reasons of both results, and no third
+worker starts; `tries = 1` never gives a request to a second worker. What the first worker committed is not brought over. The
+try is kept in `tasks/<worker task>/worker-try-<n>.json`, and a daemon that stops while the request waits for the second
+worker goes on from the file of the first result. A worker whose result is not settled is busy; a request the daemon has
+answered does not keep it busy, even when its file cannot be removed. A run that ends otherwise than `STATUS: DONE`, the
+lines of `agent status` for the tries and the pull request's description of the returned steps come with the next version.
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),

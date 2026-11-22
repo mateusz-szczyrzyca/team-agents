@@ -282,3 +282,75 @@ fn a_directory_has_a_pending_request_while_a_file_of_one_is_in_it_and_not_when_i
 
     assert!(!has_pending(dir.path()));
 }
+
+#[test]
+fn the_try_of_a_request_is_kept_and_read_back_and_a_request_without_one_is_on_its_first() {
+    let dir = tempfile::tempdir().expect("a directory");
+    assert_eq!(read_try(dir.path(), request(4)).expect("none kept"), Try::first());
+    let second = Try {
+        number: 2,
+        earlier: vec!["the check failed".to_owned()],
+    };
+
+    write_try(dir.path(), request(4), &second).expect("kept");
+
+    assert_eq!(read_try(dir.path(), request(4)).expect("read"), second);
+    assert_eq!(read_try(dir.path(), request(5)).expect("none kept"), Try::first());
+    assert!(
+        !has_pending(dir.path()),
+        "the file of a try is not the file of a request"
+    );
+}
+
+#[test]
+fn a_try_that_cannot_be_read_is_a_failure_and_not_a_first_try() {
+    let dir = tempfile::tempdir().expect("a directory");
+    std::fs::write(try_path(dir.path(), request(4)), "{").expect("written");
+
+    assert!(matches!(
+        read_try(dir.path(), request(4)),
+        Err(PendingError::Parse { .. })
+    ));
+}
+
+#[test]
+fn a_request_that_was_answered_does_not_keep_a_worker_busy_but_one_that_was_not_does() {
+    let dir = tempfile::tempdir().expect("a directory");
+    write_pending(dir.path(), &pending(3, Stage::Ended)).expect("written");
+    write_pending(dir.path(), &pending(4, Stage::Ended)).expect("written");
+    let mut answered = std::collections::HashSet::new();
+
+    assert!(has_pending_except(dir.path(), &answered));
+    answered.insert(request(3));
+    assert!(has_pending_except(dir.path(), &answered), "request 4 is not answered");
+    answered.insert(request(4));
+    assert!(!has_pending_except(dir.path(), &answered));
+}
+
+#[test]
+fn a_result_that_will_be_given_again_is_written_and_read_back_with_its_reasons() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let again = pending(
+        6,
+        Stage::Settled {
+            checked: Box::new(checked()),
+            settlement: Settlement::Again {
+                reasons: vec!["the check failed".to_owned()],
+            },
+        },
+    );
+
+    write_pending(dir.path(), &again).expect("written");
+
+    let read = read_all(dir.path());
+    assert_eq!(read, vec![again]);
+}
+
+/// The requests of `dir`, read all at once.
+fn read_all(dir: &Path) -> Vec<Pending> {
+    tokio::runtime::Builder::new_current_thread()
+        .build()
+        .expect("a runtime")
+        .block_on(read_pending(dir))
+        .expect("read")
+}

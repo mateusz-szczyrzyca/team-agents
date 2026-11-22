@@ -177,11 +177,15 @@ A request is given to one worker first. Its result is wrong when the request's c
 than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
 the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
 wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
-facts only: its result goes to the requester as before, and its check, when it has one, is run all the same.
+facts only: its result goes to the requester as before, and its check, when it has one, is run all the same. Both keys
+apply to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the requester as failed at
+once, as before (its second try comes with a later version). The second worker is told who served the request before it and
+why that result did not serve; the requester is told the request went again, and, after a second wrong result, gets the
+reasons of both. A restart of the daemon while the request waits for the second worker does not lose it.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`) |
+| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`). A request gets one second try at most: a value above `2` behaves as `2` |
 | `seconds` | `0` | how long a worker's run may last, in seconds; a run past it is a wrong result. `0` has no limit |
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.
@@ -232,6 +236,12 @@ place than the one it replaces, not in the task's team, not in a run, not with a
 quota. With an empty `agents` list, or when no agent of `agents` fits, no busy hand-over takes place and the task keeps waiting for its own agent. Of the agents that fit, the one whose CLI runs the fewest runs now is taken, and among equals the first of `agents`.
 The task keeps its worktree and branch, its new holder's first run is briefed with the reason `busy`, the bus tells the team who holds the item now, and the first holder
 is not woken for it. Only a queued task waiting for its busy agent counts: a task that is running, a task that waits for an answer of the human or for a review, a coordinator's task while one of its members runs, a reviewer's task, and a worker's task are never handed over this way.
+
+The same `mode` and ordered `agents` list apply when the next part of a split needs a new holder because
+its previous member stopped, failed or handed over the task. `auto` tries qualified configured replacements,
+then the lead; `lead` tries the lead; `off` asks you. If no eligible holder can take the part, the harness asks
+you once rather than leaving the part waiting silently. A replacement must meet both the part's required tier
+and the previous holder's tier; a busy eligible agent waits until it is available.
 
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
 the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator

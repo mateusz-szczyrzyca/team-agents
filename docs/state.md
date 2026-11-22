@@ -23,6 +23,11 @@ activity files are left alone. See [history retention](history.md#retention-and-
 
 ## State
 
+A member may carry optional `holder_after_run`, the last run of the previous task holder. A handover preserves all
+runs but resumes only sessions after this boundary and counts only those runs for the new holder's failure ladder.
+Older states omit the field; they load without migration and acquire a boundary on their next handover. The
+pre-renewal state fixture and handover reload tests exercise both formats.
+
 ### Approved split definitions
 
 Schema 13 adds optional per-team `splits`, a list of whole validated plans in approval order. Each plan has
@@ -456,6 +461,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
   a `clean` tree is a pass of `head`. The previous record, in the same format, is retained in optional
   `tasks/<task>/gate-previous.json` before replacing the latest record. This lets descriptions disclose a pass
   after a failure at the same commit. An older task directory without it reads as before.
+- **The try of a request** — optional `tasks/<worker task>/worker-try-<n>.json`, `{"number": 2, "earlier": ["why the first result did not serve"]}`, written when a request is given to a worker for the second time and removed when the request is answered; a request without it is on its first try. An unknown field is refused. The settlement `again` of a request's file (`{"settled": "again", "reasons": [...]}`) keeps the first worker's file until the bus has the request with another worker.
 - **The request of a worker whose run has ended** — optional `tasks/<worker task>/worker-request-<n>.json`, written by the
   daemon when a worker's run ends `STATUS: DONE` and replaced, through a temporary file, after each stage of settling its
   result: `{"request": n, "team", "requester", "requester_task", "worker", "worker_task", "summary", "run_seconds", "base",
@@ -464,7 +470,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
   with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons). The daemon removes the
   file when the requester is told. A daemon that starts finds the files of the team's workers and goes on from their
   stages; an unknown field is refused, and a file that is refused, cut short or cannot be read is set aside as
-  `worker-request-<n>.json.damaged` (kept, never read again), logged (`restart_corrected`, with its name) and its request is
+  `worker-request-<n>.json.damaged` (kept, never read again), logged (`worker_request_damaged`, with its name) and its request is
   answered as a wrong result, while the other files are read. `base` is the commit the worker's worktree was at when the request was given to it. A task directory without such files reads as before.
 - **Lead contribution to the PR description** — optional `tasks/<lead>/description.md`, outside the repository,
   read as UTF-8 with a 1 MiB limit. The harness combines it with its own header, measured Size, recorded Gate

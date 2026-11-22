@@ -20,6 +20,7 @@ pub mod last_step;
 pub mod merge_refusal;
 pub mod opinion;
 pub mod outcome;
+pub mod part;
 pub mod plan;
 pub mod publish;
 pub mod rejection;

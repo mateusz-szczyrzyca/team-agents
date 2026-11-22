@@ -69,6 +69,19 @@ mod worker_result_texts {
     }
 
     #[test]
+    fn the_second_worker_is_told_who_served_the_request_before_and_why_that_result_did_not_serve() {
+        let text = rendered(
+            TeamPrompt::DelegationAgain,
+            &[
+                ("previous_worker", "glm-1"),
+                ("reason", "the check `exists docs/guide.md` failed"),
+            ],
+        );
+
+        assert_eq!(text, golden("delegation-again.txt"));
+    }
+
+    #[test]
     fn the_requester_is_told_the_request_went_again_to_another_worker_and_why() {
         let text = rendered(
             TeamPrompt::WorkerGivenAgain,

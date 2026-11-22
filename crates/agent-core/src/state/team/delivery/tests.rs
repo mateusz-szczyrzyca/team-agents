@@ -416,3 +416,21 @@ fn ending_a_completed_abandoned_part_refuses_a_stale_claim_without_mutation() {
         before
     );
 }
+
+#[test]
+fn deliver_round_with_pr_records_external_claim_and_completes_split_part() {
+    let mut team = two_part_team();
+    let external = PullRequest {
+        number: PrNumber::new(std::num::NonZeroU32::new(99).unwrap()),
+        branch: "agents/external/pr-branch".parse().unwrap(),
+        opened_at: at(10),
+    };
+    team.deliver_round_with_pr(&round_id(2), external.clone()).unwrap();
+    assert_eq!(team.round(&round_id(2)).unwrap().delivered_by(), Some(&external));
+    team.complete_delivery(&round_id(2), at(40)).unwrap();
+    assert_eq!(team.round(&round_id(2)).unwrap().ended(), Some(RoundEnd::Merged));
+    assert_eq!(team.round(&round_id(2)).unwrap().part_pull_request(), Some(&external));
+    let item = "2.1".parse().unwrap();
+    assert_eq!(team.item(item).unwrap().phase(), &ItemPhase::Pending);
+    assert_eq!(team.next_part(item).unwrap().0.to_string(), "2.1b");
+}

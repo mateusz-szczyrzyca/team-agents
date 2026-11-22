@@ -191,19 +191,15 @@ impl Team {
         })
     }
 
-    /// Records a claim after the caller verifies the item's clean git tree and ancestry.
+    /// Records a claim for `pr` on `round`.
     ///
     /// # Errors
-    /// Returns [`DeliverRoundError`] unless the round is open, working, unclaimed and names another round's team PR.
-    pub fn deliver_round(&mut self, id: &RoundId, number: PrNumber) -> Result<(), DeliverRoundError> {
+    /// Returns [`DeliverRoundError`] unless the round is open, working and unclaimed.
+    pub fn deliver_round_with_pr(&mut self, id: &RoundId, pr: PullRequest) -> Result<(), DeliverRoundError> {
         let round = self.working_delivery_round(id)?;
         if round.delivered_by().is_some() {
             return Err(DeliverRoundError::AlreadyDelivered { round: id.clone() });
         }
-        let pr = self
-            .delivery_pull_request(number)
-            .cloned()
-            .ok_or(DeliverRoundError::NoTeamPr { number })?;
         let target = self
             .rounds
             .iter_mut()
@@ -211,6 +207,19 @@ impl Team {
             .ok_or_else(|| DeliverRoundError::NoSuchRound { round: id.clone() })?;
         target.deliver(pr);
         Ok(())
+    }
+
+    /// Records a claim after the caller verifies the item's clean git tree and ancestry.
+    ///
+    /// # Errors
+    /// Returns [`DeliverRoundError`] unless the round is open, working, unclaimed and names another round's team PR.
+    pub fn deliver_round(&mut self, id: &RoundId, number: PrNumber) -> Result<(), DeliverRoundError> {
+        let _ = self.working_delivery_round(id)?;
+        let pr = self
+            .delivery_pull_request(number)
+            .cloned()
+            .ok_or(DeliverRoundError::NoTeamPr { number })?;
+        self.deliver_round_with_pr(id, pr)
     }
 
     /// Completes an accepted delivery after the caller observes its PR merged.
@@ -296,6 +305,14 @@ impl CheckedMut<'_, Team> {
     /// Returns [`EndDeliveryError`] if the claim cannot be ended.
     pub fn end_delivery(&mut self, round: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
         self.value.end_delivery(round, at)
+    }
+
+    /// See [`Team::deliver_round`].
+    ///
+    /// # Errors
+    /// Returns [`DeliverRoundError`] when the claim cannot be recorded.
+    pub fn deliver_round_with_pr(&mut self, round: &RoundId, pr: PullRequest) -> Result<(), DeliverRoundError> {
+        self.value.deliver_round_with_pr(round, pr)
     }
 
     /// See [`Team::deliver_round`].

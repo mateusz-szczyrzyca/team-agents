@@ -1,0 +1,158 @@
+{
+  "schema_version": 13,
+  "teams": [
+    {
+      "id": "team-20261121-120000-spl1",
+      "repo": "example",
+      "created_at": "2026-11-21T12:00:00Z",
+      "merge": "autopilot",
+      "task_list": "Coordinator: inv-lead\n\nBuild the thing.\n\n1. Work\n[ ] 1.1 Split task\n    Expected result:\n    - it works\n    Checks:\n    - true\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "splits": [
+        {
+          "parent": "1.1",
+          "parts": [
+            {
+              "title": "Part A",
+              "delivers": "Part A",
+              "checks": "true",
+              "depends_on": []
+            },
+            {
+              "title": "Part B",
+              "delivers": "Part B",
+              "checks": "true",
+              "depends_on": ["a"]
+            },
+            {
+              "title": "Part C",
+              "delivers": "Part C",
+              "checks": "true",
+              "depends_on": ["b"]
+            }
+          ]
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261121-120001-r001",
+          "item": "1.1",
+          "opened_at": "2026-11-21T12:00:05Z",
+          "state": {
+            "status": "closed",
+            "at": "2026-11-21T12:05:00Z",
+            "how": "merged"
+          },
+          "part": {
+            "status": "merged",
+            "key": "a",
+            "pr": {
+              "number": 1,
+              "branch": "agents/claude-1/task-20261121-120002-spl1-1.1a",
+              "opened_at": "2026-11-21T12:02:00Z"
+            }
+          }
+        },
+        {
+          "id": "round-20261121-120002-r002",
+          "item": "1.1",
+          "opened_at": "2026-11-21T12:05:10Z",
+          "state": {
+            "status": "closed",
+            "at": "2026-11-21T12:10:00Z",
+            "how": "merged"
+          },
+          "part": {
+            "status": "merged",
+            "key": "b",
+            "pr": {
+              "number": 2,
+              "branch": "agents/claude-1/task-20261121-120002-spl1-1.1b",
+              "opened_at": "2026-11-21T12:05:00Z"
+            }
+          }
+        }
+      ],
+      "crew": {
+        "kind": "team",
+        "coordinator": {
+          "task": "task-20261121-120001-spl1",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-lead"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261121-120001-r001",
+              "started_at": "2026-11-21T12:00:05Z",
+              "rounds": [
+                "round-20261121-120001-r001"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-21T12:05:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "SLEEPING"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        "members": [
+          {
+            "task": "task-20261121-120002-spl1",
+            "agent": {
+              "tier": "normal",
+              "name": "claude-1"
+            },
+            "status": "stopped",
+            "runs": [
+              {
+                "id": "run-20261121-120002-r001",
+                "started_at": "2026-11-21T12:01:00Z",
+                "rounds": [
+                  "round-20261121-120001-r001"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-21T12:05:00Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "DONE"
+                  }
+                }
+              },
+              {
+                "id": "run-20261121-120003-r002",
+                "started_at": "2026-11-21T12:06:00Z",
+                "rounds": [
+                  "round-20261121-120002-r002"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-21T12:10:00Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "DONE"
+                  }
+                }
+              }
+            ],
+            "questions": []
+          }
+        ],
+        "workers": []
+      }
+    }
+  ]
+}

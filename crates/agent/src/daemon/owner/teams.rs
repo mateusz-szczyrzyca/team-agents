@@ -36,9 +36,9 @@ use tracing::Instrument;
 use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
-    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
-    closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
-    request_outcome, shared_agents, start_item, team_done_notification,
+    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
+    assignable_with_candidates, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for,
+    reconcile, render_notice, request_outcome, shared_agents, start_item, team_done_notification,
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
@@ -71,11 +71,21 @@ pub(super) struct Served {
 }
 
 /// The workers of a team and which of them cannot take a request now.
-struct Workers {
+pub(super) struct Workers {
     /// The workers with their tasks, in the configured order.
-    in_order: Vec<(AgentName, TaskId)>,
+    pub(super) in_order: Vec<(AgentName, TaskId)>,
     /// The workers that are at work or cannot work.
-    busy: Vec<AgentName>,
+    pub(super) busy: Vec<AgentName>,
+}
+
+/// What taking a request from the bus for a worker came to.
+enum Taken {
+    /// The worker was given a request.
+    Served,
+    /// A request of another team was taken and is put back; the worker is still free.
+    Held,
+    /// There is no request, or the bus cannot say now.
+    Nothing,
 }
 
 /// What one look at a team changed in the state.
@@ -707,15 +717,51 @@ impl Owner {
         Ok(())
     }
 
+    /// Configured replacement participants with their actual tiers, excluding the current team.
+    fn split_replacements(&self, team: &agent_core::state::Team) -> Vec<agent_core::state::Participant> {
+        let replacement = self.parts.settings.config.replacement();
+        let crew = team.crew().roster();
+        let outside: Vec<_> = replacement
+            .agents()
+            .iter()
+            .filter(|name| {
+                !crew.iter().any(|(_, member)| member.agent().name() == name.as_str())
+                    && !team
+                        .reviewers()
+                        .iter()
+                        .any(|member| member.agent().name() == name.as_str())
+            })
+            .filter_map(|name| self.participant_of(name))
+            .collect();
+        outside
+    }
+
     /// Records absent capability once, retaining the wait through daemon recovery.
     fn refresh_tier_waits(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        let replacement = self.parts.settings.config.replacement();
+        let found = self
+            .parts
+            .state
+            .team(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
+        let outside = self.split_replacements(found);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
         let mut team = self
             .parts
             .state
             .team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?;
         let previous = team.tier_waits().clone();
-        let entered = team.refresh_tier_waits();
+        let entered = team.refresh_tier_waits_with_candidates(replacement.mode(), replacement.agents(), &candidates);
         look.changed |= previous != *team.tier_waits();
         for (item, tier) in entered {
             tracing::info!(event = LogEvent::TeamChanged.as_str(), kind = "tier_wait", team = %team_id,
@@ -730,10 +776,24 @@ impl Owner {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
-        let given = assignable(team).map_err(|source| OwnerError::Assign {
-            team: team_id.clone(),
-            source,
-        })?;
+        let replacement = self.parts.settings.config.replacement();
+        let outside = self.split_replacements(team);
+        let busy = self.agents_in_runs();
+        let candidates: Vec<_> = outside
+            .iter()
+            .map(|agent| agent_core::decide::part::Candidate {
+                agent,
+                status: TaskStatus::Waiting,
+                handed_over: false,
+                busy: busy.contains(&agent.name()),
+            })
+            .collect();
+        let given = assignable_with_candidates(team, replacement.mode(), replacement.agents(), &candidates).map_err(
+            |source| OwnerError::Assign {
+                team: team_id.clone(),
+                source,
+            },
+        )?;
         let repo = team.repo().clone();
         for assigned in given {
             let Some(base) = self
@@ -764,10 +824,7 @@ impl Owner {
                 );
                 continue;
             }
-            let now = Timestamp::now(&self.parts.clock)?;
-            self.open_item_round(team_id, assigned.item, now, look)?;
-            self.record_assignment(team_id, &assigned)?;
-            let round = self.round_of_item(team_id, assigned.item)?;
+            let round = self.activate_assignment(team_id, &assigned, look)?;
             look.events.push(EventKind::ItemStatus {
                 team: team_id.clone(),
                 item: assigned.item,
@@ -791,7 +848,77 @@ impl Owner {
                     "an item is given to a member"
                 );
             }
-            self.release(&assigned.task, Why::Assigned(assigned.item), look)?;
+        }
+        Ok(())
+    }
+
+    /// Commits the holder, item and round together before a queued task can start.
+    fn activate_assignment(
+        &mut self,
+        team_id: &TeamId,
+        assigned: &Assigned,
+        look: &mut Look,
+    ) -> Result<agent_core::ids::RoundId, OwnerError> {
+        let previous = self.parts.state.clone();
+        let mut pending = Look::default();
+        // No await or persistence occurs inside this transaction. A failed transition
+        // restores the holder and queue along with the item and its round.
+        let activated = (|| {
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.open_item_round(team_id, assigned.item, now, &mut pending)?;
+            self.record_assignment(team_id, assigned)?;
+            self.hand_over_split_task(assigned, team_id, &mut pending)?;
+            let round = self.round_of_item(team_id, assigned.item)?;
+            self.release(&assigned.task, Why::Assigned(assigned.item), &mut pending)?;
+            Ok(round)
+        })();
+        match activated {
+            Ok(round) => {
+                look.events.extend(pending.events);
+                look.changed |= pending.changed;
+                Ok(round)
+            }
+            Err(error) => {
+                self.parts.state = previous;
+                Err(error)
+            }
+        }
+    }
+
+    /// Starts a fresh holder session when a split part selects another agent.
+    fn hand_over_split_task(
+        &mut self,
+        assigned: &Assigned,
+        team_id: &TeamId,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(&assigned.task)
+            .ok_or_else(|| OwnerError::LostTask {
+                task: assigned.task.clone(),
+            })?;
+        if found.member.agent().name() != assigned.agent.as_str() {
+            let from = found.member.agent().name().to_owned();
+            let holder = self
+                .participant_of(&assigned.agent)
+                .ok_or_else(|| OwnerError::LostTask {
+                    task: assigned.task.clone(),
+                })?;
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.parts
+                .state
+                .hand_over_task(&assigned.task, holder, now)
+                .map_err(|source| OwnerError::HandOver {
+                    task: assigned.task.clone(),
+                    source,
+                })?;
+            self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
+            look.changed = true;
+            tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
+                task = %assigned.task, from, to = %assigned.agent,
+                "the next split part goes to a configured replacement in a fresh session");
         }
         Ok(())
     }
@@ -854,63 +981,87 @@ impl Owner {
         };
         let names: Vec<AgentName> = workers.iter().map(|(name, _)| name.clone()).collect();
         let mut held = Vec::new();
-        while let Some(worker) = first_free_worker(&names, &busy).cloned() {
-            let request = match self.parts.bus.helper_next(&worker).await {
-                Ok(Some(request)) => request,
-                Ok(None) => break,
-                Err(error) => {
-                    tracing::warn!(
-                        event = LogEvent::BusDown.as_str(),
-                        team = %team_id,
-                        %worker,
-                        error = %error_chain(&error),
-                        "the queue of requests for workers cannot be read: it is tried again at the next look"
-                    );
-                    break;
-                }
-            };
-            let Some((_, task)) = workers.iter().find(|(name, _)| *name == worker).cloned() else {
-                break;
-            };
-            if !self.is_member(team_id, &request.from_task) {
-                held.push(request.id);
-                continue;
+        // A request given back for a second try goes to a worker of another provider when one is free.
+        while let Some(worker) = self.second_try_pick(team_id, &workers, &busy) {
+            match self.take_request(team_id, (&worker, &workers), &mut held, look).await? {
+                Taken::Served => busy.push(worker),
+                Taken::Held => {}
+                Taken::Nothing => break,
             }
-            log_decision(
-                "first_free_worker",
-                &json!({"workers": &names, "busy": &busy}),
-                &json!({"worker": &worker, "request_id": request.id}),
-            );
-            // The commit the worker's worktree is at: the files the worker changes are those since.
-            let base = self.worker_head(team_id, &task, &worker).await;
-            let started = Timestamp::now(&self.parts.clock)?;
-            self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
-            self.serving.insert(
-                task.clone(),
-                Served {
-                    request: request.id,
-                    requester: request.from.clone(),
-                    requester_task: request.from_task.clone(),
-                    worker: worker.clone(),
-                    started,
-                    base,
-                },
-            );
-            self.tell_bus(
-                team_id,
-                request_update(request.id, DelegationStatus::Running, Some(task)),
-            );
-            tracing::info!(
-                event = LogEvent::RequestDelegated.as_str(),
-                team = %team_id,
-                request = %request.id,
-                %worker,
-                "a request is given to a worker"
-            );
-            busy.push(worker);
+        }
+        while let Some(worker) = first_free_worker(&names, &busy).cloned() {
+            match self.take_request(team_id, (&worker, &workers), &mut held, look).await? {
+                Taken::Served => busy.push(worker),
+                Taken::Held => {}
+                Taken::Nothing => break,
+            }
         }
         self.put_back(team_id, held).await;
         Ok(())
+    }
+
+    /// Takes the oldest queued request for `worker` from the bus and starts the worker's run on it.
+    async fn take_request(
+        &mut self,
+        team_id: &TeamId,
+        (worker, workers): (&AgentName, &[(AgentName, TaskId)]),
+        held: &mut Vec<RequestId>,
+        look: &mut Look,
+    ) -> Result<Taken, OwnerError> {
+        let request = match self.parts.bus.helper_next(worker).await {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(Taken::Nothing),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    %worker,
+                    error = %error_chain(&error),
+                    "the queue of requests for workers cannot be read: it is tried again at the next look"
+                );
+                return Ok(Taken::Nothing);
+            }
+        };
+        let Some((_, task)) = workers.iter().find(|(name, _)| name == worker).cloned() else {
+            return Ok(Taken::Nothing);
+        };
+        if !self.is_member(team_id, &request.from_task) {
+            held.push(request.id);
+            return Ok(Taken::Held);
+        }
+        log_decision(
+            "first_free_worker",
+            &json!({"workers": workers.iter().map(|(name, _)| name).collect::<Vec<_>>()}),
+            &json!({"worker": worker, "request_id": request.id}),
+        );
+        // The commit the worker's worktree is at: the files the worker changes are those since.
+        let base = self.worker_head(team_id, &task, worker).await;
+        let started = Timestamp::now(&self.parts.clock)?;
+        let given = self.given_again(team_id, &request, worker, &task);
+        self.release(&task, Why::Delegated(Box::new(given)), look)?;
+        self.serving.insert(
+            task.clone(),
+            Served {
+                request: request.id,
+                requester: request.from.clone(),
+                requester_task: request.from_task.clone(),
+                worker: worker.clone(),
+                started,
+                base,
+            },
+        );
+        self.tell_bus(
+            team_id,
+            request_update(request.id, DelegationStatus::Running, Some(task)),
+        );
+        tracing::info!(
+            event = LogEvent::RequestDelegated.as_str(),
+            team = %team_id,
+            request = %request.id,
+            %worker,
+            "a request is given to a worker"
+        );
+        Ok(Taken::Served)
     }
 
     /// Puts the requests of other teams that the look at `team_id` took from the bus back in the queue at once, so that
@@ -937,7 +1088,7 @@ impl Owner {
 
     /// The workers of `team` in the configured order with their tasks, and those that cannot take a request now;
     /// `None` for a team that is not there or has no workers to ask.
-    fn workers_of(&self, team_id: &TeamId) -> Result<Option<Workers>, OwnerError> {
+    pub(super) fn workers_of(&self, team_id: &TeamId) -> Result<Option<Workers>, OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(None);
         };
@@ -956,7 +1107,10 @@ impl Owner {
             // A worker whose result is not settled yet is busy: its worktree is what the check reads and the commit comes from.
             if member.status() != TaskStatus::Waiting
                 || self.serving.contains_key(member.task())
-                || agent_runtime::worker_request::has_pending(&self.parts.store.home().task_dir(member.task()))
+                || agent_runtime::worker_request::has_pending_except(
+                    &self.parts.store.home().task_dir(member.task()),
+                    &self.answered_requests,
+                )
             {
                 busy.push(name.clone());
             }
@@ -1059,11 +1213,13 @@ impl Owner {
                         if let Err(error) = self.keep_worker_result(&located.team, &served, task, summary.clone()) {
                             // Without its file the result cannot be settled: the requester gets the worker's report, as
                             // before, rather than nothing.
-                            tracing::error!(
+                            tracing::warn!(
+                                event = LogEvent::WorkerRequestDamaged.as_str(),
                                 request = %served.request,
                                 error = %error_chain(&error),
                                 "the result of a worker cannot be kept: the requester is given the worker's report unchecked"
                             );
+                            Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                             for job in answer_jobs(&self.parts.team_texts, &served, RequestOutcome::Done { summary })? {
                                 self.outbox.push_back(Outbound {
                                     team: located.team.clone(),
@@ -1073,6 +1229,8 @@ impl Owner {
                         }
                     }
                     outcome @ RequestOutcome::Failed { .. } => {
+                        // The request is answered here, not from a file: the try that came with it goes with it.
+                        Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                         for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
                             self.outbox.push_back(Outbound {
                                 team: located.team.clone(),
