@@ -473,9 +473,9 @@ fn prepare_process_spec(
         })?;
         env_map.insert(name, val.clone());
     }
-    let daemon_pid = std::process::id();
     let gate_script =
-        format!("while [ ! -s \"$1\" ]; do kill -0 {daemon_pid} 2>/dev/null || exit 1; done; exec /bin/sh -c \"$2\"");
+        "rec=\"$1\"; cmd=\"$2\"; read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && printf '%s %s\\n' \"$$\" \"${20}\" > \"$rec\" && exec /bin/sh -c \"$cmd\""
+            .to_owned();
     Ok(ProcessSpec {
         program,
         args: vec![

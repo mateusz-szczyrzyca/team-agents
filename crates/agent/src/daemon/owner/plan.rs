@@ -1037,7 +1037,9 @@ impl Owner {
                 settled,
             )
             .await?;
-        self.finish(&task, parked.located, parked.run, settled, held).await
+        let result = self.finish(&task, parked.located, parked.run, settled, held).await;
+        self.release_run_worktree_targets(&task);
+        result
     }
 
     /// The judgement records of `results` of a run of `task`, stamped now.

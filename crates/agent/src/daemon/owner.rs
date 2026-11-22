@@ -1313,7 +1313,6 @@ impl Owner {
             events.extend(look.events);
         }
         self.commit(task, &located, now, events, notice).await?;
-        self.release_run_worktree_targets(task);
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
     }
