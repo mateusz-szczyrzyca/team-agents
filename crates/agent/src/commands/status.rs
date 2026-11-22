@@ -876,3 +876,7 @@ mod short_tests;
 #[cfg(test)]
 #[path = "status/tests/versions.rs"]
 mod versions_tests;
+
+#[cfg(test)]
+#[path = "status/tests/split_tier.rs"]
+mod split_tier_tests;
