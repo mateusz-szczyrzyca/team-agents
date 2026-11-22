@@ -1695,6 +1695,51 @@ Integrate the guide.
     }
 
     #[test]
+    fn a_request_the_second_worker_holds_is_not_given_again_by_the_file_of_the_first_whose_task_the_bus_still_names() {
+        let (mut world, member, worker, other) = world_with_two_workers_and_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_again(), MEMBER_REQUEST);
+        // The second worker took the request, but the update that records its task has not reached the bus: the bus names
+        // glm-2 and still has the task of the first worker.
+        world.bus_cli(&["helper-set", "--id", "1", "--status", "queued"]);
+        world.bus_cli(&["helper-next", "--worker", "glm-2"]);
+        assert_eq!(world.requests()["1"]["helper_task"], worker.as_str());
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        let sentinel = world.one_more_request(&member, &other);
+
+        world.start();
+        world.settle_as_a_look(sentinel, &member, &other);
+
+        let request = &world.requests()["1"];
+        assert_eq!(
+            request["status"], "starting",
+            "the request was not queued again: {request}"
+        );
+        assert_eq!(request["worker"], "glm-2");
+        assert!(
+            !pending_file(&world, &worker).exists(),
+            "the file of the first result is dropped"
+        );
+        assert_eq!(world.count_told("claude-1", "went once more"), 0);
+        assert_eq!(world.runs(&other), 1, "no worker was started for it");
+    }
+
+    #[test]
+    fn a_second_worker_that_fails_leaves_no_try_file_and_the_requester_is_told() {
+        let (world, tasks) = second_try_world(&[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,fail")], None);
+
+        world.request_is("1", "failed");
+
+        world.told("claude-1", "Your request H1 to the worker glm-2 failed");
+        let dir = world.home.join("tasks").join(task(&tasks, "glm-2"));
+        let tries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("worker-try-"))
+            .collect();
+        assert!(tries.is_empty(), "the file of the try stays: {tries:?}");
+    }
+
+    #[test]
     fn a_file_of_a_request_the_bus_does_not_know_is_not_taken_as_running_at_its_checked_stage() {
         let (mut world, member, worker) = world_with_a_served_request();
         world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
