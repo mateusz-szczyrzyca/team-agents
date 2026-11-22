@@ -266,7 +266,7 @@ impl TeamPrompt {
             Self::WorkerNoStatus => PromptSpec::new("harness/team/worker-no-status.md", Audience::Model, &[]),
             Self::WorkerStopped => PromptSpec::new("harness/team/worker-stopped.md", Audience::Model, &[]),
             Self::WorkerHung => PromptSpec::new("harness/team/worker-hung.md", Audience::Model, &[]),
-            Self::WorkerResultBrought => anyhow_result_spec(),
+            Self::WorkerResultBrought => brought_result_spec(),
             Self::WorkerResultConflict => conflict_result_spec(),
             Self::WorkerGivenAgain => given_again_spec(),
             Self::WorkerStepReturned => step_returned_spec(),
@@ -280,7 +280,7 @@ impl TeamPrompt {
 }
 
 /// The text of a result a worker's check let through and that the harness brought to the requester's branch.
-const fn anyhow_result_spec() -> PromptSpec {
+const fn brought_result_spec() -> PromptSpec {
     PromptSpec::new(
         "harness/team/worker-result-brought.md",
         Audience::Model,
