@@ -101,8 +101,8 @@ fn target_of(word: &str) -> Option<ReturnTarget> {
 /// The runs of `runs` that worked for the round `round`, in order: the runs of one item, not of the items the member held
 /// before it.
 #[must_use]
-pub fn runs_of_round(runs: &[crate::state::Run], _round: &crate::ids::RoundId) -> Vec<crate::state::Run> {
-    runs.to_vec()
+pub fn runs_of_round(runs: &[crate::state::Run], round: &crate::ids::RoundId) -> Vec<crate::state::Run> {
+    runs.iter().filter(|run| run.rounds().contains(round)).cloned().collect()
 }
 
 /// The run of `runs` that the member's last hand-over was made after: the last one that ended `DONE`.
