@@ -130,8 +130,16 @@ impl Activity {
     /// The line counting the runs going per configured CLI across `teams`, when at least one run is going and the
     /// configuration file can be read.
     pub(crate) fn cli_runs_line(&self, teams: &[TeamSummary]) -> Option<String> {
-        let text = std::fs::read_to_string(self.home.config_file()).ok()?;
-        let config = agent_core::config::Config::from_toml_str(&text).ok()?;
+        // An absent or unreadable `agents.toml` is already reported by `disk_line`; status tests without a
+        // configuration file omit the per-CLI run count.
+        let text = match std::fs::read_to_string(self.home.config_file()) {
+            Ok(text) => text,
+            Err(_) => return None,
+        };
+        let config = match agent_core::config::Config::from_toml_str(&text) {
+            Ok(config) => config,
+            Err(_) => return None,
+        };
         cli_runs_line(&config, teams)
     }
 }
