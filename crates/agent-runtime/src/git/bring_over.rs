@@ -16,6 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
+use std::os::unix::ffi::OsStrExt;
 use std::str::FromStr;
 
 use agent_core::config::EnvName;
@@ -540,15 +541,25 @@ impl Git {
             )
             .await;
         if let Err(error) = moved {
-            // The requester committed after the check: the files go back to the head it had, and the merge is reported as
-            // not applied. A failure to put them back is the worse one and is the one reported.
-            self.read_tree_update(&applied_text, &head_text).await?;
+            // The files go back to the head the branch is at now, not to the one the merge was made on: when the requester
+            // committed meanwhile, its commit is what the worktree must agree with, and it may be the staged merge itself.
+            // A failure to put them back is the worse one and is the one reported.
+            let now = self.rev_parse(&Revision::Head).await?;
+            self.read_tree_update(&applied_text, &now.to_string()).await?;
+            if now != *head {
+                return Err(GitError::HeadMoved {
+                    expected: head.clone(),
+                    found: now,
+                });
+            }
             return Err(error);
         }
         Ok(())
     }
 
-    /// The files the merge `applied` writes over `head` that the requester has changed or has untracked in its worktree.
+    /// The files the merge `applied` writes over `head` that are in the requester's way: changed, staged or untracked in
+    /// its worktree, and, for a file the merge adds, anything the worktree has at that path or in the place of a
+    /// directory of it, ignored or not. `read-tree -u` would overwrite an ignored file without a word.
     async fn in_the_way(&self, head: &str, applied: &str) -> Result<Vec<RepoPath>, GitError> {
         let operation = GitOperation::DiffTree;
         let written = self
@@ -558,7 +569,7 @@ impl Git {
                 &[
                     arg("diff-tree"),
                     arg("-r"),
-                    arg("--name-only"),
+                    arg("--name-status"),
                     arg("--no-renames"),
                     arg("-z"),
                     arg(head),
@@ -567,6 +578,21 @@ impl Git {
             )
             .await?;
         let written = whole(operation, &written.stdout, self.limits)?;
+        let mut changes = Vec::new();
+        let mut added = Vec::new();
+        let mut fields = written.split(|byte| *byte == 0).filter(|field| !field.is_empty());
+        while let Some(kind) = fields.next() {
+            let Some(path) = fields.next() else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(kind),
+                });
+            };
+            changes.push(path);
+            if kind == b"A" {
+                added.push(path);
+            }
+        }
         let operation = GitOperation::Status;
         let status = self
             .run_ok(
@@ -598,14 +624,49 @@ impl Git {
                 touched.insert(origin);
             }
         }
-        let mut files = Vec::new();
-        for path in written.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
-            if touched.contains(path) {
-                files.push(repo_path(GitOperation::DiffTree, path)?);
+        let mut files: BTreeSet<Vec<u8>> = changes
+            .iter()
+            .filter(|path| touched.contains(**path))
+            .map(|path| path.to_vec())
+            .collect();
+        for path in added {
+            if let Some(obstacle) = self.obstacle_in_worktree(path).await? {
+                files.insert(obstacle);
             }
         }
-        files.sort();
-        Ok(files)
+        let mut found = Vec::new();
+        for path in files {
+            found.push(repo_path(GitOperation::DiffTree, &path)?);
+        }
+        found.sort();
+        Ok(found)
+    }
+
+    /// What the worktree has where the merge adds `path`: the path itself, in whatever form, or the first file in the
+    /// place of one of its directories. `None` when the way is free.
+    async fn obstacle_in_worktree(&self, path: &[u8]) -> Result<Option<Vec<u8>>, GitError> {
+        let root = self.dir.as_path();
+        let mut prefix = Vec::new();
+        for (n, part) in path.split(|byte| *byte == b'/').enumerate() {
+            if n > 0 {
+                prefix.push(b'/');
+            }
+            prefix.extend_from_slice(part);
+            let last = prefix.len() == path.len();
+            match tokio::fs::symlink_metadata(root.join(OsStr::from_bytes(&prefix))).await {
+                Ok(metadata) if last || !metadata.is_dir() => return Ok(Some(prefix)),
+                Ok(_) => {}
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                // A file where a directory of the path should be is an obstacle too; git reports it as not a directory.
+                Err(source) if source.kind() == std::io::ErrorKind::NotADirectory => return Ok(Some(prefix)),
+                Err(source) => {
+                    return Err(GitError::Scratch {
+                        source: ScratchError::Make(source),
+                    });
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// Moves the index and the worktree from the tree of `from` to the tree of `to`: `git read-tree -m -u`.
