@@ -202,7 +202,10 @@ async fn a_coordinator_that_repeats_a_refused_line_is_told_twice_and_then_left_t
 
     rig.prompt(&tasks[0], 4).await;
     rig.status_is(&tasks[0], TaskStatus::Waiting).await;
-    let told = messages(&rig).matches("Item 1.1 is already split").count();
+    let told = messages(&rig)
+        .lines()
+        .filter(|line| line.contains("Item 1.1 is already split"))
+        .count();
     let runs = rig.runs(&tasks[0]);
     rig.stop().await.unwrap();
 
