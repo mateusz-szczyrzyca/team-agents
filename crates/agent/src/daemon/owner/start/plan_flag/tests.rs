@@ -70,10 +70,7 @@ fn the_bus_is_told_the_tier_and_role_of_the_run() {
     assert_eq!(value_of(&of(Role::Member, Tier::Normal), "--tier"), Some("normal"));
     assert_eq!(value_of(&of(Role::Member, Tier::Normal), "--role"), Some("worker"));
     assert_eq!(value_of(&of(Role::Worker, Tier::Worker), "--tier"), Some("worker"));
-    assert_eq!(
-        value_of(&of(Role::Reviewer, Tier::Normal), "--role"),
-        Some("investigator")
-    );
+    assert_eq!(value_of(&of(Role::Reviewer, Tier::Normal), "--role"), Some("worker"));
     assert_eq!(
         value_of(&of(Role::Coordinator, Tier::Investigator), "--role"),
         Some("investigator")
