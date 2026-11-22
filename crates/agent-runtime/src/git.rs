@@ -288,9 +288,6 @@ pub enum GitOperation {
     /// `git commit`, of a change the harness makes itself.
     #[strum(serialize = "commit")]
     Commit,
-    /// `git cat-file`, to read a blob of the merge before writing it to the worktree.
-    #[strum(serialize = "cat-file")]
-    CatFile,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
