@@ -1509,10 +1509,27 @@ async fn a_restart_during_a_second_command_check_keeps_the_first_judgement_and_d
         "the first command check was already persisted before the restart and must not rerun"
     );
     let reader = agent_runtime::history::Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.step_judgements(&task(1)).unwrap();
     assert_eq!(
-        reader.step_judgements(&task(1)).unwrap().len(),
+        judgements.len(),
         2,
         "exactly two step judgement rows exist across the restart"
+    );
+    assert_eq!(
+        judgements
+            .iter()
+            .filter(|row| row.step == "1.1".parse::<ItemId>().unwrap())
+            .count(),
+        1,
+        "step 1.1 must have exactly one judgement row for the run"
+    );
+    assert_eq!(
+        judgements
+            .iter()
+            .filter(|row| row.step == "1.2".parse::<ItemId>().unwrap())
+            .count(),
+        1,
+        "step 1.2 must have exactly one judgement row for the run"
     );
     assert_eq!(
         reader.plan_versions(&task(1)).unwrap().len(),
@@ -1649,9 +1666,30 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
     );
     drop(owner);
 
-    // Case 2: a hung run that made no progress increments hang strikes on recovery instead of resetting to 1.
+    // Case 2: a hung run that made no progress preserves prior hang strikes from recovery and increments to 2.
     let (mut owner, _sinks) = daemon.bare_owner().await;
-    owner.hangs.insert(task(1), 1);
+    let session = Some("sess-1".parse().unwrap());
+    let first_hang_id: agent_core::ids::RunId = "run-20261122-060200-hang".parse().unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: first_hang_id,
+                at: at(10),
+                session: session.clone(),
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    {
+        let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(20), RunEnd::Hung).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
     let run_id: agent_core::ids::RunId = "run-20261122-060500-efgh".parse().unwrap();
     owner
         .parts
@@ -1660,15 +1698,14 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
             &task(1),
             NewRun {
                 id: run_id.clone(),
-                at: at(0),
-                session: None,
+                at: at(30),
+                session,
                 rounds: Vec::new(),
             },
         )
         .unwrap();
     {
         let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
-        member.transition(TaskStatus::Queued).unwrap();
         member.transition(TaskStatus::Running).unwrap();
         member.set_plan_running_check(Some(RunningPlanCheck {
             run: run_id,
@@ -1678,11 +1715,11 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
             final_message: None,
         }));
     }
-    owner.recover_plan_checks().await.unwrap();
-    assert_ne!(
+    owner.recover().await.unwrap();
+    assert_eq!(
         owner.hangs.get(&task(1)),
-        Some(&1),
-        "a recovered hang without progress must not reset the hang strike count to 1"
+        Some(&2),
+        "a recovered hang without progress must restore prior hang strike (1) and increment to 2"
     );
 }
 
