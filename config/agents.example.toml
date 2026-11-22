@@ -120,6 +120,20 @@ bounces = 3
 check_seconds = 120
 check_refuse = ["agent gate", "make gate"]
 
+# Worker requests: what the harness does with the result of a worker (a model of `[tiers] workers`) that served a
+# delegate request. A request is given to one worker first; when its result is wrong (the request's check fails, the
+# worker ends otherwise than DONE, it says it cannot, it changed a file outside the request's files, or its run passed
+# `seconds`) the request goes once more to a free worker of another CLI (of the same CLI when no other is free), and a
+# second wrong result returns the step to the requester. A request that names no path to write asks for facts only: its result goes to the requester as before,
+# its check is run all the same.
+#   tries     how many tries a request gets, its first try included; 1 never gives it to a second worker (default: 2)
+#   seconds   how long a worker's run may last; a run past it is a wrong result; 0 has no limit (default: 0)
+# The daemon does not apply these keys yet; they are read and checked when the file loads.
+
+[workers]
+tries = 2
+seconds = 0
+
 # Coordinator proposals are approved whole when valid and unchanged in scope.
 # Estimates are compared only when their unit matches the repository unit (case, spaces and a plural s are ignored).
 # Other units are kept without conversion; checks are required for every deliverable.

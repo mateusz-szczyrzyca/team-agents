@@ -40,6 +40,7 @@ Top-level key and tables:
 | `[agents.NAME]` | table | none | one normal agent or worker |
 | `[investigators.NAME]` | table | none | one investigator |
 | `[tiers]` | table | empty | which agents are normal and which are workers |
+| `[workers]` | table | `tries = 2`, `seconds = 0` | what the harness does with the result of a worker that served a request |
 | `[build]` | table | `incremental = false` | Cargo cache policy for managed agent CLIs and gates |
 | `[binaries]` | table | see below | programs and the agents' `PATH` |
 | `[watchdog]` | table | see below | when a silent run is hung |
@@ -161,6 +162,25 @@ A task created before the daemon first ran with plans keeps none of this: its pl
 its runs are never sent back. Done steps are nevertheless judged for all roles and outcomes, even with
 `bounces = 0`: existence checks and command checks run, while no-check and reviewer steps remain declared in the daemon. The daemon runs the command checks of done steps (`check_seconds` is their time limit); a step check that fails is recorded as a `mismatch` and sends a `STATUS: DONE` run of a role in `roles` back within `bounces` (or asks the human once after the limit), while a step check matching `check_refuse` stays `declared` and is told once in the task's next prompt.
 Existing configurations need no changes.
+
+### `[workers]`
+
+What the harness does with the result of a worker — a model of `[tiers] workers` — that served a `delegate` request.
+A request is given to one worker first. Its result is wrong when the request's check fails, the worker ends otherwise
+than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
+the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
+wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
+facts only: its result goes to the requester as before, and its check, when it has one, is run all the same.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`) |
+| `seconds` | `0` | how long a worker's run may last, in seconds; a run past it is a wrong result. `0` has no limit |
+
+A file without `[workers]` gets these defaults, so existing configurations need no change.
+
+The keys are read and checked at load. The daemon does not apply them yet: until it brings a worker's result to the
+requester's branch, a worker's result reaches the requester as it always did.
 
 ### `[split]`
 

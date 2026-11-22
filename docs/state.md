@@ -794,6 +794,14 @@ the part identity. No schema migration is needed for this optional field.
 ### Plan-step status snapshots
 
 Step judgements live in history schema 17, not `state.json`; state schema 14 is unchanged.
+
+### Worker requests in the bus state
+
+A request for a worker is not kept in `state.json`: the bus keeps it in its own state, under `helpers`. Next to `step` a
+request the harness accepted for a step carries `files` (the paths the request names, as a list), `check` (the command or
+`exists PATH` that shows the result right) and `doing` (what to do, in the requester's words). The three are absent on a
+request in the old form, or one written before this version — the harness will read them as none and treat such a request
+as a look-up — so a bus state of an earlier version loads unchanged (`agentbus/testdata/state-before-worker-result.json`).
 The daemon caches plan-step summaries for task and round status and rebuilds them on startup.
 A summary includes the mark, step ID and title, plus a done step's settlement and optional reason.
 The optional `task_plans` map in team and round replies is absent when there is no readable plan.
