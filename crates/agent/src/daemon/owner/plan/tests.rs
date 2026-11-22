@@ -1083,3 +1083,243 @@ async fn a_daemon_that_starts_ends_the_check_a_dead_daemon_left_running() {
     );
     assert!(!checks.join("running").exists());
 }
+
+#[tokio::test]
+async fn two_done_steps_with_commands_run_one_after_the_other_and_show_in_status() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    let plan = concat!(
+        "Finish it.\n\n1. Work\n",
+        "[x] 1.1 First\n",
+        "    Check: /bin/sh -c 'echo first > order.txt'\n",
+        "[x] 1.2 Second\n",
+        "    Check: /bin/sh -c 'test \"$(cat order.txt)\" = first && echo second >> order.txt && seq 1 60 && exit 7'\n",
+    );
+    std::fs::write(dir.join(".agent/plan.md"), plan).unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    let reply = daemon
+        .ask(agent_core::protocol::Command::Status(
+            agent_core::protocol::StatusRequest { target: None },
+        ))
+        .await
+        .unwrap();
+    daemon.stop().await.unwrap();
+
+    assert_eq!(
+        std::fs::read_to_string(dir.join("order.txt")).unwrap(),
+        "first\nsecond\n"
+    );
+    let (agent_core::protocol::Reply::Teams { teams } | agent_core::protocol::Reply::Overview { teams, .. }) = reply
+    else {
+        panic!("expected Teams or Overview reply, got {reply:?}");
+    };
+    let summaries = teams[0].task_plans.get(&task(1)).expect("task plan summaries");
+    assert_eq!(summaries.len(), 2);
+    assert_eq!(
+        summaries[0].state,
+        Some(agent_core::plan::judge::JudgementState::Confirmed)
+    );
+    assert_eq!(summaries[0].reason, None);
+    assert_eq!(
+        summaries[1].state,
+        Some(agent_core::plan::judge::JudgementState::Mismatch)
+    );
+    assert!(
+        summaries[1]
+            .reason
+            .as_deref()
+            .unwrap_or_default()
+            .contains("exit code 7"),
+        "reason: {:?}",
+        summaries[1].reason
+    );
+    let second = judgement_of(&daemon, "1.2");
+    let output_rel = second.output_path.expect("output path of failing second step");
+    let output_text = std::fs::read_to_string(daemon.home.task_dir(&task(1)).join(output_rel)).unwrap();
+    assert_eq!(output_text.lines().count(), 60);
+}
+
+#[tokio::test]
+async fn a_command_check_past_its_limit_is_ended_with_its_children() {
+    let daemon = with_bounces(&solo_state(), 0);
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 0\ncheck_seconds = 1\n"),
+    )
+    .unwrap();
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Slow\n    Check: /bin/sh -c 'sleep 300 & echo $! > child.pid; sleep 300'\n",
+    )
+    .unwrap();
+    let mut daemon = daemon;
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    let child_pid: u32 = std::fs::read_to_string(dir.join("child.pid"))
+        .unwrap()
+        .trim()
+        .parse()
+        .unwrap();
+    assert!(
+        !process_runs(child_pid),
+        "child process {child_pid} of timed-out check must be killed"
+    );
+    let judgement = judgement_of(&daemon, "1.1");
+    assert_eq!(judgement.state, agent_core::plan::judge::JudgementState::Mismatch);
+    assert_eq!(judgement.reason.as_deref(), Some("ran past 1 seconds"));
+}
+
+#[tokio::test]
+async fn a_command_check_sees_the_agents_secret_and_not_the_daemons_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut daemon = with_bounces(&solo_state(), 0);
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        format!("{config}\n[build]\nincremental = true\n"),
+    )
+    .unwrap();
+    std::fs::write(
+        daemon.home.secrets_file(),
+        "github_token = \"ghp_example\"\n[agent_env]\nAGENT_ONLY = \"for-the-agent\"\n[notification_env]\nDAEMON_ONLY = \"for-notifications\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(daemon.home.secrets_file(), std::fs::Permissions::from_mode(0o600)).unwrap();
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Secrets\n    Check: /bin/sh -c 'test \"$AGENT_ONLY\" = \"for-the-agent\" && test -z \"$DAEMON_ONLY\" && test -z \"$GITHUB_TOKEN\" && test \"$CARGO_INCREMENTAL\" = \"1\"'\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_daemon_restarted_while_a_command_check_runs_reruns_the_check_and_settles_the_run_once() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Recoverable\n    Check: /bin/sh -c 'if [ ! -f attempt-1.txt ]; then touch attempt-1.txt; sleep 300; fi; touch attempt-2.txt'\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let group = running_check_group(&daemon).await;
+    daemon.stop().await.unwrap();
+
+    assert!(
+        !process_runs(group),
+        "the check process group {group} must not outlive daemon.stop()"
+    );
+    let saved = State::from_json(&std::fs::read_to_string(daemon.home.state_file()).unwrap()).unwrap();
+    assert!(
+        saved.find_task(&task(1)).unwrap().member.plan_running_check().is_some(),
+        "state.json records the unsettled finished run while its check is running"
+    );
+
+    daemon.start().await;
+    let state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert!(dir.join("attempt-2.txt").exists(), "the check ran again on restart");
+    let member = state.find_task(&task(1)).unwrap().member;
+    assert_eq!(
+        member.runs().len(),
+        1,
+        "the finished run is settled once without starting a second agent CLI run"
+    );
+    assert_eq!(member.plan_running_check(), None);
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
+
+#[tokio::test]
+async fn a_restart_after_the_judgement_is_recorded_settles_the_run_without_rerunning_the_check() {
+    use agent_runtime::history::Store;
+
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Judged\n    Check: /bin/sh -c 'echo ran >> count.txt; sleep 300'\n",
+    )
+    .unwrap();
+    daemon.start().await;
+
+    let _group = running_check_group(&daemon).await;
+    daemon.stop().await.unwrap();
+
+    let saved = State::from_json(&std::fs::read_to_string(daemon.home.state_file()).unwrap()).unwrap();
+    let run_id = saved
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .current_run()
+        .expect("the finished run stays open in state.json until its plan settlement commits")
+        .id()
+        .clone();
+    {
+        let mut db = agent_runtime::history::HistoryDb::open(
+            &daemon.home.history_file(),
+            agent_core::history::MaxTextBytes::default(),
+        )
+        .unwrap();
+        db.write_judgements(&[agent_runtime::history::JudgementRecord {
+            task: task(1),
+            team: team_id(0),
+            run: Some(run_id),
+            at: at(0),
+            step: "1.1".parse().unwrap(),
+            state: agent_core::plan::judge::JudgementState::Confirmed,
+            check: Some("/bin/sh -c 'echo ran >> count.txt; sleep 300'".to_owned()),
+            reason: None,
+            duration_ms: 12,
+            output_path: None,
+        }])
+        .unwrap();
+    }
+
+    if dir.join("count.txt").exists() {
+        std::fs::remove_file(dir.join("count.txt")).unwrap();
+    }
+
+    daemon.start().await;
+    let settled_state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+
+    assert!(
+        !dir.join("count.txt").exists(),
+        "a step already judged for the finished run must not be executed again on restart"
+    );
+    let member = settled_state.find_task(&task(1)).unwrap().member;
+    assert_eq!(member.runs().len(), 1);
+    assert_eq!(member.plan_running_check(), None);
+    assert_eq!(
+        judgement_of(&daemon, "1.1").state,
+        agent_core::plan::judge::JudgementState::Confirmed
+    );
+}
