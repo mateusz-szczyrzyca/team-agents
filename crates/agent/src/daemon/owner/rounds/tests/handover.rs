@@ -94,6 +94,24 @@ async fn an_exhausted_handover_reports_its_human_wait_in_the_round_detail() {
     let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.notification_with("FIXED needs a commit").await;
     let round = rig.state().team(&team).unwrap().rounds().last().unwrap().id().clone();
+    // The wait began when the round went idle: the end of the latest run of the tasks of the round.
+    let began = {
+        let state = rig.state();
+        let found = state.team(&team).unwrap();
+        let tasks = found
+            .members_in(&round)
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(found.crew().roster().into_iter().map(|(_, member)| member));
+        tasks
+            .flat_map(agent_core::state::Member::runs)
+            .filter_map(|run| match run.state() {
+                agent_core::state::RunState::Ended { at, .. } => Some(*at),
+                agent_core::state::RunState::Running => None,
+            })
+            .max()
+            .unwrap()
+    };
     let reply = crate::client::Connection::connect(&rig.home.socket_file())
         .await
         .unwrap()
@@ -112,6 +130,10 @@ async fn an_exhausted_handover_reports_its_human_wait_in_the_round_detail() {
     let value = serde_json::to_value(round).unwrap();
     assert_eq!(
         value.get("waiting").and_then(serde_json::Value::as_str),
-        Some("an answer of the human")
+        Some(format!(
+            "an answer of the human, owed by the human since {}",
+            agent_core::local_time::Zone::Utc.stamp(began)
+        ))
+        .as_deref()
     );
 }

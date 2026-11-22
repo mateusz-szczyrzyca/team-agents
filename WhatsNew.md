@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.59.0 — 22.11.2026 — PR #176
+
+### New features
+- [agent] [agent-core] A `SPLIT: <item>` line the daemon cannot take (the item is split already, or the team has no such item) is no longer dropped without a word: it is recorded in the log and the history with its reason, and the coordinator is told on the bus what was refused, why and what to do instead (deliver the part of its round, describe the rest as a task of its own). The message wakes a coordinator that sleeps; the status the run ended with (`DONE`, `QUESTIONS`) is acted on as before. A coordinator that repeats the line is told as many times as a proposal is corrected (`[split] corrections`, two), and then only its own status counts. A line that is not `SPLIT:` and an item number (`SPLIT: none`) asks nothing.
+- [agent] [agent-core] The first prompt of a fix pass writes its findings to `fix-pass-<n>-findings.md` in the lead's task directory, and the line that says the pass is still open and the request to correct a response name that file when it is there, so a lead that lost the findings reads them again instead of asking you.
+
+### Enhancements
+- [agent] [agent-core] Every wait line of a round (`agent status`, `agent status --json`) now says who owes it and since when: `an answer of the human, owed by the human since 2026-11-22T03:59:28Z` (the `waiting` field is the same, with longer text; `agent status` shows the time in your zone). The start is the question's for your answer and the end of the round's last run otherwise.
+- [agent-core] A lead's response is judged only when it was given in a run that started at or after the review's verdict, never a message from before the review.
 ## 0.58.0 — 22.11.2026 — PR #175
 
 ### New features

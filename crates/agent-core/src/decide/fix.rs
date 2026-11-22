@@ -1,4 +1,6 @@
-//! Whether a completed fix pass has supplied the commit its answers require.
+//! Whether a completed fix pass has supplied the commit its answers require, and whether a lead's run can be its response.
+
+use crate::state::Timestamp;
 
 /// The relationship between the handed-over tip and the reviewed commit.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -67,6 +69,43 @@ pub fn fix_step(progress: Progress, budget: Budget) -> Step {
     match budget {
         Budget::Available => Step::Correct(hold),
         Budget::Exhausted => Step::AskHuman(hold),
+    }
+}
+
+/// The lead's last completed run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LeadRun {
+    /// When the run started: what decides whether it can answer the findings of a pass.
+    pub started: Timestamp,
+}
+
+impl LeadRun {
+    /// A run that started at `started`; that is all that decides whether it can answer a pass.
+    #[must_use]
+    pub const fn started_at(started: Timestamp) -> Self {
+        Self { started }
+    }
+}
+
+/// Whether a lead's run can be the response to the findings of a fix pass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Response {
+    /// The lead has no completed run to judge.
+    None,
+    /// The run started before the reviewers' verdict, so it cannot answer findings it never had: whatever its final
+    /// message says, also when the run ended after the verdict, is not judged.
+    BeforeVerdict,
+    /// The run started with the findings, or after them: its final message is the response.
+    AfterVerdict,
+}
+
+/// Which of the lead's runs is judged as the response: only one that started at or after the verdict of the pass.
+#[must_use]
+pub fn response_of(run: Option<LeadRun>, verdict_at: Option<Timestamp>) -> Response {
+    match (run, verdict_at) {
+        (None, _) => Response::None,
+        (Some(run), Some(verdict)) if run.started < verdict => Response::BeforeVerdict,
+        (Some(_), Some(_) | None) => Response::AfterVerdict,
     }
 }
 

@@ -305,7 +305,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
 | `snapshot_failed` | `warn` | A snapshot of a task's worktree cannot be taken; the daemon goes on without it. |
 | `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
-| `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused. |
+| `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused; also a `SPLIT:` line of a coordinator that the daemon refuses, with `team`, `task`, `item`, `refused` (how many times in a row), `told` and the `reason`. |
 | `daemon_panicked` | `error` | A task or thread in the daemon panicked, with its message and location. |
 | `daemon_task_failed` | `error` | A task of the daemon (a side task or the task of a client connection) ends with an error it does not handle, such as a panic, with `error`. With `operation=round_wait` it is an idle open round whose next action the harness has lost; a round whose task waits to be started waits for its run and is not such a round. |
 | `team_not_started` | `error` | A team that was formed is not started because of a fault of the daemon (the state refuses it, its events cannot be made, or forming it failed inside); the client is told to see this log. |

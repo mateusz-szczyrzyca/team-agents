@@ -44,6 +44,8 @@
 #   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
 #                   the number of the run): a message can reach the agent while its run works
 #   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
+#   split-line:L@S  ends with the line `SPLIT: L` and `STATUS: S` (and, for QUESTIONS, writes questions-1.md in this task's
+#                   directory): a coordinator whose submission the harness may refuse, with the status it ends with
 #   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
 #   checks-lead     what a coordinator does under the checks before a review: puts the question the prompt says the harness wrote
 #                   (ends with STATUS: QUESTIONS and writes no file), ends at once when the prompt says the human answered, and
@@ -630,6 +632,17 @@ case $action in
   stream:*)
     cat "$home/fake-scripts/${action#stream:}.jsonl"
     result 'Streamed.\nSTATUS: DONE'
+    ;;
+  split-line:*)
+    spec=${action#split-line:}
+    line=${spec%@*}
+    status=${spec##*@}
+    if [[ $status == QUESTIONS ]]; then
+      file="$home/tasks/$(basename "$PWD")/questions-1.md"
+      mkdir -p "$(dirname "$file")"
+      printf '# Questions — fake\n\n## 1. Continue the part?\na) continue — finish the document\nb) stop — leave it open\n\n**Recommended:** a) — finish the independent part (fake)\n\n**Verdict:**\n' > "$file"
+    fi
+    result "SPLIT: $line\nSTATUS: $status"
     ;;
   ask-here)
     file="$home/tasks/$(basename "$PWD")/questions-1.md"

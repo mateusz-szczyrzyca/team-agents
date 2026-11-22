@@ -60,3 +60,28 @@ async fn review_gate_in_formats_finished_time_in_the_daemon_zone() {
 
     assert!(rendered.contains("Finished: 2026-11-19 10:30:00 +01:00."), "{rendered}");
 }
+
+// Rule: the findings file is named only where it is: a pass begun before the file was kept, or one whose file could not be
+// written, is not sent to a file that is not there.
+#[tokio::test]
+async fn the_findings_file_is_named_only_when_it_exists() {
+    let texts = AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("fix-pass-findings.md");
+
+    let missing = findings_file_line(&texts, &file).unwrap();
+    std::fs::write(&file, "findings").unwrap();
+    let present = findings_file_line(&texts, &file).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    std::fs::create_dir(&file).unwrap();
+    let a_directory = findings_file_line(&texts, &file).unwrap();
+
+    assert_eq!(missing, None);
+    assert!(present.is_some_and(|line| line.contains(&file.display().to_string())));
+    assert_eq!(a_directory, None);
+}

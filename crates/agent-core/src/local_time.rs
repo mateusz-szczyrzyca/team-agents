@@ -109,20 +109,25 @@ impl Zone {
         self.written(at, Precision::Minute)
     }
 
-    /// Formats any retry timestamp in a daemon `waiting` line (`..., next try <timestamp>`) in this zone.
+    /// Formats the timestamp that ends a daemon `waiting` line (`..., next try <timestamp>`, `..., owed by the lead since <timestamp>`) in
+    /// this zone.
     ///
     /// The socket protocol (`RoundDetail.waiting`) carries the retry moment inside the UTC wait text so that the
     /// protocol schema and `agent status --json` stay byte-for-byte compatible while client commands display their
     /// own local zone.
     #[must_use]
     pub fn stamp_waiting(&self, waiting: &str) -> String {
-        let Some((before, raw)) = waiting.rsplit_once(", next try ") else {
-            return waiting.to_owned();
-        };
-        let Ok(at) = self.parse_typed(raw) else {
-            return waiting.to_owned();
-        };
-        format!("{before}, next try {}", self.stamp_minute(at))
+        // The retry moment and, for a wait that has an owner, the moment it started: each ends the line.
+        for marker in [", next try ", " since "] {
+            let Some((before, raw)) = waiting.rsplit_once(marker) else {
+                continue;
+            };
+            let Ok(at) = self.parse_typed(raw) else {
+                continue;
+            };
+            return format!("{before}{marker}{}", self.stamp_minute(at));
+        }
+        waiting.to_owned()
     }
 
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
