@@ -101,3 +101,40 @@ func TestDelegateInTheOldFormStillWaitsWithoutAFreeWorker(t *testing.T) {
 
 	chk(t).ok(toolResult(server(b, "m", inTeam("T")).delegateFields(fields(t.TempDir()))))
 }
+
+// teamWithTasks is team T whose members have the tasks given (name → task, tier and state).
+func teamWithTasks(members map[string][3]string) *Team {
+	team := &Team{ID: "T", Members: map[string]*TeamMember{}}
+	for name, v := range members {
+		team.Members[name] = &TeamMember{Agent: name, Task: v[0], Tier: Tier(v[1]), State: MemberState(v[2])}
+	}
+	return team
+}
+
+func TestFreeWorkersCountOnlyTheTeamsOwnRequests(t *testing.T) {
+	// m and w are in team T (tasks task-m-t, task-w-t) and in another team U (tasks task-m-u, task-w-u).
+	members := map[string][3]string{"m": {"task-m-t", "normal", "active"}, "w": {"task-w-t", "worker", "sleeping"}}
+	cases := []struct {
+		name    string
+		helpers []*Helper
+		want    int
+	}{
+		{"a request of the requester's task in another team does not count",
+			[]*Helper{{ID: 1, From: "m", FromTask: "task-m-u", Status: HelperQueued}}, 1},
+		{"a request of the requester's task in this team counts",
+			[]*Helper{{ID: 1, From: "m", FromTask: "task-m-t", Status: HelperQueued}}, 0},
+		{"a request recorded without its task counts by its requester",
+			[]*Helper{{ID: 1, From: "m", Status: HelperQueued}}, 0},
+		{"the worker serving in another team's task is free here",
+			[]*Helper{{ID: 1, From: "x", FromTask: "task-x-u", Status: HelperRunning, Worker: "w", HelperTask: "task-w-u"}}, 1},
+		{"the worker serving in this team's task is not free",
+			[]*Helper{{ID: 1, From: "m", FromTask: "task-m-t", Status: HelperRunning, Worker: "w", HelperTask: "task-w-t"}}, 0},
+		{"a worker that is starting a request, its task not yet recorded, is not free",
+			[]*Helper{{ID: 1, From: "m", FromTask: "task-m-t", Status: HelperStarting, Worker: "w"}}, 0},
+	}
+	for _, c := range cases {
+		if got := freeWorkers(teamWithTasks(members), c.helpers); got != c.want {
+			t.Errorf("%s: freeWorkers = %d, want %d", c.name, got, c.want)
+		}
+	}
+}
