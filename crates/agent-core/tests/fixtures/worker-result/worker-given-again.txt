@@ -1,0 +1,5 @@
+The result of the worker glm-1 for your request H3 is wrong: the check failed
+
+The request went once more to the worker codex-2, which started again from the same request.
+
+Wait for its result; do not send the request again in other words meanwhile.

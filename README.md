@@ -265,11 +265,13 @@ state schema `2`, and migrates history to schema `8`. See [configuration](docs/c
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
 `[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
-or lost a step of its last version goes back to the same agent with the reason, at most `[plan] bounces` times per task
-(default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go on as it is
-or send it back once more. Tasks created before this version are never sent back. The plan is kept out of git and out of
-the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
-delivery". See [configuration](docs/configuration.md#plan).
+lost a step of its last version, or has a done step whose check failed (`mismatch`, sent back with the step, its check,
+the reason and up to 40 trailing lines of output) goes back to the same agent with the reason, at most `[plan] bounces`
+times per task (default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go
+on as it is or send it back once more. A step whose check matches `[plan] check_refuse` stays `declared`, and the task's
+next run is told once in its prompt that the gate is never a step's check. Tasks created before this version are never
+sent back. The plan is kept out of git and out of the pull request: a plan an agent commits by mistake is taken out of
+its branch by a commit "Keep the plan out of the delivery". See [configuration](docs/configuration.md#plan).
 
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
 folder inside the worktree; an absent path or a symlink outside it is a mismatch. A command check runs in the
@@ -913,6 +915,34 @@ none and is served as before). An agent without a plan — a worker, a reviewer,
 investigation request, a run of a home that keeps no plan, or a run whose worktree has no `.agent/plan.md` yet — sends
 the old form, which is for look-ups only and waits
 in the queue as before.
+
+**A worker's result is checked before it reaches your branch.** The bus keeps, next to the step, the paths the request
+names (`files`), its check (`check`) and what to do (`doing`) — a request that names no path is a look-up, in the old form,
+and its result goes to the requester as before. From the version that wires it the harness runs the request's check in the worker's
+worktree, brings the worker's commit to the requester's branch only when it passes, gives a wrong request once more to a
+free worker of another CLI (of the same CLI when no other is free), and returns the step to the requester with the reasons. The decision and the texts are in
+this version (`[workers]` in [`docs/configuration.md`](docs/configuration.md#workers)); the daemon uses them from the
+version that wires them.
+
+**When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
+instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
+say it: a step with one result, named files and a check a machine runs, the reading and listing of many files, a
+mechanical edit by a stated rule — never a decision, a design, a step whose check is `reviewer` or anything that needs
+the requester's uncommitted work changed; a refused or failed request is done by the requester itself. A plan marks
+such a step with the line `By: worker` in its text (`docs/plan.md`).
+
+**The requests are seen.** `agent status <task>` (and `--task`) shows the requests for workers of each task under its
+plan, as the bus has them (`agentbus helper-dump --task <task>`, JSON):
+
+```text
+    request H3  step 1.2  worker glm-1  done
+    request H4  no step  no worker yet  queued
+```
+
+When the bus cannot be read, a line says why (`requests unknown (…)`); a home without `agents.toml` shows none. The
+description of a pull request gets the harness's section `## Steps done by a worker`, with each request of the team's
+tasks that is done and names a step: `- step 1.2 of claude-1's plan — done by glm-1 (H3)`. A lead cannot write that
+section itself.
 
 **An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
 session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session

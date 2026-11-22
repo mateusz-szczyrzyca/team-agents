@@ -274,6 +274,14 @@ const TAIL_BYTES: u64 = 64 * 1024;
 /// Maximum number of trailing lines returned in a mismatch tail.
 const TAIL_LINES: usize = 40;
 
+/// Reads the last 40 lines (within the last 64 KiB) of the output at `path`, the output of a check that a run is sent back for.
+///
+/// # Errors
+/// [`io::Error`] when the file cannot be opened or read.
+pub async fn read_check_tail(path: &Path) -> Result<String, io::Error> {
+    read_tail(path).await
+}
+
 /// Reads the last [`TAIL_LINES`] lines (up to [`TAIL_BYTES`]) from `path`.
 async fn read_tail(path: &Path) -> Result<String, io::Error> {
     let mut file = fs::File::open(path).await?;

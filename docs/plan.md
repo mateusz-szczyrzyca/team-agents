@@ -63,6 +63,10 @@ stage here, and what it calls an item is a step. A plan has no `Coordinator:` or
   valid — a step whose being done nobody can show by a machine or by a path is written without it.
 - **The note** — every other line of the step's text. A `[-]` step needs a note that is not blank: its reason. A note
   that is only a `Files:` line or a `Check:` line is no reason, and is refused as none.
+- **`By: worker`** — a line of the note that marks the step for a worker: its holder gives it to a worker with
+  `delegate` (one result, named files, a check a machine runs) instead of doing it. Only the exact line
+  `By: worker` is the mark; any other line that starts with `By:` is a note like any other, and a plan without the
+  line is done by its holder, step by step, as before. The mark stays in the note, so the plan writes it back.
 
 Two words of a `Check:` line are not commands, and how a command is told from them:
 
@@ -167,8 +171,7 @@ Judgements are acknowledged by the history writer before run settlement continue
 `agent status <task>` and `agent status <round>` show the plan's step marks and the settlement of done steps,
 for example `[x] 1.1 Write the guide (confirmed)` or `[x] 1.2 Add images (mismatch: …)`.
 The daemon serves cached snapshots so status requests do not read plans or SQLite. A task without a readable
-plan keeps its previous status format. Mismatches are recorded and displayed in this part; they do not send a run
-back and do not consume the plan's bounce budget. The existing rules below still apply to unfinished plans.
+plan keeps its previous status format.
 
 ## Enforcing the plan
 
@@ -190,6 +193,18 @@ handed its item over); until then its steps for the other items are not a fault.
 `[plan] bounces` times (default 3; `0` sends nothing back and still records the plan). The count is kept in
 `state.json` with the task ([`state.md`](state.md)), and so is the reason of a send-back until the next run starts: a
 restart of the daemon loses neither.
+
+**A failed step check.** A run that ends done while a step it marked done fails its check (a `mismatch`, see above) is
+sent back with that step: the correction names the step, its title, its check, the reason and the last lines of the
+check's output (at most 40). It counts against `[plan] bounces` like any other send-back. When an unfinished or lost-step
+plan fault and a mismatch come together, the run goes back once with both corrections (consuming one bounce of
+`[plan] bounces`). A run that ends another way, a role outside `[plan] roles`, a task created before plans, and a task
+created before the daemon first ran step judging (`#163`, without the `plan_judging` marker) are never sent back for a
+mismatch.
+
+**A refused gate command.** A step whose check is `[plan] check_refuse` (the gate) stays `declared`, and the next run is
+told once, in its prompt, that the gate is never a step's check. The notice is kept in the task's plan in
+`state.json` until a run starts with it; a run that is started after a restart gets it only if it was not yet started.
 
 **The human, after the limit.** A run that ends done against its plan once more is not sent back: the daemon writes
 the task's next questions file itself, quoting what the agent was told the last time, and the human is told as for any

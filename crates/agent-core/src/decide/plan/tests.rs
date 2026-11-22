@@ -4,7 +4,7 @@ use crate::ids::ItemId;
 use crate::ids::TaskId;
 use crate::kinds::Role;
 use crate::plan::{Plan, parse_plan};
-use crate::state::{Member, Participant, PlanKeeping, PlanReason, PlanStage, RunEnd};
+use crate::state::{Member, Participant, PlanFault, PlanKeeping, PlanReason, PlanStage, RunEnd, StepMismatch};
 use crate::status::RunOutcome;
 
 /// The end of a run of the agent that reports `outcome`.
@@ -676,4 +676,120 @@ fn a_step_mismatch_does_not_bounce_for_failed_run_or_unplanned_role_or_legacy() 
         ),
         PlanVerdict::Accept
     );
+}
+
+fn sample_mismatch() -> PlanReason {
+    PlanReason::Mismatch {
+        step: item("1.1"),
+        title: "Write it".to_owned(),
+        check: Some("cargo test".to_owned()),
+        reason: Some("check failed with exit code 1".to_owned()),
+        tail: "failures:\n    test_it".to_owned(),
+    }
+}
+
+fn sample_combined(fault: PlanFault) -> PlanReason {
+    PlanReason::fault_and_mismatch(
+        fault,
+        StepMismatch {
+            step: item("1.1"),
+            title: "Write it".to_owned(),
+            check: Some("cargo test".to_owned()),
+            reason: Some("check failed with exit code 1".to_owned()),
+            tail: "failures:\n    test_it".to_owned(),
+        },
+    )
+}
+
+#[test]
+fn decide_plan_with_mismatch_table() {
+    let clean = read(DONE);
+    let unfinished = read("1. Work\n[x] 1.1 Write it\n[ ] 1.2 Check it\n");
+    let prev_1_3 = [plan("1. Work\n[x] 1.1 Write it\n[ ] 1.3 Document it\n")];
+    let lost = read("1. Work\n[x] 1.1 Write it\n");
+    let def_policy = policy();
+    let zero_policy = policy_of("[plan]\nbounces = 0\n");
+    let k0 = keeping(0, PlanStage::Open);
+    let k2 = keeping(2, PlanStage::Open);
+    let k3 = keeping(3, PlanStage::Open);
+    let k4 = keeping(4, PlanStage::Open);
+    let pre_judging = PlanKeeping::default();
+    let done = ended(RunOutcome::Done);
+    let sleeping = ended(RunOutcome::Sleeping);
+    let failed = ended(RunOutcome::Failed);
+    let facts = |role, end, read, earlier, keeping, policy| PlanFacts {
+        role,
+        end,
+        read,
+        earlier,
+        keeping,
+        policy,
+    };
+
+    let rows: &[(&str, PlanFacts<'_>, PlanVerdict)] = &[
+        (
+            "below bounces",
+            facts(Role::Member, &done, &clean, &[], Some(&k2), &def_policy),
+            PlanVerdict::SendBack(sample_mismatch()),
+        ),
+        (
+            "at bounces",
+            facts(Role::Member, &done, &clean, &[], Some(&k3), &def_policy),
+            PlanVerdict::AskHuman(sample_mismatch()),
+        ),
+        (
+            "above bounces",
+            facts(Role::Member, &done, &clean, &[], Some(&k4), &def_policy),
+            PlanVerdict::AskHuman(sample_mismatch()),
+        ),
+        (
+            "bounces 0",
+            facts(Role::Member, &done, &clean, &[], Some(&k0), &zero_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "status SLEEPING",
+            facts(Role::Member, &sleeping, &clean, &[], Some(&k0), &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "status FAILED",
+            facts(Role::Member, &failed, &clean, &[], Some(&k0), &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "excluded role",
+            facts(Role::Worker, &done, &clean, &[], Some(&k0), &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "legacy task",
+            facts(Role::Solo, &done, &clean, &[], None, &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "task older than first judging version (keeping present without judging marker)",
+            facts(Role::Solo, &done, &clean, &[], Some(&pre_judging), &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "mismatch with unfinished step (one bounce, both named)",
+            facts(Role::Member, &done, &unfinished, &[], Some(&k0), &def_policy),
+            PlanVerdict::SendBack(sample_combined(PlanFault::Unfinished {
+                steps: vec![item("1.2")],
+            })),
+        ),
+        (
+            "mismatch with lost step at bounce limit (both named)",
+            facts(Role::Coordinator, &done, &lost, &prev_1_3, Some(&k3), &def_policy),
+            PlanVerdict::AskHuman(sample_combined(PlanFault::LostStep {
+                steps: vec![item("1.3")],
+            })),
+        ),
+    ];
+
+    for (name, row_facts, expected) in rows {
+        let actual = decide_plan_with_mismatch(*row_facts, Some(sample_mismatch()));
+        assert_eq!(&actual, expected, "row: {name}");
+    }
 }

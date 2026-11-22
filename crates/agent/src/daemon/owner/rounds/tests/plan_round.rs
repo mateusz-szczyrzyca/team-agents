@@ -523,7 +523,7 @@ async fn plan_steps_with_various_checks_report_declared_and_mismatch() {
     let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
     std::fs::write(
         rig.home.config_file(),
-        config.replace("[plan]\nbounces = 3\n", "[plan]\nbounces = 3\ncheck_seconds = 0\n"),
+        config.replace("[plan]\nbounces = 3\n", "[plan]\nbounces = 0\ncheck_seconds = 0\n"),
     )
     .unwrap();
     let plan = "\
@@ -626,6 +626,13 @@ Do several.
 #[tokio::test]
 async fn unchanged_confirmed_steps_are_not_rejudged_across_runs_and_roles() {
     let mut rig = round_with_changes("script:first,fix-script:second").await;
+    // A failed check is sent back with `bounces` above 0: these tests expect the item settled with the mismatch.
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 3\n", "[plan]\nbounces = 0\n"),
+    )
+    .unwrap();
     let plan = "\
 Do two.
 

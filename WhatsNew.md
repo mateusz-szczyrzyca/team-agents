@@ -5,11 +5,35 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.65.0 — 22.11.2026 — PR #183
+## 0.68.0 — 22.11.2026 — PR #185
 
 ### New features
 - [agent] [agent-core] The next part of a split item opens with an assigned qualified member or lead fallback, or asks the human when capability is missing.
-- [agent] [agent-core] Split parts delivered outside their round via `DELIVERED: #N` are validated and accepted if already merged, or refused if unmerged.
+- [agent] [agent-core] Split parts delivered outside their round via `DELIVERED: #N` are validated and accepted if already merged, or refused if unmerged or using a foreign branch.
+
+## 0.67.0 — 22.11.2026 — PR #184
+
+### New features
+- [agentbus] The bus keeps, next to the step of a request for a worker, the paths the worker may write, the request's check and what to do (`files`, `check`, `doing` in the bus state); a request in the old form has none, and a bus state written before loads as it was. The daemon does not read them yet.
+- [agent-core] `[workers]` in `agents.toml` says how many tries a request for a worker gets and how long its run may last — `tries = 2` and `seconds = 0` (no limit) unless you set them; `tries = 0` is refused. A file without `[workers]` keeps these defaults. The daemon does not apply the keys yet.
+
+### Enhancements
+- [agent-core] The harness decides, in one pure decision, whether a worker's result serves the request: accept it, give the request once more to a free worker of another CLI (of the same CLI when no other is free), or return the step to the requester with every reason. The requester is told each of those in its own text; the daemon uses them from the version that wires them.
+
+## 0.66.0 — 22.11.2026 — PR #182
+
+### New features
+- [agent] [agent-core] [agent-runtime] A run of a role in `[plan] roles` that ends `STATUS: DONE` while a step it marked done fails its check (`mismatch`) now goes back to the same agent with the step, its check, the reason and up to 40 trailing lines of the check's output (counting against `[plan] bounces`, and combined in one send-back when an unfinished or lost step is present at the same time); after `[plan] bounces` send-backs you are asked once, in the task's questions file, whether to go on as it is or send it back once more.
+- [agent] [agent-core] A step whose check matches `[plan] check_refuse` (`agent gate`, `make gate`) stays `declared`, and the task's next run is told once in its prompt that the gate is never a step's check.
+- [agent] [agent-core] **Action:** the first run after this update may send a `STATUS: DONE` run back for a failed step check (up to `[plan] bounces`, default `3`); set `[plan] check_seconds = 0` in `agents.toml` to disable command checks, or `[plan] bounces = 0` to record plans and judgements without sending runs back.
+
+## 0.65.0 — 22.11.2026 — PR #183
+
+### New features
+- [agent] [agent-core] [agentbus] The member, the coordinator and the solo agent, and an investigator through the bus, are told when to give a step to a worker and when not to: a step with one result, named files and a check a machine runs, never a decision, a design or a step a reviewer judges; a refused or failed request they do themselves.
+- [agent-core] A plan can mark a step for a worker with the line `By: worker` in its text; plans without it read as before.
+- [agent] [agent-runtime] [agentbus] `agent status <task>` lists the task's requests for workers under its plan, for example `request H3  step 1.2  worker glm-1  done`.
+- [agent] The description of a pull request gets a section of the harness, "Steps done by a worker", for example `- step 1.2 of claude-1's plan — done by glm-1 (H3)`.
 
 ## 0.64.0 — 22.11.2026 — PR #181
 

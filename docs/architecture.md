@@ -178,6 +178,7 @@ the network. The order of the checks and the rules each follows are in the docum
 | Where | What |
 |---|---|
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
+| `agent_core::decide::worker_result::{decide, worker_for_second_try}` | `decide`: what the harness does with a worker's result — accept it, give the request once more to a free worker of another CLI (of the same CLI when no other is free), or return the step to the requester with every reason; `worker_for_second_try`: that worker (part 1.1a of the worker harness; the daemon calls it when the result of a run of a worker is checked) |
 | `agent_runtime::{settings, harness_prompts, autopilot_prompts, checks_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth and fifth (`AutopilotPrompts`, `ChecksPrompts`); a bounded text file; the system clock |
 | `agent::daemon` | `owner` (the state), `owner/plan` (the plan of a task at a run's end and start, the background command checks of done steps and their recovery across restarts, the question about it and its answer, the plan kept out of the delivery), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
 | `agent_runtime::history`, `agent_core::history`, `agent::daemon::{history, owner/history}` | the history: a database of what happened and what every run did; see "The history" |
@@ -1289,6 +1290,14 @@ worker that comes later. An agent may be in several teams, so a request belongs 
 a worker serves in the task the request was given to. The harness is asked before the four pieces are required: its
 `NO-PLAN` makes the request an old-form one, with no step.
 
+The requests are read back with `agentbus helper-dump --task <task>` (a JSON array, oldest first) into
+`agent_runtime::agentbus::TaskRequest` (number, step, worker, state). `agent status` reads them on the client side when
+the tasks are shown with their plans (`commands::status::requests`); the publication of a pull request reads those of
+every task of the team's crew and adds the section of the steps done by a worker
+(`daemon::pr::description::worker_steps_section`); a bus that does not answer fails the publication with
+`PublishError::Bus`, which is tried again later. A plan's step meant for a worker carries the line `By: worker`, kept in
+its note (`Step::doer`).
+
 ## Plan-step judgements
 
 `agent-core::plan::judge` selects done steps that need judgement and defines `confirmed`, `declared` and `mismatch`.
@@ -1296,9 +1305,7 @@ a worker serves in the task the request was given to. The harness is asked befor
 and provides `execute_command_check` for sequential command check execution with agent environment variables, closed input,
 process group isolation, output logging to `checks/<run_id>/<step_id>.log`, and a configurable `[plan] check_seconds` timeout
 (commands matching `[plan] check_refuse` are refused before spawn and remain declared).
-The owner runs existence checks sequentially after reading a plan at every run's end, independently of role and outcome,
-and awaits durable history acknowledgement before settling the run. In the daemon, commands stay declared pending durable
-owner background lifecycle; durable command execution with mismatch bounce handling follows in a dedicated task.
+The owner runs existence checks after reading a plan at every run's end, spawns a per-task background worker for command checks (`running_check` in `state.json` tracks unsettled finished runs across restarts), awaits durable history acknowledgement for each judgement, sends `STATUS: DONE` runs of roles in `[plan] roles` with a `mismatch` back within `[plan] bounces` (or asks the human once after the limit), and delivers a one-time prompt notice for steps whose check matched `[plan] check_refuse`.
 Task and round status use cached plan summaries; their read path does no filesystem or database work.
 History schema 17 adds append-only step judgements and migrates older databases.
 
