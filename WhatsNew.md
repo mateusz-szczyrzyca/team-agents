@@ -5,13 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.56.0 — 22.11.2026 — PR (number assigned at opening)
+## 0.58.0 — 22.11.2026 — PR (number assigned at opening)
 
 ### New features
 - [agent] [agent-core] `agent status` and `agent status --running` print each team with its rounds and a count of its tasks by what they do: `tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`. A task that waits for the human's answer is named with the number of its questions file.
-- [agent] [agent-core] [agent-runtime] Every list of `agent status` starts with the versions of the four crates, `agent 0.56.0 · agent-core 0.56.0 · agent-runtime 0.56.0 · agent-web 0.56.0`. When the daemon runs another build, a second line shows its versions and says that they differ; a daemon that tells none is shown as `daemon: version unknown`.
+- [agent] [agent-core] [agent-runtime] Every list of `agent status` starts with the versions of the four crates, `agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`. When the daemon runs another build, a second line shows its versions and says that they differ; a daemon that tells none is shown as `daemon: version unknown`.
 - [agent] `agent status --task` (and `agent status --running --task`) prints the task lines, their plans and their parts, as `agent status` printed them before.
 - [agent] **Action:** a script that reads the text of `agent status` or `agent status --running` for the task lines must add `--task`; `agent status --json` is unchanged.
+- [agent] `agent status --task` is refused with a team, a task or a round, which already show their tasks, and with `--investigators`; with `--json` it is accepted and changes nothing.
 
 ## 0.55.0 — 22.11.2026 — PR #172
 
