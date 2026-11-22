@@ -1466,6 +1466,72 @@ fn a_ready_later_split_part_shows_its_tier_wait_before_a_round_opens() {
 }
 
 #[test]
+fn a_split_part_with_stopped_member_shows_in_status_summary() {
+    let mut team = team_state().teams()[0].clone();
+    let item = "1.1".parse().unwrap();
+    let round: agent_core::ids::RoundId = "round-20261111-153001-q1w2".parse().unwrap();
+    team.open_round(round.clone(), Some(item), at(1)).unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::InProgress {
+            assignee: "claude-1".parse().unwrap(),
+            branch: "agents/claude-1/first".parse().unwrap(),
+        },
+    )
+    .unwrap();
+    team.activate_split(serde_json::from_value(serde_json::json!({
+        "parent":"1.1", "parts":[
+            {"title":"First", "delivers":"First document", "checks":"Read it", "depends_on":[]},
+            {"title":"Second", "delivers":"Second document", "checks":"Read it", "depends_on":["a"]}
+        ]
+    })).unwrap()).unwrap();
+    let reviews = vec![agent_core::state::Review {
+        outcome: agent_core::state::ReviewOutcome::Submitted {
+            verdict: agent_core::status::ReviewVerdict::Approve,
+            at: at(2),
+        },
+        ..crate::fixtures::review("inv-codex", 4)
+    }];
+    team.advance_item(
+        item,
+        ItemPhase::InReview {
+            pr: crate::fixtures::pr(7),
+            reviews: reviews.clone(),
+        },
+    )
+    .unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::Approved {
+            pr: crate::fixtures::pr(7),
+            reviews,
+        },
+    )
+    .unwrap();
+    team.advance_item(
+        item,
+        ItemPhase::Done {
+            completion: agent_core::state::Completion::Merged {
+                pr: crate::fixtures::pr(7),
+                at: at(2),
+            },
+        },
+    )
+    .unwrap();
+    team.close_round(&round, at(2), agent_core::state::RoundEnd::Merged).unwrap();
+    // Case 3: member stopped
+    team.find_mut(&task(2)).unwrap().1.transition(TaskStatus::Stopped).unwrap();
+    let summary = TeamSummary::from(&team);
+    assert_eq!(
+        super::splits::lines(&summary),
+        vec![
+            "    1.1a  done  First",
+            "    1.1b  to do  Second",
+        ]
+    );
+}
+
+#[test]
 fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
     use agent_core::local_time::Zone;
     let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));

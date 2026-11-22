@@ -76,3 +76,96 @@ fn deserializing_team_validates_split_membership_uniqueness_and_plan_invariants(
         &[]
     );
 }
+
+#[test]
+fn old_state_from_20261121_case_3_stopped_member_on_split_part_loads_and_continues() {
+    let raw = serde_json::json!({
+        "schema_version": 14,
+        "teams": [
+            {
+                "id": "team-20261121-120000-abcd",
+                "repo": "example",
+                "created_at": "2026-11-21T12:00:00Z",
+                "merge": "autopilot",
+                "task_list": "Build the feature.\n\n1. First\n[ ] 1.1 The first item\n",
+                "items": [
+                    {
+                        "id": "1.1",
+                        "phase": {
+                            "phase": "pending"
+                        }
+                    }
+                ],
+                "rounds": [
+                    {
+                        "id": "round-20261121-120001-aaaa",
+                        "item": "1.1",
+                        "opened_at": "2026-11-21T12:00:01Z",
+                        "state": {
+                            "status": "closed",
+                            "at": "2026-11-21T12:05:00Z",
+                            "how": "merged"
+                        },
+                        "part": {
+                            "status": "merged",
+                            "key": "a",
+                            "pr": {
+                                "number": 1,
+                                "branch": "agents/claude-1/task-20261121-120002-m111-1.1a",
+                                "opened_at": "2026-11-21T12:04:00Z"
+                            }
+                        }
+                    }
+                ],
+                "crew": {
+                    "kind": "team",
+                    "coordinator": {
+                        "task": "task-20261121-120002-lead",
+                        "agent": {
+                            "tier": "normal",
+                            "name": "lead"
+                        },
+                        "status": "waiting",
+                        "runs": []
+                    },
+                    "members": [
+                        {
+                            "task": "task-20261121-120002-m111",
+                            "agent": {
+                                "tier": "normal",
+                                "name": "claude-1"
+                            },
+                            "status": "stopped",
+                            "runs": []
+                        }
+                    ],
+                    "workers": []
+                },
+                "splits": [
+                    {
+                        "parent": "1.1",
+                        "parts": [
+                            {
+                                "title": "Part A",
+                                "delivers": "Part A delivered",
+                                "checks": "Checks",
+                                "depends_on": []
+                            },
+                            {
+                                "title": "Part B",
+                                "delivers": "Part B delivered",
+                                "checks": "Checks",
+                                "depends_on": ["a"]
+                            }
+                        ]
+                    }
+                ]
+            }
+        ]
+    });
+    let state = crate::state::State::from_json(&serde_json::to_string(&raw).unwrap()).expect("loads legacy state");
+    let team = &state.teams()[0];
+    assert_eq!(team.next_part("1.1".parse().unwrap()).unwrap().0.to_string(), "1.1b");
+    let dispatched = crate::decide::assign::dispatch::dispatch(team);
+    assert_eq!(dispatched.assigned, vec![("1.1".parse().unwrap(), crate::state::fixtures::normal("lead"))]);
+}
