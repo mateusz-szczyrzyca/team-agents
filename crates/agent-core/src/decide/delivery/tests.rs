@@ -140,3 +140,84 @@ fn observations_act_only_on_the_current_waiting_claim() {
         assert_eq!(delivery_action(team, &round_id(2), observation), expected, "{name}");
     }
 }
+
+#[test]
+fn evaluate_delivery_report_table_covers_all_spec_cases() {
+    struct Case {
+        name: &'static str,
+        same_repo: bool,
+        pr_branch: &'static str,
+        task_branch: &'static str,
+        part_branch: Option<&'static str>,
+        state: DeliveryObservation,
+        expected: DeliveryVerdict,
+    }
+
+    let cases = [
+        Case {
+            name: "merged pr matching task branch is accepted",
+            same_repo: true,
+            pr_branch: "agents/codex-1/task-1-1.1",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: None,
+            state: DeliveryObservation::Merged,
+            expected: DeliveryVerdict::Accepted,
+        },
+        Case {
+            name: "merged pr matching part branch is accepted",
+            same_repo: true,
+            pr_branch: "agents/codex-1/task-1-1.1b",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: Some("agents/codex-1/task-1-1.1b"),
+            state: DeliveryObservation::Merged,
+            expected: DeliveryVerdict::Accepted,
+        },
+        Case {
+            name: "open pr is refused as unmerged",
+            same_repo: true,
+            pr_branch: "agents/codex-1/task-1-1.1",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: None,
+            state: DeliveryObservation::Open,
+            expected: DeliveryVerdict::RefusedOpen,
+        },
+        Case {
+            name: "closed without merge is refused",
+            same_repo: true,
+            pr_branch: "agents/codex-1/task-1-1.1",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: None,
+            state: DeliveryObservation::Closed,
+            expected: DeliveryVerdict::RefusedClosed,
+        },
+        Case {
+            name: "pr of another repository is refused",
+            same_repo: false,
+            pr_branch: "agents/codex-1/task-1-1.1",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: None,
+            state: DeliveryObservation::Merged,
+            expected: DeliveryVerdict::RefusedForeignRepository,
+        },
+        Case {
+            name: "pr branch matching neither task nor part branch is refused",
+            same_repo: true,
+            pr_branch: "random-foreign-branch",
+            task_branch: "agents/codex-1/task-1-1.1",
+            part_branch: Some("agents/codex-1/task-1-1.1b"),
+            state: DeliveryObservation::Merged,
+            expected: DeliveryVerdict::RefusedForeignBranch,
+        },
+    ];
+
+    for case in cases {
+        let verdict = evaluate_delivery_report(DeliveryReportFacts {
+            same_repo: case.same_repo,
+            pr_branch: case.pr_branch,
+            task_branch: case.task_branch,
+            part_branch: case.part_branch,
+            state: case.state,
+        });
+        assert_eq!(verdict, case.expected, "case: {}", case.name);
+    }
+}

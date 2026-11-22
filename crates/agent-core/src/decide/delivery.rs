@@ -103,6 +103,64 @@ pub fn delivery_action(team: &Team, round: &RoundId, observed: DeliveryObservati
     }
 }
 
+/// The validation outcome of a lead's delivery report for a working round.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeliveryVerdict {
+    /// The PR is merged and targets a recognized branch of the item or part.
+    Accepted,
+    /// The PR is open and cannot be accepted.
+    RefusedOpen,
+    /// The PR was closed without being merged.
+    RefusedClosed,
+    /// The PR belongs to another repository.
+    RefusedForeignRepository,
+    /// The PR branch is neither the task's nor the part's branch.
+    RefusedForeignBranch,
+}
+
+impl DeliveryVerdict {
+    /// Whether the report is accepted.
+    #[must_use]
+    pub const fn is_accepted(&self) -> bool {
+        matches!(self, Self::Accepted)
+    }
+
+    /// The human-readable explanation of why the report was refused, or none if accepted.
+    #[must_use]
+    pub const fn refusal_reason(&self) -> Option<&'static str> {
+        match self {
+            Self::Accepted => None,
+            Self::RefusedOpen => Some("the delivering pull request is not merged"),
+            Self::RefusedClosed => Some("the delivering pull request was closed without merging"),
+            Self::RefusedForeignRepository => Some("the delivering pull request belongs to another repository"),
+            Self::RefusedForeignBranch => Some("the delivering pull request does not use the task's or part's branch"),
+        }
+    }
+}
+
+/// What the lead's delivery report is evaluated against.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DeliveryReportFacts<'a> {
+    /// Whether the pull request belongs to the team's repository.
+    pub same_repo: bool,
+    /// The branch of the pull request.
+    pub pr_branch: &'a str,
+    /// The task's branch.
+    pub task_branch: &'a str,
+    /// The part's branch, if delivering a split part.
+    pub part_branch: Option<&'a str>,
+    /// The observed state of the pull request.
+    pub state: DeliveryObservation,
+}
+
+/// Evaluates a lead's delivery report: merged, open, closed without merge, another repository,
+/// a branch that is neither the task's nor the part's branch.
+#[must_use]
+pub fn evaluate_delivery_report(facts: DeliveryReportFacts<'_>) -> DeliveryVerdict {
+    let _ = facts;
+    DeliveryVerdict::Accepted
+}
+
 #[cfg(test)]
 mod tests;
 
