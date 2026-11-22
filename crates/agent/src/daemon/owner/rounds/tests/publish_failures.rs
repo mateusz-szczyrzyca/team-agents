@@ -1287,21 +1287,19 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     let task = tasks[0].clone();
 
     // Synchronize on durable first publication failure where lead is released for retry with publish_tries=1:
-    rig.state_where(
-        "lead is released for corrective run with publish_tries=1",
-        |state| {
-            state.teams().iter().any(|t| {
-                t.items().iter().any(|item| item.publish_tries() == 1)
-            })
-        },
-    )
+    rig.state_where("lead is released for corrective run with publish_tries=1", |state| {
+        state
+            .teams()
+            .iter()
+            .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
+    })
     .await;
 
     // Wait until run 2 is actively executing (held by hold-retry.sh script):
     rig.wait_for("run 2 is actively running and held", || {
-        rig.state().find_task(&task).is_some_and(|f| {
-            f.member.status() == TaskStatus::Running && f.member.runs().len() == 2
-        })
+        rig.state()
+            .find_task(&task)
+            .is_some_and(|f| f.member.status() == TaskStatus::Running && f.member.runs().len() == 2)
     })
     .await;
 
@@ -1402,9 +1400,10 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
     rig.state_where(
         "first publication rejection persists retry-only state with publish_tries=1",
         |state| {
-            state.teams().iter().any(|t| {
-                t.items().iter().any(|item| item.publish_tries() == 1)
-            })
+            state
+                .teams()
+                .iter()
+                .any(|t| t.items().iter().any(|item| item.publish_tries() == 1))
         },
     )
     .await;
