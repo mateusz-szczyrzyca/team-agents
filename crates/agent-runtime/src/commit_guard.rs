@@ -15,7 +15,7 @@ use crate::git::{Git, GitError, Revision, StagedAgainst};
 
 /// The exit status of `agent guard-commit` that refuses a commit, and that the hook stops on: every other status of the
 /// program (it cannot start, it cannot write, it was usage) lets the commit through.
-pub const COMMIT_REFUSED_STATUS: u8 = 1;
+pub const COMMIT_REFUSED_STATUS: u8 = 86;
 
 /// Whether the commit about to be made is a new one or replaces the last one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
