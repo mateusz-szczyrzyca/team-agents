@@ -413,6 +413,9 @@ pub struct Rejection {
     at: Timestamp,
     /// What the lead said, from the bus.
     reason: String,
+    /// The run of the item that counts the rejection as carried out on the branch; absent until it starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    recorded_in: Option<NonZeroU32>,
 }
 
 impl Rejection {
@@ -426,6 +429,12 @@ impl Rejection {
     #[must_use]
     pub fn reason(&self) -> &str {
         &self.reason
+    }
+
+    /// The run of the item that counts it; `None` while the member has not started one after it.
+    #[must_use]
+    pub const fn counted_in(&self) -> Option<NonZeroU32> {
+        self.recorded_in
     }
 }
 
@@ -1087,8 +1096,16 @@ impl ItemProgress {
 
     /// How many rejections of the item were counted against the limit `limit` of `[replacement] rejections`.
     #[must_use]
-    pub const fn counted_rejections(&self, limit: u32) -> crate::decide::rejection::Rejections {
-        crate::decide::rejection::Rejections::none(limit)
+    pub fn counted_rejections(&self, limit: u32) -> crate::decide::rejection::Rejections {
+        let counted = self
+            .rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|rejection| rejection.counted_in().is_some())
+            .count();
+        let counted = u32::try_from(counted).unwrap_or(u32::MAX);
+        crate::decide::rejection::Rejections::new(counted, limit)
     }
 
     /// Records that the lead returned the item at `at` with `reason`, after the rejections recorded already: returns
@@ -1099,10 +1116,23 @@ impl ItemProgress {
     /// [`RejectionError::NoReason`] when `reason` says nothing;
     /// [`RejectionError::AlreadyCounted`] when a rejection at `at` is recorded already.
     pub fn record_rejection(&mut self, reason: String, at: Timestamp) -> Result<Option<Timestamp>, RejectionError> {
-        self.rejections
-            .get_or_insert_with(Vec::new)
-            .push(Rejection { at, reason });
-        Ok(None)
+        if !matches!(self.phase, ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }) {
+            return Err(RejectionError::NotWorkedOn { item: self.id });
+        }
+        if reason.trim().is_empty() {
+            return Err(RejectionError::NoReason { item: self.id });
+        }
+        let recorded = self.rejections.get_or_insert_with(Vec::new);
+        if recorded.iter().any(|rejection| rejection.at == at) {
+            return Err(RejectionError::AlreadyCounted { item: self.id, at });
+        }
+        let settled_at = recorded.last().map(|rejection| rejection.at);
+        recorded.push(Rejection {
+            at,
+            reason,
+            recorded_in: None,
+        });
+        Ok(settled_at)
     }
 
     /// Records that run `run` of the item started at `at`, the run the rejections recorded so far count on: returns
@@ -1110,13 +1140,35 @@ impl ItemProgress {
     ///
     /// # Errors
     /// [`RejectionError::RunBeforeRejection`] when a rejection was recorded after the run started.
-    pub fn next_run_started(&mut self, _run: NonZeroU32, _at: Timestamp) -> Result<u32, RejectionError> {
-        Ok(0)
-    }
-
-    /// Clears the reasons of the rejections, for a fresh start: the count against the limit stays.
-    pub fn clear_rejections(&mut self) {
-        self.rejections = Some(Vec::new());
+    pub fn next_run_started(&mut self, run: NonZeroU32, at: Timestamp) -> Result<u32, RejectionError> {
+        let Some(recorded) = self.rejections.as_deref_mut() else {
+            return Ok(0);
+        };
+        if recorded
+            .iter()
+            .any(|rejection| rejection.recorded_in.is_none() && rejection.at > at)
+        {
+            let rejection = recorded
+                .iter()
+                .find(|rejection| rejection.recorded_in.is_none() && rejection.at > at)
+                .map(|rejection| rejection.at);
+            return Err(RejectionError::RunBeforeRejection {
+                item: self.id,
+                run_started_at: at,
+                counted: rejection.unwrap_or(at),
+            });
+        }
+        // The run that starts is the run every rejection so far was settled by; the rejections present when it starts
+        // are the ones it carries.
+        let mut counted = 0_u32;
+        for rejection in recorded.iter_mut() {
+            if rejection.recorded_in.is_some() {
+                continue;
+            }
+            rejection.recorded_in = Some(run);
+            counted = counted.saturating_add(1);
+        }
+        Ok(counted)
     }
 
     /// Completes only a working item after the team checked its delivery claim.

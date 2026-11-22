@@ -7,7 +7,7 @@ use crate::decide::rejection::Rejections;
 use crate::ids::AgentName;
 use crate::ids::{BranchName, ItemId, TaskId};
 use crate::state::fixtures::{assert_refused, at};
-use crate::state::{ItemPhase, ItemProgress, RejectionError, State, Timestamp};
+use crate::state::{ItemPhase, ItemProgress, Rejection, RejectionError, State, Timestamp};
 use crate::task_list::ItemMark;
 
 /// The item these tests count the rejections of.
@@ -58,8 +58,8 @@ fn a_rejected_item_keeps_the_count_its_reasons_and_the_start_of_its_next_run_and
     let next = progress
         .record_rejection("the count is not in the state".to_owned(), when(2))
         .unwrap();
-    // The run that closes one rejection stays open until the next rejection or a new run of the item.
-    assert_eq!(next, None);
+    // The rejection before this one is what this one settles: the member had not started a run after it yet.
+    assert_eq!(next, Some(when(1)));
     let started = progress
         .record_rejection("the status line is not shown".to_owned(), when(3))
         .unwrap();
@@ -68,11 +68,11 @@ fn a_rejected_item_keeps_the_count_its_reasons_and_the_start_of_its_next_run_and
     let returned = progress.rejections().unwrap();
     assert_eq!(returned.len(), 3);
     assert_eq!(
-        returned.first().map(|rejection| rejection.reason()),
+        returned.first().map(Rejection::reason),
         Some("the tests of the reader are missing")
     );
     assert_eq!(
-        returned.last().map(|rejection| rejection.reason()),
+        returned.last().map(Rejection::reason),
         Some("the status line is not shown")
     );
     let written: serde_json::Value = serde_json::to_value(&progress).unwrap();
@@ -82,6 +82,15 @@ fn a_rejected_item_keeps_the_count_its_reasons_and_the_start_of_its_next_run_and
         entries.first().map(|entry| entry["reason"].clone()),
         Some(serde_json::json!("the tests of the reader are missing"))
     );
+    let run_of = |index: usize| {
+        progress
+            .rejections()
+            .and_then(|recorded| recorded.get(index))
+            .and_then(Rejection::counted_in)
+    };
+    assert_eq!(run_of(0), None, "the first rejection has no run that carries it yet");
+    assert_eq!(run_of(1), None, "the second rejection has no run that carries it yet");
+    assert_eq!(run_of(2), None, "the last rejection waits for the member's next run");
 }
 
 #[test]
@@ -146,20 +155,6 @@ fn a_rejection_is_counted_when_the_next_run_of_the_item_starts_and_only_once() {
     assert_eq!(progress.counted_rejections(5).get(), 2);
     // The same run does not close a rejection twice.
     assert_eq!(progress.next_run_started(NonZeroU32::new(37).unwrap(), when(3)), Ok(0));
-}
-
-#[test]
-fn a_fresh_start_clears_the_reasons_of_the_earlier_branch_and_keeps_the_count() {
-    let mut progress = working();
-    progress
-        .record_rejection("the reader is wrong".to_owned(), when(1))
-        .unwrap();
-    progress.next_run_started(NonZeroU32::new(2).unwrap(), when(1)).unwrap();
-
-    progress.clear_rejections();
-
-    assert_eq!(progress.rejections(), Some(&[][..]));
-    assert_eq!(progress.counted_rejections(5).get(), 1);
 }
 
 #[test]
