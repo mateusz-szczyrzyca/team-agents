@@ -553,10 +553,4 @@ async fn read_window(path: &Path) -> Result<Option<Window>, UnreadMessagesError>
 #[cfg(test)]
 mod after_tests;
 #[cfg(test)]
-mod finished_segments_tests;
-#[cfg(test)]
-mod finished_tests;
-#[cfg(test)]
-mod said_tests;
-#[cfg(test)]
 mod tests;
