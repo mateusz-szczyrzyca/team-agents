@@ -689,7 +689,8 @@ impl StatusCounts {
             (self.done, count_word(TaskStatus::Done)),
         ]
         .into_iter()
-        .filter_map(|(count, word)| (count > 0).then(|| format!("{count} {word}")))
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
         .collect()
     }
 }
