@@ -678,15 +678,31 @@ fn a_step_mismatch_does_not_bounce_for_failed_run_or_unplanned_role_or_legacy() 
     );
 }
 
-#[test]
-fn decide_plan_with_mismatch_table() {
-    let mismatch = || PlanReason::Mismatch {
+fn sample_mismatch() -> PlanReason {
+    PlanReason::Mismatch {
         step: item("1.1"),
         title: "Write it".to_owned(),
         check: Some("cargo test".to_owned()),
         reason: Some("check failed with exit code 1".to_owned()),
         tail: "failures:\n    test_it".to_owned(),
-    };
+    }
+}
+
+fn sample_combined(fault: PlanFault) -> PlanReason {
+    PlanReason::fault_and_mismatch(
+        fault,
+        StepMismatch {
+            step: item("1.1"),
+            title: "Write it".to_owned(),
+            check: Some("cargo test".to_owned()),
+            reason: Some("check failed with exit code 1".to_owned()),
+            tail: "failures:\n    test_it".to_owned(),
+        },
+    )
+}
+
+#[test]
+fn decide_plan_with_mismatch_table() {
     let clean = read(DONE);
     let unfinished = read("1. Work\n[x] 1.1 Write it\n[ ] 1.2 Check it\n");
     let prev_1_3 = [plan("1. Work\n[x] 1.1 Write it\n[ ] 1.3 Document it\n")];
@@ -700,18 +716,6 @@ fn decide_plan_with_mismatch_table() {
     let done = ended(RunOutcome::Done);
     let sleeping = ended(RunOutcome::Sleeping);
     let failed = ended(RunOutcome::Failed);
-    let combined = |fault| {
-        PlanReason::fault_and_mismatch(
-            fault,
-            StepMismatch {
-                step: item("1.1"),
-                title: "Write it".to_owned(),
-                check: Some("cargo test".to_owned()),
-                reason: Some("check failed with exit code 1".to_owned()),
-                tail: "failures:\n    test_it".to_owned(),
-            },
-        )
-    };
     let facts = |role, end, read, earlier, keeping, policy| PlanFacts {
         role,
         end,
@@ -725,17 +729,17 @@ fn decide_plan_with_mismatch_table() {
         (
             "below bounces",
             facts(Role::Member, &done, &clean, &[], Some(&k2), &def_policy),
-            PlanVerdict::SendBack(mismatch()),
+            PlanVerdict::SendBack(sample_mismatch()),
         ),
         (
             "at bounces",
             facts(Role::Member, &done, &clean, &[], Some(&k3), &def_policy),
-            PlanVerdict::AskHuman(mismatch()),
+            PlanVerdict::AskHuman(sample_mismatch()),
         ),
         (
             "above bounces",
             facts(Role::Member, &done, &clean, &[], Some(&k4), &def_policy),
-            PlanVerdict::AskHuman(mismatch()),
+            PlanVerdict::AskHuman(sample_mismatch()),
         ),
         (
             "bounces 0",
@@ -765,21 +769,21 @@ fn decide_plan_with_mismatch_table() {
         (
             "mismatch with unfinished step (one bounce, both named)",
             facts(Role::Member, &done, &unfinished, &[], Some(&k0), &def_policy),
-            PlanVerdict::SendBack(combined(PlanFault::Unfinished {
+            PlanVerdict::SendBack(sample_combined(PlanFault::Unfinished {
                 steps: vec![item("1.2")],
             })),
         ),
         (
             "mismatch with lost step at bounce limit (both named)",
             facts(Role::Coordinator, &done, &lost, &prev_1_3, Some(&k3), &def_policy),
-            PlanVerdict::AskHuman(combined(PlanFault::LostStep {
+            PlanVerdict::AskHuman(sample_combined(PlanFault::LostStep {
                 steps: vec![item("1.3")],
             })),
         ),
     ];
 
     for (name, row_facts, expected) in rows {
-        let actual = decide_plan_with_mismatch(*row_facts, Some(mismatch()));
+        let actual = decide_plan_with_mismatch(*row_facts, Some(sample_mismatch()));
         assert_eq!(&actual, expected, "row: {name}");
     }
 }
