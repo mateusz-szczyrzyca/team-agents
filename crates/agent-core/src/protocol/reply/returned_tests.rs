@@ -36,7 +36,6 @@ fn team_with_returns(counted: u32, pending: u32) -> crate::state::Team {
         item.record_rejection(format!("pending {round}"), when(1000 + i64::from(round)))
             .unwrap();
     }
-    drop(item);
     team
 }
 
