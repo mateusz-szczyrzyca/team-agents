@@ -169,8 +169,6 @@ pub enum LogEvent {
     RunStarted,
     /// A model CLI run ends.
     RunEnded,
-    /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
-    TaskWaitsForAgent,
     /// The daemon has opened its state and its history and serves its socket.
     DaemonStarted,
     /// A signal (`SIGTERM` or `SIGINT`) asks the daemon to stop.
@@ -208,6 +206,8 @@ pub enum LogEvent {
     /// A task whose runs went bad after the last new session is handed over: to another agent, which holds it from now
     /// on, or, for a member's work, to its team's lead.
     TaskHandedOver,
+    /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
+    TaskWaitsForAgent,
 }
 
 impl Keyword for LogEvent {

@@ -319,7 +319,6 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `task_status_changed` | `info` | A task's status changes. |
 | `run_started` | `info` | A model CLI run starts. A run that the bus's wake-up starts also has `why` (`wake_up`), `message_id`, `from` and `wake_ups` (the number of this wake-up for that message). |
 | `run_ended` | `info` | A model CLI run ends. |
-| `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
 | `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
 | `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
 | `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
@@ -338,6 +337,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
 | `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. |
+| `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
 
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers
