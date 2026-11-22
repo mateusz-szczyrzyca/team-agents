@@ -42,6 +42,9 @@ pub const PLAN_PROTOCOL_VERSION: u32 = 5;
 /// The negotiated version carrying split executors and capability waits.
 pub const EXECUTOR_PROTOCOL_VERSION: u32 = 6;
 
+/// The negotiated version carrying the daemon's crate versions on status replies.
+pub const VERSIONS_PROTOCOL_VERSION: u32 = 7;
+
 /// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -53,6 +56,8 @@ pub enum ReplyFormat {
     Plan,
     /// Version six, including split executors and capability waits.
     Executor,
+    /// Version seven, including the daemon's crate versions on status replies.
+    Versions,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -347,7 +352,7 @@ impl Frame {
             ReplyFormat::Legacy => self.to_line(),
             ReplyFormat::Split => encode_split(self),
             ReplyFormat::Plan => encode_plan(self),
-            ReplyFormat::Executor => encode_executor(self),
+            ReplyFormat::Executor | ReplyFormat::Versions => encode_executor(self),
         }
     }
 

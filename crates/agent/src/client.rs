@@ -338,7 +338,9 @@ impl Connection {
                 .ok_or(ClientError::Closed)?;
             let frame = match format {
                 ReplyFormat::Legacy => Frame::from_line(&line)?,
-                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor => Frame::from_line_negotiated(&line)?,
+                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor | ReplyFormat::Versions => {
+                    Frame::from_line_negotiated(&line)?
+                }
             };
             match frame {
                 Frame::Response(response) if response.id == id => return Ok(response),
