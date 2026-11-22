@@ -8,6 +8,7 @@ use std::str::FromStr;
 use std::time::{Duration, Instant};
 
 use agent_core::config::{AbsolutePath, EnvName, Program};
+use agent_core::decide::worker_result::CheckOutcome;
 use agent_core::ids::{ItemId, RunId, TaskId, TeamId};
 use agent_core::plan::judge::{JudgementState, refuse_command};
 use agent_core::plan::{Check, Step};
@@ -358,7 +359,7 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
             (
                 JudgementState::Mismatch,
                 Some(with_cleanup_result(
-                    format!("ran past {check_seconds} seconds"),
+                    format!("{RAN_PAST}{check_seconds} seconds"),
                     cleanup,
                 )),
             )
@@ -677,6 +678,15 @@ pub async fn execute_command_check(
     step: &Step,
     command_str: &str,
 ) -> Result<JudgementResult, CheckError> {
+    run_command_check(context, step.id(), command_str).await
+}
+
+/// Runs `command_str` as the check of the step `id`, with the limits of `context`.
+async fn run_command_check(
+    context: &CheckContext<'_>,
+    id: ItemId,
+    command_str: &str,
+) -> Result<JudgementResult, CheckError> {
     let start = Instant::now();
     if refuse_command(command_str, context.check_refuse) {
         return Ok(JudgementResult {
@@ -714,7 +724,7 @@ pub async fn execute_command_check(
         );
     }
 
-    let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, step.id()).await {
+    let (log_path, rel_output_path) = match check_log_paths(&checks_dir, context.run, id).await {
         Ok(paths) => paths,
         Err(error) => {
             let reason = remove_running_record(&record, format!("cannot create check log path: {error}")).await;
@@ -780,6 +790,55 @@ fn failure_without_output(command: &str, reason: String, start: Instant) -> Resu
         gate_refused: false,
     })
 }
+
+/// Runs the check `check` of a request for a worker in the worker's worktree: a path that must exist, or a command with
+/// the limits of a step's check. `id` names the check's output file, the step of the requester's plan the request is for.
+///
+/// # Errors
+/// [`CheckError::DurationOverflow`] if the measured check duration exceeds `u64` milliseconds.
+pub async fn execute_request_check(
+    context: &CheckContext<'_>,
+    id: &ItemId,
+    check: &Check,
+) -> Result<JudgementResult, CheckError> {
+    match check {
+        Check::Exists(path) => check_exists(context.worktree, path, check.to_string()).await,
+        Check::Command(command) => run_command_check(context, *id, command).await,
+        Check::Reviewer => Ok(JudgementResult {
+            state: JudgementState::Declared,
+            check_line: Some(check.to_string()),
+            reason: None,
+            duration_ms: 0,
+            output_path: None,
+            tail: String::new(),
+            gate_refused: false,
+        }),
+    }
+}
+
+/// What a request's check found, for the decision about the worker's result: a check that ran and passed, one that failed,
+/// one that ran past its limit, or none that could show anything (a check that is only declared: a reviewer's, or a
+/// command when `[plan] check_seconds` is `0`).
+#[must_use]
+pub fn request_check_outcome(result: &JudgementResult) -> CheckOutcome {
+    match result.state {
+        JudgementState::Confirmed => CheckOutcome::Passed,
+        JudgementState::Mismatch
+            if result
+                .reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with(RAN_PAST)) =>
+        {
+            CheckOutcome::TimedOut
+        }
+        JudgementState::Mismatch => CheckOutcome::Failed,
+        JudgementState::Declared if result.gate_refused => CheckOutcome::Failed,
+        JudgementState::Declared => CheckOutcome::Absent,
+    }
+}
+
+/// What the reason of a check that ran past its limit starts with.
+const RAN_PAST: &str = "ran past ";
 
 /// Executes the check for `step` within `context`.
 ///

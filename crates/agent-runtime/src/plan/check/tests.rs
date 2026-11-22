@@ -1054,3 +1054,112 @@ async fn spawning_daemon_death_during_record_rename_removes_record_and_prevents_
         "child shell must remove checks/running when the second daemon-liveness check fails"
     );
 }
+
+fn result(state: JudgementState, reason: Option<&str>, gate_refused: bool) -> super::JudgementResult {
+    super::JudgementResult {
+        state,
+        check_line: None,
+        reason: reason.map(str::to_owned),
+        duration_ms: 0,
+        output_path: None,
+        tail: String::new(),
+        gate_refused,
+    }
+}
+
+#[test]
+fn a_requests_check_outcome_has_a_row_for_each_state() {
+    use agent_core::decide::worker_result::CheckOutcome;
+    let table = [
+        (
+            "confirmed",
+            result(JudgementState::Confirmed, None, false),
+            CheckOutcome::Passed,
+        ),
+        (
+            "a command that failed",
+            result(JudgementState::Mismatch, Some("check failed with exit code 1"), false),
+            CheckOutcome::Failed,
+        ),
+        (
+            "a path that is not there",
+            result(JudgementState::Mismatch, Some("path does not exist: a.md"), false),
+            CheckOutcome::Failed,
+        ),
+        (
+            "a command that ran past its limit",
+            result(JudgementState::Mismatch, Some("ran past 120 seconds"), false),
+            CheckOutcome::TimedOut,
+        ),
+        (
+            "a refused gate command",
+            result(JudgementState::Declared, Some("refused gate command"), true),
+            CheckOutcome::Failed,
+        ),
+        (
+            "a declared check",
+            result(JudgementState::Declared, None, false),
+            CheckOutcome::Absent,
+        ),
+    ];
+    for (what, result, expected) in table {
+        assert_eq!(super::request_check_outcome(&result), expected, "{what}");
+    }
+}
+
+#[tokio::test]
+async fn a_request_check_that_names_a_path_passes_when_it_exists_and_fails_when_it_does_not() {
+    let env = TestEnv::new();
+    fs::write(env.worktree.join("count.txt"), "3\n").unwrap();
+    let id: agent_core::ids::ItemId = "2.1".parse().unwrap();
+    let ctx = env.context(120, &[]);
+
+    let there = super::execute_request_check(&ctx, &id, &"exists count.txt".parse().unwrap())
+        .await
+        .unwrap();
+    let missing = super::execute_request_check(&ctx, &id, &"exists other.txt".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(there.state, JudgementState::Confirmed);
+    assert_eq!(missing.state, JudgementState::Mismatch);
+}
+
+#[tokio::test]
+async fn a_request_check_that_is_a_command_runs_in_the_worktree_with_its_output_kept() {
+    let env = TestEnv::new();
+    fs::write(env.worktree.join("count.txt"), "3\n").unwrap();
+    let id: agent_core::ids::ItemId = "2.1".parse().unwrap();
+    let ctx = env.context(120, &[]);
+
+    let passed = super::execute_request_check(&ctx, &id, &"test -s count.txt && cat count.txt".parse().unwrap())
+        .await
+        .unwrap();
+    let failed = super::execute_request_check(&ctx, &id, &"echo broken; exit 3".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert_eq!(passed.state, JudgementState::Confirmed);
+    assert!(passed.output_path.is_some());
+    assert_eq!(failed.state, JudgementState::Mismatch);
+    assert!(failed.tail.contains("broken"), "{}", failed.tail);
+}
+
+#[tokio::test]
+async fn a_request_check_that_is_the_gate_is_refused_and_a_reviewers_is_only_declared() {
+    let env = TestEnv::new();
+    let id: agent_core::ids::ItemId = "2.1".parse().unwrap();
+    let refuse = ["agent gate".to_owned()];
+    let ctx = env.context(120, &refuse);
+
+    let gate = super::execute_request_check(&ctx, &id, &"agent gate".parse().unwrap())
+        .await
+        .unwrap();
+    let reviewer = super::execute_request_check(&ctx, &id, &"reviewer".parse().unwrap())
+        .await
+        .unwrap();
+
+    assert!(gate.gate_refused);
+    assert_eq!(gate.state, JudgementState::Declared);
+    assert_eq!(reviewer.state, JudgementState::Declared);
+}
