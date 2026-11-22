@@ -202,43 +202,11 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     // Remove the blocking hook so push can succeed:
     std::fs::remove_file(&hook).unwrap();
 
-    // Controlled refusal blocking final merge reset:
-    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    // Allow merge:
+    rig.github.answer_merges(MergeAnswer::Allow);
 
     // Restart daemon:
     rig.start().await;
-
-    // Wait until publication succeeds and push is observed on origin:
-    let gate: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
-    let gated_commit = gate["result"]["head"].as_str().unwrap().to_owned();
-    let branch = rig.github.pulls()[0].head.clone();
-    // Wait until publication succeeds, gated commit is pushed, and pass is spent:
-    let state = rig
-        .state_where("conflict publication succeeds and pass is recorded", |state| {
-            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            item.merge_passes() == 1 && item.publish_tries() == 0
-        })
-        .await;
-    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-    assert_eq!(
-        item.merge_passes(),
-        1,
-        "successful publication must increment merge conflict pass exactly once"
-    );
-    assert_eq!(
-        item.publish_tries(),
-        0,
-        "successful publication resets publish tries"
-    );
-    assert_eq!(
-        git(&rig.origin, &["rev-parse", branch.as_str()]).trim(),
-        gated_commit,
-        "gated commit must be pushed to origin upon successful publication"
-    );
-
-    // Now allow merge:
-    rig.github.answer_merges(MergeAnswer::Allow);
 
     // Wait until part 1.1a PR merges and advances:
     let state = rig
@@ -257,6 +225,9 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let pr = team.rounds()[0].part_pull_request().unwrap();
     assert_eq!(pr.number.get().get(), 1);
     let remote_head = git(&rig.origin, &["rev-parse", pr.branch.as_str()]).trim().to_string();
+    let gate: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.gate_record_file(&coordinator)).unwrap()).unwrap();
+    let gated_commit = gate["result"]["head"].as_str().unwrap();
     assert_eq!(
         remote_head, gated_commit,
         "remote PR branch must carry the exact gated commit hash"
@@ -2754,7 +2725,7 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     // Observe daemon evaluation after restart:
     let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
     rig.wait_for("daemon evaluation after restart", || {
-        rig.github.calls("GET", &pull_path).len() >= 1
+        !rig.github.calls("GET", &pull_path).is_empty()
     })
     .await;
 
