@@ -1,15 +1,20 @@
 //! Durable coordinator proposals, whole-plan approval and bounded corrections.
 
+use std::collections::BTreeSet;
+
 use agent_core::decide::split::approval::{AskReason, ProposalDecision, ProposalFault, ProposalRead, decide_proposal};
+use agent_core::decide::split::submission::{Refusal, Submission, judge_submission};
 use agent_core::history::{HistoryEvent, SplitDecision};
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
+use agent_core::log::LogEvent;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 use agent_core::questions::{MAX_QUESTIONS_BYTES, quote};
 use agent_core::state::split::keeping::{ProposalKeeping, ProposalStage};
 use agent_core::state::split::proposal::{ReadProposalError, ScopeChange, read_proposal};
 use agent_core::state::{RecordSplitError, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::Outgoing;
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 use agent_runtime::text_file::{ReplaceError, read_text_file, replace_text_file};
 
@@ -75,16 +80,17 @@ impl Owner {
             .ok_or_else(|| OwnerError::LostTeam {
                 team: located.team.clone(),
             })?;
-        let submitted = team
-            .items()
+        let items: Vec<ItemId> = team.items().iter().map(agent_core::state::ItemProgress::id).collect();
+        let split: BTreeSet<ItemId> = team
+            .splits()
             .iter()
-            .find(|item| {
-                !team.splits().iter().any(|plan| plan.parent() == item.id())
-                    && message
-                        .is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {}", item.id())))
-            })
-            .map(agent_core::state::ItemProgress::id);
-        let Some(item) = submitted else { return Ok(None) };
+            .map(agent_core::state::split::SplitPlan::parent)
+            .collect();
+        let item = match judge_submission(&items, &split, message) {
+            Submission::NotSubmitted => return Ok(None),
+            Submission::Refused(refusal) => return self.refuse_split(task, located, &refusal).await.map(Some),
+            Submission::Taken(item) => item,
+        };
         let keeping = team.split_proposal(item).cloned();
         let path = self
             .parts
@@ -113,6 +119,61 @@ impl Owner {
         self.decide_split(task, located, item, keeping)
             .await
             .map(|end| Some(end.into()))
+    }
+
+    /// Records a `SPLIT:` line that cannot be taken and tells its author why, in a message of the catalog that says what to do
+    /// instead; the author is queued to run again and read it. Nobody is left waiting for a correction it was not asked for.
+    async fn refuse_split(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        refusal: &Refusal,
+    ) -> Result<Settled, OwnerError> {
+        let (id, values, item) = match refusal {
+            Refusal::AlreadySplit { item } => (
+                TeamPrompt::SplitRefusedAlready,
+                Variables::new().with("item", item.to_string()),
+                Some(*item),
+            ),
+            Refusal::UnknownItem { text } => (
+                TeamPrompt::SplitRefusedUnknown,
+                Variables::new().with("text", text.as_str()),
+                None,
+            ),
+        };
+        let text = self
+            .parts
+            .team_texts
+            .render(id, &values.map_err(ProposalError::Variables)?)
+            .map_err(ProposalError::Render)?;
+        let reason = text.trim().to_owned();
+        agent_runtime::history::log_decision(
+            "split_proposal",
+            &serde_json::json!({"task": task, "item": item.map(|item| item.to_string()), "corrections": 0}),
+            &serde_json::json!({"decision": SplitDecision::Corrected, "reason": reason}),
+        );
+        if let Some(item) = item {
+            self.record_event(
+                &located.team,
+                self.rounds_of_tasks(std::slice::from_ref(task)),
+                HistoryEvent::SplitDecision {
+                    task: task.clone(),
+                    item,
+                    decision: SplitDecision::Corrected,
+                    corrections: 0,
+                    question: None,
+                    reason,
+                },
+            );
+        }
+        let to = self.recipient_of(task)?;
+        let from = "agentbus".parse()?;
+        if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
+            // The refusal is recorded; the author still runs again, and the checks of its next end say it again.
+            tracing::warn!(event = LogEvent::BusDown.as_str(), %task, error = %agent_runtime::process::error_chain(&error),
+                "cannot tell the author of a refused split why");
+        }
+        Ok(Settled::Status(TaskStatus::Queued))
     }
 
     /// Applies one saved pending proposal; all outcomes are committed with the task status.
