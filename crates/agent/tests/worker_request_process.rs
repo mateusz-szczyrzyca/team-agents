@@ -409,6 +409,8 @@ Integrate the guide.
             ("glm-1", "worker", "ask-worker:worker,done:Result: done."),
             ("glm-2", "worker", "sleep,done:Result: done."),
         ]);
+        // The row is about the prompts of the first tries: a wrong result is not given to the other worker here.
+        world.allow_tries(1);
         world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
         world.asks("coordinator", Some(COORDINATOR_PLAN), &[COORDINATOR_REQUEST]);
         world.asks(
@@ -1409,6 +1411,13 @@ Integrate the guide.
     }
 
     impl World {
+        /// Lets a request be given to `tries` workers in all (`[workers] tries`): `1` never gives it to a second worker.
+        fn allow_tries(&self, tries: u32) {
+            let mut config = std::fs::read_to_string(self.home.join("agents.toml")).unwrap();
+            write!(config, "[workers]\ntries = {tries}\n").unwrap();
+            std::fs::write(self.home.join("agents.toml"), config).unwrap();
+        }
+
         /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
         fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
             serde_json::json!({
@@ -1544,15 +1553,12 @@ Integrate the guide.
             "the file is set aside"
         );
         assert!(task_dir.join("worker-request-5.json.damaged").exists(), "and kept");
+        // The request the file holds is answered too, once: the bus had it running for this worker.
         assert_eq!(
             world.count_told("claude-1", "Your request H1 to the workers is back with you"),
-            0
+            1
         );
-        assert_eq!(
-            world.requests()["1"]["status"],
-            "running",
-            "the request of the content was not settled by it"
-        );
+        assert_eq!(world.requests()["1"]["status"], "failed");
     }
 
     /// The member's request on a team of `workers` (each with its own script), served by the first of them, whose result is
