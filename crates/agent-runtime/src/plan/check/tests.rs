@@ -932,9 +932,7 @@ async fn replace_running_record_and_proc_scan_propagate_errors() {
     std::fs::create_dir_all(&bad_pid_dir).unwrap();
     std::fs::write(bad_pid_dir.join("stat"), "corrupt-stat-without-parens").unwrap();
 
-    let scan_res = super::process_group_has_member_since_in(&fake_proc, 4242, 100);
-    assert!(
-        scan_res.is_err(),
-        "process_group_has_member_since_in must propagate unexpected /proc/<pid>/stat errors instead of returning Ok(false): {scan_res:?}"
-    );
+    let scan_err = super::process_group_has_member_since_in(&fake_proc, 4242, 100)
+        .expect_err("process_group_has_member_since_in must propagate unexpected /proc/<pid>/stat errors");
+    assert_eq!(scan_err.kind(), std::io::ErrorKind::InvalidData);
 }
