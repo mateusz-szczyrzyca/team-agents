@@ -267,18 +267,29 @@ impl Owner {
 
     /// `waiting` as a line that names who owes it and since when.
     ///
-    /// The wait starts when the round last went idle: the end of the latest run of its tasks. A round whose tasks have not
-    /// run, or whose run goes on, has no start to name.
+    /// The wait starts when the question was put, for the human's, and otherwise when the round last went idle: the end of
+    /// the latest run that worked for it. A round whose tasks have not run, or whose run goes on, has no start to name.
     pub(in crate::daemon::owner) fn wait_text(team: &Team, round: &Round, waiting: Waiting) -> String {
-        let since = round_tasks(team, round)
+        let tasks = round_tasks(team, round);
+        // The human's wait began when the question was put; any other when the round last went idle: the end of the latest
+        // run that worked for this round, not one of the same task for another.
+        let asked = match waiting {
+            Waiting::For(Obligation::Human) => tasks
+                .iter()
+                .filter_map(|member| member.open_question().map(agent_core::state::Question::asked_at))
+                .min(),
+            Waiting::For(_) | Waiting::Defect => None,
+        };
+        let idle = tasks
             .iter()
             .flat_map(|member| member.runs())
+            .filter(|run| run.rounds().contains(round.id()))
             .filter_map(|run| match run.state() {
                 agent_core::state::RunState::Ended { at, .. } => Some(*at),
                 agent_core::state::RunState::Running => None,
             })
-            .max()
-            .map(|at| agent_core::local_time::Zone::Utc.stamp(at));
+            .max();
+        let since = asked.or(idle).map(|at| agent_core::local_time::Zone::Utc.stamp(at));
         waiting.line(since.as_deref())
     }
 

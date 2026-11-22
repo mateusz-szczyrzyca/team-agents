@@ -327,13 +327,8 @@ fn needs_response(item: &agent_core::state::ItemProgress, run: &agent_core::stat
         .fix_passes()
         .last()
         .and_then(|pass| pass.requested_by.iter().map(|request| request.requested_at).max());
-    let ended = match run.state() {
-        RunState::Ended { at, .. } => *at,
-        RunState::Running => run.started_at(),
-    };
     let lead = LeadRun {
         started: run.started_at(),
-        ended,
     };
     disputes.answered_pass != pass
         && disputes.checked_run.as_ref() != Some(run.id())

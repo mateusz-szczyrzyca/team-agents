@@ -72,23 +72,18 @@ pub fn fix_step(progress: Progress, budget: Budget) -> Step {
     }
 }
 
-/// When the lead's last completed run started and ended.
+/// The lead's last completed run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LeadRun {
-    /// When the run started.
+    /// When the run started: what decides whether it can answer the findings of a pass.
     pub started: Timestamp,
-    /// When the run ended.
-    pub ended: Timestamp,
 }
 
 impl LeadRun {
     /// A run that started at `started`; that is all that decides whether it can answer a pass.
     #[must_use]
     pub const fn started_at(started: Timestamp) -> Self {
-        Self {
-            started,
-            ended: started,
-        }
+        Self { started }
     }
 }
 
