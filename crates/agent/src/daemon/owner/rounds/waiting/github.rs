@@ -41,6 +41,7 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
             Outlook::MayPass
         }
         PublishError::Git(_)
+        | PublishError::Bus { .. }
         | PublishError::Findings(_)
         | PublishError::Commit(_)
         | PublishError::Path { .. }

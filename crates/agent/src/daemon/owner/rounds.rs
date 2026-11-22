@@ -295,6 +295,14 @@ enum PublishError {
         /// What is wrong with it, if the text was refused.
         source: Option<InvalidValue>,
     },
+    /// The bus cannot list the requests for workers of a task, whose steps done by a worker the description lists.
+    #[error("cannot list the requests for workers of {task}")]
+    Bus {
+        /// The task.
+        task: TaskId,
+        /// Why the bus did not answer.
+        source: agent_runtime::agentbus::AgentBusError,
+    },
     /// The lead contribution cannot be read.
     #[error("cannot read lead description {path:?}")]
     Description {
