@@ -57,6 +57,7 @@ use crate::commands::control::ControlError;
 use crate::commands::daemon::{DaemonCommandError, daemon};
 use crate::commands::debug::{DebugCliArgs, DebugError, debug};
 use crate::commands::gate::{GateError, gate, task_in};
+use crate::commands::guard::{GuardCommitError, guard_commit};
 use crate::commands::log::{LogError, LogRequest, log_in};
 use crate::commands::pause::pause;
 use crate::commands::resume::resume;
@@ -100,6 +101,12 @@ const GATE: &str = "gate";
 /// What `agent gate` is for, as the help says.
 const GATE_ABOUT: &str =
     "Runs the repository's gate for a task, one gate at a time on the machine, and says what it said";
+
+/// The name of the command that the `commit-msg` hook of an agent's runs calls.
+const GUARD_COMMIT: &str = "guard-commit";
+
+/// What `agent guard-commit` is for, as the help says; the command is hidden from the list of commands.
+const GUARD_COMMIT_ABOUT: &str = "Asked by the commit-msg hook of an agent's runs: refuses a commit that changes a test a RED: commit froze, unless it is a TEST-FIX: commit";
 
 /// The name of the command that tells the story of a round or a team from the history.
 const LOG: &str = "log";
@@ -152,6 +159,11 @@ fn command() -> clap::Command {
     let with_run = Cli::command()
         .subcommand(RunArgs::augment_args(clap::Command::new(RUN)).about(RUN_ABOUT))
         .subcommand(GateArgs::augment_args(clap::Command::new(GATE)).about(GATE_ABOUT))
+        .subcommand(
+            GuardCommitArgs::augment_args(clap::Command::new(GUARD_COMMIT))
+                .about(GUARD_COMMIT_ABOUT)
+                .hide(true),
+        )
         .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT))
         .subcommand(DebugArgs::augment_args(clap::Command::new(DEBUG)).about(DEBUG_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
@@ -175,6 +187,8 @@ enum Invocation {
     Steer(Steer),
     /// `gate`.
     Gate(GateArgs),
+    /// `guard-commit`.
+    GuardCommit(GuardCommitArgs),
     /// `log`.
     Log(LogArgs),
     /// `debug`.
@@ -198,6 +212,9 @@ where
     // `gate` is added to the command line like `run`, so the matches are read here, where it is taken out of them.
     if let Some((GATE, gate)) = matches.subcommand() {
         return Ok(Invocation::Gate(GateArgs::from_arg_matches(gate)?));
+    }
+    if let Some((GUARD_COMMIT, guard)) = matches.subcommand() {
+        return Ok(Invocation::GuardCommit(GuardCommitArgs::from_arg_matches(guard)?));
     }
     if let Some((LOG, log)) = matches.subcommand() {
         return Ok(Invocation::Log(LogArgs::from_arg_matches(log)?));
@@ -230,6 +247,13 @@ struct RunArgs {
     /// Permit unpublished commits on the base branch.
     #[arg(long)]
     allow_unpushed_base: bool,
+}
+
+/// The arguments of `agent guard-commit`.
+#[derive(Debug, Args)]
+struct GuardCommitArgs {
+    /// The file that holds the message of the commit, which git gives its `commit-msg` hook.
+    message_file: PathBuf,
 }
 
 /// The arguments of `agent log`.
@@ -533,6 +557,9 @@ enum CommandError {
     /// `agent gate` failed.
     #[error(transparent)]
     Gate(#[from] GateError),
+    /// `agent guard-commit` refused the commit or cannot write its answer.
+    #[error(transparent)]
+    GuardCommit(#[from] GuardCommitError),
     /// `agent log` failed.
     #[error(transparent)]
     Log(#[from] LogError),
@@ -585,6 +612,7 @@ where
         Ok(Invocation::Parsed(Parsed::Run(args))) => finish(execute_blocking(environment, Work::Run(args), out), err)?,
         Ok(Invocation::Steer(steer)) => finish(execute_blocking(environment, Work::Steer(steer), out), err)?,
         Ok(Invocation::Gate(args)) => finish(execute_blocking(environment, Work::Gate(args), out), err)?,
+        Ok(Invocation::GuardCommit(args)) => finish(execute_blocking(environment, Work::GuardCommit(args), out), err)?,
         // `log` reads a file and needs no runtime: it runs on the thread of the command.
         Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
         Ok(Invocation::Debug(args)) => finish(execute_blocking(environment, Work::Debug(args), out), err)?,
@@ -622,6 +650,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
+                | CommandError::GuardCommit(_)
                 | CommandError::Editor(_)
                 | CommandError::Runtime(_) => ExitCode::FAILURE,
             })
@@ -640,6 +669,8 @@ enum Work {
     Steer(Steer),
     /// `gate`.
     Gate(GateArgs),
+    /// `guard-commit`.
+    GuardCommit(GuardCommitArgs),
     /// `debug`.
     Debug(DebugArgs),
 }
@@ -656,6 +687,7 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Run(args) => execute_run(environment, args, out).await,
             Work::Steer(steer) => execute_steer(environment, steer, out).await,
             Work::Gate(args) => execute_gate(environment, args, out).await,
+            Work::GuardCommit(args) => Ok(guard_commit(environment, &args.message_file, out).await?),
             Work::Debug(args) => execute_debug_cmd(environment, args, out).await,
         }
     })
