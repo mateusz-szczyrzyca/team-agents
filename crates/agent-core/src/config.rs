@@ -597,6 +597,42 @@ impl Plan {
     }
 }
 
+/// `[workers]`: what the harness does with the result of a worker that served a request.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Workers {
+    /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
+    tries: u32,
+    /// How long a worker's run may last, in seconds; `0` has no limit.
+    seconds: u64,
+}
+
+impl Workers {
+    /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
+    #[must_use]
+    pub const fn tries(&self) -> u32 {
+        self.tries
+    }
+
+    /// How long a worker's run may last, in seconds; `0` has no limit.
+    #[must_use]
+    pub const fn seconds(&self) -> u64 {
+        self.seconds
+    }
+}
+
+impl Default for Workers {
+    fn default() -> Self {
+        Self {
+            tries: DEFAULT_WORKERS_TRIES,
+            seconds: 0,
+        }
+    }
+}
+
+/// How many tries a request for a worker gets, by default.
+const DEFAULT_WORKERS_TRIES: u32 = 2;
+
 /// How many times a task's runs go back for its plan before the human is asked, by default.
 const DEFAULT_PLAN_BOUNCES: u32 = 3;
 
@@ -1222,6 +1258,12 @@ impl Config {
         &self.log
     }
 
+    /// What the harness does with the result of a worker.
+    #[must_use]
+    pub const fn workers(&self) -> &Workers {
+        &Workers { tries: 2, seconds: 0 }
+    }
+
     /// Which roles keep a plan of their task, and how often a run goes back for it.
     #[must_use]
     pub fn plan(&self) -> &Plan {
@@ -1533,6 +1575,49 @@ cli = "claude"
             .clone();
         assert_eq!(configured.check_seconds(), 30);
         assert_eq!(configured.check_refuse(), ["cargo test"]);
+    }
+
+    #[test]
+    fn a_file_without_workers_gets_two_tries_and_no_time_limit() {
+        let workers = config("").workers().clone();
+
+        assert_eq!(workers.tries(), 2);
+        assert_eq!(workers.seconds(), 0);
+    }
+
+    #[test]
+    fn the_workers_table_says_how_many_tries_and_how_long_a_run() {
+        let workers = config("[workers]\ntries = 3\nseconds = 900\n").workers().clone();
+
+        assert_eq!(workers.tries(), 3);
+        assert_eq!(workers.seconds(), 900);
+    }
+
+    #[test]
+    fn workers_tries_may_be_one_and_refuse_zero_or_a_fraction() {
+        assert_eq!(config("[workers]\ntries = 1\n").workers().tries(), 1);
+        for text in [
+            "[workers]\ntries = 0\n",
+            "[workers]\ntries = 1.5\n",
+            "[workers]\nseconds = -1\n",
+        ] {
+            let error = failure(text);
+
+            assert!(matches!(&error, ConfigError::Parse(_)), "{text}: {error:?}");
+        }
+    }
+
+    #[test]
+    fn the_template_has_the_workers_table_and_loads_to_its_defaults() {
+        let template = include_str!("../../../config/agents.example.toml");
+        let workers = Config::from_toml_str(template)
+            .expect("the example loads")
+            .workers()
+            .clone();
+
+        assert!(template.contains("[workers]"));
+        assert_eq!(workers.tries(), 2);
+        assert_eq!(workers.seconds(), 0);
     }
 
     #[test]
