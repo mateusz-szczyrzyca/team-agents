@@ -12,6 +12,27 @@ use std::path::Path;
 
 use crate::environment::Environment;
 
+/// What starts a line of the message that the editor shows and git's cleanup removes.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the commit that makes the command work")
+)]
+const COMMENT: char = '#';
+
+/// The position, after the name of the command, of the parent in `/proc/<pid>/stat`: the state comes first.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the commit that makes the command work")
+)]
+const PARENT_FIELD: usize = 1;
+
+/// The argument of `git commit` that replaces the last commit.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "used by the commit that makes the command work")
+)]
+const AMEND: &[u8] = b"--amend";
+
 /// Why `agent guard-commit` failed: the commit is refused, or the answer cannot be written.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum GuardCommitError {
@@ -29,8 +50,11 @@ pub(crate) enum GuardCommitError {
     not(test),
     expect(dead_code, reason = "used by the commit that makes the command work")
 )]
-fn subject_of(_message: &str) -> Option<&str> {
-    None
+fn subject_of(message: &str) -> Option<&str> {
+    message
+        .lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty() && !line.starts_with(COMMENT))
 }
 
 /// The parent of the process whose `/proc/<pid>/stat` is `stat`.
@@ -38,8 +62,10 @@ fn subject_of(_message: &str) -> Option<&str> {
     not(test),
     expect(dead_code, reason = "used by the commit that makes the command work")
 )]
-fn parent_of(_stat: &str) -> Option<u32> {
-    None
+fn parent_of(stat: &str) -> Option<u32> {
+    // The name of the command is in brackets and may hold brackets: the fields start after the last one.
+    let (_, after_name) = stat.rsplit_once(')')?;
+    after_name.split_whitespace().nth(PARENT_FIELD)?.parse().ok()
 }
 
 /// Whether the command line `cmdline` (arguments separated by NUL, as `/proc/<pid>/cmdline` holds it) asks `git commit`
@@ -48,8 +74,8 @@ fn parent_of(_stat: &str) -> Option<u32> {
     not(test),
     expect(dead_code, reason = "used by the commit that makes the command work")
 )]
-fn is_amend(_cmdline: &[u8]) -> bool {
-    false
+fn is_amend(cmdline: &[u8]) -> bool {
+    cmdline.split(|byte| *byte == 0).any(|argument| argument == AMEND)
 }
 
 /// Asks whether the commit whose message is in `message_file` may be made, in the directory of `environment`.
