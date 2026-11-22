@@ -762,4 +762,61 @@ mod git_bring_over {
         raw(repo, &["switch", "-q", "main"]);
         other
     }
+
+    #[tokio::test]
+    async fn the_commits_of_a_worker_before_the_base_of_its_request_are_not_brought_over() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n")], "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
+        // The rejected result of an earlier request stays on the worker's branch.
+        commit(&repo, &[("rejected.md", b"rejected\n")], "the earlier request's result");
+        let base: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        let worker = commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        raw(&repo, &["switch", "-q", "main"]);
+
+        let outcome = handle(&repo)
+            .bring_over_since(&base, &worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
+        assert!(
+            !repo.join("rejected.md").exists(),
+            "the earlier result is not brought over"
+        );
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn a_commit_brought_over_before_does_not_conflict_with_the_requesters_later_edit_of_that_file() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n"), ("other.txt", b"other\n")], "base");
+        raw(&repo, &["switch", "-q", "-c", "worker"]);
+        commit(&repo, &[("guide.md", b"one\ntwo\n")], "the first request's result");
+        let base: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        let worker = commit(&repo, &[("other.txt", b"other\nmore\n")], "the second request's result");
+        raw(&repo, &["switch", "-q", "main"]);
+        // The first result was brought over, and the requester has edited that file since.
+        commit(
+            &repo,
+            &[("guide.md", b"one\ntwo\nthe requester's edit\n")],
+            "the requester's own step",
+        );
+
+        let outcome = handle(&repo)
+            .bring_over_since(&base, &worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(
+            std::fs::read(repo.join("other.txt")).expect("the file"),
+            b"other\nmore\n"
+        );
+        assert_eq!(
+            std::fs::read(repo.join("guide.md")).expect("the file"),
+            b"one\ntwo\nthe requester's edit\n"
+        );
+    }
 }

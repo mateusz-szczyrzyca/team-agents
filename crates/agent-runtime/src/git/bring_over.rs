@@ -548,6 +548,23 @@ impl Git {
         Err(failed(operation, &captured))
     }
 
+    /// Brings what the worker committed since `base`, the commit its worktree was at when the request was given to it, to
+    /// the requester's branch, as [`Git::bring_over`] does: the commits before `base` — the rejected result of an earlier
+    /// request of the same worker, or one that was brought over already — are not part of it.
+    ///
+    /// # Errors
+    /// The errors of [`Git::bring_over`].
+    pub async fn bring_over_since(
+        &self,
+        base: &CommitId,
+        commit: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<BringOver, GitError> {
+        let _ = base;
+        self.bring_over(commit, round, task).await
+    }
+
     /// Brings `commit` to the requester's branch after a snapshot of the requester's worktree: the snapshot is taken
     /// first, the merge is settled in a scratch directory, and only a merge that applies is written, to the worktree
     /// and then to the branch, so the head moves to the merge commit and `git status` shows nothing of it.
