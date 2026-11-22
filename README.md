@@ -349,7 +349,10 @@ up to [`[split] corrections`](docs/configuration.md#split), and asks the human o
 corrections. Estimates are compared against `part_limit` in the configured `unit` (default `lines`). Members'
 requests go to their coordinator. Pending input, corrections and existing questions survive restarts.
 Decisions appear in history as `split_decision` and, at debug log level, as `decision_taken` with decision
-`split_proposal`. Existing configurations and split plans remain readable;
+`split_proposal`. A `SPLIT:` line the harness cannot take — the item is split already, or the team has no item of that name —
+is answered, not dropped: it is recorded in the log and in the history as a correction with its reason, the coordinator is
+sent a text of the catalog on the bus that says what was refused, why and what to do instead (deliver the part of its round;
+what does not fit is described for a task of its own), and it is woken for it, with no question to you. Existing configurations and split plans remain readable;
 history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
 items and parts are assigned only to agents meeting their minimum tier. When none fits, the harness writes one
 questions file for the lead and keeps the item waiting. An answer goes to the lead without permitting a lower-tier
@@ -644,6 +647,12 @@ handover corrections are allowed; exhaustion sends one notice naming the round a
 An unchanged tip can still enter verification when every blocker is explained or closed by a second opinion.
 Legacy unanswered blockers require a committed fix too.
 
+The first run of the lead after a verdict with findings gets the full text of every open finding, with its number, its
+reviewer and its level, and the same text is written to `fix-pass-findings.md` in the lead's task directory; the line
+that says the pass is still open and the request to correct a response name that file, so a lead that has lost the text
+reads it again instead of asking you. A lead's response is judged only when it was given in a run that started at or
+after the verdict, never a message from before the review.
+
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
 work, when none is free), a second opinion that an investigator is giving, the human's answer, the lead's correction,
@@ -652,7 +661,11 @@ one of the member the item or part is given to, or one that worked in the round 
 yet or holds it for a free agent or a limit of runs: the run goes on with the round, so it is no defect, and the round
 opened right after a merge of a part writes no error. A task that waits for a message, an assignment or a merge has no
 run to come. `nothing: this is a defect` means the harness has lost its next action, as when every task of the round
-waits; it logs one `daemon_task_failed` error for that round with `operation=round_wait`.
+waits; it logs one `daemon_task_failed` error for that round with `operation=round_wait`. Every other line also names who
+is obliged and since when the round last went idle (`the lead's correction, owed by the lead since 2026-11-22 03:12 +01:00`):
+the lead and the reviewers are told what is expected of them in their next prompt or a message that wakes them, you in a
+question or a notification, and the harness's own work (a gate, a merge, a queued run, a free investigator) needs no telling.
+A test lists every state a round can wait in with its owner and fails when one is added without.
 
 When another pull request of the same team already contains an item's deliverable (code, documents, images or
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
