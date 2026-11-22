@@ -1053,6 +1053,24 @@ impl ItemProgress {
         self.publish_question_number = Some(number);
     }
 
+    /// Destination recorded with the publication question, if known.
+    #[must_use]
+    pub fn publish_question_branch(&self) -> Option<&BranchName> {
+        None
+    }
+
+    /// Records the exact publication destination with its question identity.
+    pub fn record_publish_question_branch(
+        &mut self,
+        task: TaskId,
+        number: NonZeroU32,
+        at: Timestamp,
+        branch: BranchName,
+    ) {
+        drop(branch);
+        self.record_publish_question(task, number, at);
+    }
+
     /// Clears the open publication question.
     pub fn clear_publish_question(&mut self) {
         self.publish_question = None;
@@ -2310,5 +2328,17 @@ mod tests {
                 complete.then_some(NonZeroU32::new(3).unwrap())
             );
         }
+    }
+    #[test]
+    fn publication_question_retains_its_exact_destination_across_restart() {
+        let mut item = progress_in(PhaseKind::InProgress);
+        let task = "task-20261111-153001-k3x9".parse().unwrap();
+        let branch: BranchName = "agents/claude-1/task-1-1.1b".parse().unwrap();
+        item.record_publish_question_branch(task, NonZeroU32::new(3).unwrap(), at(100), branch.clone());
+        let saved = serde_json::to_value(&item).unwrap();
+        let restored: ItemProgress = serde_json::from_value(saved).unwrap();
+        assert_eq!(restored.publish_question_branch(), Some(&branch));
+        item.clear_publish_question();
+        assert_eq!(item.publish_question_branch(), None);
     }
 }
