@@ -835,7 +835,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         daemon.clock.advance(time::Duration::seconds(1));
         assert!(std::panic::catch_unwind(|| panic!("synthetic panic for daemon_panicked")).is_err());
 
-        // warn (14)
+        // warn (15)
         for variant in [
             LogEvent::CliOutputUnreadable,
             LogEvent::RunEndedWithoutStatus,
@@ -850,6 +850,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::GateDirtyTree,
             LogEvent::QuestionsFileInvalid,
             LogEvent::RestartCorrected,
+            LogEvent::WorkerRequestDamaged,
             LogEvent::RequestRefused,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
@@ -1437,6 +1438,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::turn_limit_restart_tests::record_snapshot_events(&mut observed).await;
     super::last_step_tests::record_task_handed_over(&mut observed).await;
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
+    super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

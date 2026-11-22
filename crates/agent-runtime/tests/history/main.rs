@@ -71,4 +71,6 @@ mod split_proposals;
 #[cfg(test)]
 mod wait_events;
 #[cfg(test)]
+mod worker_request_damaged;
+#[cfg(test)]
 mod writer_plans;

@@ -73,6 +73,17 @@ pub(in crate::daemon) enum BusNotice {
         /// What the worker reported.
         summary: String,
     },
+    /// The result of a worker did not serve a request of a member: it goes once more to another worker.
+    HelperGivenAgain {
+        /// The request.
+        request: RequestId,
+        /// The worker whose result did not serve.
+        worker: AgentName,
+        /// The worker the request goes to now.
+        next: AgentName,
+        /// Why the result did not serve.
+        reason: String,
+    },
     /// A worker could not do a request of a member.
     HelperFailed {
         /// The request.

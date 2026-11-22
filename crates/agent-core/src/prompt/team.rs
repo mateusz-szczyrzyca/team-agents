@@ -59,6 +59,9 @@ pub enum TeamPrompt {
     Wake,
     /// What a worker is told when it is given a request of a member.
     Delegation,
+    /// What a worker is told, after the delegation, when the request was given to another worker before and that result was
+    /// wrong.
+    DelegationAgain,
     /// The message to the coordinator that a member is done with an item.
     MemberFinished,
     /// The message to the coordinator that a member is done, in a team whose task list has no items.
@@ -132,6 +135,7 @@ impl TeamPrompt {
         Self::TierCoordinator,
         Self::Wake,
         Self::Delegation,
+        Self::DelegationAgain,
         Self::MemberFinished,
         Self::MemberFinishedPlain,
         Self::MemberFailed,
@@ -268,6 +272,11 @@ impl TeamPrompt {
             Self::WorkerHung => PromptSpec::new("harness/team/worker-hung.md", Audience::Model, &[]),
             Self::WorkerResultBrought => brought_result_spec(),
             Self::WorkerResultConflict => conflict_result_spec(),
+            Self::DelegationAgain => PromptSpec::new(
+                "harness/team/delegation-again.md",
+                Audience::Model,
+                &["previous_worker", "reason"],
+            ),
             Self::WorkerGivenAgain => given_again_spec(),
             Self::WorkerStepReturned => step_returned_spec(),
             Self::NoticeTeamDone => PromptSpec::new(

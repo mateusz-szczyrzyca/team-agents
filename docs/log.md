@@ -304,7 +304,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `state_save_failed` | `error` | The daemon's state file cannot be saved. |
 | `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
-| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it; also a problem with a worker's request: a file that cannot be used (cut short, an unknown field, another request than its name says, unreadable, or a stage that cannot be written), set aside as `<name>.damaged` while its request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the removal of a file, the output of a check or the wording of an answer that fails. A name of its own for these comes with the next part of the worker harness. |
+| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
 | `snapshot_failed` | `warn` | A snapshot of a task's worktree cannot be taken; the daemon goes on without it. |
 | `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
 | `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused; also a `SPLIT:` line of a coordinator that the daemon refuses, with `team`, `task`, `item`, `refused` (how many times in a row), `told` and the `reason`. |
@@ -323,7 +323,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
 | `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
 | `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
-| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`. |
+| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`; also the result of a worker is settled (`request`, `worker`, `requester`, `step`, `outcome`, `run_seconds`). |
 | `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
 | `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
 | `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`; `asked_human` also says in `commits` how many findings about commits the question names. Publication uses `publish_failed_lead` when the configured retry limit releases the lead once, and `publish_failed_human` when further failures ask the human in a questions file. |
@@ -339,6 +339,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
 | `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. |
 | `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
+| `worker_request_damaged` | `warn` | What the daemon keeps for a worker's request cannot be used: its file is cut short, has an unknown field, holds another request than its name says or cannot be read, a stage cannot be written, or the removal of the file, the output of its check or the wording of its answer fails. The file is set aside as `<name>.damaged` and the request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the answer falls back; the daemon goes on. |
 
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers

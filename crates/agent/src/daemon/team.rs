@@ -24,8 +24,8 @@ pub(super) use self::assign::{
 pub(super) use self::close::{closing_transitions, is_finished, item_in_flight};
 pub(super) use self::form::{FormError, Formed, Workspace, form};
 pub(super) use self::jobs::{
-    BusJob, DoneNoticeError, NoticeRenderError, failure_reason, render_notice, team_done_notification,
-    worker_result_brought, worker_result_conflict, worker_step_returned,
+    BusJob, DoneNoticeError, NoticeRenderError, delegation_again, failure_reason, render_notice,
+    team_done_notification, worker_result_brought, worker_result_conflict, worker_step_returned,
 };
 pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape_with_answers};
 pub(super) use self::react::{BusNotice, NoticeError, RequestOutcome, lead_takes_work, notice_for, request_outcome};

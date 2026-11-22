@@ -952,13 +952,21 @@ worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
 A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
 `worker-request-<n>.json` that is cut short, has a field this version does not know, holds another request than its name says, cannot be read, or a stage that cannot
-be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
+be written: the daemon logs a `worker_request_damaged` warning that names the file (and where it is kept), moves the file aside
 as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
 the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
 cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
 log line to learn what happened to the worker's work: nothing was brought over.
-A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
-returned steps, come with the next version.
+**A wrong result is tried once elsewhere.** When the result of a run that ended `STATUS: DONE` is wrong (the check failed or
+ran past its limit, a file outside `files` was changed, nothing was committed, the run lasted past `[workers] seconds`) and
+`[workers] tries` is above 1, the request goes once more to a free worker of another CLI (of the same CLI when no other is
+free): its prompt says who served the request before and why that result did not serve, and the requester is told that the
+request went again. A second wrong result returns the step to the requester with the reasons of both results, and no third
+worker starts; `tries = 1` never gives a request to a second worker. What the first worker committed is not brought over. The
+try is kept in `tasks/<worker task>/worker-try-<n>.json`, and a daemon that stops while the request waits for the second
+worker goes on from the file of the first result. A worker whose result is not settled is busy; a request the daemon has
+answered does not keep it busy, even when its file cannot be removed. A run that ends otherwise than `STATUS: DONE`, the
+lines of `agent status` for the tries and the pull request's description of the returned steps come with the next version.
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),

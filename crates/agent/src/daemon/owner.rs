@@ -557,6 +557,9 @@ pub(super) struct Owner {
     unreadable_requests: HashSet<String>,
     /// The requests of workers that were answered by this daemon, so that a file that could not be removed is not answered again.
     answered_requests: HashSet<agent_runtime::agentbus::RequestId>,
+    /// The requests whose result was wrong and that wait in the bus's queue for a second try, with what their next worker
+    /// and their requester are told.
+    again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -634,6 +637,7 @@ impl Owner {
             request_checking: HashMap::new(),
             unreadable_requests: HashSet::new(),
             answered_requests: HashSet::new(),
+            again: HashMap::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
         }
