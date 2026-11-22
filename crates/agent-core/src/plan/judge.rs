@@ -131,3 +131,17 @@ pub fn check_run<'a>(check: Option<&'a Check>, check_seconds: u64, refused: &[St
         }
     }
 }
+
+/// Which steps of `current` are to be judged at the end of a run, in the order of the plan, and what the daemon does
+/// with each step's check.
+#[must_use]
+pub fn steps_to_run<'a>(
+    current: &'a Plan,
+    last_plan: Option<&Plan>,
+    last_state: impl Fn(&ItemId) -> Option<JudgementState>,
+    check_seconds: u64,
+    refused: &[String],
+) -> Vec<(ItemId, CheckRun<'a>)> {
+    drop((current, last_plan, last_state, check_seconds, refused));
+    Vec::new()
+}

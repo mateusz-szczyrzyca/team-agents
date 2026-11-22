@@ -63,3 +63,38 @@ fn legacy_mismatch_reason_without_title_or_reason_loads() {
         other => panic!("expected Mismatch, got {other:?}"),
     }
 }
+
+#[test]
+fn running_plan_check_roundtrips_and_is_omitted_when_cleared() {
+    use crate::status::RunOutcome;
+
+    let mut keeping = PlanKeeping::default();
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        final_message: Some("Finished.\nSTATUS: DONE".to_owned()),
+        step: Some(ItemId::from_str("1.1").unwrap()),
+        pid: Some(NonZeroU32::new(4242).unwrap()),
+    };
+    keeping.set_running_check(Some(check.clone()));
+    assert_eq!(keeping.running_check(), Some(&check));
+
+    let json = serde_json::to_string(&keeping).expect("serialize PlanKeeping with running_check");
+    assert!(json.contains(r#""running_check":"#), "{json}");
+    let loaded: PlanKeeping = serde_json::from_str(&json).expect("deserialize PlanKeeping with running_check");
+    assert_eq!(loaded.running_check(), Some(&check));
+
+    keeping.set_running_check(None);
+    assert_eq!(keeping.running_check(), None);
+    let cleared_json = serde_json::to_string(&keeping).expect("serialize cleared PlanKeeping");
+    assert!(!cleared_json.contains("running_check"), "{cleared_json}");
+}
+
+#[test]
+fn state_from_main_before_running_check_loads() {
+    let fixture = include_str!("../../../tests/fixtures/state-v0-36-before-proposals.json");
+    let state = crate::state::State::from_json(fixture).expect("legacy state from main loads");
+    assert_eq!(state.teams().len(), 3);
+}

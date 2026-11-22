@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
 use super::holding;
-use super::plan::{PlanKeeping, PlanReason};
+use super::plan::{PlanKeeping, PlanReason, RunningPlanCheck};
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::renewal;
 use super::run::{Run, RunEnd, RunError, RunState};
@@ -293,6 +293,11 @@ impl CheckedMut<'_, Member> {
     pub fn release_plan(&mut self) {
         self.value.release_plan();
     }
+
+    /// See [`Member::set_plan_running_check`].
+    pub fn set_plan_running_check(&mut self, check: Option<RunningPlanCheck>) {
+        self.value.set_plan_running_check(check);
+    }
 }
 
 /// Why questions could not be added or answered.
@@ -532,6 +537,19 @@ impl Member {
     pub fn release_plan(&mut self) {
         if let Some(keeping) = &mut self.plan {
             keeping.release();
+        }
+    }
+
+    /// The finished run whose command checks or plan settlement are in progress, when one is.
+    #[must_use]
+    pub fn plan_running_check(&self) -> Option<&RunningPlanCheck> {
+        self.plan.as_ref().and_then(PlanKeeping::running_check)
+    }
+
+    /// Sets or clears the record of a finished run whose command checks or plan settlement are in progress.
+    pub fn set_plan_running_check(&mut self, check: Option<RunningPlanCheck>) {
+        if let Some(keeping) = &mut self.plan {
+            keeping.set_running_check(check);
         }
     }
 

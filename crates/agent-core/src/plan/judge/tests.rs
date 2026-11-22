@@ -189,3 +189,95 @@ fn plan_check_without_refused_prefixes_runs_gate_commands() {
     let step = plan.steps().next().unwrap();
     assert_eq!(check_run(step.check(), 120, &[]), CheckRun::Run("make gate"));
 }
+
+#[test]
+fn steps_to_run_table() {
+    struct Row<'a> {
+        name: &'a str,
+        current: &'a Plan,
+        last_plan: Option<&'a Plan>,
+        state_1_1: Option<JudgementState>,
+        seconds: u64,
+        expected: Vec<(ItemId, CheckRun<'a>)>,
+    }
+
+    let item = |id: &str| id.parse::<ItemId>().unwrap();
+    let refuse = vec!["agent gate".to_owned(), "make gate".to_owned()];
+    let two_commands =
+        parse_plan("Plan.\n\n1. Work\n[x] 1.1 First\n    Check: cargo test\n[x] 1.2 Second\n    Check: cargo clippy\n")
+            .unwrap();
+    let command_and_exists = parse_plan(
+        "Plan.\n\n1. Work\n[x] 1.1 First\n    Check: cargo test\n[x] 1.2 Second\n    Check: exists ok.txt\n",
+    )
+    .unwrap();
+    let refused_gate = parse_plan("Plan.\n\n1. Work\n[x] 1.1 First\n    Check: make gate\n").unwrap();
+    let one_command = parse_plan("Plan.\n\n1. Work\n[x] 1.1 First\n    Check: cargo test\n").unwrap();
+
+    let rows = [
+        Row {
+            name: "two steps with commands",
+            current: &two_commands,
+            last_plan: None,
+            state_1_1: None,
+            seconds: 120,
+            expected: vec![
+                (item("1.1"), CheckRun::Run("cargo test")),
+                (item("1.2"), CheckRun::Run("cargo clippy")),
+            ],
+        },
+        Row {
+            name: "a command and an exists",
+            current: &command_and_exists,
+            last_plan: None,
+            state_1_1: None,
+            seconds: 120,
+            expected: vec![
+                (item("1.1"), CheckRun::Run("cargo test")),
+                (item("1.2"), CheckRun::Inline),
+            ],
+        },
+        Row {
+            name: "a refused command",
+            current: &refused_gate,
+            last_plan: None,
+            state_1_1: None,
+            seconds: 120,
+            expected: vec![(item("1.1"), CheckRun::Refused)],
+        },
+        Row {
+            name: "check_seconds = 0",
+            current: &one_command,
+            last_plan: None,
+            state_1_1: None,
+            seconds: 0,
+            expected: vec![(item("1.1"), CheckRun::Disabled)],
+        },
+        Row {
+            name: "a step confirmed before and unchanged",
+            current: &one_command,
+            last_plan: Some(&one_command),
+            state_1_1: Some(JudgementState::Confirmed),
+            seconds: 120,
+            expected: vec![],
+        },
+        Row {
+            name: "a mismatch still done",
+            current: &one_command,
+            last_plan: Some(&one_command),
+            state_1_1: Some(JudgementState::Mismatch),
+            seconds: 120,
+            expected: vec![(item("1.1"), CheckRun::Run("cargo test"))],
+        },
+    ];
+
+    for row in rows {
+        let actual = steps_to_run(
+            row.current,
+            row.last_plan,
+            |id| (*id == item("1.1")).then_some(row.state_1_1).flatten(),
+            row.seconds,
+            &refuse,
+        );
+        assert_eq!(actual, row.expected, "case: {}", row.name);
+    }
+}
