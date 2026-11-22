@@ -10,6 +10,12 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### New features
 - [agent] [agent-core] [agent-runtime] A commit that takes lines out of a test its `RED:` commit froze is now refused while it can still be undone: the `git` of every run an agent starts has a `commit-msg` hook that tells the agent the rule, which file and which `RED:` commit, and to make a `TEST-FIX:` commit of the test files instead. It costs no question to you, works for every CLI that commits through `git`, reads the branch and changes nothing (a commit that is already made is never touched), and keeps the repository's own hooks running. The hook reaches the run through its environment: nothing is written into the repository, and a commit the agent makes in another repository during a run runs that repository's own hooks. `commit_guard = false` under `[repos.NAME.checks]` turns the refusal off for a repository (the checks before a review stay); a repository without the table is not judged.
 - [agent-core] The roles of a member, a coordinator and a solo agent say in one line that every change to a test after its `RED:` commit — also formatting, a refactor, a removed debug line — is a `TEST-FIX:` commit of its own, test files only.
+## 0.56.0 — 22.11.2026 — PR #173
+
+### Bug fixes
+- [agent] [agent-core] Rejected publication no longer retries forever without an explanation: after `[publish] tries` failures (default 3), the lead gets one correction pass, then the human gets a question to retry or stop. Conflict publication now observes the same retry backoff.
+- [agent] [agent-core] Publication questions notify the human and enter the questions status directly, without recording a run that never happened. Another failed publication waits while the lead already has a question open.
+- [agent] [agent-core] [agent-runtime] A restart no longer loses publication retry counts or question identity. Interrupted question creation preserves existing questions and answers, adopts an answer already saved, and clears retry backoff only for the publication that was answered.
 
 ## 0.55.0 — 22.11.2026 — PR #172
 

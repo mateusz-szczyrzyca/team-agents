@@ -333,6 +333,9 @@ pub(crate) enum OwnerError {
     /// The notification that a team is finished cannot be made.
     #[error("the notification that a team is finished cannot be made")]
     TeamDone(#[from] DoneNoticeError),
+    /// The question about publication cannot be prepared or written.
+    #[error(transparent)]
+    PublishQuestion(#[from] rounds::PublishQuestionError),
 }
 
 /// What the owner is made of.
@@ -1605,7 +1608,10 @@ impl Owner {
             task: task.clone(),
             number,
         });
-        self.prepare_questions(task, &path, &loaded).await;
+        // A recovered answer is already the human's completed document; preserve its exact contents.
+        if !loaded.file.is_answered() {
+            self.prepare_questions(task, &path, &loaded).await;
+        }
         // What the human sees is the file with the daemon's instructions in it.
         if let Some(text) = self
             .questions_text(

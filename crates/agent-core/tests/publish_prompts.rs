@@ -4,7 +4,10 @@
 mod publish_prompts {
     use std::path::Path;
 
-    use agent_core::prompt::PROMPTS_DIR;
+    use agent_core::prompt::{AutopilotPrompt, PROMPTS_DIR, Variables};
+
+    const PUBLISH_FAILED_GOLDEN: &str = include_str!("fixtures/publish-failed-lead.md");
+    const NOTICE_PUBLISH_QUESTION_GOLDEN: &str = include_str!("fixtures/notice-publish-question.txt");
 
     fn read_prompt(path: &str) -> String {
         std::fs::read_to_string(
@@ -14,6 +17,34 @@ mod publish_prompts {
                 .join(path),
         )
         .unwrap_or_else(|error| panic!("{path}: {error}"))
+    }
+
+    #[test]
+    fn publish_failed_lead_prompt_matches_golden() {
+        let spec = AutopilotPrompt::PublishFailed.spec();
+        let values = Variables::new()
+            .with("branch", "agents/gemini-1/task-1-1.1")
+            .and_then(|values| values.with("reason", "rejected by remote"))
+            .expect("variables");
+
+        let template = read_prompt(spec.path());
+        let rendered = spec.render(&template, &values).expect("rendered");
+        assert_eq!(rendered, PUBLISH_FAILED_GOLDEN);
+    }
+
+    #[test]
+    fn notice_publish_question_prompt_matches_golden() {
+        let spec = AutopilotPrompt::NoticePublishQuestion.spec();
+        let values = Variables::new()
+            .with("task", "task-20261121-122925-b788")
+            .and_then(|values| values.with("items", "1.1"))
+            .and_then(|values| values.with("branch", "agents/gemini-1/task-1-1.1"))
+            .and_then(|values| values.with("reason", "cannot force update branch"))
+            .expect("variables");
+
+        let template = read_prompt(spec.path());
+        let rendered = spec.render(&template, &values).expect("rendered");
+        assert_eq!(rendered, NOTICE_PUBLISH_QUESTION_GOLDEN);
     }
 
     #[test]

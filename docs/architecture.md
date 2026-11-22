@@ -59,8 +59,9 @@ refuses a change its table does not allow with a typed `InvalidTransition`:
 ```text
 task:  queued -> running | paused | stopped
        running -> queued | waiting | questions | paused | stopped | failed | done
-       waiting -> queued | paused | stopped | done
-       questions, paused, failed -> queued | stopped
+       waiting -> queued | questions | paused | stopped | done
+       failed -> queued | questions | stopped
+       questions, paused -> queued | stopped
        stopped -> queued
        done (final)
 
@@ -679,6 +680,19 @@ Exhaustion sends `harness/pr/notice-handover-held.md` once for the held tip, nam
 `agent say` command. Publication clears the counter. The counter and notification deduplication remain transient,
 like the existing publication corrections; a daemon restart may issue a fresh correction.
 
+When publication to GitHub fails (push rejection, pull request creation or update error), attempts are governed
+by pure decision `decide::publish::publish_tries_step` and bounded by `[publish] tries` (default 3). Below the
+limit, the harness retries with backoff. At the limit, the lead is notified once with `harness/pr/publish-failed.md`
+and sent back to correct the issue. Above the limit or when the limit is 0, the human is asked once in a questions file
+with `harness/pr/notice-publish-question.md`. The attempt counter and complete question identity (task, number, timestamp and publication branch) are persisted
+on `ItemProgress` across daemon restarts. Both ordinary and conflict publication honor backoff and defer escalation
+while the lead is running or has any open question. Questions move a waiting or failed lead directly to `questions`,
+record `QuestionAsked` history and send the normal human notification, without inventing a run. Atomic creation
+reconciles an existing file and consumes an answer saved before question registration. Human answers are resolved
+via `decide::publish::publish_answer`: `Retry` clears the matching branch backoff and queues a new paid lead run;
+`Stop` stops the task. Legacy complete flat question identities remain readable; timestamp-only markers are not
+treated as permission to adopt another task’s answer.
+
 The owner's `rounds/waiting.rs` projects task activity, pending opinions, durable response corrections and its
 queued gates/publication actions into `decide::wait::round_wait`. This pure decision returns no wait for active
 or closed rounds and an owned obligation or a defect for idle open rounds. `RoundDetail.waiting` carries its
@@ -975,8 +989,7 @@ the round back each time the file is still changed.
 `STATUS: DONE`. It is made when the round is held and kept in the record, so a run that starts after a restart of the daemon is told
 the same.
 
-**The question to the human.** The daemon cannot put a question for a task that waits (the status table has no `waiting →
-questions`), so — as for the reviewers' used-up passes — the lead is the messenger: the daemon writes the questions file of
+**The question to the human.** For pre-review checks, as for the reviewers' used-up passes, the lead is the messenger: the daemon writes the questions file of
 the lead's next round itself, one question for each finding kind (`Issue::kind`, including the `TestChange` variant)
 and judge. Each question lists every path and finding of that kind, including removed lines and the edit and RED commits,
 why the human is asked, and the recommendation to refuse. It wakes the lead with the path and has it end its turn with

@@ -20,6 +20,7 @@ use std::fmt;
 
 use crate::config::AbsolutePath;
 use crate::ids::BranchName;
+use crate::questions::Verdict;
 use crate::state::{CommitId, GateOutcome, GateRecord};
 
 /// What is known of the branch of a lead that waits.
@@ -223,6 +224,60 @@ pub fn publish_decision<'a>(
         RemoteState::Diverged => PublishAction::Refused,
     };
     PublishDecision { branch, action }
+}
+
+/// What the harness does when publication cannot succeed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishTriesStep {
+    /// Retry publication after a backoff.
+    Retry,
+    /// Tell the lead once what is wrong.
+    TellLead,
+    /// Ask the human once in a questions file.
+    AskHuman,
+}
+
+/// Decides the next step after a publication failure based on attempt count and configured limit.
+#[must_use]
+pub const fn publish_tries_step(tries: u32, limit: u32) -> PublishTriesStep {
+    if limit == 0 {
+        return PublishTriesStep::AskHuman;
+    }
+    if tries < limit {
+        PublishTriesStep::Retry
+    } else if tries == limit {
+        PublishTriesStep::TellLead
+    } else {
+        PublishTriesStep::AskHuman
+    }
+}
+
+/// What the human's answer to the publication failure question says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PublishAnswer {
+    /// Try publishing again.
+    Retry,
+    /// Stop the task.
+    Stop,
+}
+
+/// Reads the human's verdict on a publication failure question.
+#[must_use]
+pub fn publish_answer(verdict: Option<&Verdict>) -> PublishAnswer {
+    match verdict {
+        Some(Verdict::Own(answer)) if names_option_b(answer.as_str()) => PublishAnswer::Stop,
+        Some(Verdict::Accept | Verdict::Own(_)) | None => PublishAnswer::Retry,
+    }
+}
+
+/// Whether `answer` selects option b or asks to stop.
+fn names_option_b(answer: &str) -> bool {
+    let trimmed = answer.trim_start();
+    let mut chars = trimmed.chars();
+    if matches!(chars.next(), Some('b' | 'B')) && chars.next().is_none_or(|next| !next.is_alphanumeric()) {
+        return true;
+    }
+    trimmed.starts_with("stop") || trimmed.starts_with("Stop")
 }
 
 #[cfg(test)]

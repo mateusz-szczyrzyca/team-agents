@@ -196,6 +196,68 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let matching_items: Vec<agent_core::ids::ItemId> = self
+            .parts
+            .state
+            .team(&located.team)
+            .map(|team| {
+                team.items()
+                    .iter()
+                    .filter(|item| {
+                        item.publish_question_task() == Some(task) && item.publish_question_number() == Some(number)
+                    })
+                    .map(agent_core::state::ItemProgress::id)
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !matching_items.is_empty() {
+            let answer = agent_core::decide::publish::publish_answer(file.entries().first().and_then(Entry::verdict));
+            log_decision("publish_answer", &task.as_str(), &format!("{answer:?}"));
+            let matching_branches: std::collections::HashSet<agent_core::ids::BranchName> =
+                self.parts
+                    .state
+                    .team(&located.team)
+                    .into_iter()
+                    .flat_map(|team| {
+                        matching_items.iter().filter_map(|id| {
+                            team.item(*id).and_then(|item| {
+                                item.publish_question_branch().cloned().or_else(|| match item.phase() {
+                                    agent_core::state::ItemPhase::InProgress { branch, .. } => Some(branch.clone()),
+                                    agent_core::state::ItemPhase::InReview { pr, .. }
+                                    | agent_core::state::ItemPhase::Approved { pr, .. }
+                                    | agent_core::state::ItemPhase::Fixing { pr, .. } => Some(pr.branch.clone()),
+                                    agent_core::state::ItemPhase::Pending
+                                    | agent_core::state::ItemPhase::Done { .. } => None,
+                                })
+                            })
+                        })
+                    })
+                    .collect();
+            let mut team_mut = self
+                .parts
+                .state
+                .team_mut(&located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: located.team.clone(),
+                })?;
+            for id in &matching_items {
+                if let Some(mut item) = team_mut.item_mut(*id) {
+                    item.clear_publish_question();
+                    if answer == agent_core::decide::publish::PublishAnswer::Retry {
+                        item.reset_publish_tries();
+                    }
+                }
+            }
+            return match answer {
+                agent_core::decide::publish::PublishAnswer::Retry => {
+                    self.watch
+                        .retry_at
+                        .retain(|(t, b), _| !(t == &located.team && matching_branches.contains(b)));
+                    Ok(TaskStatus::Queued)
+                }
+                agent_core::decide::publish::PublishAnswer::Stop => Ok(TaskStatus::Stopped),
+            };
+        }
         if found.member.asked_after_last_step() != Some(number) {
             return Ok(TaskStatus::Queued);
         }
@@ -251,3 +313,7 @@ fn holds_work_of_a_stopped_member(team: &Team) -> bool {
             })
         })
 }
+
+#[cfg(test)]
+#[path = "last_step/tests.rs"]
+mod tests;
