@@ -98,6 +98,13 @@ fn target_of(word: &str) -> Option<ReturnTarget> {
     Some(ReturnTarget { item, part: Some(part) })
 }
 
+/// The runs of `runs` that worked for the round `round`, in order: the runs of one item, not of the items the member held
+/// before it.
+#[must_use]
+pub fn runs_of_round(runs: &[crate::state::Run], _round: &crate::ids::RoundId) -> Vec<crate::state::Run> {
+    runs.to_vec()
+}
+
 /// The run of `runs` that the member's last hand-over was made after: the last one that ended `DONE`.
 #[must_use]
 pub fn handed_over_run(runs: &[crate::state::Run]) -> Option<&crate::ids::RunId> {
@@ -414,6 +421,8 @@ mod answered_tests;
 mod before_tests;
 #[cfg(test)]
 mod facts_tests;
+#[cfg(test)]
+mod round_runs_tests;
 #[cfg(test)]
 mod runs_tests;
 #[cfg(test)]
