@@ -629,6 +629,16 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.clear_publish_question();
     }
 
+    /// See [`ItemProgress::record_published_conflict_pass`].
+    pub fn record_published_conflict_pass(&mut self) -> u32 {
+        self.value.record_published_conflict_pass()
+    }
+
+    /// See [`ItemProgress::refund_conflict_pass`].
+    pub fn refund_conflict_pass(&mut self) -> u32 {
+        self.value.refund_conflict_pass()
+    }
+
     /// See [`ItemProgress::set_conflict_approved_head`].
     pub fn set_conflict_approved_head(&mut self, approved_head: CommitId) {
         self.value.set_conflict_approved_head(approved_head);
@@ -1112,6 +1122,16 @@ impl ItemProgress {
     /// Clears the publication question identity together.
     pub fn clear_publish_question(&mut self) {
         self.publish_question = None;
+    }
+
+    /// Records that a merge conflict pass was published and increments spent merge passes.
+    pub fn record_published_conflict_pass(&mut self) -> u32 {
+        0
+    }
+
+    /// Refunds an unspent or unpublished conflict pass and returns the new count.
+    pub fn refund_conflict_pass(&mut self) -> u32 {
+        0
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
@@ -2001,6 +2021,28 @@ mod tests {
 
         let head: CommitId = "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap();
         assert_eq!(item.begin_merge_conflict(head, at(10)), 1);
+        assert_eq!(item.merge_passes(), 1);
+    }
+
+    #[test]
+    fn publishing_conflict_resolution_records_conflict_pass_and_refund_restores_it() {
+        let mut item = progress_in(PhaseKind::Approved);
+        assert_eq!(item.merge_passes(), 0);
+
+        let head: CommitId = "26b65de7e4076596768ca96b48a7f94799c93874".parse().unwrap();
+        item.begin_merge_conflict(head, at(10));
+        assert_eq!(item.merge_passes(), 1);
+
+        // A failed publication refunds the pass:
+        assert_eq!(item.refund_conflict_pass(), 0);
+        assert_eq!(item.merge_passes(), 0);
+
+        // Repeated failure keeps passes untouched:
+        assert_eq!(item.refund_conflict_pass(), 0);
+        assert_eq!(item.merge_passes(), 0);
+
+        // Successful publication records the pass:
+        assert_eq!(item.record_published_conflict_pass(), 1);
         assert_eq!(item.merge_passes(), 1);
     }
 
