@@ -37,7 +37,7 @@ mod range;
 mod size;
 mod snapshot;
 
-pub use bring_over::BringOver;
+pub use bring_over::{BringOver, Merged, Written};
 pub use changes::WorkChanges;
 pub use range::StagedAgainst;
 pub use snapshot::Snapshot;
@@ -404,6 +404,14 @@ pub enum GitError {
         first: String,
         /// The second revision as git was asked.
         second: String,
+    },
+    /// The branch is not at the head a merge was made on: the requester committed meanwhile, and nothing was written.
+    #[error("the branch is at {found}, not at {expected} the merge was made on")]
+    HeadMoved {
+        /// The head the merge was made on.
+        expected: CommitId,
+        /// The head the branch is at now.
+        found: CommitId,
     },
     /// The range has more commits than are read.
     #[error("the range has more than {limit} commits")]

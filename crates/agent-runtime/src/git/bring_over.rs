@@ -44,6 +44,16 @@ pub enum BringOver {
         /// The commit that holds the requester's head with the worker's change merged into it.
         commit: CommitId,
     },
+    /// The merge applies to the branch, but writing it would overwrite files the requester changed uncommitted, or
+    /// untracked files in its way: nothing was written, and the worker's commit is returned as the reference.
+    InTheWay {
+        /// The snapshot taken of the requester's worktree before the merge was tried.
+        snapshot: Snapshot,
+        /// The worker's commit, as a reference: nothing of it is on the requester's branch.
+        worker: CommitId,
+        /// The files the merge writes that the requester has changed, or has untracked, in its worktree.
+        files: Vec<RepoPath>,
+    },
     /// The worker's commit conflicts with the requester's head: nothing of it was applied, the requester's worktree,
     /// index and files are as before, and the worker's commit is returned as the reference to do the step from.
     Conflicted {
@@ -80,6 +90,18 @@ pub enum Merged {
     Clean(CommitId),
     /// The merge conflicts: the files it could not settle.
     Conflicts(Vec<RepoPath>),
+}
+
+/// What writing a merge to the requester's worktree and branch came to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Written {
+    /// The worktree and the branch are at the merge.
+    Done,
+    /// Files the merge writes are changed uncommitted, or untracked, in the requester's worktree: nothing was written.
+    InTheWay {
+        /// Those files.
+        files: Vec<RepoPath>,
+    },
 }
 
 impl Git {
@@ -137,13 +159,13 @@ impl Git {
     /// [`GitError::OutputTooLong`], [`GitError::Unexpected`] and [`GitError::NotUtf8`].
     pub async fn merge_into_scratch(
         &self,
+        head: &CommitId,
         commit: &CommitId,
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Merged, GitError> {
-        let head = self.rev_parse(&Revision::Head).await?;
         let scratch = make_scratch().await?;
-        let merged = self.write_merge(scratch.path(), &head, commit, round, task).await;
+        let merged = self.write_merge(scratch.path(), head, commit, round, task).await;
         close_scratch(scratch).await;
         merged
     }
@@ -352,20 +374,34 @@ impl Git {
     /// both cases the worktree is as it was.
     pub async fn bring_over(&self, commit: &CommitId, round: &RoundId, task: &TaskId) -> Result<BringOver, GitError> {
         let snapshot = self.snapshot(round, task).await?;
-        match self.merge_into_scratch(commit, round, task).await? {
+        match self.merge_into_scratch(&snapshot.head, commit, round, task).await? {
             Merged::Conflicts(files) => Ok(BringOver::Conflicted {
                 snapshot,
                 worker: commit.clone(),
                 files,
             }),
-            Merged::Clean(applied) => {
-                self.write_applied(&applied).await?;
-                Ok(BringOver::Applied {
+            Merged::Clean(applied) => match self.write_merged(&snapshot.head, &applied).await? {
+                Written::Done => Ok(BringOver::Applied {
                     snapshot,
                     commit: applied,
-                })
-            }
+                }),
+                Written::InTheWay { files } => Ok(BringOver::InTheWay {
+                    snapshot,
+                    worker: commit.clone(),
+                    files,
+                }),
+            },
         }
+    }
+
+    /// Writes the merge `applied`, made on `head`, to the worktree and the branch.
+    ///
+    /// # Errors
+    /// The errors of [`Git::write_applied`].
+    pub async fn write_merged(&self, head: &CommitId, applied: &CommitId) -> Result<Written, GitError> {
+        let _ = head;
+        self.write_applied(applied).await?;
+        Ok(Written::Done)
     }
 
     /// Moves the index and the files of the worktree from the head to `applied`, whose parent is the head, then the
