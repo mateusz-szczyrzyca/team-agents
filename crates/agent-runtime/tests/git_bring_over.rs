@@ -262,15 +262,21 @@ mod git_bring_over {
         let before_head = raw(&repo, &["rev-parse", "HEAD"]);
         let before = state(&repo, &files);
 
-        let error = handle(&repo)
+        let outcome = handle(&repo)
             .bring_over(&worker, &round(), &task())
             .await
-            .expect_err("the requester's edit is in the way");
+            .expect("a requester's edit in the way is an answer");
 
-        assert!(
-            matches!(error, agent_runtime::git::GitError::Failed { .. }),
-            "{error:?}"
-        );
+        let BringOver::InTheWay {
+            worker: returned,
+            files: in_the_way,
+            ..
+        } = outcome
+        else {
+            panic!("the requester's edit is in the way: {outcome:?}");
+        };
+        assert_eq!(returned, worker);
+        assert_eq!(in_the_way, paths(&["guide.md"]));
         assert_eq!(state(&repo, &files), before);
         assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
         assert_eq!(
