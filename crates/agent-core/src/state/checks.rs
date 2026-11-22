@@ -203,6 +203,13 @@ impl ChecksRecord {
         }
     }
 
+    /// Bounds what an answer written before commits had subjects covers: every file the human allowed or refused for
+    /// `items` with no head known is taken to cover the commits up to `head`, so that a commit added after it is a
+    /// finding of its own, whether or not the round has a finding about that file now. Whether anything was recorded.
+    pub fn bound_old_answers(&mut self, _items: &[ItemId], _head: &CommitId) -> bool {
+        false
+    }
+
     /// Records that the human refused `subjects` for `items`, without an answer to a question.
     pub fn keep_refused(&mut self, items: &[ItemId], subjects: &[Subject]) {
         for item in items {

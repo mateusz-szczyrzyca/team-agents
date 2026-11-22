@@ -172,4 +172,31 @@ mod checks_record_commits {
             std::collections::BTreeMap::from([(some_path("tests/a.rs"), head('4'))])
         );
     }
+
+    #[test]
+    fn a_file_answered_without_a_head_is_bounded_even_when_no_finding_needs_it_yet() {
+        let mut record: ChecksRecord = serde_json::from_str(
+            r#"{"items":{"1.1":{"passes":0,"allowed":[{"path":"tests/old.txt"},{"path":"tests/dated.txt"},"no_tests"],
+                "allowed_at":{"tests/dated.txt":"1111111111111111111111111111111111111111"},
+                "refused":[{"path":"tests/no.txt"}]}}}"#,
+        )
+        .unwrap();
+
+        let recorded = record.bound_old_answers(&[item()], &head('7'));
+
+        assert!(recorded);
+        assert_eq!(
+            record.covered_at_of(&[item()]),
+            std::collections::BTreeMap::from([
+                (some_path("tests/no.txt"), head('7')),
+                (some_path("tests/old.txt"), head('7'))
+            ])
+        );
+        // What is bounded stays bounded at the first head, and nothing is left to record the next time.
+        assert!(!record.bound_old_answers(&[item()], &head('8')));
+        assert_eq!(
+            record.covered_at_of(&[item()]).get(&some_path("tests/old.txt")),
+            Some(&head('7'))
+        );
+    }
 }
