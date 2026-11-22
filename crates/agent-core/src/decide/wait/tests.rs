@@ -148,3 +148,48 @@ fn a_queued_run_behind_another_names_its_agent_and_team() {
         ", after the run of codex-1 in team-20261122-140915-aaaa"
     );
 }
+
+#[test]
+fn line_with_holder_appends_the_holding_run_only_for_a_queued_run() {
+    let agent = "codex-1".parse().unwrap();
+    let team = "team-20261122-140915-aaaa".parse().unwrap();
+    let cases = [
+        (
+            Waiting::For(Obligation::QueuedRun),
+            Some("2026-11-22 03:12"),
+            Some((&agent, &team)),
+            "the queued run of its task to start, owed by the harness since 2026-11-22 03:12, after the run of codex-1 in team-20261122-140915-aaaa",
+        ),
+        (
+            Waiting::For(Obligation::QueuedRun),
+            None,
+            Some((&agent, &team)),
+            "the queued run of its task to start, owed by the harness, after the run of codex-1 in team-20261122-140915-aaaa",
+        ),
+        (
+            Waiting::For(Obligation::QueuedRun),
+            Some("2026-11-22 03:12"),
+            None,
+            "the queued run of its task to start, owed by the harness since 2026-11-22 03:12",
+        ),
+        (
+            Waiting::For(Obligation::Human),
+            Some("2026-11-22 03:12"),
+            Some((&agent, &team)),
+            "an answer of the human, owed by the human since 2026-11-22 03:12",
+        ),
+        (
+            Waiting::Defect,
+            Some("2026-11-22 03:12"),
+            Some((&agent, &team)),
+            "nothing: this is a defect",
+        ),
+    ];
+    for (waiting, since, holder, expected) in cases {
+        assert_eq!(
+            waiting.line_with_holder(since, holder),
+            expected,
+            "{waiting:?}, {since:?}, {holder:?}"
+        );
+    }
+}

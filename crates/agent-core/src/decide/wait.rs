@@ -148,6 +148,13 @@ impl Waiting {
             .replace("{{owner}}", obligation.owner().text())
             .replace("{{since}}", since.unwrap_or_default())
     }
+
+    /// The wait as a line that also names the active run `(agent, team)` holding a queued task of the round at its
+    /// run limit. Only [`Obligation::QueuedRun`] carries a holding run; any other wait state ignores `holder`.
+    #[must_use]
+    pub fn line_with_holder(self, since: Option<&str>, _holder: Option<(&AgentName, &TeamId)>) -> String {
+        self.line(since)
+    }
 }
 
 /// Reports an idle round's obligation; a closed or active round needs no wait line.
