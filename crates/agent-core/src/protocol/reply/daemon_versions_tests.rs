@@ -73,6 +73,6 @@ fn a_daemon_that_sends_no_versions_reads_as_none() {
 fn the_versions_name_each_crate_and_refuse_unknown_fields() {
     let line = r#"{"agent":"1","agent_core":"2","agent_runtime":"3","agent_web":"4","agent_cli":"5"}"#;
 
-    assert!(serde_json::from_str::<Versions>(line).is_err());
+    serde_json::from_str::<Versions>(line).expect_err("an unknown crate is refused");
     assert_eq!(serde_json::to_value(versions()).unwrap()["agent_web"], "0.9.4");
 }

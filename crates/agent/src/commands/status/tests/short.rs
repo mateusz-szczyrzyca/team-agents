@@ -155,9 +155,7 @@ fn a_round_is_listed_with_what_it_waits_for_and_the_count_follows_it() {
     );
 
     assert!(
-        text.contains(&format!(
-            "  round-20261111-153001-q1w2  item 1.1  open, waits for claude-1 round-20261111-153001-q1w2\n  tasks: 4 queued\n"
-        )),
+        text.contains("  round-20261111-153001-q1w2  item 1.1  open, waits for claude-1 round-20261111-153001-q1w2\n  tasks: 4 queued\n"),
         "{text}"
     );
 }

@@ -74,14 +74,8 @@ async fn the_short_list_starts_with_the_versions_and_says_the_daemon_tells_none(
 
     let text = run_status(&dir, Reply::Teams { teams: vec![quiet()] }, None, false, false).await;
 
-    assert_eq!(
-        text,
-        format!(
-            "{}{QUIET_SHORT}",
-            format!("{}daemon: version unknown\n", this_command_line())
-        ),
-        "{text}"
-    );
+    let expected = format!("{}daemon: version unknown\n{QUIET_SHORT}", this_command_line());
+    assert_eq!(text, expected, "{text}");
 }
 
 #[tokio::test]
