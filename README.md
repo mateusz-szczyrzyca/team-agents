@@ -267,8 +267,13 @@ queued task waits — it is not failed — and `agent status` says `queued, wait
 when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
-a free agent of `[replacement] agents` of the same or a higher place: the same worktree and branch, briefed with the reason
-`busy`, and `agent status` shows `for claude-1` next to the agent that holds it now. `busy_after = 0` never hands over.
+a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
+at that moment: the same worktree and branch, briefed with the reason `busy`, the bus tells the team who holds the item now,
+and `agent status` shows `for claude-1` next to the agent that holds it now and a `runs: <cli> <count>, …` line for the runs
+going per CLI. Only the agents listed in `[replacement] agents` are candidates: an empty `[replacement] agents` list (or
+`busy_after = 0`) performs no busy hand-over and the task keeps waiting for its own agent. Tasks that are running, waiting
+for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
+handed over.
 
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).

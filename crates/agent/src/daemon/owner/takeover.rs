@@ -295,7 +295,81 @@ impl Owner {
             "a task that waited too long for its busy agent is handed over to a free agent"
         );
         self.save().await?;
+        self.tell_team_busy_handover(&team, task, &held, &name).await;
         Ok(true)
+    }
+
+    /// Tells the team on the bus who holds each reassigned item of `task` now after `from` was busy in another team.
+    async fn tell_team_busy_handover(
+        &self,
+        team_id: &agent_core::ids::TeamId,
+        task: &TaskId,
+        from: &Participant,
+        to: &AgentName,
+    ) {
+        let Some(team) = self.parts.state.team(team_id) else {
+            return;
+        };
+        if team.crew().coordinator().is_none() {
+            return;
+        }
+        let Some(found) = self.parts.state.find_task(task) else {
+            return;
+        };
+        let bus_agent = found.member.bus_agent().agent_name();
+        let items: Vec<(ItemId, agent_core::ids::BranchName)> = team
+            .items()
+            .iter()
+            .filter_map(|progress| match progress.phase() {
+                ItemPhase::InProgress { assignee, branch } | ItemPhase::Fixing { assignee, branch, .. } => {
+                    (assignee == to).then(|| (progress.id(), branch.clone()))
+                }
+                ItemPhase::Pending
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+            .collect();
+        let Ok(sender) = "agentbus".parse::<AgentName>() else {
+            return;
+        };
+        for (item, branch) in items {
+            let Ok(values) = agent_core::prompt::Variables::new()
+                .with("item", item.to_string())
+                .and_then(|v| v.with("from", from.name()))
+                .and_then(|v| v.with("to", to.as_str()))
+                .and_then(|v| v.with("task", task.as_str()))
+                .and_then(|v| v.with("branch", branch.as_str()))
+            else {
+                continue;
+            };
+            let Ok(text) = self
+                .parts
+                .team_texts
+                .render(agent_core::prompt::TeamPrompt::ItemHandedOver, &values)
+            else {
+                continue;
+            };
+            let recipient = agent_runtime::agentbus::Recipient::Member {
+                agent: bus_agent.clone(),
+                team: team_id.clone(),
+            };
+            if let Err(error) = self
+                .parts
+                .bus
+                .send(&sender, &recipient, &agent_runtime::agentbus::Outgoing::Chat { text })
+                .await
+            {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    task = %task,
+                    item = %item,
+                    error = %agent_runtime::process::error_chain(&error),
+                    "cannot tell the team on the bus who holds the handed-over item now"
+                );
+            }
+        }
     }
 
     /// The free agent that takes the waiting `task` over now, and the participant that holds it now; `None` when the task

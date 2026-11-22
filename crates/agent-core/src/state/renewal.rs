@@ -235,9 +235,13 @@ pub enum RenewTaskError {
 }
 
 /// Checks that the renewal of `renewals` follows a run of `runs`: a task is started anew after a run of it went bad. A
-/// renewal after the last run is the state between the ladder's decision and the run of the new session.
+/// renewal after the last run is the state between the ladder's decision and the run of the new session; a busy hand-over
+/// may also happen before the task's first run (`after_runs == 0`, `used == 0`).
 pub(super) fn check_renewals(renewals: &Renewals, runs: &[Run]) -> Result<(), RenewalError> {
     let at = renewals.at();
+    if renewals.reason == Trouble::Busy && renewals.used == 0 && renewals.after_runs == 0 {
+        return Ok(());
+    }
     match runs.first() {
         Some(first) if first.started_at().as_utc() <= at.as_utc() && renewals.after_runs <= runs.len() => Ok(()),
         Some(_) | None => Err(RenewalError::BeforeEveryRun { at }),

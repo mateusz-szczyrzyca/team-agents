@@ -300,8 +300,13 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
 
 /// A line for each agent of a team that has just started that is in another open team too: its messages there are not
 /// for its session here, `agent say` to it names the task, and when its tier has a run limit its task here waits while
-/// its run there goes on.
-fn render_shared(shared: &[SharedAgent], team: &Team, limits: &agent_core::config::Limits) -> String {
+/// its run there goes on (or goes to another agent when `[replacement] agents` and `busy_after` allow a hand-over).
+fn render_shared(
+    shared: &[SharedAgent],
+    team: &Team,
+    limits: &agent_core::config::Limits,
+    replacement: &agent_core::config::Replacement,
+) -> String {
     use agent_core::decide::slot::{RunLimit, limit_for};
     use agent_core::kinds::Tier;
 
@@ -313,10 +318,20 @@ fn render_shared(shared: &[SharedAgent], team: &Team, limits: &agent_core::confi
                 .iter()
                 .find(|(_, member)| member.agent().name() == found.agent.as_str())
                 .map_or(Tier::Normal, |(_, member)| member.agent().tier());
-            let wait = match limit_for(limits, tier) {
-                RunLimit::Unlimited => "",
-                RunLimit::AtMost(one) if one.get() == 1 => ", and its task here waits while its run there goes on",
-                RunLimit::AtMost(_) => ", and its task here waits when its limit of runs is reached",
+            let may_hand_over =
+                tier != Tier::Worker && replacement.busy_after() > 0 && !replacement.agents().is_empty();
+            let wait = match (limit_for(limits, tier), may_hand_over) {
+                (RunLimit::Unlimited, _) => "",
+                (RunLimit::AtMost(one), false) if one.get() == 1 => {
+                    ", and its task here waits while its run there goes on"
+                }
+                (RunLimit::AtMost(one), true) if one.get() == 1 => {
+                    ", and its task here waits while its run there goes on or goes to another agent"
+                }
+                (RunLimit::AtMost(_), false) => ", and its task here waits when its limit of runs is reached",
+                (RunLimit::AtMost(_), true) => {
+                    ", and its task here waits or goes to another agent when its limit of runs is reached"
+                }
             };
             format!(
                 "  {} is also in the open team {} (task {}): its messages there do not reach this team{wait}\n",
@@ -415,9 +430,15 @@ pub(crate) async fn start(
     out: &mut impl Write,
 ) -> Result<(), RunError> {
     let warning = rotation_warning(home, &request.agents).await?;
-    let limits = local_config(home)
-        .await?
-        .map_or_else(agent_core::config::Limits::default, |cfg| cfg.limits().clone());
+    let (limits, replacement) = local_config(home).await?.map_or_else(
+        || {
+            (
+                agent_core::config::Limits::default(),
+                agent_core::config::Replacement::default(),
+            )
+        },
+        |cfg| (cfg.limits().clone(), cfg.replacement().clone()),
+    );
     // The daemon fetches the base from `origin` before it starts anything, which may take longer than an ordinary
     // request: it bounds that wait itself, and a client that gave up first would hide a team that starts anyway.
     let reply = connection
@@ -439,7 +460,7 @@ pub(crate) async fn start(
     };
     out.write_all(render_started(home, &team).as_bytes())
         .map_err(RunError::Output)?;
-    out.write_all(render_shared(&shared, &team, &limits).as_bytes())
+    out.write_all(render_shared(&shared, &team, &limits, &replacement).as_bytes())
         .map_err(RunError::Output)?;
     if let Some(warning) = warning {
         out.write_all(warning.as_bytes()).map_err(RunError::Output)?;
