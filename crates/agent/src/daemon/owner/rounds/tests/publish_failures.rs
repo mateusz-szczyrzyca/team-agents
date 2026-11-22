@@ -2454,10 +2454,19 @@ async fn split_part_idle_lead_with_current_run_waits_for_completion() {
 
     let mut look = crate::daemon::owner::teams::Look::default();
     let now = agent_core::state::Timestamp::now(&owner.parts.clock).unwrap();
-    owner.advance_merge_conflicts(&pulls, &team_id, &mut look, now).await.unwrap();
+    owner
+        .advance_merge_conflicts(&pulls, &team_id, &mut look, now)
+        .await
+        .unwrap();
 
     // Verify item stays held in AskingHuman and no conflict pass was started:
-    let item = owner.parts.state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    let item = owner
+        .parts
+        .state
+        .team(&team_id)
+        .unwrap()
+        .item("1.1".parse().unwrap())
+        .unwrap();
     assert!(
         matches!(
             item.merge_conflict(),
@@ -2498,17 +2507,20 @@ async fn split_part_corrupt_gate_record_propagates_typed_error_and_waits() {
     rig.start().await;
 
     // Wait until recovery error is propagated and logged:
-    rig.wait_for("recovery error logged with OutsideCallCompleted on corrupt gate record", || {
-        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
-            return false;
-        };
-        reader.daemon_logs().is_ok_and(|logs| {
-            logs.iter().any(|e| {
-                e.event() == agent_core::log::LogEvent::OutsideCallCompleted
-                    && e.message().contains("recovery of exhausted split conflict failed")
+    rig.wait_for(
+        "recovery error logged with OutsideCallCompleted on corrupt gate record",
+        || {
+            let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+                return false;
+            };
+            reader.daemon_logs().is_ok_and(|logs| {
+                logs.iter().any(|e| {
+                    e.event() == agent_core::log::LogEvent::OutsideCallCompleted
+                        && e.message().contains("recovery of exhausted split conflict failed")
+                })
             })
-        })
-    })
+        },
+    )
     .await;
 
     let state = rig.state();
@@ -2557,17 +2569,20 @@ async fn split_part_github_error_propagates_typed_error_and_waits() {
     rig.start().await;
 
     // Wait until recovery error is propagated and logged:
-    rig.wait_for("recovery error logged with OutsideCallCompleted on GitHub failure", || {
-        let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
-            return false;
-        };
-        reader.daemon_logs().is_ok_and(|logs| {
-            logs.iter().any(|e| {
-                e.event() == agent_core::log::LogEvent::OutsideCallCompleted
-                    && e.message().contains("recovery of exhausted split conflict failed")
+    rig.wait_for(
+        "recovery error logged with OutsideCallCompleted on GitHub failure",
+        || {
+            let Ok(reader) = agent_runtime::history::Reader::open(&rig.home.history_file()) else {
+                return false;
+            };
+            reader.daemon_logs().is_ok_and(|logs| {
+                logs.iter().any(|e| {
+                    e.event() == agent_core::log::LogEvent::OutsideCallCompleted
+                        && e.message().contains("recovery of exhausted split conflict failed")
+                })
             })
-        })
-    })
+        },
+    )
     .await;
 
     let state = rig.state();
@@ -2696,7 +2711,11 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
         Some(refused_head.as_str()),
         "fallback approved head must match the original refused head identity"
     );
-    assert_eq!(item.merge_passes(), 2, "merge passes before publication must be preserved");
+    assert_eq!(
+        item.merge_passes(),
+        2,
+        "merge passes before publication must be preserved"
+    );
 
     // Wait until gated tip is pushed to origin:
     rig.wait_for("gated commit pushed to origin", || {
