@@ -936,3 +936,121 @@ async fn replace_running_record_and_proc_scan_propagate_errors() {
         .expect_err("process_group_has_member_since_in must propagate unexpected /proc/<pid>/stat errors");
     assert_eq!(scan_err.kind(), std::io::ErrorKind::InvalidData);
 }
+
+#[test]
+fn prepare_process_spec_in_returns_daemon_start_time_error_when_proc_stat_is_missing_or_corrupt() {
+    let env = TestEnv::new();
+    let checks_dir = env.task_dir.join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    let record = checks_dir.join("running");
+    let log_path = checks_dir.join("prep.log");
+    let ctx = env.context(10, &[]);
+
+    let empty_proc = env.task_dir.join("empty-proc");
+    std::fs::create_dir_all(&empty_proc).unwrap();
+    let missing_err = super::prepare_process_spec_in(&empty_proc, &ctx, "exit 0", &record, log_path.clone(), 4242)
+        .expect_err("missing daemon /proc/<pid>/stat must fail process spec preparation");
+    assert!(
+        matches!(
+            &missing_err,
+            super::CommandPreparationError::DaemonStartTime { pid: 4242, source, .. }
+                if source.kind() == std::io::ErrorKind::NotFound
+        ),
+        "expected DaemonStartTime with NotFound, got {missing_err:?}"
+    );
+
+    let corrupt_proc = env.task_dir.join("corrupt-proc");
+    let pid_dir = corrupt_proc.join("4242");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    std::fs::write(pid_dir.join("stat"), "corrupt-daemon-stat").unwrap();
+    let corrupt_err = super::prepare_process_spec_in(&corrupt_proc, &ctx, "exit 0", &record, log_path, 4242)
+        .expect_err("corrupt daemon /proc/<pid>/stat must fail process spec preparation");
+    assert!(
+        matches!(
+            &corrupt_err,
+            super::CommandPreparationError::DaemonStartTime { pid: 4242, source, .. }
+                if source.kind() == std::io::ErrorKind::InvalidData
+        ),
+        "expected DaemonStartTime with InvalidData, got {corrupt_err:?}"
+    );
+}
+
+#[tokio::test]
+async fn spawning_daemon_death_during_record_rename_removes_record_and_prevents_command() {
+    let env = TestEnv::new();
+    let checks_dir = env.task_dir.join("checks");
+    std::fs::create_dir_all(&checks_dir).unwrap();
+    let record = checks_dir.join("running");
+    std::fs::write(&record, b"").unwrap();
+    let log_path = checks_dir.join("post-rename-dead-daemon.log");
+    std::fs::write(&log_path, b"").unwrap();
+
+    let mut stand_in = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg("sleep 30")
+        .spawn()
+        .expect("spawn stand-in daemon");
+    let stand_in_pid = stand_in.id();
+    let stand_in_ticks = super::process_start_ticks(stand_in_pid)
+        .expect("read stand-in daemon stat")
+        .expect("stand-in daemon must exist");
+
+    let fake_bin = env.task_dir.join("fake-bin");
+    std::fs::create_dir_all(&fake_bin).unwrap();
+    let mv_wrapper = fake_bin.join("mv");
+    std::fs::write(
+        &mv_wrapper,
+        format!(
+            "#!/bin/sh\n/bin/mv \"$@\"\nstatus=$?\nkill -s KILL {stand_in_pid} 2>/dev/null || true\nwhile read -r ds < \"/proc/{stand_in_pid}/stat\" 2>/dev/null; do\n  set -- ${{ds#*)}}\n  [ \"$1\" = \"Z\" ] && break\ndone\nexit $status\n"
+        ),
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&mv_wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    let path_env = format!(
+        "{}:{}",
+        fake_bin.display(),
+        std::env::var("PATH").unwrap_or_else(|_| "/usr/bin:/bin".to_owned())
+    );
+    let envs = vec![("PATH".to_owned(), path_env)];
+    let ctx = super::CheckContext {
+        worktree: &env.worktree,
+        task_dir: &env.task_dir,
+        run: None,
+        check_seconds: 10,
+        check_refuse: &[],
+        envs: &envs,
+    };
+    let spec = super::prepare_process_spec_for_daemon(
+        &ctx,
+        "touch ran_after_post_rename_death.txt",
+        &record,
+        log_path,
+        stand_in_pid,
+        stand_in_ticks,
+    )
+    .expect("prepare process spec for stand-in daemon");
+    let supervisor = crate::process::Supervisor::new(std::num::NonZeroUsize::MIN);
+    let mut process = supervisor.spawn(&spec).await.expect("spawn child shell");
+    let exit = process.wait().await.expect("wait for child shell");
+    drop(stand_in.kill());
+    drop(stand_in.wait());
+
+    assert_eq!(
+        exit,
+        crate::process::ExitReport::Exited { code: 125 },
+        "child shell must exit 125 when the spawning daemon dies during the record rename"
+    );
+    assert!(
+        !env.worktree.join("ran_after_post_rename_death.txt").exists(),
+        "child shell must not execute the check command when the second daemon-liveness check fails"
+    );
+    assert!(
+        !record.exists(),
+        "child shell must remove checks/running when the second daemon-liveness check fails"
+    );
+}

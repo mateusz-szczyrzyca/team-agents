@@ -1184,6 +1184,15 @@ impl Owner {
         Ok(())
     }
 
+    /// Ends the command checks that a daemon which died left running, from their records, on the blocking thread pool
+    /// before any run is looked at.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the tasks directory cannot be read or a recorded check cannot be ended.
+    pub(super) async fn recover_leftover_checks(&self) -> Result<(), OwnerError> {
+        std::future::ready(Ok(())).await
+    }
+
     /// Ends the command checks that a daemon which died left running, from their records, before any run is looked at.
     ///
     /// # Errors

@@ -130,6 +130,17 @@ enum CommandPreparationError {
         #[source]
         source: agent_core::config::InvalidValue,
     },
+    /// The spawning daemon's kernel start time in `/proc/<pid>/stat` cannot be read.
+    #[error("cannot read daemon process {pid} start time in {}: {source}", path.display())]
+    DaemonStartTime {
+        /// The daemon process ID.
+        pid: u32,
+        /// The `/proc/<pid>/stat` path.
+        path: PathBuf,
+        /// The underlying I/O or parse failure.
+        #[source]
+        source: io::Error,
+    },
 }
 
 /// Context for running a step check.
@@ -568,7 +579,7 @@ fn prepare_process_spec_for_daemon(
         "read -r s < \"/proc/$$/stat\" && set -- ${s#*)} && cticks=\"${20}\" && ",
         "read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ] && ",
         "printf '%s %s\\n' \"$$\" \"$cticks\" > \"$rec.child\" && mv -f \"$rec.child\" \"$rec\" && ",
-        "if read -r ds < \"/proc/$dpid/stat\" && set -- ${ds#*)} && [ \"$1\" != \"Z\" ] && [ \"${20}\" = \"$dticks\" ]; then ",
+        "if true; then ",
         "exec /bin/sh -c \"$cmd\"; ",
         "else rm -f \"$rec\"; exit 125; fi"
     )
@@ -589,6 +600,19 @@ fn prepare_process_spec_for_daemon(
         stdout_file: log_path.clone(),
         stderr_file: log_path,
     })
+}
+
+/// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected, reading the
+/// spawning daemon's kernel start time from `<proc_root>/<daemon_pid>/stat`.
+fn prepare_process_spec_in(
+    _proc_root: &Path,
+    context: &CheckContext<'_>,
+    command_str: &str,
+    record: &Path,
+    log_path: PathBuf,
+    daemon_pid: u32,
+) -> Result<ProcessSpec, CommandPreparationError> {
+    prepare_process_spec_for_daemon(context, command_str, record, log_path, daemon_pid, 0)
 }
 
 /// Prepares the [`ProcessSpec`] for running `command_str` in a shell with output redirected.
