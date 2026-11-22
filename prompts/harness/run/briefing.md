@@ -1,7 +1,7 @@
 # A NEW SESSION ON A TASK THAT WAS ALREADY STARTED
 
-You work on task {{task}} again, in a new session. The session before you did not finish the work; the harness recorded
-why as `{{reason}}`:
+You work on task {{task}} again, in a new session. The session before you went bad; the harness recorded why as
+`{{reason}}`:
 
 - `no_status`: its last runs ended without a `STATUS:` line;
 - `hang`: its last runs showed no activity until the watchdog stopped them;
