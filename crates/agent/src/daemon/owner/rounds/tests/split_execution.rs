@@ -1978,3 +1978,95 @@ async fn split_branch_collision_keeps_the_old_holder_stopped_until_a_round_can_o
         1
     );
 }
+#[tokio::test]
+async fn outside_replacement_reuses_a_stopped_coordinators_task_for_the_next_part() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            investigator("inv-extra", "sleep"),
+            normal("claude-1", "sleep"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-split-delivery.json");
+    let mut wire: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    let last_run = wire["teams"][0]["crew"]["members"][0]["runs"]
+        .as_array_mut()
+        .unwrap()
+        .pop()
+        .unwrap();
+    wire["teams"][0]["crew"]["coordinator"]["runs"]
+        .as_array_mut()
+        .unwrap()
+        .push(last_run);
+    wire["teams"][0]["crew"]["coordinator"]["status"] = serde_json::json!("stopped");
+    std::fs::write(rig.home.state_file(), serde_json::to_string(&wire).unwrap()).unwrap();
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[replacement]\nagents = [\"inv-extra\"]\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+
+    let team_id: TeamId = "team-20261121-120000-spl1".parse().unwrap();
+    let lead_task: TaskId = "task-20261121-120001-spl1".parse().unwrap();
+    let member_task: TaskId = "task-20261121-120002-spl1".parse().unwrap();
+
+    std::fs::create_dir_all(rig.home.task_dir(&lead_task)).unwrap();
+    std::fs::create_dir_all(rig.home.task_dir(&member_task)).unwrap();
+    let lead_branch = format!("agents/inv-lead/{lead_task}-1.1");
+    let branch_c = format!("agents/inv-lead/{lead_task}-1.1c");
+    let member_branch = format!("agents/claude-1/{member_task}-1.1");
+    super::rig::git(&rig.repo, &["branch", &lead_branch, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_c, "main"]);
+    super::rig::git(&rig.repo, &["branch", &member_branch, "main"]);
+    super::rig::git(
+        &rig.repo,
+        &[
+            "worktree",
+            "add",
+            rig.worktree(&lead_task).to_str().unwrap(),
+            &lead_branch,
+        ],
+    );
+    super::rig::git(
+        &rig.repo,
+        &[
+            "worktree",
+            "add",
+            rig.worktree(&member_task).to_str().unwrap(),
+            &member_branch,
+        ],
+    );
+
+    rig.github
+        .foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1a");
+    rig.github
+        .foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1b");
+    let pr3 = rig.github.foreign_pull(&branch_c);
+    assert_eq!(pr3, 3);
+    rig.github.merged_by_a_human(3);
+
+    rig.start().await;
+
+    let state = rig
+        .state_where(
+            "outside replacement receives a round after the stopped coordinator",
+            |state| {
+                let team = state.team(&team_id).unwrap();
+                team.rounds().len() == 3
+                    && team.rounds()[2].is_open()
+                    && state.find_task(&lead_task).unwrap().member.agent().name() == "inv-extra"
+                    && state.find_task(&lead_task).unwrap().member.status() == TaskStatus::Running
+            },
+        )
+        .await;
+    assert_eq!(
+        state.team(&team_id).unwrap().rounds()[2].part().unwrap().to_string(),
+        "c"
+    );
+    assert_eq!(
+        state.find_task(&member_task).unwrap().member.status(),
+        TaskStatus::Stopped
+    );
+    rig.stop().await.unwrap();
+}

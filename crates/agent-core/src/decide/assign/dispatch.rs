@@ -143,6 +143,14 @@ pub fn dispatch_with_candidates(
     result
 }
 
+/// Finds the durable task that can carry a subsequent split part's replacement.
+///
+/// A recorded holder also identifies a round that opened before its first run.
+#[must_use]
+pub fn reusable_split_member(_team: &Team, _item: ItemId) -> Option<&Member> {
+    None
+}
+
 /// Immutable assignment facts shared by the ready split parts.
 struct SplitDispatchContext<'a> {
     /// Team whose parts are ready.

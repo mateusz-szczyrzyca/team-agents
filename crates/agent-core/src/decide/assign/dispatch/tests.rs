@@ -1082,3 +1082,76 @@ fn busy_configured_outside_replacement_waits_without_a_capability_question() {
         assert_eq!(entered, expected_waits);
     }
 }
+
+#[test]
+fn split_reusable_task_covers_member_coordinator_recorded_holder_and_missing_history() {
+    for (source, expected) in [
+        ("member", Some("task-20261121-120002-spl1")),
+        ("coordinator", Some("task-20261121-120001-spl1")),
+        ("recorded", Some("task-20261121-120002-spl1")),
+        ("missing", None),
+    ] {
+        let fixture = include_str!("../../../../tests/fixtures/state-before-split-delivery.json");
+        let mut wire: serde_json::Value = serde_json::from_str(fixture).unwrap();
+        if source == "coordinator" {
+            let run = wire["teams"][0]["crew"]["members"][0]["runs"]
+                .as_array_mut()
+                .unwrap()
+                .pop()
+                .unwrap();
+            wire["teams"][0]["crew"]["coordinator"]["runs"]
+                .as_array_mut()
+                .unwrap()
+                .push(run);
+        }
+        if source == "recorded" || source == "missing" {
+            wire["teams"][0]["crew"]["members"][0]["runs"] = serde_json::json!([]);
+            wire["teams"][0]["crew"]["coordinator"]["runs"] = serde_json::json!([]);
+        }
+        if source == "recorded" {
+            let round = wire["teams"][0]["rounds"][1]["id"].as_str().unwrap().to_owned();
+            wire["teams"][0]["part_assignments"] = serde_json::json!({round: "claude-1"});
+        }
+        let state = crate::state::State::from_json(&serde_json::to_string(&wire).unwrap()).unwrap();
+        let team = state.teams().first().unwrap();
+        assert_eq!(
+            reusable_split_member(team, "1.1".parse().unwrap()).map(|member| member.task().as_str()),
+            expected,
+            "{source}"
+        );
+    }
+}
+
+#[test]
+fn outside_split_replacement_without_a_reusable_task_waits_for_the_human() {
+    let fixture = include_str!("../../../../tests/fixtures/state-before-split-delivery.json");
+    let mut wire: serde_json::Value = serde_json::from_str(fixture).unwrap();
+    wire["teams"][0]["crew"]["members"][0]["runs"] = serde_json::json!([]);
+    wire["teams"][0]["crew"]["coordinator"]["runs"] = serde_json::json!([]);
+    wire["teams"][0]["crew"]["coordinator"]["status"] = serde_json::json!("stopped");
+    let state = crate::state::State::from_json(&serde_json::to_string(&wire).unwrap()).unwrap();
+    let team = state.teams().first().unwrap();
+    let agent = inv("outside-agent");
+    let candidates = [Candidate {
+        agent: &agent,
+        status: TaskStatus::Waiting,
+        handed_over: false,
+        busy: false,
+    }];
+    assert_eq!(
+        dispatch_with_candidates(
+            team,
+            ReplacementMode::Auto,
+            &["outside-agent".parse().unwrap()],
+            &candidates
+        ),
+        Dispatch {
+            assigned: vec![],
+            waiting: vec![Waiting {
+                item: "1.1".parse().unwrap(),
+                required: Tier::Normal,
+                reason: WaitReason::Absent
+            }],
+        }
+    );
+}
