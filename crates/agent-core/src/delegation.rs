@@ -30,19 +30,6 @@ pub struct Named {
     pub doing: String,
 }
 
-impl Named {
-    /// A request that names none of the four, as an agent without a plan sends it.
-    #[must_use]
-    pub fn none() -> Self {
-        Self {
-            step: String::new(),
-            files: Vec::new(),
-            check: String::new(),
-            doing: String::new(),
-        }
-    }
-}
-
 /// What a request names of its plan: the pieces the worker needs, and where they can be refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Request {
