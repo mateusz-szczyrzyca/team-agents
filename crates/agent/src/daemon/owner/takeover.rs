@@ -437,20 +437,17 @@ impl Owner {
             .roster()
             .into_iter()
             .any(|(_, member)| member.status() == TaskStatus::Running);
-        let in_review = found.team.items().iter().any(|progress| match progress.phase() {
-            ItemPhase::InReview { .. } => {
-                found.role == Role::Coordinator
-                    || found
-                        .team
-                        .rounds()
-                        .iter()
-                        .any(|round| round.is_open() && round.item() == Some(progress.id()))
+        let in_review = found.team.items().iter().any(|progress| {
+            if !matches!(progress.phase(), ItemPhase::InReview { .. }) {
+                return false;
             }
-            ItemPhase::Pending
-            | ItemPhase::InProgress { .. }
-            | ItemPhase::Fixing { .. }
-            | ItemPhase::Approved { .. }
-            | ItemPhase::Done { .. } => false,
+            found
+                .member
+                .runs()
+                .iter()
+                .flat_map(|run| run.rounds())
+                .filter_map(|round| found.team.round(round))
+                .any(|round| round.item() == Some(progress.id()))
         });
         let wait = if found.member.status() == TaskStatus::Running {
             TaskWait::Running
