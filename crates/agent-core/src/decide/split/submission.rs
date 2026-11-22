@@ -73,5 +73,56 @@ pub fn judge_submission(items: &[ItemId], split: &BTreeSet<ItemId>, message: Opt
     })
 }
 
+/// Whether the author of a refused line is told again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Telling {
+    /// It is sent the text of the refusal.
+    Tell,
+    /// The refusal is only recorded: the author has been told as often as it will be, and its own status decides.
+    LeaveToStatus,
+}
+
+/// Whether the author is told of its `refused`th refusal in a row when a proposal is corrected `limit` times (`[split]
+/// corrections`). It is always told once, also when the configuration corrects nothing: a coordinator that is never told
+/// why would repeat the line.
+#[must_use]
+pub fn telling(_refused: u32, _limit: u32) -> Telling {
+    Telling::Tell
+}
+
+/// Whether the text of a refusal reached the bus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Sent {
+    /// The bus took the message.
+    Delivered,
+    /// The bus did not.
+    Failed,
+}
+
+/// How the run that made the refused line ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ending {
+    /// With `STATUS: SLEEPING`: nothing runs the coordinator again but a message or the harness.
+    Sleeping,
+    /// With another status, which is acted on as it is.
+    Other,
+}
+
+/// What follows the refusal besides the run's own ending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Wake {
+    /// The run's own ending decides; a message on the bus wakes a coordinator that sleeps.
+    KeepStatus,
+    /// The coordinator runs again: it sleeps and could not be told, so no message will wake it.
+    Queue,
+}
+
+/// What follows a refusal that was meant to be told: the run's own status stands, except that a sleeping coordinator the bus
+/// could not tell is run again.
+#[must_use]
+pub fn wake_after(_sent: Sent, _ending: Ending) -> Wake {
+    Wake::KeepStatus
+}
+
 #[cfg(test)]
 mod tests;

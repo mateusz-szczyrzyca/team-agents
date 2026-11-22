@@ -102,3 +102,37 @@ fn a_well_formed_item_the_team_does_not_have_is_refused_by_name() {
     assert_eq!(judged(&[], Some("SPLIT: 9.9\nSTATUS: SLEEPING")), unknown("9.9"));
     assert_eq!(judged(&["1.1"], Some("SPLIT: 12.34")), unknown("12.34"));
 }
+
+// Rule: the author is told of a refusal as often as a proposal is corrected, and at least once.
+#[test]
+fn the_author_is_told_as_often_as_a_proposal_is_corrected_and_at_least_once() {
+    let cases = [
+        (1, 2, Telling::Tell, "told"),
+        (2, 2, Telling::Tell, "told again"),
+        (3, 2, Telling::LeaveToStatus, "limit reached"),
+        (9, 2, Telling::LeaveToStatus, "far past the limit"),
+        (1, 0, Telling::Tell, "limit 0: told once"),
+        (2, 0, Telling::LeaveToStatus, "limit 0: not told twice"),
+        (1, 1, Telling::Tell, "limit 1: told"),
+        (2, 1, Telling::LeaveToStatus, "limit 1: not told again"),
+    ];
+
+    for (refused, limit, want, name) in cases {
+        assert_eq!(telling(refused, limit), want, "{name}");
+    }
+}
+
+// Rule: a coordinator that sleeps and could not be told is run again; every other case leaves the run's own status.
+#[test]
+fn only_a_sleeping_coordinator_that_could_not_be_told_is_run_again() {
+    let cases = [
+        (Sent::Delivered, Ending::Sleeping, Wake::KeepStatus),
+        (Sent::Delivered, Ending::Other, Wake::KeepStatus),
+        (Sent::Failed, Ending::Sleeping, Wake::Queue),
+        (Sent::Failed, Ending::Other, Wake::KeepStatus),
+    ];
+
+    for (sent, ending, want) in cases {
+        assert_eq!(wake_after(sent, ending), want, "{sent:?}, {ending:?}");
+    }
+}
