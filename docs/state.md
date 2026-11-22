@@ -825,7 +825,10 @@ Older teams omit both maps and load with empty maps; the pre-change fixture
 
 ### Per-agent run limits
 
-The run limit (`[limits] runs_per_agent` and `runs_per_worker`, default `1`) adds no field to `state.json`, and
-state schema `14` is unchanged. A state written before the limit with an agent that has runs going in two teams loads
-unchanged: both tasks finish, and the limit holds from the next start. On the socket, `MemberSummary` carries the
-optional `waits_for` (`{team, task}`) when a queued task waits for its agent's run in another task, omitted when absent.
+The run limit (`[limits] runs_per_agent` and `runs_per_worker`, default `1`) keeps state schema `14` unchanged. When
+queued tasks enter the queue in an order that differs from team-creation order (for example, when an older team's task
+is resumed while a newer team's task is already waiting), `state.json` carries the optional top-level `queued` array of
+task IDs in queue-entry order; when the order matches team-creation order, `queued` is omitted. A state written before
+the limit with an agent that has runs going in two teams loads unchanged: both tasks finish, and the limit holds from
+the next start. On the socket, `MemberSummary` carries the optional `waits_for` (`{team, task}`) when a queued task
+waits for its agent's run in another task, omitted when absent.
