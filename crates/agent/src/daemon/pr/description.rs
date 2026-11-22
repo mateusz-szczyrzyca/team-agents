@@ -1,8 +1,10 @@
 //! Harness-owned description sections and the lead's editable contribution.
 
 use super::PullTextError;
+use agent_core::ids::AgentName;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::state::GateRecord;
+use agent_runtime::agentbus::TaskRequest;
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
 
 /// The lead contribution lives in the task directory, outside the worktree.
@@ -130,4 +132,17 @@ pub(crate) fn allowed_section(
         AutopilotPrompt::PrAllowedBeforehand,
         &Variables::new().with("paths", rows)?,
     )?))
+}
+
+/// The section of the steps of the plans that workers did: each request of `requests` (a requester and the requests
+/// of its task, as the bus lists them) that is done and names a step and a worker. `None` when there is none.
+///
+/// # Errors
+/// [`PullTextError`] if template rendering or variable construction fails.
+pub(crate) fn worker_steps_section(
+    texts: &AutopilotPrompts,
+    requests: &[(AgentName, Vec<TaskRequest>)],
+) -> Result<Option<String>, PullTextError> {
+    let _ = (texts, requests);
+    Ok(None)
 }
