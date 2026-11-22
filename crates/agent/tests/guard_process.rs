@@ -339,4 +339,25 @@ mod guard_process {
         assert!(merged.status.success(), "{}", stderr(&merged));
         assert_eq!(world.count(), before + 2);
     }
+
+    // Rule: with `commit_guard = false` under the checks table, nothing is refused; the table itself is as it was.
+    #[tokio::test]
+    async fn a_repository_with_the_guard_switched_off_is_not_judged() {
+        let world = World::new(true).await;
+        world.red();
+        let config = std::fs::read_to_string(world.home.join("agents.toml")).unwrap();
+        std::fs::write(
+            world.home.join("agents.toml"),
+            config.replace(
+                "test_paths = [\"tests/\"]",
+                "test_paths = [\"tests/\"]\ncommit_guard = false",
+            ),
+        )
+        .unwrap();
+
+        let output = world.commit("tests/a.rs", "one\nTWO\nthree\n", "Format the test");
+
+        assert!(output.status.success(), "{}", stderr(&output));
+        assert_eq!(stderr(&output), "");
+    }
 }
