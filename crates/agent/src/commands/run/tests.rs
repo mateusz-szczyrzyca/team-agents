@@ -650,6 +650,8 @@ async fn an_agent_in_another_open_team_with_unlimited_runs_omits_the_wait_clause
     std::fs::write(
         local_home.config_file(),
         "[agents.claude-1]\ncli = \"claude\"\n[agents.codex-1]\ncli = \"codex\"\n\
+         [investigators.inv-0]\ncli = \"codex\"\n[investigators.inv-1]\ncli = \"codex\"\n\
+         [investigators.inv-2]\ncli = \"codex\"\n[investigators.inv-3]\ncli = \"codex\"\n\
          [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
          [limits]\nruns_per_agent = 0\n\
          [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",

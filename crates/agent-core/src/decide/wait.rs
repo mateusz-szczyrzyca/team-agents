@@ -105,8 +105,10 @@ pub enum Waiting {
 
 /// The end of a wait line of a queued run that goes after the run of `agent` in `team`: the wait line says which run.
 #[must_use]
-pub fn behind_run(_agent: &AgentName, _team: &TeamId) -> String {
-    String::new()
+pub fn behind_run(agent: &AgentName, team: &TeamId) -> String {
+    include_str!("../../../../prompts/harness/pr/wait-behind.md")
+        .replace("{{agent}}", agent.as_str())
+        .replace("{{team}}", team.as_str())
 }
 
 impl Waiting {

@@ -318,7 +318,9 @@ impl Owner {
             Activity::Idle
         };
         let obligation = if self.pulls.is_none() {
-            Some(Obligation::Human)
+            self.stuck_obligation(team, round)
+                .or_else(|| Self::queued_run_obligation(team, round))
+                .or(Some(Obligation::Human))
         } else {
             self.stuck_obligation(team, round)
                 .or_else(|| self.round_obligation(team, round))
@@ -472,7 +474,7 @@ fn round_tasks<'team>(team: &'team Team, round: &Round) -> Vec<&'team Member> {
     let lead = roster
         .first()
         .map(|(_, member)| *member)
-        .filter(|_| round.item().is_some());
+        .filter(|_| round.item().is_some() || team.items().is_empty());
     let holders = roster
         .iter()
         .map(|(_, member)| *member)
