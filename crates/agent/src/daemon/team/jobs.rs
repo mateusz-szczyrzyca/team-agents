@@ -107,21 +107,7 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                 &Variables::new().with("member", member.as_str())?,
             )?,
         ),
-        BusNotice::MemberNoStatusItem { member, item, branch } => (
-            NoticeKind::MemberNoStatus,
-            vec![
-                ("branch", branch.to_string()),
-                ("item", item.to_string()),
-                ("member", member.to_string()),
-            ],
-            texts.render(
-                TeamPrompt::MemberNoStatusItem,
-                &Variables::new()
-                    .with("member", member.as_str())?
-                    .with("item", item.to_string())?
-                    .with("branch", branch.as_str())?,
-            )?,
-        ),
+        BusNotice::MemberNoStatusItem { member, item, branch } => no_status_item(texts, member, *item, branch)?,
         BusNotice::LeadTakesWork(work) => lead_takes_work(texts, work)?,
         BusNotice::HelperResult {
             request,
@@ -134,6 +120,12 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
             HELPER_DONE,
             (TeamPrompt::HelperResult, "summary", summary),
         )?,
+        BusNotice::HelperGivenAgain {
+            request,
+            worker,
+            next,
+            reason,
+        } => given_again(texts, *request, (worker, next), reason)?,
         BusNotice::HelperFailed {
             request,
             worker,
@@ -176,6 +168,30 @@ fn lead_takes_work(texts: &TeamPrompts, work: &LeadWork) -> Result<Rendered, Not
             ("task", work.task.to_string()),
         ],
         text,
+    ))
+}
+
+/// The notice that `member` ended its turn without a status line while working on `item` of `branch`.
+fn no_status_item(
+    texts: &TeamPrompts,
+    member: &AgentName,
+    item: ItemId,
+    branch: &BranchName,
+) -> Result<Rendered, NoticeRenderError> {
+    Ok((
+        NoticeKind::MemberNoStatus,
+        vec![
+            ("branch", branch.to_string()),
+            ("item", item.to_string()),
+            ("member", member.to_string()),
+        ],
+        texts.render(
+            TeamPrompt::MemberNoStatusItem,
+            &Variables::new()
+                .with("member", member.as_str())?
+                .with("item", item.to_string())?
+                .with("branch", branch.as_str())?,
+        )?,
     ))
 }
 
@@ -269,6 +285,44 @@ pub(in crate::daemon) fn worker_result_brought(
         .with("files", files)?
         .with("tail", tail)?;
     Ok(texts.render(TeamPrompt::WorkerResultBrought, &values)?)
+}
+
+/// The notice that the result of `worker` did not serve the request `request`, which goes once more to `next`.
+fn given_again(
+    texts: &TeamPrompts,
+    request: RequestId,
+    (worker, next): (&AgentName, &AgentName),
+    reason: &str,
+) -> Result<Rendered, NoticeRenderError> {
+    let values = Variables::new()
+        .with("worker", worker.as_str())?
+        .with("request_id", request.number().to_string())?
+        .with("reason", reason)?
+        .with("next", next.as_str())?;
+    Ok((
+        NoticeKind::HelperResult,
+        vec![
+            ("request", request.to_string()),
+            ("status", "again".to_owned()),
+            ("worker", worker.to_string()),
+        ],
+        texts.render(TeamPrompt::WorkerGivenAgain, &values)?,
+    ))
+}
+
+/// The text that tells the worker of a second try who served the request before it and why that result did not serve.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn delegation_again(
+    texts: &TeamPrompts,
+    previous_worker: &AgentName,
+    reason: &str,
+) -> Result<String, NoticeRenderError> {
+    let values = Variables::new()
+        .with("previous_worker", previous_worker.as_str())?
+        .with("reason", reason)?;
+    Ok(texts.render(TeamPrompt::DelegationAgain, &values)?)
 }
 
 /// The text that tells a requester the worker's commit does not apply to its branch: the files in conflict.
