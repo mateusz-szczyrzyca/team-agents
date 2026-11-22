@@ -221,3 +221,49 @@ async fn prepare_publish_question_file_returns_write_error_on_failure_and_recove
     let content = std::fs::read_to_string(&valid_file).unwrap();
     assert!(content.contains("could not be published"));
 }
+
+#[tokio::test]
+async fn publication_question_notifies_and_transitions_directly_from_waiting_or_failed() {
+    for status in [TaskStatus::Waiting, TaskStatus::Failed] {
+        let (state, team_id) = state_with_waiting_lead();
+        let plan = plan_publications(state.team(&team_id).unwrap()).unwrap();
+        let mut json = serde_json::to_value(&state).unwrap();
+        json["teams"][0]["crew"]["member"]["status"] = serde_json::to_value(status).unwrap();
+        let state = serde_json::from_value(json).unwrap();
+        let (daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+        let lead = owner.lead_of(&team_id).unwrap();
+        std::fs::create_dir_all(daemon.home.questions_file(&lead.task, n(1)).parent().unwrap()).unwrap();
+        let mut events = owner.parts.events.subscribe();
+        let capacity = owner.parts.notices.capacity();
+        owner
+            .ask_human_publish_failed(
+                Site {
+                    pulls: &pulls,
+                    team: &team_id,
+                    lead: &lead,
+                },
+                &plan[0],
+                "refused",
+                (4, 3),
+                crate::fixtures::at(100),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            owner.parts.state.find_task(&lead.task).unwrap().member.status(),
+            TaskStatus::Questions
+        );
+        assert_eq!(
+            owner.parts.notices.capacity(),
+            capacity - 1,
+            "human notification must be queued"
+        );
+        let mut statuses = Vec::new();
+        while let Ok(event) = events.try_recv() {
+            if let EventKind::TaskStatus { status, .. } = event.event {
+                statuses.push(status);
+            }
+        }
+        assert_eq!(statuses, [TaskStatus::Questions]);
+    }
+}
