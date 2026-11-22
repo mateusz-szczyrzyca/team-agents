@@ -1225,8 +1225,12 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`].
-    pub async fn helper_dump(&self, _task: &TaskId) -> Result<Vec<TaskRequest>, AgentBusError> {
-        Ok(Vec::new())
+    pub async fn helper_dump(&self, task: &TaskId) -> Result<Vec<TaskRequest>, AgentBusError> {
+        let command = BusCommand::HelperDump;
+        let output = self
+            .run(command, Args::new().flag("--task", task.as_str()), None)
+            .await?;
+        decode_json(command, &output)
     }
 
     /// The checkpoint kept under `key`; none when there is none.
