@@ -203,19 +203,50 @@ impl AgentBus {
     }
 }
 
+/// The lines of the log of the bus at `bus_dir`, oldest first; none when it has no log.
+async fn log_lines(bus_dir: &Path) -> Result<Vec<Line>, UnreadMessagesError> {
+    let path = bus_dir.join(LOG_FILE);
+    let Some(window) = read_window(&path).await? else {
+        return Ok(Vec::new());
+    };
+    let text = std::str::from_utf8(window.bytes()).map_err(|source| UnreadMessagesError::NotUtf8 {
+        path: path.clone(),
+        source,
+    })?;
+    text.lines()
+        .enumerate()
+        .filter(|(_, text)| !text.trim().is_empty())
+        .map(|(index, text)| {
+            serde_json::from_str(text).map_err(|source| UnreadMessagesError::Line {
+                path: path.clone(),
+                line: index.saturating_add(1),
+                source,
+            })
+        })
+        .collect()
+}
+
 /// See [`AgentBus::newest_message_id`]; `bus_dir` is the directory of the bus.
-async fn newest_message_id(_bus_dir: &Path) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
-    Ok(None)
+async fn newest_message_id(bus_dir: &Path) -> Result<Option<NonZeroU64>, UnreadMessagesError> {
+    Ok(log_lines(bus_dir).await?.last().map(|line| line.id))
 }
 
 /// See [`AgentBus::said_after`]; `bus_dir` is the directory of the bus.
 async fn said_after(
-    _bus_dir: &Path,
-    _reader: Reader<'_>,
-    _sender: &str,
-    _after: Option<NonZeroU64>,
+    bus_dir: &Path,
+    reader: Reader<'_>,
+    sender: &str,
+    after: Option<NonZeroU64>,
 ) -> Result<Vec<Said>, UnreadMessagesError> {
-    Ok(Vec::new())
+    Ok(log_lines(bus_dir)
+        .await?
+        .into_iter()
+        .filter(|line| after.is_none_or(|mark| line.id > mark) && line.from == sender && line.is_direct_for(reader))
+        .map(|line| Said {
+            id: line.id,
+            text: line.text,
+        })
+        .collect())
 }
 
 /// See [`AgentBus::said_since_finished`]; `bus_dir` is the directory of the bus.
