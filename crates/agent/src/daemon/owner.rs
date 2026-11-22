@@ -280,6 +280,12 @@ pub(crate) enum OwnerError {
         /// The task's ID in the runtime.
         id: JoinId,
     },
+    /// A batch of command checks ended that the owner did not start.
+    #[error("the command check task {id} is not one the owner started")]
+    UnknownCheck {
+        /// The task's ID in the runtime.
+        id: tokio::task::Id,
+    },
     /// A name in the state is not an agent name.
     #[error("a name in the state is not an agent name")]
     Name(#[from] InvalidName),
@@ -345,6 +351,12 @@ pub(crate) enum OwnerError {
     /// The question about publication cannot be prepared or written.
     #[error(transparent)]
     PublishQuestion(#[from] rounds::PublishQuestionError),
+    /// A leftover or stopping command check could not be cleaned up.
+    #[error(transparent)]
+    PlanCheckCleanup(#[from] plan::PlanCheckCleanupError),
+    /// Existing step judgements in `history.db` could not be read.
+    #[error(transparent)]
+    PlanJudgementsRead(#[from] plan::PlanJudgementsError),
 }
 
 /// What the owner is made of.
@@ -522,6 +534,14 @@ pub(super) struct Owner {
     was_min_space: bool,
     /// Cached plan summaries of tasks, refreshed when a run ends.
     task_plans: HashMap<TaskId, Vec<PlanStepSummary>>,
+    /// The command checks of finished runs that run in the background, one batch per run.
+    checks: JoinSet<plan::CheckBatch>,
+    /// The task whose run each batch of command checks judges, by the batch's task ID in the runtime.
+    checking: HashMap<tokio::task::Id, TaskId>,
+    /// Background command check batches aborted by `halt_parked_check`, ignored if they had already completed.
+    aborted_checks: HashSet<tokio::task::Id>,
+    /// The finished runs whose end waits for their command checks, by task: each is finished when its batch ends.
+    parked: HashMap<TaskId, plan::Parked>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -588,6 +608,10 @@ impl Owner {
             pending_removals: disk::PendingRemovals::default(),
             was_min_space: false,
             task_plans: HashMap::new(),
+            checks: JoinSet::new(),
+            checking: HashMap::new(),
+            aborted_checks: HashSet::new(),
+            parked: HashMap::new(),
         }
     }
 
@@ -645,12 +669,14 @@ impl Owner {
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
+                Some(joined) = self.checks.join_next_with_id() => self.check_batch_done(joined).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
                 }
             }
         }
+        let checks_stopped = self.stop_checks().await;
         let stopped = self.stop_runs().await;
         // What the runs' ends told the bus is carried out before the daemon ends: a lead given a member's work at the end
         // of the last retry is told even when the daemon stops then, as the state already says the member stopped.
@@ -667,6 +693,7 @@ impl Owner {
         while let Some(joined) = self.disk_jobs.join_next_with_id().await {
             self.disk_job_done(joined).await;
         }
+        checks_stopped?;
         stopped
     }
 
@@ -674,6 +701,8 @@ impl Owner {
 
     /// Ends the runs a restart left going and finds the pauses to wake.
     async fn recover(&mut self) -> Result<(), OwnerError> {
+        // A command check a dead daemon left running is ended before any run is looked at: nothing runs without its daemon.
+        self.recover_leftover_checks().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let recovery = recover(&mut self.parts.state, now, self.parts.settings.config.limits())?;
         for (at, task) in recovery.wakes {
@@ -735,6 +764,7 @@ impl Owner {
             self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
+        self.recover_plan_checks().await?;
         Ok(())
     }
 
@@ -1012,7 +1042,6 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         self.in_flight.remove(&task);
-        self.release_deferred_target(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
         let result = match outcome {
@@ -1022,16 +1051,26 @@ impl Owner {
             },
             Outcome::Failed(reason) => self.failed(&task, reason).await,
         };
+        if !self.parked.contains_key(&task) {
+            self.release_run_worktree_targets(&task);
+        }
+        result
+    }
+
+    /// Releases any deferred round target removal or low-disk reviewer target removal once `task` has finished both its
+    /// CLI run and any parked plan command checks.
+    pub(super) fn release_run_worktree_targets(&mut self, task: &TaskId) {
+        self.release_deferred_target(task);
         let free_bytes = self.check_free_space();
-        match self.locate(&task) {
+        match self.locate(task) {
             Ok(located) if located.role == Role::Reviewer => {
                 let low_limit_bytes = self.parts.settings.config.disk().low_free_gb.saturating_mul(GIBIBYTE);
                 if let Some(free) = free_bytes
                     && free < low_limit_bytes
                     && let Some(team) = self.parts.state.team(&located.team)
                 {
-                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), &task);
-                    self.remove_target(&task, &worktree_dir);
+                    let worktree_dir = self.parts.store.home().worktree_dir(team.repo(), task);
+                    self.remove_target(task, &worktree_dir);
                 }
             }
             Ok(_) => {}
@@ -1044,7 +1083,6 @@ impl Owner {
                 );
             }
         }
-        result
     }
 
     /// A run that could not be carried out: its task fails.
@@ -1155,13 +1193,11 @@ impl Owner {
         Ok(())
     }
 
-    /// A run that went to its end: its task goes where the end says.
+    /// A run that went to its end: its task goes where the end says. The end waits for the command checks of the plan
+    /// when there are some: the run is then parked, and [`Owner::check_batch_done`] finishes it.
     async fn finished(&mut self, task: &TaskId, run: FinishedRun) -> Result<(), OwnerError> {
         let located = self.locate(task)?;
         self.keep_plan_out_of_delivery(task, &located).await;
-        let now = Timestamp::now(&self.parts.clock)?;
-        let mut events = Vec::new();
-        let settle_span = self.settle_span_of(task, &located.team);
         self.attach_session(task, run.session.clone())?;
         self.remember_fix_message(&located, run.final_message.as_deref())?;
         let settled = settle(
@@ -1177,8 +1213,79 @@ impl Owner {
             .await?
         {
             Some(settled) => (settled, plan::PlanHeld::Yes),
-            None => self.plan_at_end(task, &located, &run.classified.end, settled).await?,
+            None => match self
+                .plan_step_at_end(task, &located, &run.classified.end, settled)
+                .await?
+            {
+                plan::PlanStep::Done(settled, held) => (settled, held),
+                plan::PlanStep::Waiting(wait, job) => {
+                    // Persist the unsettled finished run before spawning its background command checks, so a crash
+                    // while checks run never loses the finished run or re-runs the agent CLI.
+                    let run_id = wait.run.clone().or_else(|| {
+                        self.parts
+                            .state
+                            .find_task(task)
+                            .and_then(|found| found.member.current_run().map(|current| current.id().clone()))
+                    });
+                    if let Some(run_id) = run_id {
+                        let ended_at = self
+                            .parts
+                            .state
+                            .find_task(task)
+                            .and_then(|found| found.member.plan_running_check())
+                            .and_then(|check| check.ended_at)
+                            .map_or_else(|| Timestamp::now(&self.parts.clock), Ok)?;
+                        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+                            member.set_plan_running_check(Some(agent_core::state::RunningPlanCheck {
+                                run: run_id,
+                                end: run.classified.end.clone(),
+                                pause: run.classified.pause.clone(),
+                                made_progress: run.progress == Progress::Made,
+                                final_message: run.final_message.clone(),
+                                ended_at: Some(ended_at),
+                            }));
+                            self.save().await?;
+                        }
+                    }
+                    let abort = self.start_command_checks(task, *job);
+                    self.parked.insert(
+                        task.clone(),
+                        plan::Parked {
+                            located,
+                            run,
+                            wait: *wait,
+                            abort,
+                        },
+                    );
+                    return Ok(());
+                }
+            },
         };
+        self.finish(task, located, run, settled, held).await
+    }
+
+    /// Ends a run of `task` that went to its end, with what its end and its plan decided: the status of the task, the
+    /// commit of its state and the report of the end.
+    async fn finish(
+        &mut self,
+        task: &TaskId,
+        located: Located,
+        run: FinishedRun,
+        settled: Settled,
+        held: plan::PlanHeld,
+    ) -> Result<(), OwnerError> {
+        let now = match self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.plan_running_check())
+            .and_then(|check| check.ended_at)
+        {
+            Some(at) => at,
+            None => Timestamp::now(&self.parts.clock)?,
+        };
+        let mut events = Vec::new();
+        let settle_span = self.settle_span_of(task, &located.team);
         {
             let _entered = settle_span.enter();
             log_decision(
@@ -1214,6 +1321,9 @@ impl Owner {
             run.final_message.as_deref(),
             &mut events,
         )?;
+        if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+            member.set_plan_running_check(None);
+        }
         let (status, notice) = if let Some(halt) = overruled {
             self.hangs.remove(task);
             self.wakes.remove(task);

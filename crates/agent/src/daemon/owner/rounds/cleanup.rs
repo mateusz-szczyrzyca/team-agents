@@ -40,7 +40,7 @@ impl Owner {
             })
             .collect();
         for (task, worktree_dir) in targets {
-            if self.in_flight.contains(&task) {
+            if self.in_flight.contains(&task) || self.parked.contains_key(&task) {
                 self.deferred_targets.insert(task, worktree_dir);
             } else {
                 self.remove_target(&task, &worktree_dir);

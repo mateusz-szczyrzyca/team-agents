@@ -159,9 +159,9 @@ history; a run of a role here that ends `STATUS: DONE` against its plan is sent 
 
 A task created before the daemon first ran with plans keeps none of this: its plan, if it writes one, is recorded, and
 its runs are never sent back. Done steps are nevertheless judged for all roles and outcomes, even with
-`bounces = 0`: existence checks run, while no-check, reviewer and command steps remain declared in the daemon. Mismatches
-do not consume this budget yet. The configuration keys `check_seconds` and `check_refuse` are introduced in this release
-alongside the runtime command check engine, while durable daemon command execution and mismatch bounces follow in a dedicated task.
+`bounces = 0`: existence checks and command checks run, while no-check and reviewer steps remain declared in the daemon. Mismatches
+do not consume this budget yet. The daemon runs the command checks of done steps (`check_seconds` is their time limit); a command that fails is recorded as a
+`mismatch`.
 Existing configurations need no changes.
 
 ### `[split]`

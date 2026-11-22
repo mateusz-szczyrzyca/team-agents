@@ -179,18 +179,15 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
             worktree: spec.working_dir.as_path().to_path_buf(),
             source,
         })?;
-    let mut env = BTreeMap::new();
-    for (name, secret) in parts.secrets.agent_env() {
-        env.insert(name.clone(), secret.expose().to_owned());
-    }
-    env.insert(env_name(PATH_VARIABLE)?, agent_path(parts)?);
-    // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
-    env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
-    // The commits of the run are the agent's: this wins over a secret of the same name.
     let hooks = guard_hooks(parts, job, &run_dir).await;
-    for (name, value) in identity_env(&job.identity, hooks.as_deref())? {
-        env.insert(env_name(name)?, value);
-    }
+    let mut env = base_agent_environment(
+        &parts.secrets,
+        &parts.agent_binary_dir,
+        &parts.config.binaries().agent_path,
+        parts.store.home().root(),
+        &job.identity,
+        hooks.as_deref(),
+    )?;
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.
     env.extend(spec.env);
     // The configured cache policy wins over inherited and secret environment values.
@@ -240,15 +237,6 @@ pub fn agent_path_directories<'a>(agent_binary_dir: &'a Path, agent_path: &'a [A
         }
     }
     directories
-}
-
-/// The `PATH` of the agents: the daemon executable directory, then the directories of `[binaries] agent_path`, in order.
-fn agent_path(parts: &EngineParts) -> Result<String, RunError> {
-    let directories = agent_path_directories(parts.agent_binary_dir.as_path(), &parts.config.binaries().agent_path);
-    let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
-    joined
-        .into_string()
-        .map_err(|path| RunError::PathNotUtf8 { path: path.into() })
 }
 
 /// Git in `worktree`, to read from: no commit is made, but a handle has an identity.
@@ -309,3 +297,51 @@ pub async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Re
     handle.write_all(added.as_bytes()).await.map_err(io_error)?;
     handle.flush().await.map_err(io_error)
 }
+
+/// The base environment of a run or command check of an agent with `identity`: the agents' secrets, `PATH`,
+/// `AGENTS_HOME`, and the commit identity (with optional `hooks`).
+fn base_agent_environment(
+    secrets: &agent_core::config::Secrets,
+    agent_binary_dir: &AbsolutePath,
+    agent_path: &[AbsolutePath],
+    home: &Path,
+    identity: &CommitIdentity,
+    hooks: Option<&Path>,
+) -> Result<BTreeMap<EnvName, String>, RunError> {
+    let mut env = BTreeMap::new();
+    for (name, secret) in secrets.agent_env() {
+        env.insert(name.clone(), secret.expose().to_owned());
+    }
+    let directories = agent_path_directories(agent_binary_dir.as_path(), agent_path);
+    let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
+    let path = joined
+        .into_string()
+        .map_err(|path| RunError::PathNotUtf8 { path: path.into() })?;
+    env.insert(env_name(PATH_VARIABLE)?, path);
+    // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
+    env.insert(env_name(HOME_VARIABLE)?, utf8(home)?.to_owned());
+    // The commits of the run are the agent's: this wins over a secret of the same name.
+    for (name, value) in identity_env(identity, hooks)? {
+        env.insert(env_name(name)?, value);
+    }
+    Ok(env)
+}
+
+/// The environment of a command check of a task whose agent has `identity`: the variables a run of that agent gets from
+/// the daemon (the agents' secrets, `PATH` and `HOME`, the commit identity), and no other secret of the daemon.
+///
+/// # Errors
+/// [`RunError`] when the `PATH` cannot be joined or is not UTF-8, or `home` is not UTF-8.
+pub fn check_environment(
+    secrets: &agent_core::config::Secrets,
+    agent_binary_dir: &AbsolutePath,
+    agent_path: &[AbsolutePath],
+    home: &Path,
+    identity: &CommitIdentity,
+) -> Result<Vec<(String, String)>, RunError> {
+    let env = base_agent_environment(secrets, agent_binary_dir, agent_path, home, identity, None)?;
+    Ok(env.into_iter().map(|(k, v)| (k.as_str().to_owned(), v)).collect())
+}
+
+#[cfg(test)]
+mod tests;
