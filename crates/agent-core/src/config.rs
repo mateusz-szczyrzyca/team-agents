@@ -154,6 +154,9 @@ pub enum ConfigError {
         /// The role that is listed twice.
         role: Role,
     },
+    /// `[workers] tries` asks for no try at all.
+    #[error("[workers] tries is 0: a request for a worker needs at least one try")]
+    WorkersTriesZero,
     /// `[replacement] agents` names an agent that has no table in the file.
     #[error("[replacement] agents names {name}, which is not defined in [agents] or [investigators]")]
     ReplacementAgentUnknown {
@@ -600,14 +603,14 @@ impl Plan {
 /// `[workers]`: what the harness does with the result of a worker that served a request.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct Workers {
+pub struct WorkerSettings {
     /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
     tries: u32,
     /// How long a worker's run may last, in seconds; `0` has no limit.
     seconds: u64,
 }
 
-impl Workers {
+impl WorkerSettings {
     /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
     #[must_use]
     pub const fn tries(&self) -> u32 {
@@ -621,7 +624,7 @@ impl Workers {
     }
 }
 
-impl Default for Workers {
+impl Default for WorkerSettings {
     fn default() -> Self {
         Self {
             tries: DEFAULT_WORKERS_TRIES,
@@ -853,6 +856,8 @@ pub struct Config {
     questions: Questions,
     /// The plans of tasks.
     plan: Plan,
+    /// What the harness does with the result of a worker.
+    worker_settings: WorkerSettings,
     /// The replacement of a task whose session went bad.
     replacement: Replacement,
     /// Split approval policy, defaulted for older configurations.
@@ -933,6 +938,9 @@ struct RawConfig {
     /// See [`Config::questions`].
     #[serde(default)]
     questions: Questions,
+    /// See [`Config::workers`].
+    #[serde(default)]
+    workers: WorkerSettings,
     /// See [`Config::plan`].
     #[serde(default)]
     plan: Plan,
@@ -965,7 +973,10 @@ impl RawConfig {
             language,
             agents,
             investigators,
-            tiers: RawTiers { normal, workers },
+            tiers: RawTiers {
+                normal,
+                workers: worker_names,
+            },
             binaries,
             build,
             watchdog,
@@ -980,6 +991,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            workers: worker_settings,
             replacement,
             split,
             history,
@@ -988,10 +1000,11 @@ impl RawConfig {
             repos,
         } = self;
         check_plan(&plan)?;
+        check_workers(&worker_settings)?;
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
-        check_list(Tier::Worker, &workers, &agents)?;
-        check_tiers(&normal, &workers, &agents, &investigators)?;
+        check_list(Tier::Worker, &worker_names, &agents)?;
+        check_tiers(&normal, &worker_names, &agents, &investigators)?;
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews
             && required.get() > investigators.len()
@@ -1005,7 +1018,7 @@ impl RawConfig {
             language,
             agents,
             normal,
-            workers,
+            workers: worker_names,
             investigators,
             binaries,
             build,
@@ -1021,6 +1034,7 @@ impl RawConfig {
             notifications,
             questions,
             plan,
+            worker_settings,
             replacement,
             split,
             history,
@@ -1029,6 +1043,14 @@ impl RawConfig {
             repos,
         })
     }
+}
+
+/// Checks that `[workers] tries` asks for at least one try: a request with none is never served.
+fn check_workers(workers: &WorkerSettings) -> Result<(), ConfigError> {
+    if workers.tries == 0 {
+        return Err(ConfigError::WorkersTriesZero);
+    }
+    Ok(())
 }
 
 /// Checks that `[plan] roles` names no role that keeps no plan and no role twice, in the order the file gives.
@@ -1260,8 +1282,8 @@ impl Config {
 
     /// What the harness does with the result of a worker.
     #[must_use]
-    pub const fn workers(&self) -> &Workers {
-        &Workers { tries: 2, seconds: 0 }
+    pub const fn workers(&self) -> &WorkerSettings {
+        &self.worker_settings
     }
 
     /// Which roles keep a plan of their task, and how often a run goes back for it.
