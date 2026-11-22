@@ -237,4 +237,38 @@ mod git_bring_over {
         assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
         assert_eq!(raw(&repo, &["show", "HEAD:guide.md"]), "requester");
     }
+
+    #[tokio::test]
+    async fn a_commit_that_changes_a_file_the_requester_changed_uncommitted_is_refused_and_writes_nothing() {
+        let (_tmp, repo) = repository();
+        commit(&repo, &[("guide.md", b"one\n"), ("other.txt", b"other\n")], "base");
+        let base = raw(&repo, &["rev-parse", "HEAD"]);
+        raw(&repo, &["switch", "-q", "-c", "worker", &base]);
+        commit(&repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        let worker: CommitId = raw(&repo, &["rev-parse", "HEAD"]).parse().expect("a commit");
+        raw(&repo, &["switch", "-q", "main"]);
+        // The requester is in the middle of its own edit of the file the worker's commit changes, and has an untracked
+        // file: the merge applies to the branch, but writing it would lose the edit.
+        write(&repo, "guide.md", b"one\nmy edit\n");
+        write(&repo, "untracked.txt", b"new\n");
+        let files = ["guide.md", "other.txt", "untracked.txt"];
+        let before_head = raw(&repo, &["rev-parse", "HEAD"]);
+        let before = state(&repo, &files);
+
+        let error = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect_err("the requester's edit is in the way");
+
+        assert!(
+            matches!(error, agent_runtime::git::GitError::Failed { .. }),
+            "{error:?}"
+        );
+        assert_eq!(state(&repo, &files), before);
+        assert_eq!(raw(&repo, &["rev-parse", "HEAD"]), before_head);
+        assert_eq!(
+            std::fs::read(repo.join("guide.md")).expect("the file"),
+            b"one\nmy edit\n"
+        );
+    }
 }
