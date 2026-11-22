@@ -929,9 +929,16 @@ impl Owner {
         // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
             let reason = member.take_plan_reason();
+            let refused = member.take_plan_refused_gate();
             let answers = member.take_unread_plan_answers();
-            if reason.is_some() || answers.is_some() {
-                tracing::debug!(task = %task, ?reason, ?answers, "the run is told what waited for it of its plan");
+            if reason.is_some() || !refused.is_empty() || answers.is_some() {
+                tracing::debug!(
+                    task = %task,
+                    ?reason,
+                    refused = refused.len(),
+                    ?answers,
+                    "the run is told what waited for it of its plan"
+                );
             }
         }
         events.push(EventKind::RunStarted {
