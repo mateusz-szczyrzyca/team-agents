@@ -406,3 +406,188 @@ async fn a_waiting_members_own_review_is_not_handed_over() {
         "claude-1"
     );
 }
+
+/// A waiting ordinary member in a team with a candidate-free investigator available as a replacement.
+fn waiting_team_state() -> (agent_core::state::State, agent_core::ids::TeamId, TaskId) {
+    let mut state = crate::fixtures::team_state();
+    let task = crate::fixtures::task(2);
+    state.start_waiting(&task, crate::fixtures::at(0));
+    (state, crate::fixtures::team_id(0), task)
+}
+
+/// Enables a replacement candidate by name; the sample investigator inv-codex needs its config entry too.
+fn configure_candidate(daemon: &super::super::fixture::Daemon, name: &str) {
+    let extra = if name == "inv-codex" {
+        "[investigators.inv-codex]\ncli = \"claude\"\n"
+    } else {
+        ""
+    };
+    daemon.configure(&format!(
+        "\n{extra}[replacement]\nagents = [\"{name}\"]\nbusy_after = 1\n"
+    ));
+}
+
+/// Gives the sample reviewer task 4 a state that maps to availability free, running or paused.
+fn candidate_with_status(state: &mut agent_core::state::State, status: TaskStatus) {
+    let task = crate::fixtures::task(4);
+    let mut team = state.team_mut(&crate::fixtures::team_id(0)).unwrap();
+    let (_, mut member) = team.find_mut(&task).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    if status != TaskStatus::Running {
+        member.transition(status).unwrap();
+    }
+}
+
+#[tokio::test]
+async fn a_lower_tier_candidate_is_not_given_the_waiting_task() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, _team, task) = waiting_team_state();
+    state
+        .hand_over_task(&task, crate::fixtures::investigator("inv-1"), crate::fixtures::at(0))
+        .unwrap();
+    state.start_waiting(&task, crate::fixtures::at(0));
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "claude-2");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "a normal agent cannot take an investigator's task");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "inv-1"
+    );
+}
+
+#[tokio::test]
+async fn an_agent_of_the_tasks_team_is_not_given_the_waiting_task() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, _team, task) = waiting_team_state();
+    candidate_with_status(&mut state, TaskStatus::Waiting);
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-codex");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "a free agent of the same team still cannot take the task");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
+
+#[tokio::test]
+async fn a_running_candidate_is_not_given_the_waiting_task() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, _team, task) = waiting_team_state();
+    candidate_with_status(&mut state, TaskStatus::Running);
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-codex");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "a running candidate stays untouched");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
+
+#[tokio::test]
+async fn a_paused_candidate_is_not_given_the_waiting_task() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, _team, task) = waiting_team_state();
+    candidate_with_status(&mut state, TaskStatus::Paused);
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-codex");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "a candidate paused for its quota stays untouched");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
+
+#[tokio::test]
+async fn a_task_that_waits_for_an_answer_is_not_handed_over() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, team, task) = waiting_team_state();
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let (_, mut member) = found.find_mut(&task).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.transition(TaskStatus::Questions).unwrap();
+    }
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-1");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&task).await.unwrap();
+
+    assert!(!changed, "the human's answer does not change the holder");
+    assert_eq!(
+        owner.parts.state.find_task(&task).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
+
+#[tokio::test]
+async fn an_active_coordinator_is_not_handed_over() {
+    use super::super::fixture::Daemon;
+
+    let (mut state, team, _member) = waiting_team_state();
+    {
+        let task = crate::fixtures::task(2);
+        let mut found = state.team_mut(&team).unwrap();
+        let (_, mut member) = found.find_mut(&task).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+    }
+    let lead = crate::fixtures::task(1);
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-1");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&lead).await.unwrap();
+
+    assert!(!changed, "a lead stays while one of its members runs");
+    assert_eq!(
+        owner.parts.state.find_task(&lead).unwrap().member.agent().name(),
+        "inv-opus"
+    );
+}
+
+#[tokio::test]
+async fn a_reviewer_is_not_handed_over_for_a_busy_wait() {
+    use super::super::fixture::Daemon;
+
+    let (state, _team, _member) = waiting_team_state();
+    let reviewer = crate::fixtures::task(4);
+    let daemon = Daemon::new(&state, None);
+    configure_candidate(&daemon, "inv-1");
+    daemon.clock.advance(time::Duration::seconds(2));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let changed = owner.hand_over_busy_wait(&reviewer).await.unwrap();
+
+    assert!(!changed, "reviewer replacement does not use the busy hand-over path");
+    assert_eq!(
+        owner.parts.state.find_task(&reviewer).unwrap().member.agent().name(),
+        "inv-codex"
+    );
+}
