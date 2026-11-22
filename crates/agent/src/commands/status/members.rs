@@ -46,6 +46,7 @@ pub(super) fn line(
     let renewed = member
         .new_sessions
         .map_or_else(String::new, |_| ", in a new session".to_owned());
+    let returned = super::returned::task_note(member);
     let taken_over = member
         .held_by
         .as_ref()
@@ -61,7 +62,7 @@ pub(super) fn line(
     };
     let (role_width, agent_width) = (columns.role, columns.agent);
     format!(
-        "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{active}{waiting}",
+        "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{returned}{active}{waiting}",
         member.task,
         member.role.to_string(),
         member.agent.name(),

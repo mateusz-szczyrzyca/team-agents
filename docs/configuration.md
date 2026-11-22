@@ -198,6 +198,7 @@ and a member are started anew; a worker and a reviewer are not.
 | `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list, `mode = "auto"` gives a member's work to the team's lead, as `lead` does |
 | `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
+| `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
 
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
 the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator
@@ -207,6 +208,20 @@ its first run is briefed like a new session (see above), with retries of its own
 under that name, so the messages to it, its wake-ups and a lead's rights stay with the task, and its branch keeps that
 name too. The state keeps who held the task before (`past_holders`), and the daemon's log the choice
 (`decision_taken` with `decision` `takeover`).
+
+`rejections` counts another way a member's work comes back: the lead of a team, in its final message, sends an item back
+instead of taking the branch. A rejection is a line `RETURNED: <item>` of that message, beside its `STATUS:` line — a
+lead of an older prompt that writes no such line never counts one. It counts only when the harness sees that the lead
+read the member's work and sent it back: the item is held by a member's task whose last run before the lead's run ended
+`DONE`, the member is started again for it (by the lead's message, or at its next run), and the item did not move on
+(it is still in progress). The reason of a rejection is what the lead told the member directly during the run that returned the work, read from the bus (the newest message of the bus when the lead's run began marks where the run's messages start).
+A lead returns one part of a split item with `RETURNED: 1.1a`; every part has its own count.
+A line repeated before the member ran again counts once. An answer to the member's question, a forwarded answer of
+the human, a bounce of the task's plan, a refused gate and the checks before a review are not rejections: they have
+counters of their own. The count is kept with the item (`rejections`, see [`state.md`](state.md)) and survives a restart;
+`agent status` shows it on the task's line as `returned 3 of 5`, and on the round's line when it is one rejection from
+the limit. `0` is no limit. What `rejections` does at the limit — the item goes to an equivalent agent, told the reasons — belongs to
+the version that gives the item to that agent; this version counts and shows.
 
 With no agent to take it, a member's task is stopped and the team's lead is told on the bus that the work is its own now:
 whose it was, its branch and its worktree, with the briefing of what the member's runs left — the snapshot of its

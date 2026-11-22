@@ -5,12 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.61.0 — 22.11.2026 — PR #177
+## 0.61.0 — 22.11.2026 — PR #179
 
 ### New features
-- [agent] [agent-core] [agent-runtime] When a run ends with a step of its plan newly marked done (`[x]`), changed while done or previously mismatched, the daemon now runs that step's command check in the task's worktree in the background, one command at a time for a task and without blocking other tasks or `agent status`. A command that exits `0` within `[plan] check_seconds` (default `120`) marks the step `confirmed`, and a command that exits non-zero, is ended by a signal or runs past `check_seconds` marks it `mismatch` with its reason and saves its output under the task's `checks/<run>/<step>.log`. Commands that match `[plan] check_refuse` (`agent gate`, `make gate`) are not run and stay `declared`.
-- [agent] [agent-core] **Action:** command checks in `.agent/plan.md` now run automatically at the end of a run; set `[plan] check_seconds = 0` in `agents.toml` if you want command checks disabled while keeping `exists` checks active.
-- [agent] [agent-core] [agent-runtime] Stopping or pausing a task, or stopping or restarting the daemon while a step's command check runs, ends the check's process group (validated by its kernel start time) and loses no finished run or completed judgement: a restarted daemon re-runs only the command checks not yet persisted for that run and settles the run once without starting a second agent CLI run.
+- [agent] [agent-core] [agent-runtime] The daemon counts how often a team's lead sends an item's work back to the member. The lead says so with a line `RETURNED: 1.1` beside `STATUS:` in its final message (its role text prescribes it); the daemon counts the line only when the member's last run on the item ended `DONE` and the member is started again for it, and keeps what the lead told the member after the hand-over, whole, as the reason. A part of a split item is returned as `RETURNED: 1.1a` and has its own count; a return is saved with the end of the lead's run. An answer to a question, a bounce of the plan, a refused gate and a lead that writes no such line are never counted.
+- [agent] [agent-core] `agent status` shows the count on the member's line, `claude-1  waiting, returned 3 of 5`, and on the round's line when one more return reaches the limit. The count survives a restart; a state written before it loads with none.
+- [agent] [agent-core] **Action:** `[replacement] rejections = 5` is the limit the count is shown against; `0` shows the count with no limit. This version only counts and shows: it does not yet replace the agent at the limit.
 
 ## 0.60.0 — 22.11.2026 — PR #178
 

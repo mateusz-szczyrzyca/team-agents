@@ -300,6 +300,13 @@ asks for that at once). With `mode = "off"`, and for a solo task or a coordinato
 marked failed and the coordinator or you are notified, as before. When the agent that took a task over goes bad too, or
 a lead given a member's work does, you are asked once, in the task's next questions file: `a` starts it once more in a
 new session; `b`, `ok` and any other answer stop it. Each hand-over is logged as `task_handed_over`.
+
+**Returns of a lead.** When the lead of a team sends the work of a member back instead of taking it, it ends its final
+message with a line `RETURNED: <item>` beside `STATUS:` (its role text says so). The daemon counts the line only where
+its own facts agree: the member's last run on the item ended `DONE` and the member is started again for it. The count is
+kept with the item, survives a restart, and `agent status` shows it on the member's line as `returned 3 of 5`
+(`[replacement] rejections = 5`; `0` has no limit) and on the round's line when one more return reaches the limit. A
+lead that writes no such line is never counted. In this version the count is shown; it does not yet replace the agent.
 `agent status` shows such a task as `in a new session`, and as `, for AGENT` when another agent took it over from AGENT. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)

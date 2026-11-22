@@ -317,6 +317,15 @@ An item's progress is `{id, phase, fix_passes?, gate?, findings?, merge_passes?,
 spent on a merge that GitHub refused for a conflict, compared with `[merge] conflict_passes`; it is absent while none is spent,
 so states written before it read as none spent and keep the schema version. `conflict_verifications` counts how many times an approved item was reopened for a verification review after a conflict pass or an answered conflict question (absent while zero), and `conflict_approved_head` keeps the approved head GitHub refused while a conflict pass or question is active (absent when none). The `phase` carries exactly the data of that phase:
 
+An item's optional `rejections` lists the returns of its lead, oldest first, each `{at, reason, recorded_in?, part?, of_run?}`: when the lead's
+run ended with `RETURNED: <item>`, what the lead told the member directly during the run that returned the work as the reason, the number
+of the member's run that was started again after it (`recorded_in`, absent until that run starts), the part of a split item
+the work belonged to (`part`, a letter) and the run of the member that ended `DONE` and was sent back (`of_run`); the last
+two are absent in states written before and for an item that is not split. Only the returns with a `recorded_in` count
+against `[replacement] rejections`. The field is absent while the lead returned nothing, so a state written before it
+loads with a count of zero and the schema version stays 14 (the existing `state-before-renewals.json` fixture is read by
+the tests of the count).
+
 | `phase` | Data | Item status | Moves to |
 |---|---|---|---|
 | `pending` | | `pending` | `in_progress` |
