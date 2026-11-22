@@ -601,7 +601,11 @@ impl Plan {
 }
 
 /// `[workers]`: what the harness does with the result of a worker that served a request. It is built only from a
-/// loaded configuration, after `tries = 0` is refused, so `tries` is never `0`.
+/// loaded configuration, after `tries = 0` is refused, so `tries` is never `0`: it cannot be deserialized directly.
+///
+/// ```compile_fail,E0277
+/// let _: agent_core::config::WorkerSettings = serde_json::from_str(r#"{"tries":0}"#).unwrap();
+/// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkerSettings {
     /// How many tries a request gets, its first try included; `1` never gives it to a second worker.
