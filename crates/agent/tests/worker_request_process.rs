@@ -677,7 +677,7 @@ Integrate the guide.
     fn commit_script(text: &str, more: &[&str]) -> String {
         let mut script = format!("mkdir -p docs\nprintf '{text}\\n' > docs/guide.md\ngit add docs/guide.md\n");
         for file in more {
-            script.push_str(&format!("printf 'x\\n' > {file}\ngit add {file}\n"));
+            write!(script, "printf 'x\\n' > {file}\ngit add {file}\n").unwrap();
         }
         script.push_str(
             "git -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
