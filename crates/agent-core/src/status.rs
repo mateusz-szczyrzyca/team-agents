@@ -290,8 +290,9 @@ impl StatusMachine for TaskStatus {
                 Self::Failed,
                 Self::Done,
             ],
-            Self::Waiting => &[Self::Queued, Self::Paused, Self::Stopped, Self::Done],
-            Self::Questions | Self::Paused | Self::Failed => &[Self::Queued, Self::Stopped],
+            Self::Waiting => &[Self::Queued, Self::Paused, Self::Stopped, Self::Done, Self::Questions],
+            Self::Questions | Self::Paused => &[Self::Queued, Self::Stopped],
+            Self::Failed => &[Self::Queued, Self::Stopped, Self::Questions],
             Self::Stopped => &[Self::Queued],
             Self::Done => &[],
         }

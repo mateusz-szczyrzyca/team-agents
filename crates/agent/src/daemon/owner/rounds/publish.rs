@@ -7,7 +7,6 @@ use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::decide::wait::Obligation;
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
-use std::str::FromStr;
 
 use agent_core::ids::{BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
@@ -329,17 +328,6 @@ pub(crate) enum PublishQuestionError {
         /// What failed.
         #[source]
         source: crate::daemon::questions::QuestionsProblem,
-    },
-    /// The questions file path is not valid.
-    #[error("publication question file path {path:?} is not valid for task {task}")]
-    InvalidPath {
-        /// The task.
-        task: TaskId,
-        /// The file path.
-        path: std::path::PathBuf,
-        /// What failed.
-        #[source]
-        source: Option<agent_core::config::InvalidValue>,
     },
     /// The question could not be recorded in state.
     #[error("cannot record publication question for task {task}")]
@@ -1602,61 +1590,28 @@ impl Owner {
         })?;
         let path = self.parts.store.home().questions_file(&site.lead.task, number);
 
-        let text = path.to_str().ok_or_else(|| PublishQuestionError::InvalidPath {
-            task: site.lead.task.clone(),
-            path: path.clone(),
-            source: None,
-        })?;
-        let file = match agent_core::config::AbsolutePath::from_str(text) {
-            Ok(file) => file,
-            Err(source) => {
-                return Err(PublishQuestionError::InvalidPath {
-                    task: site.lead.task.clone(),
-                    path: path.clone(),
-                    source: Some(source),
-                }
-                .into());
-            }
-        };
-
         self.prepare_publish_question_file(site, publication, &path, reason)
             .await?;
-
-        let (_, mut member) = self.member_mut(&site.lead.task)?;
-        member
-            .ask_question(agent_core::state::Question::new(number, file, now))
-            .map_err(|source| PublishQuestionError::State {
-                task: site.lead.task.clone(),
-                source,
-            })?;
-        let loaded = crate::daemon::questions::read(&path)
+        let located = self.locate(&site.lead.task)?;
+        let mut events = Vec::new();
+        let notice = match self
+            .ask(&site.lead.task, &located, now, &mut events)
             .await
-            .map_err(|source| PublishQuestionError::Read {
-                task: site.lead.task.clone(),
-                path: path.clone(),
-                source,
-            })?;
-        self.prepare_questions(&site.lead.task, &path, &loaded).await;
+            .map_err(|error| match error {
+                OwnerError::Question { task, source } => OwnerError::from(PublishQuestionError::State { task, source }),
+                other => other,
+            })? {
+            super::super::Asked::Recorded(notice) | super::super::Asked::Unusable(notice) => notice,
+        };
         self.watch.publish_question.insert(site.lead.task.clone(), number);
         let item_ids = item_ids_of(publication);
         self.each_item(site.team, &item_ids, |item| {
             item.record_publish_question(site.lead.task.clone(), number, now);
             Ok(())
         })?;
-        let located = self.locate(&site.lead.task)?;
-        let mut events = Vec::new();
-        events.push(EventKind::QuestionAsked {
-            team: site.team.clone(),
-            task: site.lead.task.clone(),
-            number,
-        });
-        if self.member_mut(&site.lead.task)?.1.status() == TaskStatus::Waiting {
-            self.move_to(&site.lead.task, site.team, TaskStatus::Queued, &mut events)?;
-        }
-        self.move_to(&site.lead.task, site.team, TaskStatus::Running, &mut events)?;
         self.move_to(&site.lead.task, site.team, TaskStatus::Questions, &mut events)?;
         self.watch_task(&site.lead.task);
-        self.commit(&site.lead.task, &located, now, events, None).await
+        self.commit(&site.lead.task, &located, now, events, Some(notice)).await
     }
 }
 
