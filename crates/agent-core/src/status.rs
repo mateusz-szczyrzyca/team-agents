@@ -455,6 +455,7 @@ mod tests {
             (Running, Failed),
             (Running, Done),
             (Waiting, Queued),
+            (Waiting, Questions),
             (Waiting, Paused),
             (Waiting, Stopped),
             (Waiting, Done),
@@ -464,6 +465,7 @@ mod tests {
             (Paused, Stopped),
             (Stopped, Queued),
             (Failed, Queued),
+            (Failed, Questions),
             (Failed, Stopped),
         ];
         assert_transitions(TaskStatus::ALL, &allowed);
