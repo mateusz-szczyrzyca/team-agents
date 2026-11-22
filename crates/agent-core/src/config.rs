@@ -408,6 +408,11 @@ pub struct Limits {
     /// How many runs a task may be woken for the same unread message before the harness stops waking it for that
     /// message; 0 never wakes a task for a message.
     pub wake_ups_per_message: u32,
+    /// How many runs an agent that is a normal agent or an investigator may have going at once, over all teams and
+    /// solo tasks; 0 is no limit.
+    pub runs_per_agent: u32,
+    /// How many runs an agent of `[tiers] workers` may have going at once; 0 is no limit.
+    pub runs_per_worker: u32,
 }
 
 impl Default for Limits {
@@ -419,6 +424,8 @@ impl Default for Limits {
             rate_limit_pause_minutes: Minutes::literal(DEFAULT_RATE_LIMIT_PAUSE_MINUTES),
             tail_lines: DEFAULT_TAIL_LINES,
             wake_ups_per_message: DEFAULT_WAKE_UPS_PER_MESSAGE,
+            runs_per_agent: 0,
+            runs_per_worker: 0,
         }
     }
 }
@@ -1895,6 +1902,15 @@ workers = ["qwen", "qwen"]"#,
                 .wake_ups_per_message,
             0
         );
+    }
+
+    #[test]
+    fn an_agent_has_one_run_at_a_time_unless_the_limits_say_otherwise() {
+        assert_eq!(config("").limits().runs_per_agent, 1);
+        assert_eq!(config("").limits().runs_per_worker, 1);
+        assert_eq!(config("[limits]\nruns_per_agent = 0\n").limits().runs_per_agent, 0);
+        assert_eq!(config("[limits]\nruns_per_agent = 2\n").limits().runs_per_agent, 2);
+        assert_eq!(config("[limits]\nruns_per_worker = 3\n").limits().runs_per_worker, 3);
     }
 
     #[test]
