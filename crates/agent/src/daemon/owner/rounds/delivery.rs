@@ -205,10 +205,7 @@ impl Owner {
             let same_repo = remote.origin == agent_runtime::github::Origin::SameRepository;
             let pr_branch = remote.head_branch.as_str();
             let task_branch = branch.as_str();
-            let part_branch = recorded_pr
-                .as_ref()
-                .map(|p| p.branch.as_str())
-                .or(derived_part_branch.as_deref());
+            let part_branch = derived_part_branch.as_deref();
             let observation = match remote.state {
                 PullState::Open => DeliveryObservation::Open,
                 PullState::Closed => DeliveryObservation::Closed,
@@ -250,7 +247,13 @@ impl Owner {
         git.verify_delivery(&item, &remote.head_branch, &base).await?;
         verify_published_tip(&git, &item, &base, &remote.head).await?;
 
-        let pr = if let Some(pr) = recorded_pr {
+        let pr = if let Some(pr) = recorded_pr.filter(|p| {
+            if is_part {
+                derived_part_branch.as_deref() == Some(p.branch.as_str())
+            } else {
+                true
+            }
+        }) {
             pr
         } else {
             let now = Timestamp::now(&self.parts.clock)?;

@@ -160,8 +160,10 @@ pub fn evaluate_delivery_report(facts: DeliveryReportFacts<'_>) -> DeliveryVerdi
     if !facts.same_repo {
         return DeliveryVerdict::RefusedForeignRepository;
     }
-    let branch_fits =
-        facts.pr_branch == facts.task_branch || facts.part_branch.is_some_and(|part| facts.pr_branch == part);
+    let branch_fits = match facts.part_branch {
+        Some(part) => facts.pr_branch == part,
+        None => facts.pr_branch == facts.task_branch,
+    };
     if !branch_fits {
         return DeliveryVerdict::RefusedForeignBranch;
     }

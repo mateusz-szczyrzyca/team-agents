@@ -134,7 +134,12 @@ fn dispatch_split_item<'a>(
     let prev_task = prev_round.and_then(|round| {
         team.members_in(round.id())
             .into_iter()
-            .find(|(role, _)| matches!(role, Role::Solo | Role::Member | Role::Coordinator))
+            .find(|(role, _)| matches!(role, Role::Solo | Role::Member))
+            .or_else(|| {
+                team.members_in(round.id())
+                    .into_iter()
+                    .find(|(role, _)| matches!(role, Role::Coordinator))
+            })
             .map(|(_, m)| m.task().clone())
     });
     let prev_member = prev_task.as_ref().and_then(|task| {
