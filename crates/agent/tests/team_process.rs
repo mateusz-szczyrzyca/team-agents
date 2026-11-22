@@ -1012,6 +1012,66 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     #[test]
+    fn a_worker_of_a_lower_tier_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("worker-1", "worker", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"worker-1\"]\nbusy_after = 1\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_recorded_wait(&mut world);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(!line_of(&status, &second).contains("worker-1"), "{status}");
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
+        let status = world.status_where("the second task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        assert!(!line_of(&status, &second).contains("for "), "{status}");
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_running_candidate_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "hold"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let busy_candidate = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate's own run to go", |status| {
+            line_of(status, &busy_candidate).contains("running")
+        });
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_recorded_wait(&mut world);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(
+            line_of(&status, &busy_candidate).contains("running") && !line_of(&status, &busy_candidate).contains("for "),
+            "the candidate keeps its own run, which the restart of the daemon resumes: {status}"
+        );
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
+        release(&world, &second);
+        release(&world, &busy_candidate);
+    }
+
+    #[test]
     fn a_restart_during_the_wait_keeps_the_time_the_task_has_waited() {
         let mut world = World::new(&agents_with(&[
             ("claude-1", "agent", "hold"),
