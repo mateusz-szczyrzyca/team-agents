@@ -190,7 +190,11 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
         })
         .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-    assert_eq!(item.merge_passes(), 0, "failed publication must not consume merge conflict pass");
+    assert_eq!(
+        item.merge_passes(),
+        0,
+        "failed publication must not consume merge conflict pass"
+    );
 
     // Stop daemon (restart between lead completion and publication):
     rig.stop().await.unwrap();
@@ -206,10 +210,13 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
 
     // Wait until part 1.1a PR merges and advances:
     let state = rig
-        .state_where("part 1.1a PR merged after restart and successful publication", |state| {
-            let team = state.team(&team_id).unwrap();
-            team.rounds().len() >= 2 && !team.rounds()[0].is_open()
-        })
+        .state_where(
+            "part 1.1a PR merged after restart and successful publication",
+            |state| {
+                let team = state.team(&team_id).unwrap();
+                team.rounds().len() >= 2 && !team.rounds()[0].is_open()
+            },
+        )
         .await;
     rig.stop().await.unwrap();
 

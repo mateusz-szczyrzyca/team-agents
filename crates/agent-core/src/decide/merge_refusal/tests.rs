@@ -170,10 +170,7 @@ fn recover_exhausted_split_round_table() {
     // 2. Open PR with valid gated commit and unexhausted passes recovers to ResumeMerge
     let open_ready = SplitPullStatus::Open {
         gating: GatingStatus::Gated,
-        budget: ConflictBudget {
-            spent: 1,
-            limit: 2,
-        },
+        budget: ConflictBudget { spent: 1, limit: 2 },
         conflict: ConflictPublication::Published,
     };
     assert_eq!(
@@ -184,10 +181,7 @@ fn recover_exhausted_split_round_table() {
     // 3. Open PR with exhausted passes but unpublished conflict pass recovers to ResumeMerge
     let open_unpublished = SplitPullStatus::Open {
         gating: GatingStatus::Gated,
-        budget: ConflictBudget {
-            spent: 2,
-            limit: 2,
-        },
+        budget: ConflictBudget { spent: 2, limit: 2 },
         conflict: ConflictPublication::Unpublished,
     };
     assert_eq!(
@@ -198,10 +192,7 @@ fn recover_exhausted_split_round_table() {
     // 4. Open PR with exhausted passes and published conflict pass waits for human
     let exhausted = SplitPullStatus::Open {
         gating: GatingStatus::Gated,
-        budget: ConflictBudget {
-            spent: 2,
-            limit: 2,
-        },
+        budget: ConflictBudget { spent: 2, limit: 2 },
         conflict: ConflictPublication::Published,
     };
     assert_eq!(
@@ -212,10 +203,7 @@ fn recover_exhausted_split_round_table() {
     // 5. Open PR without gated commit waits for human
     let ungated = SplitPullStatus::Open {
         gating: GatingStatus::Ungated,
-        budget: ConflictBudget {
-            spent: 0,
-            limit: 2,
-        },
+        budget: ConflictBudget { spent: 0, limit: 2 },
         conflict: ConflictPublication::Unpublished,
     };
     assert_eq!(

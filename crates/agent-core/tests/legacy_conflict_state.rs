@@ -1,8 +1,8 @@
 //! State written before conflict accounting loads cleanly and preserves spent passes and conflict state.
 
 use agent_core::decide::merge_refusal::{
-    recover_exhausted_split_round, ConflictBudget, ConflictPublication, ExhaustedRoundRecovery, GatingStatus,
-    SplitPullStatus,
+    ConflictBudget, ConflictPublication, ExhaustedRoundRecovery, GatingStatus, SplitPullStatus,
+    recover_exhausted_split_round,
 };
 use agent_core::state::{ItemPhase, MergeConflict, State};
 
