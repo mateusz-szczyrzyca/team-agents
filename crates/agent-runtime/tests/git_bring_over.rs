@@ -616,4 +616,67 @@ mod git_bring_over {
         assert_eq!(files, paths(&["dir"]));
         assert_eq!(state(&repo, &["guide.md", "dir/mine.txt"]), before);
     }
+
+    #[tokio::test]
+    async fn a_tracked_file_the_worker_replaces_by_a_directory_is_brought_over_in_a_clean_worktree() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n"), ("node", b"a file\n")], |repo| {
+            raw(repo, &["rm", "-q", "node"]);
+            commit(repo, &[("node/child.txt", b"child\n")], "the worker's step");
+        });
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(
+            std::fs::read(repo.join("node/child.txt")).expect("the file"),
+            b"child\n"
+        );
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn a_tracked_directory_the_worker_replaces_by_a_file_is_brought_over_in_a_clean_worktree() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n"), ("node/child.txt", b"child\n")], |repo| {
+            raw(repo, &["rm", "-q", "node/child.txt"]);
+            commit(repo, &[("node", b"a file\n")], "the worker's step");
+        });
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(std::fs::read(repo.join("node")).expect("the file"), b"a file\n");
+        assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+    }
+
+    #[tokio::test]
+    async fn a_repository_whose_trees_are_longer_than_a_megabyte_to_list_is_brought_over() {
+        // 2500 files with paths of about 500 bytes: `ls-tree -r` prints more than the 1 MiB a command's output may be.
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        });
+        raw(&repo, &["switch", "-q", "-c", "requester-files"]);
+        let directory = repo.join("a".repeat(250)).join("b".repeat(250));
+        std::fs::create_dir_all(&directory).expect("the directories");
+        for n in 0..2500 {
+            std::fs::write(directory.join(format!("file-{n:05}.txt")), b"x\n").expect("a file");
+        }
+        raw(&repo, &["add", "-A"]);
+        raw(&repo, &["commit", "-q", "-m", "the requester's many files"]);
+        raw(&repo, &["switch", "-q", "main"]);
+        raw(&repo, &["merge", "-q", "--ff-only", "requester-files"]);
+
+        let outcome = handle(&repo)
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        assert!(matches!(outcome, BringOver::Applied { .. }), "{outcome:?}");
+        assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
+    }
 }

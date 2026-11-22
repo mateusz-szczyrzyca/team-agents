@@ -144,3 +144,59 @@ async fn a_branch_that_cannot_be_moved_puts_the_files_back() {
     assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\n");
     assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
 }
+
+#[tokio::test]
+async fn a_requester_that_commits_while_the_files_are_put_back_keeps_the_files_of_its_commit() {
+    let (_tmp, repo, git, head, applied) = merge_written_to_the_worktree().await;
+    // A hook refuses the update of the reference once; a `git` in front of the real one commits what is staged just
+    // before the files are put back, the way a requester that works in its worktree could.
+    let real_git = String::from_utf8(
+        Command::new("sh")
+            .args(["-c", "command -v git"])
+            .output()
+            .expect("sh runs")
+            .stdout,
+    )
+    .expect("a path")
+    .trim()
+    .to_owned();
+    let bin = repo.parent().expect("a directory").join("bin");
+    std::fs::create_dir_all(&bin).expect("the directory of the shim");
+    let hook_arm = repo.parent().expect("a directory").join("hook-arm");
+    let shim_arm = repo.parent().expect("a directory").join("shim-arm");
+    std::fs::write(&hook_arm, "").expect("the arm of the hook");
+    std::fs::write(&shim_arm, "").expect("the arm of the shim");
+    let hook = repo.join(".git").join("hooks").join("reference-transaction");
+    std::fs::create_dir_all(hook.parent().expect("a directory")).expect("the hooks directory");
+    std::fs::write(
+        &hook,
+        format!("#!/bin/sh\n[ \"$1\" = prepared ] && [ -e {hook_arm:?} ] && exit 1\nexit 0\n"),
+    )
+    .expect("the hook");
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).expect("the mode");
+    let shim = bin.join("git");
+    std::fs::write(
+        &shim,
+        format!(
+            "#!/bin/sh\ncase \" $* \" in\n  *\" read-tree \"*)\n    if [ -e {shim_arm:?} ]; then\n      rm -f {shim_arm:?} {hook_arm:?}\n      {real_git:?} -c commit.gpgsign=false -C {repo:?} commit -q -m 'the requester commits what is staged' || exit 99\n    fi;;\nesac\nexec {real_git:?} \"$@\"\n"
+        ),
+    )
+    .expect("the shim");
+    std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).expect("the mode");
+    let path = format!("{}:{}", bin.display(), std::env::var("PATH").expect("a PATH"));
+    let git = git.with_env(agent_core::config::EnvName::from_str("PATH").expect("a name"), path);
+
+    let error = git
+        .move_branch(&head, &applied)
+        .await
+        .expect_err("the branch moved while the files were put back");
+
+    let moved = head_of(&repo);
+    assert_ne!(moved, head);
+    assert!(
+        matches!(&error, GitError::HeadMoved { expected, found } if *expected == head && *found == moved),
+        "{error:?}"
+    );
+    assert_eq!(std::fs::read(repo.join("guide.md")).expect("the file"), b"one\ntwo\n");
+    assert_eq!(raw(&repo, &["status", "--porcelain=v1", "-z"]), "");
+}
