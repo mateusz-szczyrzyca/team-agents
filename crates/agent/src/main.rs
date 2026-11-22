@@ -41,6 +41,9 @@ mod lines;
 #[path = "tests/log_command.rs"]
 mod log_command_tests;
 #[cfg(test)]
+#[path = "tests/requests_source.rs"]
+mod requests_source_tests;
+#[cfg(test)]
 #[path = "tests/run_command.rs"]
 mod run_command_tests;
 mod split_context;

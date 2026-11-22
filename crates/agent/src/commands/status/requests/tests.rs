@@ -49,3 +49,24 @@ async fn requests_that_cannot_be_read_say_why_and_unread_ones_say_nothing() {
     assert_eq!(unknown.of(&task), ["    requests unknown (cannot read the settings)"]);
     assert_eq!(unread.of(&task), [] as [String; 0]);
 }
+
+#[tokio::test]
+async fn a_bus_that_cannot_be_run_says_why_under_each_task() {
+    let task: TaskId = "task-20261122-084934-hogq".parse().unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let missing = dir.path().join("no-agentbus");
+    let bus = AgentBus::new(
+        std::str::FromStr::from_str(missing.to_str().unwrap()).unwrap(),
+        std::str::FromStr::from_str(dir.path().to_str().unwrap()).unwrap(),
+    );
+
+    let told = told(&Source::Bus(bus), [&task]).await;
+
+    let [line] = told.of(&task) else {
+        panic!("{:?}", told.of(&task))
+    };
+    assert!(
+        line.starts_with("    requests unknown (cannot run agentbus helper-dump"),
+        "{line}"
+    );
+}
