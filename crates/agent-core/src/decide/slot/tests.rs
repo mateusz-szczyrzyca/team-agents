@@ -120,6 +120,7 @@ fn task_id(name: &str) -> TaskId {
 }
 
 #[test]
+#[expect(clippy::type_complexity, reason = "table test tuple of input and expected slots")]
 fn plan_starts_table_covers_every_limit_and_queue_outcome() {
     let mut state = State::new();
     state.insert_team(team(1)).expect("sample team inserts");
