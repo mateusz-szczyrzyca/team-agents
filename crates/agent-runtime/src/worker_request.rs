@@ -54,7 +54,7 @@ pub enum PendingError {
     Encode(#[source] serde_json::Error),
     /// The clock gives a time that cannot be recorded.
     #[error("the clock gives a time that cannot be recorded")]
-    Clock,
+    Clock(#[source] agent_core::state::InvalidTimestamp),
 }
 
 /// A request whose worker's run has ended: who asked, who served, what the worker said and how far the harness got.

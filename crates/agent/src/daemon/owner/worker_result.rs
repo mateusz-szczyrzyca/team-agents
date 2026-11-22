@@ -122,7 +122,7 @@ impl Owner {
         worker_task: &TaskId,
         summary: String,
     ) -> Result<(), PendingError> {
-        let now = Timestamp::now(&self.parts.clock).map_err(|_| PendingError::Clock)?;
+        let now = Timestamp::now(&self.parts.clock).map_err(PendingError::Clock)?;
         let elapsed = now.as_utc() - served.started.as_utc();
         let pending = Pending {
             request: served.request,
@@ -235,7 +235,7 @@ impl Owner {
                             request = %pending.request,
                             "the bus has no such request any more: the result of the worker is dropped"
                         );
-                        self.drop_pending(task_dir, pending.request);
+                        Self::drop_pending(task_dir, pending.request);
                         return Ok(());
                     }
                     Gathered::Wrong(checked, reasons) => Stage::Settled {
@@ -257,7 +257,7 @@ impl Owner {
                 }
                 Stage::Settled { checked, settlement } => {
                     if self.answer_requester(&pending, checked, settlement).await? {
-                        self.drop_pending(task_dir, pending.request);
+                        Self::drop_pending(task_dir, pending.request);
                     }
                     return Ok(());
                 }
@@ -275,7 +275,7 @@ impl Owner {
     }
 
     /// Removes the file of `request` from `task_dir`; a file that is not there is the end the request wants.
-    fn drop_pending(&self, task_dir: &Path, request: RequestId) {
+    fn drop_pending(task_dir: &Path, request: RequestId) {
         let path = pending_path(task_dir, request);
         if let Err(error) = std::fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
@@ -417,12 +417,7 @@ impl Owner {
 
     /// Takes the end of a check that ran in the background: the request goes on from the stage `Checked`.
     ///
-    /// # Errors
-    /// [`OwnerError`] never today; the owner's loop takes this error type.
-    pub(super) async fn request_check_done(
-        &mut self,
-        joined: Result<(tokio::task::Id, Found), tokio::task::JoinError>,
-    ) -> Result<(), OwnerError> {
+    pub(super) fn request_check_done(&mut self, joined: Result<(tokio::task::Id, Found), tokio::task::JoinError>) {
         let (id, found) = match joined {
             Ok(done) => done,
             Err(error) => (
@@ -438,7 +433,7 @@ impl Owner {
             ),
         };
         let Some(checking) = self.request_checking.remove(&id) else {
-            return Ok(());
+            return;
         };
         let Checking {
             task_dir,
@@ -456,7 +451,6 @@ impl Owner {
             );
         }
         self.look_at(&team);
-        Ok(())
     }
 
     /// Decides what the checked result is worth and, when it is good, brings the worker's commit over.
