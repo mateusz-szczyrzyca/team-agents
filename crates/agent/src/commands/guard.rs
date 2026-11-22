@@ -35,6 +35,31 @@ const COMMENT: char = '#';
 /// The position, after the name of the command, of the parent in `/proc/<pid>/stat`: the state comes first.
 const PARENT_FIELD: usize = 1;
 
+/// The shortest abbreviation of `--amend` that no other option of `git commit` shares.
+const SHORTEST_AMEND: &[u8] = b"--am";
+
+/// The word that ends the options of a command line.
+const END_OF_OPTIONS: &[u8] = b"--";
+
+/// The short options of `git commit` that take a value: the message, a file with it, a commit to take it from, a template.
+const SHORT_OPTIONS_WITH_VALUE: &[u8] = b"mFCct";
+
+/// The long options of `git commit` that take their value as the next word.
+const LONG_OPTIONS_WITH_VALUE: [&str; 12] = [
+    "message",
+    "file",
+    "author",
+    "date",
+    "template",
+    "reuse-message",
+    "reedit-message",
+    "fixup",
+    "squash",
+    "cleanup",
+    "trailer",
+    "pathspec-from-file",
+];
+
 /// The argument of `git commit` that replaces the last commit.
 const AMEND: &[u8] = b"--amend";
 
@@ -67,7 +92,42 @@ fn parent_of(stat: &str) -> Option<u32> {
 /// Whether the command line `cmdline` (arguments separated by NUL, as `/proc/<pid>/cmdline` holds it) asks `git commit`
 /// to replace the last commit.
 fn is_amend(cmdline: &[u8]) -> bool {
-    cmdline.split(|byte| *byte == 0).any(|argument| argument == AMEND)
+    let mut arguments = cmdline.split(|byte| *byte == 0);
+    while let Some(argument) = arguments.next() {
+        if argument == END_OF_OPTIONS {
+            return false;
+        }
+        if is_amend_option(argument) {
+            return true;
+        }
+        if takes_next_argument(argument) {
+            // The next word is the value of the option, whatever it looks like.
+            arguments.next();
+        }
+    }
+    false
+}
+
+/// Whether `argument` is `--amend`, or an abbreviation of it that git accepts: the options of `git commit` that start
+/// with `--am` are no other.
+fn is_amend_option(argument: &[u8]) -> bool {
+    argument.len() >= SHORTEST_AMEND.len() && AMEND.starts_with(argument)
+}
+
+/// Whether `argument` is an option of `git commit` whose value is the next word: a long option spelled out, or a cluster
+/// of short options that ends with one that takes a value (`-m`, `-am`) and has nothing after it.
+fn takes_next_argument(argument: &[u8]) -> bool {
+    if let Some(long) = argument.strip_prefix(b"--") {
+        return LONG_OPTIONS_WITH_VALUE.iter().any(|name| name.as_bytes() == long);
+    }
+    let Some(cluster) = argument.strip_prefix(b"-") else {
+        return false;
+    };
+    // The first short option that takes a value takes the rest of the cluster; it takes the next word only when it is last.
+    cluster
+        .iter()
+        .position(|letter| SHORT_OPTIONS_WITH_VALUE.contains(letter))
+        .is_some_and(|position| position + 1 == cluster.len())
 }
 
 /// The most ancestors of this process that are looked at for `git commit --amend`: the hook is run by git, which is run
