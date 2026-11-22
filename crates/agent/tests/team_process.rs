@@ -900,6 +900,35 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         (first, second)
     }
 
+    /// Stops the daemon, sets the recorded `waiting_since` in `state.json` to an earlier moment so the wait exceeds
+    /// `busy_after` without a wall-clock sleep, and starts the daemon again.
+    fn expire_recorded_wait(world: &mut World) {
+        if let Some(mut daemon) = world.daemon.take() {
+            let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+            rustix::process::kill_process(pid, Signal::TERM).unwrap();
+            daemon.wait().unwrap();
+        }
+        let state_path = world.home.join("state.json");
+        let state_text = std::fs::read_to_string(&state_path).unwrap();
+        assert!(
+            state_text.contains("\"waiting_since\": \""),
+            "waiting_since must be persisted in state.json:\n{state_text}"
+        );
+        let updated: String = state_text
+            .lines()
+            .map(|line| {
+                if let Some((prefix, _)) = line.split_once("\"waiting_since\":") {
+                    format!("{prefix}\"waiting_since\": \"2020-01-01T00:00:00Z\"")
+                } else {
+                    line.to_owned()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        std::fs::write(&state_path, updated).unwrap();
+        world.start();
+    }
+
     #[test]
     fn a_task_that_waits_too_long_for_its_busy_agent_is_handed_over_to_a_free_agent() {
         let mut world = World::new(&agents_with(&[
@@ -930,7 +959,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
 
         // The first holder is not woken for the task when it becomes free.
         release(&world, &first);
-        std::thread::sleep(Duration::from_secs(2));
+        world.status_where("the first task to finish its run", |status| {
+            line_of(status, &first).contains("waiting")
+        });
         assert_eq!(world.runs(&second), 1, "{}", world.status());
     }
 
@@ -941,9 +972,10 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         world.start();
         let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
 
-        std::thread::sleep(Duration::from_secs(2));
-        let status = world.status();
-        assert!(line_of(&status, &second).contains("waits for claude-1"), "{status}");
+        expire_recorded_wait(&mut world);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
         assert_eq!(world.runs(&second), 0, "{status}");
 
         release(&world, &first);
@@ -967,9 +999,10 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         world.start();
         let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
 
-        std::thread::sleep(Duration::from_secs(2));
-        let status = world.status();
-        assert!(line_of(&status, &second).contains("waits for claude-1"), "{status}");
+        expire_recorded_wait(&mut world);
+        let status = world.status_where("the second task to still wait when busy_after is 0", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
         assert_eq!(world.runs(&second), 0, "{status}");
         release(&world, &first);
         eventually("the second task to start with its own agent", || {
@@ -984,15 +1017,20 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             ("claude-1", "agent", "hold"),
             ("claude-2", "agent", "done"),
         ]));
-        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 3\n");
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 300\n");
         world.start();
         let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
 
         world.restart();
-
-        world.status_where("the second task to be handed over after the restart", |status| {
-            line_of(status, &second).contains("for claude-1") && line_of(status, &second).contains("done")
+        world.status_where("the second task to still wait after the restart", |status| {
+            line_of(status, &second).contains("waits for claude-1")
         });
+        expire_recorded_wait(&mut world);
+
+        world.status_where(
+            "the second task to be handed over after the recorded wait expires",
+            |status| line_of(status, &second).contains("for claude-1") && line_of(status, &second).contains("done"),
+        );
         assert_eq!(world.runs(&second), 1);
         release(&world, &first);
     }
