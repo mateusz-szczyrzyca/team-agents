@@ -155,6 +155,10 @@ impl TeamPrompt {
 
     /// Where the text is, who reads it and which variables it uses.
     #[must_use]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per catalog entry: the entry and its spec stay side by side"
+    )]
     pub const fn spec(self) -> PromptSpec {
         match self {
             Self::SplitRequested => split_requested_spec(),
@@ -262,26 +266,10 @@ impl TeamPrompt {
             Self::WorkerNoStatus => PromptSpec::new("harness/team/worker-no-status.md", Audience::Model, &[]),
             Self::WorkerStopped => PromptSpec::new("harness/team/worker-stopped.md", Audience::Model, &[]),
             Self::WorkerHung => PromptSpec::new("harness/team/worker-hung.md", Audience::Model, &[]),
-            Self::WorkerResultBrought => PromptSpec::new(
-                "harness/team/worker-result-brought.md",
-                Audience::Model,
-                &["worker", "step", "commit", "files", "tail"],
-            ),
-            Self::WorkerResultConflict => PromptSpec::new(
-                "harness/team/worker-result-conflict.md",
-                Audience::Model,
-                &["worker", "step", "commit", "files"],
-            ),
-            Self::WorkerGivenAgain => PromptSpec::new(
-                "harness/team/worker-given-again.md",
-                Audience::Model,
-                &["worker", "request_id", "reason", "next"],
-            ),
-            Self::WorkerStepReturned => PromptSpec::new(
-                "harness/team/worker-step-returned.md",
-                Audience::Model,
-                &["request_id", "step", "reasons"],
-            ),
+            Self::WorkerResultBrought => anyhow_result_spec(),
+            Self::WorkerResultConflict => conflict_result_spec(),
+            Self::WorkerGivenAgain => given_again_spec(),
+            Self::WorkerStepReturned => step_returned_spec(),
             Self::NoticeTeamDone => PromptSpec::new(
                 "harness/team/notice-team-done.md",
                 Audience::Human,
@@ -289,6 +277,42 @@ impl TeamPrompt {
             ),
         }
     }
+}
+
+/// The text of a result a worker's check let through and that the harness brought to the requester's branch.
+const fn anyhow_result_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/worker-result-brought.md",
+        Audience::Model,
+        &["worker", "step", "commit", "files", "tail"],
+    )
+}
+
+/// The text of a worker's commit that does not apply to the requester's branch.
+const fn conflict_result_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/worker-result-conflict.md",
+        Audience::Model,
+        &["worker", "step", "commit", "files"],
+    )
+}
+
+/// The text of a request given once more to another worker, with the reason the first result did not serve.
+const fn given_again_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/worker-given-again.md",
+        Audience::Model,
+        &["worker", "request_id", "reason", "next"],
+    )
+}
+
+/// The text of a step returned to the requester with every reason its results did not serve.
+const fn step_returned_spec() -> PromptSpec {
+    PromptSpec::new(
+        "harness/team/worker-step-returned.md",
+        Audience::Model,
+        &["request_id", "step", "reasons"],
+    )
 }
 
 /// The delegation form and its complete set of model inputs.
