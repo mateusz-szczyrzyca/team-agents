@@ -31,6 +31,15 @@ pub struct ItemChecks {
     /// that file after it. A file with no head here was allowed before this key existed and holds for any.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub allowed_at: BTreeMap<RepoPath, CommitId>,
+    /// What the human refused for the item: it is kept until the item is closed, so that it is not asked again. A file
+    /// written before this key existed has none.
+    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
+    pub refused: BTreeSet<Subject>,
+    /// The head the checks looked at when what the human said about a file became known to them as a decision about
+    /// the commits that were in the round then: an answer given before findings had a subject of their own covers those
+    /// commits and no later one. A file written before this key existed has none.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub covered_at: BTreeMap<RepoPath, CommitId>,
 }
 
 /// What a question of the checks covers of the issues the checks found.
@@ -139,6 +148,102 @@ impl ChecksRecord {
         allowed.into_iter().cloned().collect()
     }
 
+    /// What the human refused for any of `items`, without repeats.
+    #[must_use]
+    pub fn refused_of(&self, items: &[ItemId]) -> Vec<Subject> {
+        let refused: BTreeSet<&Subject> = items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.refused.iter())
+            .collect();
+        refused.into_iter().cloned().collect()
+    }
+
+    /// Takes the human's answer to the question that is waited on, as [`Self::answer`] does for what they `allowed`,
+    /// and keeps what they `refused` for `items`.
+    pub fn answered(&mut self, items: &[ItemId], allowed: &[Subject], refused: &[Subject]) {
+        // The question's head is taken with the question: a refused file covers the commits up to it and no later one.
+        let head = self.basis.as_ref().map(|basis| basis.head.clone());
+        self.answer(items, allowed);
+        for item in items {
+            let kept = self.items.entry(*item).or_default();
+            for subject in allowed {
+                kept.refused.remove(subject);
+            }
+            kept.refused.extend(refused.iter().cloned());
+            if let Some(head) = &head {
+                for subject in refused {
+                    if let Subject::Path(path) = subject {
+                        kept.covered_at.entry(path.clone()).or_insert_with(|| head.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// The heads up to which what the human said about a file covers its commits, for those that have one.
+    #[must_use]
+    pub fn covered_at_of(&self, items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
+        items
+            .iter()
+            .filter_map(|item| self.items.get(item))
+            .flat_map(|held| held.covered_at.iter())
+            .map(|(path, head)| (path.clone(), head.clone()))
+            .collect()
+    }
+
+    /// Records that what the human said about each of `paths` covers the commits up to `head`; a head recorded before
+    /// stays.
+    pub fn snapshot_covered(&mut self, items: &[ItemId], paths: &[RepoPath], head: &CommitId) {
+        for item in items {
+            let kept = self.items.entry(*item).or_default();
+            for path in paths {
+                kept.covered_at.entry(path.clone()).or_insert_with(|| head.clone());
+            }
+        }
+    }
+
+    /// Bounds what an answer written before commits had subjects covers: every file the human allowed or refused for
+    /// `items` with no head known is taken to cover the commits up to `head`, so that a commit added after it is a
+    /// finding of its own, whether or not the round has a finding about that file now. Whether anything was recorded.
+    pub fn bound_old_answers(&mut self, items: &[ItemId], head: &CommitId) -> bool {
+        let mut recorded = false;
+        for item in items {
+            let Some(kept) = self.items.get_mut(item) else {
+                continue;
+            };
+            let unbounded: Vec<RepoPath> = kept
+                .allowed
+                .iter()
+                .chain(&kept.refused)
+                .filter_map(|subject| match subject {
+                    Subject::Path(path)
+                        if !kept.allowed_at.contains_key(path) && !kept.covered_at.contains_key(path) =>
+                    {
+                        Some(path.clone())
+                    }
+                    Subject::Path(_) | Subject::NoTests | Subject::Commit { .. } => None,
+                })
+                .collect();
+            for path in unbounded {
+                kept.covered_at.insert(path, head.clone());
+                recorded = true;
+            }
+        }
+        recorded
+    }
+
+    /// Records that the human refused `subjects` for `items`, without an answer to a question.
+    pub fn keep_refused(&mut self, items: &[ItemId], subjects: &[Subject]) {
+        for item in items {
+            self.items
+                .entry(*item)
+                .or_default()
+                .refused
+                .extend(subjects.iter().cloned());
+        }
+    }
+
     /// The heads at which the files of `items` were allowed, for those that have one.
     #[must_use]
     pub fn allowed_at_of(&self, items: &[ItemId]) -> BTreeMap<RepoPath, CommitId> {
@@ -191,7 +296,7 @@ impl ChecksRecord {
             held.allowed_at
                 .extend(subjects.iter().filter_map(|subject| match subject {
                     Subject::Path(path) => Some((path.clone(), basis.head.clone())),
-                    Subject::NoTests => None,
+                    Subject::NoTests | Subject::Commit { .. } => None,
                 }));
         }
     }
@@ -227,6 +332,10 @@ impl ChecksRecord {
                 continue;
             };
             for subject in subjects {
+                // A commit never changes: what was allowed about it holds until the item is closed.
+                if matches!(subject, Subject::Commit { .. }) {
+                    continue;
+                }
                 held.allowed.remove(subject);
                 held.human_only.remove(subject);
                 if let Subject::Path(path) = subject {

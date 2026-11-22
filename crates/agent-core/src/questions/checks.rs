@@ -152,6 +152,7 @@ fn subject_key(subject: &Subject) -> String {
     match subject {
         Subject::Path(path) => path_key(path.as_str()),
         Subject::NoTests => "n:".to_owned(),
+        Subject::Commit { commit, path } => format!("c:{commit}:{path}:"),
     }
 }
 
