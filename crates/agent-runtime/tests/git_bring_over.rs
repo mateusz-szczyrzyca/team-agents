@@ -705,4 +705,61 @@ mod git_bring_over {
             b"my ignored file\n"
         );
     }
+
+    #[tokio::test]
+    async fn the_files_between_two_commits_of_a_worker_are_named_once() {
+        let (_tmp, repo) = repository();
+        let first = commit(&repo, &[("guide.md", b"one\n"), ("keep.txt", b"keep\n")], "base");
+        let second = commit(
+            &repo,
+            &[("guide.md", b"one\ntwo\n"), ("notes.md", b"notes\n")],
+            "the step",
+        );
+        raw(&repo, &["rm", "-q", "keep.txt"]);
+        let third = commit(&repo, &[("notes.md", b"notes\nmore\n")], "the next step");
+
+        let git = handle(&repo);
+
+        assert_eq!(
+            git.changed_between(&first, &second).await.expect("the files"),
+            paths(&["guide.md", "notes.md"])
+        );
+        assert_eq!(
+            git.changed_between(&first, &third).await.expect("the files"),
+            paths(&["guide.md", "keep.txt", "notes.md"])
+        );
+        assert_eq!(
+            git.changed_between(&third, &third).await.expect("the files"),
+            paths(&[])
+        );
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_was_brought_over_is_found_and_one_that_was_not_is_not() {
+        let (_tmp, repo, worker) = with_worker(&[("guide.md", b"one\n")], |repo| {
+            commit(repo, &[("guide.md", b"one\ntwo\n")], "the worker's step");
+        });
+        let other = with_worker_commit_elsewhere(&repo);
+        let git = handle(&repo);
+        assert_eq!(git.brought_over(&worker).await.expect("a search"), None);
+
+        let outcome = git
+            .bring_over(&worker, &round(), &task())
+            .await
+            .expect("the commit applies");
+
+        let BringOver::Applied { commit, .. } = outcome else {
+            panic!("the commit applies: {outcome:?}");
+        };
+        assert_eq!(git.brought_over(&worker).await.expect("a search"), Some(commit));
+        assert_eq!(git.brought_over(&other).await.expect("a search"), None);
+    }
+
+    /// A commit of another history that was never brought over.
+    fn with_worker_commit_elsewhere(repo: &Path) -> CommitId {
+        raw(repo, &["switch", "-q", "--orphan", "elsewhere"]);
+        let other = commit(repo, &[("elsewhere.md", b"x\n")], "another history");
+        raw(repo, &["switch", "-q", "main"]);
+        other
+    }
 }

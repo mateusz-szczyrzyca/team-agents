@@ -157,6 +157,27 @@ impl Git {
         Ok(paths)
     }
 
+    /// The files that differ between the commits `from` and `to`, each path once: what a worker changed in its own
+    /// worktree between two of its commits.
+    ///
+    /// # Errors
+    /// The errors of [`Git::changed_in`].
+    pub async fn changed_between(&self, from: &CommitId, to: &CommitId) -> Result<Vec<RepoPath>, GitError> {
+        let _ = (from, to);
+        Ok(Vec::new())
+    }
+
+    /// The commit on the current branch that brought the worker's `commit` over, if there is one: the merge commit
+    /// [`Git::bring_over`] writes names the worker's commit in a line of its message.
+    ///
+    /// # Errors
+    /// [`GitError::Run`], [`GitError::Failed`], [`GitError::OutputTooLong`], [`GitError::NotUtf8`] and
+    /// [`GitError::NotACommit`].
+    pub async fn brought_over(&self, commit: &CommitId) -> Result<Option<CommitId>, GitError> {
+        let _ = commit;
+        Ok(None)
+    }
+
     /// The files `commit` changes that `allowed` does not name: a path the request did not give the worker.
     ///
     /// # Errors
