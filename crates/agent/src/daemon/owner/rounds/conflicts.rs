@@ -967,3 +967,6 @@ fn conflict_publication(branch: &agent_core::ids::BranchName, items: &[ItemId]) 
         },
     }
 }
+
+#[cfg(test)]
+mod tests;
