@@ -76,3 +76,136 @@ async fn a_second_split_of_an_item_is_refused_recorded_and_told_to_its_author() 
     assert!(messages.contains("Item 1.1 is already split"), "{messages}");
     assert!(!rig.home.questions_file(&tasks[0], std::num::NonZeroU32::MIN).exists());
 }
+
+/// A team whose coordinator runs `script`, with the proposal `good` in the home and the debug log on.
+async fn team_with(script: &'static str) -> Rig {
+    let rig = Rig::new(
+        &[
+            investigator("inv-lead", script),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let dir = rig.home.root().join("fake-proposals");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("good.json"), proposal().to_string()).unwrap();
+    rig
+}
+
+fn messages(rig: &Rig) -> String {
+    std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap_or_default()
+}
+
+// Rule: a name that is no item of the team is refused by name, and its author is told and woken.
+#[tokio::test]
+async fn a_split_of_an_item_the_team_does_not_have_is_refused_by_name_and_told() {
+    let mut rig = team_with("split-line:9.9@SLEEPING,sleep").await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    rig.prompt(&tasks[0], 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        messages(&rig).contains("The team has no item named `9.9`"),
+        "{}",
+        messages(&rig)
+    );
+    assert!(!rig.home.questions_file(&tasks[0], std::num::NonZeroU32::MIN).exists());
+}
+
+// Rule: the refusal is told and the run's own STATUS: is acted on: QUESTIONS puts the question to the human, as it does
+// when no split is refused.
+#[tokio::test]
+async fn a_refusal_does_not_throw_away_the_status_questions() {
+    use agent_core::status::TaskStatus;
+    let mut rig = team_with("proposal:good,split-line:1.1@QUESTIONS").await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let state = rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        state.team(&id).unwrap().crew().coordinator().unwrap().questions().len(),
+        1
+    );
+    assert!(
+        messages(&rig).contains("Item 1.1 is already split"),
+        "{}",
+        messages(&rig)
+    );
+}
+
+// Rule: a refused line followed by STATUS: DONE ends the run as DONE does: the coordinator is told, and its task is not
+// failed or lost.
+#[tokio::test]
+async fn a_refusal_does_not_throw_away_the_status_done() {
+    use agent_core::state::{RunEnd, RunState};
+    use agent_core::status::RunOutcome;
+    let mut rig = team_with("proposal:good,split-line:1.1@DONE,sleep").await;
+    rig.start().await;
+    let (id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    rig.prompt(&tasks[0], 2).await;
+    let state = rig
+        .state_where("the run that ended with DONE is recorded", |state| {
+            state
+                .team(&id)
+                .and_then(|team| team.find(&tasks[0]).map(|(_, member)| member.runs().to_vec()))
+                .is_some_and(|runs| {
+                    runs.get(1).is_some_and(|run| {
+                        matches!(
+                            run.state(),
+                            RunState::Ended {
+                                end: RunEnd::Reported {
+                                    outcome: RunOutcome::Done
+                                },
+                                ..
+                            }
+                        )
+                    })
+                })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(state.team(&id).is_some());
+    assert!(
+        messages(&rig).contains("Item 1.1 is already split"),
+        "{}",
+        messages(&rig)
+    );
+}
+
+// Rule: a coordinator that repeats a refused line is told as many times as a proposal is corrected (`[split] corrections`,
+// two) and then its own STATUS: is acted on: it is not run again forever.
+#[tokio::test]
+async fn a_coordinator_that_repeats_a_refused_line_is_told_twice_and_then_left_to_its_status() {
+    use agent_core::status::TaskStatus;
+    let mut rig =
+        team_with("proposal:good,split-line:1.1@SLEEPING,split-line:1.1@SLEEPING,split-line:1.1@SLEEPING,sleep").await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    rig.prompt(&tasks[0], 4).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let told = messages(&rig).matches("Item 1.1 is already split").count();
+    let runs = rig.runs(&tasks[0]);
+    rig.stop().await.unwrap();
+
+    assert_eq!(told, 2, "{}", messages(&rig));
+    assert_eq!(runs, 4);
+}
