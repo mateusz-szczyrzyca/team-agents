@@ -62,6 +62,9 @@ const GATE_RECORD_FILE: &str = "gate.json";
 /// The preceding gate, kept separately so old gate records remain unchanged.
 const PREVIOUS_GATE_FILE: &str = "gate-previous.json";
 
+/// The name of the file with the findings of the fix pass a lead is answering, in the directory of its task.
+const FIX_PASS_FINDINGS_FILE: &str = "fix-pass-findings.md";
+
 /// The name of the file with the record of the checks before a review, in the directory of the lead's task.
 const CHECKS_RECORD_FILE: &str = "checks.json";
 
@@ -210,6 +213,13 @@ impl Home {
     #[must_use]
     pub fn checks_file(&self, task: &TaskId) -> PathBuf {
         self.task_dir(task).join(CHECKS_RECORD_FILE)
+    }
+
+    /// The file with the full text of the findings of the fix pass that `task`, a lead, is answering, in the task's
+    /// directory: the prompts of the pass name it.
+    #[must_use]
+    pub fn fix_pass_findings_file(&self, task: &TaskId) -> PathBuf {
+        self.task_dir(task).join(FIX_PASS_FINDINGS_FILE)
     }
 
     /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.

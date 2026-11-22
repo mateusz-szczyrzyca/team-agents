@@ -944,5 +944,9 @@ mod proposal_execution_tests;
 mod split_refusal_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/fix_pass_findings.rs"]
+mod fix_pass_findings_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
