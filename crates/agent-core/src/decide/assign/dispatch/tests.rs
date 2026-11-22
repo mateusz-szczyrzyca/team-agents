@@ -1,6 +1,8 @@
 //! Decisions distinguish missing capability from unavailable qualified crew.
 
 use super::*;
+use crate::decide::part::Candidate;
+use crate::decide::replacement::ReplacementMode;
 use crate::state::fixtures::{at, inv, member, normal, task, team_id};
 use crate::state::{Crew, MergeMode, TaskListText, TeamMembers};
 use crate::status::TaskStatus;
@@ -689,7 +691,7 @@ fn configured_replacement_ordering_and_exclusion_is_respected() {
     let dispatched_2 = dispatch_in_policy(
         &team,
         crate::decide::replacement::ReplacementMode::Auto,
-        &[rep_2.clone()],
+        std::slice::from_ref(&rep_2),
     );
     assert_eq!(dispatched_2.assigned, vec![(item, normal("claude-2"))]);
 
@@ -936,8 +938,6 @@ fn outside_replacement_uses_supplied_tier_and_availability() {
         .transition(TaskStatus::Stopped)
         .unwrap();
 
-    use crate::decide::part::Candidate;
-    use crate::decide::replacement::ReplacementMode;
     for (agent, busy, expected) in [
         (
             Participant::Worker("outside-agent".parse().unwrap()),
@@ -1046,8 +1046,6 @@ fn split_without_available_crew() -> Team {
 
 #[test]
 fn busy_configured_outside_replacement_waits_without_a_capability_question() {
-    use crate::decide::part::Candidate;
-    use crate::decide::replacement::ReplacementMode;
     use crate::state::fixtures::normal;
     for (busy, configured, expected) in [(true, true, WaitReason::Busy), (true, false, WaitReason::Absent)] {
         let mut team = split_without_available_crew();

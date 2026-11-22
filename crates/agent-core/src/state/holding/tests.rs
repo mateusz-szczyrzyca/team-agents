@@ -382,7 +382,10 @@ fn replacement_run_keeps_earlier_history_but_only_resumes_its_own_session() {
     let member = loaded.find_task(&task()).unwrap().member;
     assert_eq!(member.runs().len(), earlier + 1);
     assert_eq!(member.session_runs().len(), 1);
-    assert_eq!(member.last_session().map(|s| s.as_str()), Some("replacement-session"));
+    assert_eq!(
+        member.last_session().map(crate::state::SessionId::as_str),
+        Some("replacement-session")
+    );
 }
 
 #[test]
