@@ -932,8 +932,7 @@ async fn a_member_whose_item_waits_for_a_review_is_not_handed_over_while_a_free_
 
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "hold"),
-            normal("claude-2", "work"),
+            normal("claude-2", "work-or-hold"),
             normal("claude-3", "work"),
             investigator("inv-r1", SILENT),
             investigator("inv-r2", SILENT),
@@ -962,12 +961,14 @@ async fn a_member_whose_item_waits_for_a_review_is_not_handed_over_while_a_free_
     })
     .await;
 
-    // The positive control: a second task waits for claude-1, which a run of its own holds, and goes to claude-3.
-    let (_, holder) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    // claude-2 is busy with a run of its own, so the owner of the reviewed item is occupied elsewhere too.
+    let holder_list = ONE.replace("The first item", "Holds the agent");
+    let (_, holder) = rig.run(&["claude-2"], &holder_list, MergeMode::NoMerge, None).await;
     rig.status_is(&holder[0], TaskStatus::Running).await;
-    let (_, waiting) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    // The positive control: a second task waits for claude-2, which that run holds, and goes to claude-3.
+    let (_, waiting) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
     let waiting = waiting[0].clone();
-    rig.state_where("the second task to wait for claude-1", |state| {
+    rig.state_where("the second task to wait for claude-2", |state| {
         state
             .find_task(&waiting)
             .is_some_and(|found| found.member.waiting_since().is_some())

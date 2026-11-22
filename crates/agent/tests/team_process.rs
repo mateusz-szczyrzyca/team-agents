@@ -1223,24 +1223,23 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     #[test]
     fn a_task_that_waits_for_an_answer_of_the_human_is_not_handed_over() {
         let mut world = World::new(&agents_with(&[
-            ("claude-1", "agent", "hold"),
             ("claude-2", "agent", "done"),
-            ("claude-3", "agent", "ask-here"),
+            ("claude-3", "agent", "ask-or-hold"),
         ]));
         configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
         world.start();
-        let asking = solo_task(&world.agent(&["run", "claude-3", "Asks."]));
+        let asking = solo_task(&world.agent(&["run", "claude-3", "Asks the human."]));
         world.status_where("the task to ask the human", |status| {
             line_of(status, &asking).contains("questions")
         });
-        // A run of claude-1 holds it, so the next task waits for it while the other one waits for the human.
-        let holder = solo_task(&world.agent(&["run", "claude-1", "Holds the agent."]));
+        // A run of claude-3 holds it, so the next task waits for it while the asking one waits for the human.
+        let holder = solo_task(&world.agent(&["run", "claude-3", "Holds the agent."]));
         world.status_where("the holder to run", |status| {
             line_of(status, &holder).contains("running")
         });
-        let waiting = solo_task(&world.agent(&["run", "claude-1", "Waits."]));
+        let waiting = solo_task(&world.agent(&["run", "claude-3", "Waits."]));
         world.status_where("the third task to wait", |status| {
-            line_of(status, &waiting).contains("waits for claude-1")
+            line_of(status, &waiting).contains("waits for claude-3")
         });
 
         expire_and_wait_for_the_hand_over(&mut world, &waiting);
