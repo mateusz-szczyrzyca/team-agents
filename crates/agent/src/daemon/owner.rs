@@ -781,20 +781,8 @@ impl Owner {
         let queued: Vec<Queued> = self
             .parts
             .state
-            .teams()
-            .iter()
-            .flat_map(|team| {
-                let crew = team.crew().roster().into_iter().map(|(_, member)| member);
-                crew.chain(team.reviewers().iter())
-                    .filter(|member| member.status() == TaskStatus::Queued)
-                    .map(|member| Queued {
-                        task: member.task().clone(),
-                        team: team.id().clone(),
-                        agent: member.agent().agent_name(),
-                        tier: member.agent().tier(),
-                    })
-                    .collect::<Vec<_>>()
-            })
+            .queued_tasks()
+            .into_iter()
             .filter(|item| !self.in_flight.contains(&item.task) && !self.pending_removals.contains(&item.task))
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
@@ -2263,6 +2251,7 @@ impl Owner {
             task: task.clone(),
             source,
         })?;
+        self.parts.state.sync_queued();
         let span = tracing::error_span!("task", team = %team, rounds = %rounds, task = %task);
         {
             let _entered = span.enter();

@@ -103,7 +103,7 @@ pub struct UnsupportedSchema {
 ///
 /// Task IDs are unique in the whole state, team IDs too; [`State::insert_team`] and [`State::add_reviewer`] keep
 /// them so, and reading a state checks it.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Eq, Deserialize)]
 #[serde(try_from = "StateWire")]
 pub struct State {
     /// Always [`SCHEMA_VERSION`]; first in the file, so that a reader sees it before anything else.
@@ -111,8 +111,51 @@ pub struct State {
     /// The teams, oldest first.
     teams: Vec<Team>,
     /// Delivery budgets by task; an absent entry means no message has a recorded wake-up budget.
-    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
+    /// The queued tasks in the order they entered the queue, oldest first.
+    queued: Vec<TaskId>,
+}
+
+/// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
+#[derive(Serialize)]
+struct StateOut<'a> {
+    /// See [`State`].
+    schema_version: SchemaVersion,
+    /// See [`State`].
+    teams: &'a [Team],
+    /// See [`State`].
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    wake_deliveries: &'a BTreeMap<TaskId, WakeDelivery>,
+    /// See [`State`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    queued: Vec<TaskId>,
+}
+
+impl Serialize for State {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let effective = self.effective_queued();
+        let queued = if effective == self.natural_queued() {
+            Vec::new()
+        } else {
+            effective
+        };
+        StateOut {
+            schema_version: self.schema_version,
+            teams: &self.teams,
+            wake_deliveries: &self.wake_deliveries,
+            queued,
+        }
+        .serialize(serializer)
+    }
+}
+
+impl PartialEq for State {
+    fn eq(&self, other: &Self) -> bool {
+        self.schema_version == other.schema_version
+            && self.teams == other.teams
+            && self.wake_deliveries == other.wake_deliveries
+            && self.effective_queued() == other.effective_queued()
+    }
 }
 
 /// What a [`State`] is written as, before its checks.
@@ -126,6 +169,9 @@ struct StateWire {
     /// Optional in state written before wake-up delivery budgets were persisted.
     #[serde(default)]
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
+    /// Optional in state written before queue-entry order was persisted.
+    #[serde(default)]
+    queued: Vec<TaskId>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -279,6 +325,7 @@ impl State {
             schema_version: SchemaVersion,
             teams: Vec::new(),
             wake_deliveries: BTreeMap::new(),
+            queued: Vec::new(),
         }
     }
 
@@ -287,24 +334,54 @@ impl State {
         for team in &mut self.teams {
             team.record_activities(at);
         }
+        self.sync_queued();
+    }
+
+    /// The tasks currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in team-creation and roster order.
+    fn natural_queued(&self) -> Vec<TaskId> {
+        self.teams
+            .iter()
+            .flat_map(team_members)
+            .filter(|member| member.status() == crate::status::TaskStatus::Queued)
+            .map(|member| member.task().clone())
+            .collect()
+    }
+
+    /// The tasks currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued) in queue-entry order, oldest first.
+    fn effective_queued(&self) -> Vec<TaskId> {
+        let natural = self.natural_queued();
+        let mut order = Vec::with_capacity(natural.len());
+        for task in &self.queued {
+            if natural.contains(task) && !order.contains(task) {
+                order.push(task.clone());
+            }
+        }
+        for task in natural {
+            if !order.contains(&task) {
+                order.push(task);
+            }
+        }
+        order
     }
 
     /// Synchronizes the queue-entry order with the members currently in [`TaskStatus::Queued`](crate::status::TaskStatus::Queued).
-    pub fn sync_queued(&mut self) {}
+    pub fn sync_queued(&mut self) {
+        self.queued = self.effective_queued();
+    }
 
     /// The queued tasks in the order they entered the queue, oldest first.
     pub fn queued_tasks(&mut self) -> Vec<crate::decide::slot::Queued> {
-        self.teams
+        self.sync_queued();
+        self.queued
             .iter()
-            .flat_map(|team| {
-                team_members(team)
-                    .filter(|member| member.status() == crate::status::TaskStatus::Queued)
-                    .map(|member| crate::decide::slot::Queued {
-                        task: member.task().clone(),
-                        team: team.id().clone(),
-                        agent: member.agent().agent_name(),
-                        tier: member.agent().tier(),
-                    })
+            .filter_map(|task| {
+                let found = self.find_task(task)?;
+                (found.member.status() == crate::status::TaskStatus::Queued).then(|| crate::decide::slot::Queued {
+                    task: found.member.task().clone(),
+                    team: found.team.id().clone(),
+                    agent: found.member.agent().agent_name(),
+                    tier: found.member.agent().tier(),
+                })
             })
             .collect()
     }
@@ -640,6 +717,7 @@ impl State {
             }
         }
         self.teams.push(team);
+        self.sync_queued();
         Ok(())
     }
 
@@ -659,7 +737,11 @@ impl State {
             .into());
         }
         match self.teams.iter_mut().find(|found| found.id() == team) {
-            Some(found) => found.add_reviewer(reviewer).map_err(AddReviewerError::from),
+            Some(found) => {
+                found.add_reviewer(reviewer).map_err(AddReviewerError::from)?;
+                self.sync_queued();
+                Ok(())
+            }
             None => Err(AddReviewerError::UnknownTeam { team: team.clone() }),
         }
     }
@@ -755,11 +837,14 @@ impl TryFrom<StateWire> for State {
                 }
             }
         }
-        Ok(Self {
+        let mut state = Self {
             schema_version: wire.schema_version,
             teams: wire.teams,
             wake_deliveries: wire.wake_deliveries,
-        })
+            queued: wire.queued,
+        };
+        state.sync_queued();
+        Ok(state)
     }
 }
 
