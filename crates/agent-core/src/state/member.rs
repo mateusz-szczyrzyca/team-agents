@@ -88,6 +88,10 @@ pub struct Member {
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
     #[serde(skip_serializing_if = "Option::is_none")]
     plan: Option<PlanKeeping>,
+    /// Step checks refused because they ran the gate, kept on the member when `plan` is absent so legacy tasks deliver
+    /// the notice once without enabling plan send-backs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    refused_gate: Vec<(ItemId, String)>,
     /// A finished run whose command checks or plan settlement are in progress; `None` when none is.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     running_check: Option<RunningPlanCheck>,
@@ -128,6 +132,9 @@ struct MemberWire {
     /// See [`Member`].
     #[serde(default)]
     plan: Option<PlanKeeping>,
+    /// See [`Member`].
+    #[serde(default)]
+    refused_gate: Vec<(ItemId, String)>,
     /// See [`Member`].
     #[serde(default)]
     running_check: Option<RunningPlanCheck>,
@@ -395,6 +402,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
+            refused_gate: Vec::new(),
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
@@ -411,6 +419,7 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: None,
+            refused_gate: Vec::new(),
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
@@ -506,22 +515,35 @@ impl Member {
         self.plan.as_mut().and_then(PlanKeeping::take_pending)
     }
 
-    /// Adds a refused gate command check notice on the member's plan keeping.
+    /// Adds a refused gate command check notice on the member's plan keeping, or on the member itself for a legacy task.
     pub fn add_plan_refused_gate(&mut self, step: ItemId, command: String) {
         if let Some(keeping) = &mut self.plan {
             keeping.add_refused_gate(step, command);
+        } else if !self.refused_gate.iter().any(|(s, c)| *s == step && *c == command) {
+            self.refused_gate.push((step, command));
         }
     }
 
     /// The refused gate command notices waiting for the next run, if any.
     #[must_use]
     pub fn plan_refused_gate(&self) -> &[(ItemId, String)] {
-        self.plan.as_ref().map_or(&[], PlanKeeping::refused_gate)
+        if let Some(keeping) = &self.plan
+            && !keeping.refused_gate().is_empty()
+        {
+            return keeping.refused_gate();
+        }
+        &self.refused_gate
     }
 
     /// Takes the refused gate command notices from the member's plan keeping, clearing them for future runs.
     pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
-        self.plan.as_mut().map_or_else(Vec::new, PlanKeeping::take_refused_gate)
+        let mut taken = self.plan.as_mut().map_or_else(Vec::new, PlanKeeping::take_refused_gate);
+        for (step, command) in std::mem::take(&mut self.refused_gate) {
+            if !taken.iter().any(|(s, c)| *s == step && *c == command) {
+                taken.push((step, command));
+            }
+        }
+        taken
     }
 
     /// The human said to send the run back once more: one more send-back is granted and counted, and the plan's
@@ -904,6 +926,9 @@ mod tests {
         plan: Option<PlanKeeping>,
         /// See [`Member`].
         #[serde(default)]
+        refused_gate: Vec<(ItemId, String)>,
+        /// See [`Member`].
+        #[serde(default)]
         running_check: Option<RunningPlanCheck>,
     }
 
@@ -918,6 +943,7 @@ mod tests {
                 runs: wire.runs,
                 questions: wire.questions,
                 plan: wire.plan,
+                refused_gate: wire.refused_gate,
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),

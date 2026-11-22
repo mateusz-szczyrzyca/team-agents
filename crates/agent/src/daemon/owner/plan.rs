@@ -18,7 +18,7 @@ use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
-use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
+use agent_core::state::{ItemProgress, PlanFault, PlanKeeping, PlanReason, PlanStage};
 use agent_core::state::{RunEnd, RunState, Team, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
@@ -729,6 +729,16 @@ impl Owner {
             .and_then(|found| found.member.plan_running_check())
             .is_some_and(|check| Some(&check.run) == run.as_ref());
         if !already_keeping_check {
+            if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+                let delivered = member.take_plan_refused_gate();
+                if !delivered.is_empty() {
+                    tracing::debug!(
+                        task = %task,
+                        refused = delivered.len(),
+                        "the run finished after being told of its refused gate checks"
+                    );
+                }
+            }
             self.keep_plan(task, located, run.clone(), &found)?;
         }
         let mut failed = None;
@@ -1820,7 +1830,26 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
                 .with("output", tail.as_str())?,
         )?,
         PlanReason::FaultAndMismatch { fault, mismatch } => {
-            format!("{}\n\n{}", correction(texts, fault)?, correction(texts, mismatch)?)
+            let fault_text = match fault {
+                PlanFault::Unfinished { steps: ids } => texts.render(
+                    HarnessPrompt::PlanUnfinished,
+                    &Variables::new().with("steps", steps(ids))?,
+                )?,
+                PlanFault::LostStep { steps: ids } => texts.render(
+                    HarnessPrompt::PlanLostStep,
+                    &Variables::new().with("steps", steps(ids))?,
+                )?,
+            };
+            let mismatch_text = texts.render(
+                HarnessPrompt::PlanMismatch,
+                &Variables::new()
+                    .with("step", mismatch.step.to_string())?
+                    .with("title", mismatch.title.as_str())?
+                    .with("check", mismatch.check.as_deref().unwrap_or(""))?
+                    .with("reason", mismatch.reason.as_deref().unwrap_or(""))?
+                    .with("output", mismatch.tail.as_str())?,
+            )?;
+            format!("{fault_text}\n\n{mismatch_text}")
         }
     };
     Ok(text)

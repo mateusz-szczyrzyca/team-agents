@@ -93,9 +93,9 @@ pub enum PlanReason {
     /// Both a plan fault (`LostStep` or `Unfinished`) and a step check [`Self::Mismatch`] occurred on the same run.
     FaultAndMismatch {
         /// The structural plan fault (`LostStep` or `Unfinished`).
-        fault: Box<Self>,
+        fault: PlanFault,
         /// The step check mismatch.
-        mismatch: Box<Self>,
+        mismatch: StepMismatch,
     },
 }
 
@@ -138,22 +138,8 @@ pub struct StepMismatch {
 impl PlanReason {
     /// Combines a structural [`PlanFault`] and a [`StepMismatch`] into a single [`Self::FaultAndMismatch`] bounce reason.
     #[must_use]
-    pub fn fault_and_mismatch(fault: PlanFault, mismatch: StepMismatch) -> Self {
-        let fault = match fault {
-            PlanFault::Unfinished { steps } => Self::Unfinished { steps },
-            PlanFault::LostStep { steps } => Self::LostStep { steps },
-        };
-        let mismatch = Self::Mismatch {
-            step: mismatch.step,
-            title: mismatch.title,
-            check: mismatch.check,
-            reason: mismatch.reason,
-            tail: mismatch.tail,
-        };
-        Self::FaultAndMismatch {
-            fault: Box::new(fault),
-            mismatch: Box::new(mismatch),
-        }
+    pub const fn fault_and_mismatch(fault: PlanFault, mismatch: StepMismatch) -> Self {
+        Self::FaultAndMismatch { fault, mismatch }
     }
 }
 

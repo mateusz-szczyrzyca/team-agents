@@ -338,7 +338,7 @@ fn with_plan(
     if let Some(reason) = keeping.and_then(PlanKeeping::pending) {
         sections.push(super::plan::correction(ctx.texts, reason)?);
     }
-    for (step, command) in keeping.map_or(&[][..], PlanKeeping::refused_gate) {
+    for (step, command) in member.plan_refused_gate() {
         let variables = Variables::new()
             .with("step", step.to_string())?
             .with("command", command.as_str())?;
