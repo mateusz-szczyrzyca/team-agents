@@ -23,7 +23,8 @@ use agent_runtime::plan::check::{CheckContext, execute_request_check, read_check
 use agent_runtime::process::error_chain;
 use agent_runtime::team_prompts::TeamPrompts;
 use agent_runtime::worker_request::{
-    Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending_each, write_pending,
+    Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending_each, request_of_file,
+    set_aside, write_pending,
 };
 
 use super::teams::{Outbound, Served, is_transient};
@@ -179,14 +180,14 @@ impl Owner {
         let Some(found) = self.parts.state.team(team) else {
             return Ok(());
         };
-        let workers: Vec<TaskId> = found
+        let workers: Vec<(TaskId, AgentName)> = found
             .crew()
             .roster()
             .into_iter()
             .filter(|(role, _)| *role == Role::Worker)
-            .map(|(_, member)| member.task().clone())
+            .map(|(_, member)| (member.task().clone(), member.agent().agent_name()))
             .collect();
-        for task in workers {
+        for (task, worker) in workers {
             let task_dir = self.parts.store.home().task_dir(&task);
             let read = match read_pending_each(&task_dir).await {
                 Ok(read) => read,
@@ -207,11 +208,116 @@ impl Owner {
                         }
                         self.settle_one(&task_dir, pending).await?;
                     }
-                    Err(error) => self.tell_unreadable_once(&error),
+                    Err(error) => self.settle_damaged(team, &task, &worker, error).await?,
                 }
             }
         }
         Ok(())
+    }
+
+    /// Settles a request whose file cannot be used (cut short, unknown field, cannot be read): it is the fault of that one
+    /// request. The file is set aside, kept, the fault is logged with the file's name, and the requester is told that the
+    /// result of the worker cannot be judged — a wrong result — through a settled file of its own, so that the answer
+    /// goes out as every other one does, once, also across a restart. The other requests and the owner go on.
+    async fn settle_damaged(
+        &mut self,
+        team: &TeamId,
+        worker_task: &TaskId,
+        worker: &AgentName,
+        error: PendingError,
+    ) -> Result<(), OwnerError> {
+        let Some(path) = error.path().map(Path::to_owned) else {
+            self.tell_unreadable_once(&error);
+            return Ok(());
+        };
+        let request = request_of_file(&path);
+        // What the bus knows of the request: who is to be told. A bus that cannot say now is asked again at the next look,
+        // before anything is moved.
+        let known = match request {
+            Some(request) => match self.parts.bus.helper_get(request).await {
+                Ok(known) => Some((request, known)),
+                Err(failure) if failure.class() == Some(FailureClass::NotFound) => None,
+                Err(failure) => {
+                    self.tell_unreadable_once(&error);
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        file = ?path,
+                        error = %error_chain(&failure),
+                        "who asked for a request whose file is damaged cannot be read now: it is tried again at the next look"
+                    );
+                    return Ok(());
+                }
+            },
+            None => None,
+        };
+        let aside = match set_aside(&path).await {
+            Ok(aside) => aside,
+            Err(failure) => {
+                self.tell_unreadable_once(&error);
+                tracing::error!(
+                    file = ?path,
+                    error = %error_chain(&failure),
+                    "the damaged file of a worker's request cannot be set aside: it is left as it is"
+                );
+                return Ok(());
+            }
+        };
+        tracing::warn!(
+            event = LogEvent::RestartCorrected.as_str(),
+            team = %team,
+            task = %worker_task,
+            file = ?path,
+            kept_as = ?aside,
+            request = ?request.map(|request| request.to_string()),
+            error = %error_chain(&error),
+            "the file of a worker's request cannot be used: it is set aside and the request is settled as a wrong result"
+        );
+        let Some((request, known)) = known else {
+            return Ok(());
+        };
+        let step = match self.parts.bus.helper_work(request).await {
+            Ok(work) => work.step,
+            Err(_) => None,
+        };
+        let name = path
+            .file_name()
+            .map_or_else(String::new, |name| name.to_string_lossy().into_owned());
+        let reasons = vec![format!(
+            "the harness's record of the worker's result, {name}, cannot be used ({}); it is kept as {}, and what the worker did \
+             cannot be judged",
+            error_chain(&error),
+            aside
+                .file_name()
+                .map_or_else(String::new, |name| name.to_string_lossy().into_owned())
+        )];
+        let pending = Pending {
+            request,
+            team: team.clone(),
+            requester: known.from.clone(),
+            requester_task: known.from_task.clone(),
+            worker: worker.clone(),
+            worker_task: worker_task.clone(),
+            summary: known.summary.clone(),
+            run_seconds: 0,
+            base: None,
+            stage: Stage::Settled {
+                checked: Box::new(Checked {
+                    step,
+                    files: Vec::new(),
+                    head: None,
+                    committed: false,
+                    outside: Vec::new(),
+                    found: None,
+                }),
+                settlement: Settlement::Returned { reasons },
+            },
+        };
+        let task_dir = self.parts.store.home().task_dir(worker_task);
+        // Kept first, so that an answer the bus cannot take now is tried again at the next look.
+        match write_pending(&task_dir, &pending) {
+            Ok(()) => self.settle_one(&task_dir, pending).await,
+            Err(failure) => self.settle_unkept(&task_dir, pending, &failure).await,
+        }
     }
 
     /// Says once, in the log, that a request of a worker cannot be read: the daemon goes on without it.
@@ -264,14 +370,64 @@ impl Owner {
             };
             pending.stage = next;
             if let Err(error) = write_pending(task_dir, &pending) {
-                tracing::error!(
-                    request = %pending.request,
-                    error = %error_chain(&error),
-                    "the stage of a worker's request cannot be kept: it is tried again at the next look"
-                );
-                return Ok(());
+                return self.settle_unkept(task_dir, pending, &error).await;
             }
         }
+    }
+
+    /// A stage of `pending` cannot be written: that is the fault of this request only. Its file, if there is one, is set aside
+    /// (kept), the fault is logged with the file's name, and the requester is told that the result cannot be judged, from
+    /// memory, without another file. The other requests and the owner go on.
+    async fn settle_unkept(
+        &mut self,
+        task_dir: &Path,
+        mut pending: Pending,
+        error: &PendingError,
+    ) -> Result<(), OwnerError> {
+        let path = pending_path(task_dir, pending.request);
+        let kept_as = match set_aside(&path).await {
+            Ok(aside) => Some(aside),
+            Err(PendingError::Write { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => None,
+            Err(failure) => {
+                tracing::error!(file = ?path, error = %error_chain(&failure), "the file of a worker's request cannot be set aside");
+                None
+            }
+        };
+        tracing::warn!(
+            event = LogEvent::RestartCorrected.as_str(),
+            team = %pending.team,
+            task = %pending.worker_task,
+            file = ?path,
+            kept_as = ?kept_as,
+            request = %pending.request,
+            error = %error_chain(error),
+            "a stage of a worker's request cannot be kept: the request is settled as a wrong result"
+        );
+        let step = match &pending.stage {
+            Stage::Ended => None,
+            Stage::Checked(checked) | Stage::Settled { checked, .. } => checked.step,
+        };
+        let checked = Checked {
+            step,
+            files: Vec::new(),
+            head: None,
+            committed: false,
+            outside: Vec::new(),
+            found: None,
+        };
+        let settlement = Settlement::Returned {
+            reasons: vec![format!(
+                "the harness cannot keep its record of the worker's result in {} ({}), so what the worker did cannot be judged",
+                path.file_name()
+                    .map_or_else(String::new, |name| name.to_string_lossy().into_owned()),
+                error_chain(error)
+            )],
+        };
+        pending.stage = Stage::Settled {
+            checked: Box::new(checked.clone()),
+            settlement: settlement.clone(),
+        };
+        self.answer_requester(&pending, &checked, &settlement).await.map(drop)
     }
 
     /// Removes the file of `request` from `task_dir`; a file that is not there is the end the request wants.
@@ -417,7 +573,12 @@ impl Owner {
 
     /// Takes the end of a check that ran in the background: the request goes on from the stage `Checked`.
     ///
-    pub(super) fn request_check_done(&mut self, joined: Result<(tokio::task::Id, Found), tokio::task::JoinError>) {
+    /// # Errors
+    /// [`OwnerError`] when the clock or the state fails.
+    pub(super) async fn request_check_done(
+        &mut self,
+        joined: Result<(tokio::task::Id, Found), tokio::task::JoinError>,
+    ) -> Result<(), OwnerError> {
         let (id, found) = match joined {
             Ok(done) => done,
             Err(error) => (
@@ -433,7 +594,7 @@ impl Owner {
             ),
         };
         let Some(checking) = self.request_checking.remove(&id) else {
-            return;
+            return Ok(());
         };
         let Checking {
             task_dir,
@@ -444,13 +605,10 @@ impl Owner {
         let team = pending.team.clone();
         pending.stage = Stage::Checked(Box::new(checked));
         if let Err(error) = write_pending(&task_dir, &pending) {
-            tracing::error!(
-                request = %pending.request,
-                error = %error_chain(&error),
-                "the end of a check cannot be kept: the check is run again at the next look"
-            );
+            return self.settle_unkept(&task_dir, pending, &error).await;
         }
         self.look_at(&team);
+        Ok(())
     }
 
     /// Decides what the checked result is worth and, when it is good, brings the worker's commit over.

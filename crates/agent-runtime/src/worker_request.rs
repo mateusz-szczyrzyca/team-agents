@@ -14,6 +14,9 @@ use crate::agentbus::RequestId;
 /// worker's task directory.
 const FILE_PREFIX: &str = "worker-request-";
 
+/// How many files of one request may be kept aside before the next one is refused.
+const MOST_ASIDE: u32 = 1000;
+
 /// Why a request that a worker has ended cannot be kept or read.
 #[derive(Debug, thiserror::Error)]
 pub enum PendingError {
@@ -55,6 +58,74 @@ pub enum PendingError {
     /// The clock gives a time that cannot be recorded.
     #[error("the clock gives a time that cannot be recorded")]
     Clock(#[source] agent_core::state::InvalidTimestamp),
+}
+
+impl PendingError {
+    /// The file the failure is about; `None` when it is not about one.
+    #[must_use]
+    pub fn path(&self) -> Option<&Path> {
+        match self {
+            Self::Write { path, .. } | Self::List { path, .. } | Self::Read { path, .. } | Self::Parse { path, .. } => {
+                Some(path)
+            }
+            Self::Encode(_) | Self::Clock(_) => None,
+        }
+    }
+}
+
+/// The request a file named `worker-request-<n>.json` is for, from its name alone: it holds for a file whose content
+/// cannot be read. `None` when the name is not of that form.
+#[must_use]
+pub fn request_of_file(path: &Path) -> Option<RequestId> {
+    let digits = path
+        .file_name()?
+        .to_str()?
+        .strip_prefix(FILE_PREFIX)?
+        .strip_suffix(".json")?;
+    digits.parse::<std::num::NonZeroU64>().ok().map(RequestId::new)
+}
+
+/// Moves a file of a request that cannot be used next to where it was, under a name that the reading does not meet
+/// (`<name>.damaged`, or `<name>.damaged-2` and so on when that is taken): the file is kept, never deleted.
+///
+/// # Errors
+/// [`PendingError::Write`] when the file cannot be moved.
+pub async fn set_aside(path: &Path) -> Result<PathBuf, PendingError> {
+    let name = path.file_name().and_then(|name| name.to_str()).unwrap_or(FILE_PREFIX);
+    for attempt in 1_u32..=MOST_ASIDE {
+        let suffix = if attempt == 1 {
+            String::new()
+        } else {
+            format!("-{attempt}")
+        };
+        let target = path.with_file_name(format!("{name}.damaged{suffix}"));
+        match tokio::fs::symlink_metadata(&target).await {
+            // Taken: the next name is tried.
+            Ok(_) => {}
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                return tokio::fs::rename(path, &target)
+                    .await
+                    .map(|()| target)
+                    .map_err(|source| PendingError::Write {
+                        path: path.to_owned(),
+                        source,
+                    });
+            }
+            Err(source) => {
+                return Err(PendingError::Write {
+                    path: path.to_owned(),
+                    source,
+                });
+            }
+        }
+    }
+    Err(PendingError::Write {
+        path: path.to_owned(),
+        source: std::io::Error::new(
+            std::io::ErrorKind::AlreadyExists,
+            "too many files are set aside already",
+        ),
+    })
 }
 
 /// A request whose worker's run has ended: who asked, who served, what the worker said and how far the harness got.

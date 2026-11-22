@@ -691,7 +691,7 @@ impl Owner {
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
                 Some(joined) = self.checks.join_next_with_id() => self.check_batch_done(joined).await?,
-                Some(joined) = self.request_checks.join_next_with_id() => self.request_check_done(joined),
+                Some(joined) = self.request_checks.join_next_with_id() => self.request_check_done(joined).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();

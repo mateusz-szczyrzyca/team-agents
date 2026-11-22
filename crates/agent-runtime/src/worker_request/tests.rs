@@ -199,3 +199,47 @@ async fn a_file_that_is_not_a_request_does_not_hide_the_requests_beside_it() {
         "{read:?}"
     );
 }
+
+#[test]
+fn the_request_of_a_file_is_told_by_its_name_alone() {
+    let named = |name: &str| request_of_file(Path::new("/tasks/t").join(name).as_path());
+    assert_eq!(named("worker-request-12.json"), Some(request(12)));
+    assert_eq!(named("worker-request-0.json"), None);
+    assert_eq!(named("worker-request-x.json"), None);
+    assert_eq!(named("worker-request-3.json.damaged"), None);
+    assert_eq!(named("other-3.json"), None);
+}
+
+#[tokio::test]
+async fn a_file_set_aside_is_kept_under_a_name_the_reading_does_not_meet_and_never_over_another() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("worker-request-1.json");
+    tokio::fs::write(&path, "first").await.expect("written");
+
+    let first = set_aside(&path).await.expect("set aside");
+    tokio::fs::write(&path, "second").await.expect("written");
+    let second = set_aside(&path).await.expect("set aside");
+
+    assert_eq!(first, dir.path().join("worker-request-1.json.damaged"));
+    assert_eq!(second, dir.path().join("worker-request-1.json.damaged-2"));
+    assert_eq!(tokio::fs::read_to_string(&first).await.expect("kept"), "first");
+    assert_eq!(tokio::fs::read_to_string(&second).await.expect("kept"), "second");
+    assert!(!path.exists());
+    assert!(read_pending_each(dir.path()).await.expect("listed").is_empty());
+}
+
+#[tokio::test]
+async fn a_failure_of_a_file_names_the_file_and_one_of_the_clock_names_none() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("worker-request-1.json");
+    tokio::fs::write(&path, "{").await.expect("written");
+
+    let mut read = read_pending_each(dir.path()).await.expect("listed");
+    let error = read.remove(0).expect_err("damaged");
+
+    assert_eq!(error.path(), Some(path.as_path()));
+    assert_eq!(
+        PendingError::Encode(serde_json::from_str::<u8>("x").expect_err("bad")).path(),
+        None
+    );
+}
