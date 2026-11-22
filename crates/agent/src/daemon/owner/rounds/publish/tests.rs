@@ -320,3 +320,49 @@ async fn publication_failures_defer_while_the_lead_has_any_open_question() {
         );
     }
 }
+
+#[tokio::test]
+async fn publication_retry_clears_only_the_recorded_pr_branch_backoff() {
+    let (state, team_id) = state_with_waiting_lead();
+    let mut plan = plan_publications(state.team(&team_id).unwrap()).unwrap();
+    let destination = "agents/claude-1/task-1-1.1b".parse().unwrap();
+    plan[0].head_branch = destination;
+    let (daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+    let lead = owner.lead_of(&team_id).unwrap();
+    std::fs::create_dir_all(daemon.home.questions_file(&lead.task, n(1)).parent().unwrap()).unwrap();
+    owner
+        .ask_human_publish_failed(
+            Site {
+                pulls: &pulls,
+                team: &team_id,
+                lead: &lead,
+            },
+            &plan[0],
+            "refused",
+            (4, 3),
+            crate::fixtures::at(100),
+        )
+        .await
+        .unwrap();
+    let destination_key = (team_id.clone(), plan[0].head_branch.clone());
+    let unrelated_key = (team_id.clone(), "agents/claude-1/unrelated".parse().unwrap());
+    owner
+        .watch
+        .retry_at
+        .insert(destination_key.clone(), crate::fixtures::at(300));
+    owner
+        .watch
+        .retry_at
+        .insert(unrelated_key.clone(), crate::fixtures::at(400));
+    let located = owner.locate(&lead.task).unwrap();
+    let answer = agent_core::questions::QuestionsFile::parse("# Questions\n\n## 1. Retry?\n**Verdict:** a\n").unwrap();
+    assert_eq!(
+        owner.after_answer(&lead.task, &located, n(1), &answer).unwrap(),
+        TaskStatus::Queued
+    );
+    assert_eq!(owner.watch.retry_at.get(&destination_key), None);
+    assert_eq!(
+        owner.watch.retry_at.get(&unrelated_key),
+        Some(&crate::fixtures::at(400))
+    );
+}
