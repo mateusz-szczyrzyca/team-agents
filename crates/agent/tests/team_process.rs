@@ -1011,6 +1011,275 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         release(&world, &second);
     }
 
+    /// How many rows of the daemon's log of `event` concern `task`, read with `agent log`.
+    fn log_rows(world: &World, event: &str, task: &str) -> usize {
+        let output = world.agent(&["log", "--event", event, "--task", task, "--json"]);
+        assert!(output.status.success(), "{}", stderr(&output));
+        stdout(&output).lines().filter(|line| !line.trim().is_empty()).count()
+    }
+
+    /// Expires the recorded wait of `task` (see [`expire_recorded_wait`]) and waits until the daemon has looked at the
+    /// wait again. A restarted daemon logs `task_waits_for_agent` for each task it finds waiting, so one more such row
+    /// is the observable end of a scheduling cycle after `busy_after` has passed. Asserts that nothing was handed over.
+    fn expire_and_wait_for_the_daemon_to_look(world: &mut World, task: &str) {
+        let before = log_rows(world, "task_waits_for_agent", task);
+        expire_recorded_wait(world);
+        let world = &*world;
+        eventually("the daemon to look at the wait again after busy_after", || {
+            log_rows(world, "task_waits_for_agent", task) > before
+        });
+        assert_eq!(log_rows(world, "task_handed_over", task), 0, "{}", world.status());
+    }
+
+    #[test]
+    fn a_worker_of_a_lower_tier_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("worker-1", "worker", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"worker-1\"]\nbusy_after = 1\n");
+        world.start();
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(!line_of(&status, &second).contains("worker-1"), "{status}");
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
+        let status = world.status_where("the second task to run", |status| {
+            line_of(status, &second).contains("running")
+        });
+        assert!(!line_of(&status, &second).contains("for "), "{status}");
+        release(&world, &second);
+    }
+
+    #[test]
+    fn a_running_candidate_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "hold"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let busy_candidate = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate's own run to go", |status| {
+            line_of(status, &busy_candidate).contains("running")
+        });
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(
+            line_of(&status, &busy_candidate).contains("running")
+                && !line_of(&status, &busy_candidate).contains("for "),
+            "the candidate keeps its own run, which the restart of the daemon resumes: {status}"
+        );
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
+        release(&world, &second);
+        release(&world, &busy_candidate);
+    }
+
+    #[test]
+    fn a_candidate_of_the_tasks_own_team_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "sleep"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
+        let list = world.repo.join("list.md");
+        std::fs::write(&list, LIST).unwrap();
+        let team = world.agent(&["run", "claude-1", "inv-opus", "claude-2", "-f", list.to_str().unwrap()]);
+        assert!(team.status.success(), "{}", stderr(&team));
+        let status = world.status_where("the team's member on claude-1 to wait for it", |status| {
+            status
+                .lines()
+                .any(|line| line.contains("waits for claude-1") && !line.contains(&first))
+        });
+        let second = status
+            .lines()
+            .find(|line| line.contains("waits for claude-1") && !line.contains(&first))
+            .and_then(|line| line.split_whitespace().find(|word| word.starts_with("task-")))
+            .unwrap()
+            .to_owned();
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        let status = world.status_where("the member to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert!(!line_of(&status, &second).contains("claude-2"), "{status}");
+        assert_eq!(world.runs(&second), 0, "{status}");
+
+        release(&world, &first);
+        eventually("the member to start with its own agent", || world.runs(&second) == 1);
+    }
+
+    #[test]
+    fn a_coordinator_whose_member_runs_is_not_handed_over_for_its_busy_wait() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "hold"),
+            ("claude-3", "agent", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-3\"]\nbusy_after = 1\n");
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
+        let list = world.repo.join("list.md");
+        std::fs::write(&list, LIST).unwrap();
+        let team = world.agent(&[
+            "run",
+            "claude-2",
+            "claude-1",
+            "--coordinator",
+            "claude-1",
+            "-f",
+            list.to_str().unwrap(),
+        ]);
+        assert!(team.status.success(), "{}", stderr(&team));
+        let status = world.status_where("the coordinator to wait for claude-1 while its member runs", |status| {
+            status
+                .lines()
+                .any(|line| line.contains("coordinator") && line.contains("waits for claude-1"))
+                && status
+                    .lines()
+                    .any(|line| line.contains("member") && line.contains("claude-2") && line.contains("running"))
+        });
+        let lead = status
+            .lines()
+            .find(|line| line.contains("coordinator") && line.contains("waits for claude-1"))
+            .and_then(|line| line.split_whitespace().find(|word| word.starts_with("task-")))
+            .unwrap()
+            .to_owned();
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &lead);
+        let status = world.status_where("the coordinator to still wait", |status| {
+            line_of(status, &lead).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&lead), 0, "{status}");
+        assert!(!line_of(&status, &lead).contains("claude-3"), "{status}");
+
+        release(&world, &first);
+        eventually("the coordinator to start with its own agent", || world.runs(&lead) == 1);
+    }
+
+    /// Lets `waiting` (queued for `claude-1`) be handed over after `busy_after` has passed, and waits for that
+    /// hand-over: the positive control that the scheduler looked at the waits of the test after they expired.
+    fn expire_and_wait_for_the_hand_over(world: &mut World, waiting: &str) {
+        expire_recorded_wait(world);
+        let world = &*world;
+        eventually("the positive control to be handed over after busy_after", || {
+            log_rows(world, "task_handed_over", waiting) > 0
+        });
+    }
+
+    #[test]
+    fn a_running_task_is_not_handed_over_while_a_free_candidate_exists() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let running = solo_task(&world.agent(&["run", "claude-1", "Its own work."]));
+        world.status_where("the running task to go", |status| {
+            line_of(status, &running).contains("running")
+        });
+        // The positive control: a second task of claude-1 waits for the running one and goes to the free candidate.
+        let waiting = solo_task(&world.agent(&["run", "claude-1", "Waits."]));
+        world.status_where("the second task to wait", |status| {
+            line_of(status, &waiting).contains("waits for claude-1")
+        });
+
+        expire_and_wait_for_the_hand_over(&mut world, &waiting);
+        let status = world.status_where("the running task to keep its agent", |status| {
+            line_of(status, &running).contains("running")
+        });
+        assert_eq!(log_rows(&world, "task_handed_over", &running), 0, "{status}");
+        assert!(!line_of(&status, &running).contains("claude-2"), "{status}");
+
+        release(&world, &running);
+    }
+
+    #[test]
+    fn a_task_that_waits_for_an_answer_of_the_human_is_not_handed_over() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-2", "agent", "done"),
+            ("claude-3", "agent", "ask-or-hold"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let asking = solo_task(&world.agent(&["run", "claude-3", "Asks the human."]));
+        world.status_where("the task to ask the human", |status| {
+            line_of(status, &asking).contains("questions")
+        });
+        // A run of claude-3 holds it, so the next task waits for it while the asking one waits for the human.
+        let holder = solo_task(&world.agent(&["run", "claude-3", "Holds the agent."]));
+        world.status_where("the holder to run", |status| {
+            line_of(status, &holder).contains("running")
+        });
+        let waiting = solo_task(&world.agent(&["run", "claude-3", "Waits."]));
+        world.status_where("the third task to wait", |status| {
+            line_of(status, &waiting).contains("waits for claude-3")
+        });
+
+        expire_and_wait_for_the_hand_over(&mut world, &waiting);
+        let status = world.status_where("the asking task to keep waiting for the human", |status| {
+            line_of(status, &asking).contains("questions")
+        });
+        assert_eq!(log_rows(&world, "task_handed_over", &asking), 0, "{status}");
+        assert!(!line_of(&status, &asking).contains("claude-2"), "{status}");
+
+        release(&world, &holder);
+    }
+
+    #[test]
+    fn a_paused_candidate_is_not_given_a_waiting_task() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "turn-limit-quota"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let quota_hit = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate to pause for its quota", |status| {
+            line_of(status, &quota_hit).contains("paused")
+        });
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        let status = world.status_where("the second task to still wait after busy_after", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(line_of(&status, &quota_hit).contains("paused"), "{status}");
+
+        release(&world, &first);
+        eventually("the second task to start with its own agent", || {
+            world.runs(&second) == 1
+        });
+        release(&world, &second);
+    }
+
     #[test]
     fn a_restart_during_the_wait_keeps_the_time_the_task_has_waited() {
         let mut world = World::new(&agents_with(&[
