@@ -4,6 +4,8 @@
 //! This reads and decides and writes nothing: no ref, no index, no file of the checkout. A commit that is already made —
 //! on the remote or not — is never touched; where one slipped through, the checks before the review find it.
 
+pub mod hooks;
+
 use agent_core::config::Checks;
 use agent_core::decide::commit_guard::{PendingCommit, Verdict, frozen_tests, judge_commit};
 use agent_core::ids::BranchName;
