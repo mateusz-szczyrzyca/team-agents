@@ -438,6 +438,30 @@ fn candidate_with_status(state: &mut agent_core::state::State, status: TaskStatu
     }
 }
 
+/// Puts `claude-2` in a solo team of its own, outside the waiting member's team and with the requested status.
+fn candidate_outside_with_status(state: &mut agent_core::state::State, status: TaskStatus) {
+    use agent_core::state::{Crew, Member, MergeMode, TaskListText, Team};
+
+    let task = crate::fixtures::task(5);
+    let team = crate::fixtures::team_id(1);
+    state
+        .insert_team(Team::new(
+            team.clone(),
+            crate::fixtures::repo(),
+            crate::fixtures::at(0),
+            MergeMode::NoMerge,
+            TaskListText::new("Solo task.\n".to_owned()).unwrap(),
+            Crew::solo(Member::new(task.clone(), crate::fixtures::normal("claude-2"))).unwrap(),
+        ))
+        .unwrap();
+    let mut solo = state.team_mut(&team).unwrap();
+    let (_, mut member) = solo.find_mut(&task).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    if status != TaskStatus::Running {
+        member.transition(status).unwrap();
+    }
+}
+
 #[tokio::test]
 async fn a_lower_tier_candidate_is_not_given_the_waiting_task() {
     use super::super::fixture::Daemon;
@@ -486,9 +510,9 @@ async fn a_running_candidate_is_not_given_the_waiting_task() {
     use super::super::fixture::Daemon;
 
     let (mut state, _team, task) = waiting_team_state();
-    candidate_with_status(&mut state, TaskStatus::Running);
+    candidate_outside_with_status(&mut state, TaskStatus::Running);
     let daemon = Daemon::new(&state, None);
-    configure_candidate(&daemon, "inv-codex");
+    configure_candidate(&daemon, "claude-2");
     daemon.clock.advance(time::Duration::seconds(2));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
@@ -506,9 +530,9 @@ async fn a_paused_candidate_is_not_given_the_waiting_task() {
     use super::super::fixture::Daemon;
 
     let (mut state, _team, task) = waiting_team_state();
-    candidate_with_status(&mut state, TaskStatus::Paused);
+    candidate_outside_with_status(&mut state, TaskStatus::Paused);
     let daemon = Daemon::new(&state, None);
-    configure_candidate(&daemon, "inv-codex");
+    configure_candidate(&daemon, "claude-2");
     daemon.clock.advance(time::Duration::seconds(2));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
