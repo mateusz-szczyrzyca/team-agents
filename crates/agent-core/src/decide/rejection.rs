@@ -131,6 +131,15 @@ pub enum MovedOn {
     Yes,
 }
 
+/// Whether the work handed over was sent back already, by a return the member has not run after yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Answered {
+    /// No earlier return of this hand-over is waiting for the member to run again.
+    No,
+    /// An earlier return of it is recorded and the member has not been started since: the lead repeats itself.
+    Yes,
+}
+
 /// What the machine saw of an item when its lead ended with the line.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Facts {
@@ -146,6 +155,8 @@ pub struct Facts {
     handed_over_after: NonZeroU32,
     /// The number of the member's last run.
     last_run_number: NonZeroU32,
+    /// Whether the hand-over was sent back already.
+    answered: Answered,
 }
 
 impl Facts {
@@ -166,7 +177,14 @@ impl Facts {
             moved_on,
             handed_over_after,
             last_run_number,
+            answered: Answered::No,
         }
+    }
+
+    /// The same facts with `answered` saying whether the hand-over was sent back already.
+    #[must_use]
+    pub const fn with_answered(self, answered: Answered) -> Self {
+        Self { answered, ..self }
     }
 
     /// The same facts with the lead's end `lead`.
@@ -213,6 +231,8 @@ pub enum Rejection {
     Counted,
     /// No work that was handed over stands behind the return: not a rejection.
     NotHandedOver,
+    /// The hand-over was sent back already and the member has not run since: the same rejection, counted once.
+    AlreadyCounted,
 }
 
 /// What `line` of a lead's final message counts, from the facts the machine saw of the item.
@@ -242,6 +262,8 @@ pub fn classify(_line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
     })
 }
 
+#[cfg(test)]
+mod answered_tests;
 #[cfg(test)]
 mod facts_tests;
 #[cfg(test)]
