@@ -614,22 +614,20 @@ impl Checking {
     }
 }
 
-/// What the findings about commits add to what the checks decide: they cannot be repaired by the team.
+/// What the findings about commits add to what the checks decide: they cannot be repaired by the team, so what the human
+/// refused about one leaves nothing to ask and holds nothing back.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct CommitsLeft {
     /// How many findings about a commit nobody has answered: only the human may allow them, so they are asked at once
     /// and spend no pass of the team.
     pub to_ask: usize,
-    /// How many findings about a commit the human refused in the answer that is being taken: the team cannot undo a
-    /// commit, so a refusal holds nothing back and is only kept and told.
-    pub refused_now: usize,
 }
 
 impl CommitsLeft {
     /// What is left when `to_ask` findings about a commit wait for the human.
     #[must_use]
     pub const fn asking(to_ask: usize) -> Self {
-        Self { to_ask, refused_now: 0 }
+        Self { to_ask }
     }
 }
 

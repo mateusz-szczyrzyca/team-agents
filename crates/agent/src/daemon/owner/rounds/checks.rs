@@ -120,8 +120,6 @@ impl Owner {
             .load_checks_record(&lead.task)
             .await?
             .unwrap_or_default();
-        // What the human refused in the answer that is taken now: the team is told once.
-        let mut refused_now: Vec<Subject> = Vec::new();
         if let Some(asked) = record.asked.clone() {
             match self.where_is(&lead.task, &asked)? {
                 Asking::Open => return Ok(Some(Held::Waiting)),
@@ -137,38 +135,26 @@ impl Owner {
                     return Ok(Some(Held::WakeLead));
                 }
                 Asking::Answered(file) => {
-                    refused_now = self.take_answer(site, reviewing, &mut record, &asked, &file).await?;
+                    self.take_answer(site, reviewing, &mut record, &asked, &file).await?;
                 }
             }
         }
         let (gathered, assessed) = self.assess_round(site, reviewing, &mut record, &rules).await?;
         let Assessed { issues, settled, .. } = assessed;
         // What the human refused about a file keeps the round back until the team undoes it; what they refused about a
-        // commit is told to the team once, when they refuse it: the team cannot undo a commit.
+        // commit holds nothing back, because the team cannot undo a commit.
         let refused: Vec<Subject> = record
             .refused_of(reviewing.items)
             .into_iter()
             .filter(|subject| !matches!(subject, Subject::Commit { .. }))
             .collect();
-        let refused_commits = refused_now
-            .iter()
-            .filter(|subject| matches!(subject, Subject::Commit { .. }))
-            .count();
         let policy = ChecksPolicy::new(self.parts.settings.config.review());
         let checking = Checking::after(record.passes_of(reviewing.items));
-        let step = checking.conclude_with_commits(
-            &issues,
-            &refused,
-            CommitsLeft {
-                to_ask: settled.ask.len(),
-                refused_now: refused_commits,
-            },
-            policy,
-        );
+        let step = checking.conclude_with_commits(&issues, &refused, CommitsLeft::asking(settled.ask.len()), policy);
         log_decision(
             "conclude_checks",
             &format!(
-                "pr={}, issues={}, refused={}, refused_commits={refused_commits}",
+                "pr={}, issues={}, refused={}",
                 reviewing.pr,
                 issues.len(),
                 refused.len()
@@ -279,7 +265,7 @@ impl Owner {
     }
 
     /// Takes the human's answer to the questions of the checks: what they allowed and what they refused is kept for the
-    /// items. Returns the refused subjects.
+    /// items.
     async fn take_answer(
         &mut self,
         site: Site<'_>,
@@ -287,7 +273,7 @@ impl Owner {
         record: &mut ChecksRecord,
         asked: &Asked,
         file: &std::path::Path,
-    ) -> Result<Vec<Subject>, PublishError> {
+    ) -> Result<(), PublishError> {
         let Site { pulls, team, lead } = site;
         let loaded = questions::read(file).await?;
         let decided = grouped_decisions(&asked.subjects, &loaded.file)?;
@@ -309,7 +295,7 @@ impl Owner {
                 .collect::<Result<Vec<String>, _>>()?;
             self.record_checked(team, reviewing, allowed, CheckOutcome::Allowed);
         }
-        Ok(decided.refused)
+        Ok(())
     }
 
     /// Writes the questions that name the `issues` for the lead to put to the human, and keeps what the checks wait on.
