@@ -520,6 +520,11 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
 }
 
 impl Owner {
+    /// The summary of `team` as `agent status` shows it: with the limit of returns `[replacement] rejections` sets.
+    fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
+        TeamSummary::described(team).with_rejection_limit(self.parts.settings.config.replacement().rejections().get())
+    }
+
     /// An owner made of `parts`.
     pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
         let (watcher, saved) = match Watcher::new() {
@@ -1773,7 +1778,7 @@ impl Owner {
             .iter()
             .filter(|known| team.is_none_or(|wanted| known.id() == wanted))
             .map(|known| {
-                let mut summary = TeamSummary::described(known);
+                let mut summary = self.described(known);
                 for member in &summary.members {
                     let steps = self.task_plan_summary(&member.task);
                     if !steps.is_empty() {
@@ -1831,7 +1836,7 @@ impl Owner {
                     .parts
                     .state
                     .find_task(task)
-                    .map(|found| TeamSummary::described(found.team))
+                    .map(|found| self.described(found.team))
                     .ok_or_else(|| not_found(format!("there is no task {task}")))?;
                 let steps = self.task_plan_summary(task);
                 if !steps.is_empty() {
@@ -1844,7 +1849,7 @@ impl Owner {
                     .parts
                     .state
                     .find_round(round)
-                    .map(|(team, _)| TeamSummary::described(team))
+                    .map(|(team, _)| self.described(team))
                     .ok_or_else(|| not_found(format!("there is no round {round}")))?;
                 if let Some((team, _)) = self.parts.state.find_round(round) {
                     for (_role, member) in team.members_in(round) {
@@ -2175,7 +2180,7 @@ impl Owner {
             self.publish(
                 at,
                 EventKind::TeamUpdated {
-                    summary: Box::new(TeamSummary::described(team)),
+                    summary: Box::new(self.described(team)),
                 },
             );
         }

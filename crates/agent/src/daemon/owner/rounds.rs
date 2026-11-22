@@ -789,6 +789,9 @@ mod publish_failures_tests;
 #[path = "rounds/tests/queued_run.rs"]
 mod queued_run_tests;
 #[cfg(test)]
+#[path = "rounds/tests/returned.rs"]
+mod returned_tests;
+#[cfg(test)]
 #[path = "rounds/tests/review_head.rs"]
 mod review_head_tests;
 #[cfg(test)]
