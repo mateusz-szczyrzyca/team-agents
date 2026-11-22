@@ -184,13 +184,14 @@ pub(crate) async fn status_shown(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, Some(activity), out).await;
     }
+    let is_list = target.is_none();
     let shown = listing_text(connection, target, activity, detail).await?;
-    write_shown(
-        out,
-        &versions::block(&of_this_build(), shown.daemon.as_ref()),
-        &shown,
-        activity,
-    )
+    let prefix = if is_list {
+        versions::block(&of_this_build(), shown.daemon.as_ref())
+    } else {
+        String::new()
+    };
+    write_shown(out, &prefix, &shown, activity)
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
