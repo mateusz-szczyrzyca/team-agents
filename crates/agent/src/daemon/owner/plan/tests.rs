@@ -2021,7 +2021,7 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
     impl Clock for FailOnSecondRead {
         fn now(&self) -> time::UtcDateTime {
             let call = self.0.fetch_add(1, Ordering::SeqCst);
-            if call == 0 {
+            if call < 2 {
                 at(210).as_utc()
             } else {
                 time::UtcDateTime::MIN
@@ -2108,6 +2108,7 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
     drop(owner);
 
     // Part 3: clock failure inside run_command_checks propagates through check_batch_done as OwnerError::Clock.
+    std::fs::write(daemon.home.state_file(), solo_state().to_json().unwrap()).unwrap();
     std::fs::write(
         dir.join(".agent/plan.md"),
         "Finish it.\n\n1. Work\n[x] 1.1 Check\n    Check: /bin/sh -c 'exit 0'\n",
@@ -2130,7 +2131,6 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
         .unwrap();
     {
         let (_, mut member) = owner.parts.state.find_task_mut(&task(1)).unwrap();
-        member.transition(TaskStatus::Queued).unwrap();
         member.transition(TaskStatus::Running).unwrap();
     }
     owner.parts.clock = SharedClock::new(FailOnSecondRead(AtomicUsize::new(0)));
