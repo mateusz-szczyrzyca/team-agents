@@ -79,9 +79,7 @@ func TestHelperDumpCarriesTheFilesTheCheckAndTheToDoOfARequest(t *testing.T) {
 
 	var listed []*Helper
 	mustWith(t, b, func(st *State) {
-		for _, h := range sortedHelpers(st) {
-			listed = append(listed, h)
-		}
+		listed = append(listed, sortedHelpers(st)...)
 	})
 	if len(listed) != 1 {
 		t.Fatalf("one request expected, got %d", len(listed))
