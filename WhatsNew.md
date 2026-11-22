@@ -5,6 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.71.0 — 22.11.2026 — PR pending
+
+### Bug fixes
+- [agent] [agent-core] A split no longer stops silently when its previous member is stopped, failed or handed over: the next part goes to a qualified configured replacement or the lead, or asks the human once when nobody can take it. Existing waiting splits resume after an upgrade or daemon restart.
+- [agent] [agent-core] A lead can report a split part delivered with `DELIVERED: #N` when its pull request was merged outside the harness. The next part opens, and the last part closes the item and team; unrelated, open or unmerged pull requests are refused.
+- [agent] [agent-core] An outside replacement starts its own CLI session and failure history when taking over a task, instead of resuming the previous holder's session; the earlier runs remain in history.
+
 ## 0.70.0 — 22.11.2026 — PR #187
 
 ### New features
