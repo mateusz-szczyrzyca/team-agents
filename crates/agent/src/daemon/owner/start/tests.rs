@@ -4,6 +4,25 @@ use rand::rngs::Xoshiro256PlusPlus;
 use super::*;
 
 #[test]
+fn a_run_keeps_a_plan_exactly_when_its_role_is_one_of_the_plan_roles() {
+    let configured = Config::default().plan().roles().to_vec();
+    let rows = [
+        (Role::Solo, true),
+        (Role::Member, true),
+        (Role::Coordinator, true),
+        (Role::Worker, false),
+        (Role::Reviewer, false),
+    ];
+    for (role, kept) in rows {
+        assert_eq!(keeps_plan(&configured, role), kept, "{role:?}");
+    }
+    // The roles come from the configuration: a home that lists none holds no run to a plan.
+    assert!(!keeps_plan(&[], Role::Member));
+    assert!(keeps_plan(&[Role::Member], Role::Member));
+    assert!(!keeps_plan(&[Role::Member], Role::Coordinator));
+}
+
+#[test]
 fn a_new_session_id_is_a_version_4_uuid() {
     let mut rng = Xoshiro256PlusPlus::seed_from_u64(7);
 

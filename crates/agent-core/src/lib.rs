@@ -54,6 +54,7 @@ pub mod commits;
 pub mod config;
 pub mod debug_summary;
 pub mod decide;
+pub mod delegation;
 pub mod diagnostic_assessment;
 pub mod files;
 pub mod history;

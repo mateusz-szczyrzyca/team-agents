@@ -923,11 +923,22 @@ const (
 	DelegateMissingField                             // a required field of the request (goal, workdir, steps, returns) is empty [InvalidArgument]
 	DelegateWorkdirInvalid                           // the request's working directory is not absolute, or (for a local agent) not an existing directory [InvalidArgument]
 	DelegateUndefinedTerm                            // a harness identifier (a round, a board item, a request) in the request has no definition in its terms [InvalidArgument]
-	DelegateNotNormalTier                            // a worker or an investigator called it (delegate is for normal models) [Permission]
+	DelegateNotNormalTier                            // a worker called it (a worker does its own job and hands nothing on) [Permission]
 	DelegateMissingRequest                           // the request text is missing [InvalidArgument]
 	DelegateBoardInstruction                         // the request tells the worker to use the board (claim or finish an item, the newest item), which a worker has no tools for [InvalidArgument]
 	DelegateInvalidCapabilities                      // requires contains an unknown or malformed capability [InvalidArgument]
 	DelegateSnapshotFailed                           // the requester commit could not be captured [Process]
+	DelegateMissingFor                               // the request names no step of the requester's plan (for) [InvalidArgument]
+	DelegateNoSuchStep                               // for names no step of the requester's plan [InvalidArgument]
+	DelegateStepClosed                               // for names a step of the plan that is done or given up [InvalidArgument]
+	DelegateMissingFiles                             // the request names no files (files) [InvalidArgument]
+	DelegatePathOutside                              // a path of files is not a path inside the repository [InvalidArgument]
+	DelegateMissingCheck                             // the request names no check (check) [InvalidArgument]
+	DelegateCheckRefused                             // check is reviewer or one the [plan] check_refuse refuses [InvalidArgument]
+	DelegateMissingDo                                // the request says nothing to do (do) [InvalidArgument]
+	DelegatePlanUnreadable                           // the requester's plan does not read, so its steps cannot be checked [Process]
+	DelegateCheckFailed                              // the harness could not answer whether the request names a step of the plan [Process]
+	DelegateNoFreeWorker                             // the requester has a plan and no worker of its team is free to take the request: it does the step itself [InvalidState]
 	DelegateStorage                                  // the shared state or a file could not be read or written [Storage]
 )
 
@@ -946,6 +957,17 @@ var delegateCauses = [...]causeInfo{
 	{"BoardInstruction", ClassInvalidArgument},
 	{"InvalidCapabilities", ClassInvalidArgument},
 	{"SnapshotFailed", ClassProcess},
+	{"MissingFor", ClassInvalidArgument},
+	{"NoSuchStep", ClassInvalidArgument},
+	{"StepClosed", ClassInvalidArgument},
+	{"MissingFiles", ClassInvalidArgument},
+	{"PathOutside", ClassInvalidArgument},
+	{"MissingCheck", ClassInvalidArgument},
+	{"CheckRefused", ClassInvalidArgument},
+	{"MissingDo", ClassInvalidArgument},
+	{"PlanUnreadable", ClassProcess},
+	{"CheckFailed", ClassProcess},
+	{"NoFreeWorker", ClassInvalidState},
 	{"Storage", ClassStorage},
 }
 

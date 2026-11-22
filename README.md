@@ -889,11 +889,30 @@ failure, a timeout and a refusal. The command says first where the result is rec
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
 | `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
 | `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
-| `delegate`, `delegation_status` | worker requests (normal tier); optional `requires` routes to a capable node |
+| `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` routes to a capable node |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
+
+**A request to a worker names its work.** A run whose role is in `[plan] roles` (a solo agent, a member or a
+coordinator, the investigator among them when it leads or works as one) sends the four new arguments beside `goal`,
+`workdir`, `steps` and `returns`: `for`, the ID of a step of its plan that is still to do or in hand; `files`, the paths
+the worker may read and, when it is to produce something, write (relative to the repository, no globs); `check`, a
+command or `exists PATH` that shows the result is right — never `reviewer`, never the repository's gate (`[plan]
+check_refuse`); and `do`, what to do in the requester's words. The bus asks the harness's `agent _delegation-check` at
+the moment of the request, which reads `.agent/plan.md` of the requester's worktree: a request that lacks one of the
+four, names a step the plan does not have or that is done or given up, a path outside the repository, or a refused
+check is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
+`MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. In a
+team, such a request is also refused at once (`NoFreeWorker`) when no worker of the team is free to take it — none in
+the team waits for work (a worker in a run of its own is busy), or every waiting one is promised to an earlier request
+of the team — and the requester does the step itself; it is never served by a higher tier. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
+and `Do:`, and the bus records the step's ID with the request (`step` in the bus state; a request recorded before has
+none and is served as before). An agent without a plan — a worker, a reviewer, an investigator answering an
+investigation request, a run of a home that keeps no plan, or a run whose worktree has no `.agent/plan.md` yet — sends
+the old form, which is for look-ups only and waits
+in the queue as before.
 
 **An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
 session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session
