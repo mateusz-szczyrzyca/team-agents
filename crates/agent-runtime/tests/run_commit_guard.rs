@@ -16,6 +16,7 @@ mod run_commit_guard {
     use agent_core::ids::Clock;
     use agent_core::kinds::CliKind;
     use agent_runtime::clock::SharedClock;
+    use agent_runtime::commit_guard::COMMIT_REFUSED_STATUS;
     use agent_runtime::git::CommitIdentity;
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::process::Supervisor;
@@ -137,7 +138,7 @@ mod run_commit_guard {
     // Rule: the git a run starts asks the guard about each commit, and a refusal stops the commit.
     #[tokio::test]
     async fn a_commit_of_a_run_is_stopped_when_the_guard_refuses() {
-        let trial = trial(1).await;
+        let trial = trial(i32::from(COMMIT_REFUSED_STATUS)).await;
 
         let code = std::fs::read_to_string(trial.tree.join(".fake-commit-code")).unwrap_or_default();
         let asked = std::fs::read_to_string(&trial.calls).unwrap_or_default();
@@ -161,7 +162,7 @@ mod run_commit_guard {
     // Rule: the repository is not changed: no hooks path is written into its configuration.
     #[tokio::test]
     async fn the_configuration_of_the_repository_is_not_changed() {
-        let trial = trial(1).await;
+        let trial = trial(i32::from(COMMIT_REFUSED_STATUS)).await;
 
         let configured = Command::new("git")
             .args(["config", "--local", "--get", "core.hooksPath"])

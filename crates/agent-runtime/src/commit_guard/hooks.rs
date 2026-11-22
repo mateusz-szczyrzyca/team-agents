@@ -37,7 +37,7 @@ pub enum HooksError {
 const COMMIT_MSG: &str = "commit-msg";
 
 /// The exit status of `agent guard-commit` that refuses a commit.
-const REFUSED: u8 = 1;
+const REFUSED: u8 = super::COMMIT_REFUSED_STATUS;
 
 /// The mode of the hook: it is run by git.
 const HOOK_MODE: u32 = 0o755;

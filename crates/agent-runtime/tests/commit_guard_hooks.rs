@@ -9,6 +9,7 @@ mod commit_guard_hooks {
     use std::str::FromStr;
 
     use agent_core::config::{AbsolutePath, EnvName};
+    use agent_runtime::commit_guard::COMMIT_REFUSED_STATUS;
     use agent_runtime::commit_guard::hooks::install_hooks;
     use agent_runtime::git::{CommitIdentity, Git};
 
@@ -29,6 +30,11 @@ mod commit_guard_hooks {
             .env("GIT_COMMITTER_EMAIL", "fixture@example.com")
             .output()
             .unwrap()
+    }
+
+    /// The status with which the stand-in for `agent` refuses a commit.
+    fn refusal() -> i32 {
+        i32::from(COMMIT_REFUSED_STATUS)
     }
 
     fn handle(dir: &Path) -> Git {
@@ -85,7 +91,7 @@ mod commit_guard_hooks {
     async fn the_guard_is_asked_with_the_message_file_and_its_refusal_stops_the_commit() {
         let world = repository();
         let calls = world.root.join("calls");
-        let agent = stand_in(&world.root, &calls, 1);
+        let agent = stand_in(&world.root, &calls, refusal());
         let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &agent)
             .await
             .unwrap();
@@ -147,7 +153,7 @@ mod commit_guard_hooks {
         assert!(!hooks.join("post-merge.sample").exists());
 
         std::fs::remove_file(world.root.join("seen")).unwrap();
-        let refusing = stand_in(&world.root, &calls, 1);
+        let refusing = stand_in(&world.root, &calls, refusal());
         let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &refusing)
             .await
             .unwrap();
@@ -326,7 +332,7 @@ mod commit_guard_hooks {
             &format!("#!/bin/sh\necho first >> '{}'\n", seen.display()),
         );
         let calls = world.root.join("calls");
-        let agent = stand_in(&world.root, &calls, 86);
+        let agent = stand_in(&world.root, &calls, refusal());
         let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &agent)
             .await
             .unwrap();

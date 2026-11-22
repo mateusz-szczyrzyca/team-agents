@@ -641,6 +641,9 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
             Ok(match &error {
                 CommandError::Log(error) => ExitCode::from(error.exit_code()),
                 CommandError::Debug(error) => ExitCode::from(error.exit_code()),
+                CommandError::GuardCommit(GuardCommitError::Refused) => {
+                    ExitCode::from(agent_runtime::commit_guard::COMMIT_REFUSED_STATUS)
+                }
                 CommandError::Environment(_)
                 | CommandError::Client(_)
                 | CommandError::Status(_)
@@ -650,7 +653,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
-                | CommandError::GuardCommit(_)
+                | CommandError::GuardCommit(GuardCommitError::Output(_))
                 | CommandError::Editor(_)
                 | CommandError::Runtime(_) => ExitCode::FAILURE,
             })
