@@ -860,6 +860,9 @@ async fn split_part_with_fitting_replacement_agent_takes_over_when_member_stops(
         true,
     )
     .await;
+    let mut cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    cfg.push_str("\n[replacement]\nagents = [\"claude-2\"]\n");
+    std::fs::write(rig.home.config_file(), cfg).unwrap();
     rig.start().await;
     let (team_id, tasks) = rig
         .run(&["inv-lead", "claude-1", "claude-2"], ONE, MergeMode::NoMerge, None)
@@ -1349,9 +1352,12 @@ async fn split_part_assignment_logs_who_gets_part_decision() {
     rig.stop().await.unwrap();
     let reader = agent_runtime::history::Reader::open(&rig.home.history_file()).unwrap();
     let logs = reader.daemon_logs().unwrap();
-    let logged = logs.iter().any(|row| {
+    let row = logs.iter().find(|row| {
         row.event() == agent_core::log::LogEvent::DecisionTaken
             && row.fields().get("decision").and_then(|v| v.as_str()) == Some("who_gets_part")
     });
-    assert!(logged, "who_gets_part decision must be logged");
+    assert!(row.is_some(), "who_gets_part decision must be logged");
+    let result = &row.unwrap().fields()["result"];
+    assert!(result.get("choice").is_some(), "result must contain choice: {result:?}");
+    assert!(result.get("reason").is_some(), "result must contain reason: {result:?}");
 }

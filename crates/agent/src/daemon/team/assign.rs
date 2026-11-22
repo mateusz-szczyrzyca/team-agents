@@ -101,13 +101,32 @@ pub(in crate::daemon) fn assignable_in_policy(
         for (item, agent) in &decided {
             if let Some((part, _)) = team.next_part(*item) {
                 let required = required_tier(team, *item);
+                let choice = if team
+                    .crew()
+                    .coordinator()
+                    .is_some_and(|c| c.agent().name() == agent.name())
+                {
+                    "lead"
+                } else if configured_replacements.iter().any(|r| r.as_str() == agent.name()) {
+                    "replacement"
+                } else {
+                    "previous_member"
+                };
+                let reason = format!("assigned {choice} {} for part {part} under mode {mode:?}", agent.name());
                 agent_runtime::history::log_decision(
                     "who_gets_part",
-                    &format!(
-                        "team={}, item={item}, part={part}, required={required:?}, mode={mode:?}",
-                        team.id()
-                    ),
-                    &[format!("{agent}")],
+                    &serde_json::json!({
+                        "team": team.id().as_str(),
+                        "item": item.to_string(),
+                        "part": part.to_string(),
+                        "required": format!("{required:?}"),
+                        "mode": format!("{mode:?}"),
+                    }),
+                    &serde_json::json!({
+                        "agent": agent.to_string(),
+                        "choice": choice,
+                        "reason": reason,
+                    }),
                 );
             }
         }

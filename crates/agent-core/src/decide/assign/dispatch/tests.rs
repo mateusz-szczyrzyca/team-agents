@@ -257,7 +257,8 @@ fn next_split_part_obeys_previous_member_replacement_and_lead_fallbacks() {
         .1
         .transition(TaskStatus::Stopped)
         .unwrap();
-    let dispatched = dispatch(&team);
+    let rep_2: AgentName = "member-2".parse().unwrap();
+    let dispatched = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[rep_2]);
     assert_eq!(dispatched.assigned, vec![(item, normal("member-2"))]);
 }
 
@@ -685,11 +686,19 @@ fn configured_replacement_ordering_and_exclusion_is_respected() {
     assert_eq!(dispatched.assigned, vec![(item, normal("claude-3"))]);
 
     // With configured replacement ["claude-2"], claude-3 is excluded:
-    let dispatched_2 = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[rep_2.clone()]);
+    let dispatched_2 = dispatch_in_policy(
+        &team,
+        crate::decide::replacement::ReplacementMode::Auto,
+        &[rep_2.clone()],
+    );
     assert_eq!(dispatched_2.assigned, vec![(item, normal("claude-2"))]);
 
     // With configured replacement ["claude-2", "claude-3"], claude-2 is chosen:
-    let dispatched_ordered = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[rep_2, rep_3]);
+    let dispatched_ordered = dispatch_in_policy(
+        &team,
+        crate::decide::replacement::ReplacementMode::Auto,
+        &[rep_2, rep_3],
+    );
     assert_eq!(dispatched_ordered.assigned, vec![(item, normal("claude-2"))]);
 }
 
@@ -707,10 +716,7 @@ fn empty_replacement_list_goes_directly_to_lead() {
         TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: normal\n".to_owned()).unwrap(),
         Crew::team(TeamMembers {
             coordinator: member(1, inv("inv-lead")),
-            members: vec![
-                member(2, normal("claude-1")),
-                member(3, normal("claude-2")),
-            ],
+            members: vec![member(2, normal("claude-1")), member(3, normal("claude-2"))],
             workers: vec![],
         })
         .unwrap(),
@@ -770,11 +776,7 @@ fn empty_replacement_list_goes_directly_to_lead() {
 
     // When configured replacements is empty [], auto must route directly to lead,
     // not pick other crew member claude-2:
-    let dispatched = dispatch_in_policy(
-        &team,
-        crate::decide::replacement::ReplacementMode::Auto,
-        &[],
-    );
+    let dispatched = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[]);
     assert_eq!(dispatched.assigned, vec![(item, inv("inv-lead"))]);
 }
 
@@ -792,9 +794,7 @@ fn outside_team_replacement_selected_when_configured() {
         TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\nTier: normal\n".to_owned()).unwrap(),
         Crew::team(TeamMembers {
             coordinator: member(1, inv("inv-lead")),
-            members: vec![
-                member(2, normal("claude-1")),
-            ],
+            members: vec![member(2, normal("claude-1"))],
             workers: vec![],
         })
         .unwrap(),
@@ -854,10 +854,6 @@ fn outside_team_replacement_selected_when_configured() {
 
     // An outside-team participant "outside-agent" is configured in replacement.agents:
     let outside_rep: AgentName = "outside-agent".parse().unwrap();
-    let dispatched = dispatch_in_policy(
-        &team,
-        crate::decide::replacement::ReplacementMode::Auto,
-        &[outside_rep],
-    );
+    let dispatched = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[outside_rep]);
     assert_eq!(dispatched.assigned, vec![(item, normal("outside-agent"))]);
 }
