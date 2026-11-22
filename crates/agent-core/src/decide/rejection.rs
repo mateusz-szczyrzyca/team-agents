@@ -255,10 +255,10 @@ pub fn classify(_line: &ReturnLine<'_>, facts: Facts) -> Option<Rejection> {
         && facts.last_run == LastRun::Reported(crate::status::RunOutcome::Done)
         && facts.moved_on == MovedOn::No
         && facts.last_run_number == facts.handed_over_after;
-    Some(if handed_over {
-        Rejection::Counted
-    } else {
-        Rejection::NotHandedOver
+    Some(match (handed_over, facts.answered) {
+        (false, Answered::No | Answered::Yes) => Rejection::NotHandedOver,
+        (true, Answered::Yes) => Rejection::AlreadyCounted,
+        (true, Answered::No) => Rejection::Counted,
     })
 }
 
