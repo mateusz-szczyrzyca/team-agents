@@ -41,8 +41,9 @@ pub enum Refusal {
 
 /// What the `SPLIT:` lines of `message` ask of a team with `items`, of which those in `split` are split already.
 ///
-/// A line that names an item that is not split wins, in the order of `items`; otherwise the first line that names a split
-/// item is refused as such, and otherwise the first line is refused as naming no item.
+/// Only a line that has the form of a proposal counts: `SPLIT:` and an item number. One that names an item that is not split
+/// wins, in the order of `items`; otherwise the first line that names a split item is refused as such, and otherwise the
+/// first line is refused as naming no item of the team.
 #[must_use]
 pub fn judge_submission(items: &[ItemId], split: &BTreeSet<ItemId>, message: Option<&str>) -> Submission {
     let named: Vec<&str> = message
@@ -50,6 +51,8 @@ pub fn judge_submission(items: &[ItemId], split: &BTreeSet<ItemId>, message: Opt
         .lines()
         .filter_map(|line| line.trim().strip_prefix(SPLIT_PREFIX))
         .map(str::trim)
+        // Only `SPLIT:` and an item number is a submission: `SPLIT: none` in a report asks nothing.
+        .filter(|text| text.parse::<ItemId>().is_ok_and(|item| item.to_string() == *text))
         .collect();
     let Some(first) = named.first() else {
         return Submission::NotSubmitted;
