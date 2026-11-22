@@ -52,7 +52,12 @@ fn short_view_prints_tier_wait_for_an_item_that_has_a_split() {
     assert_eq!(
         rendered,
         format!(
-            "{HEADER}\n  round-20261111-153001-q1w2  item 1.1  open\n    1.1  waiting for investigator agent\n  tasks: 4 queued\n"
+            "{HEADER}\n  round-20261111-153001-q1w2  item 1.1  open\n    1.1  waiting for investigator agent\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
+             task-20261111-153002-k3x9  member       claude-1   queued\n  \
+             task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+             tasks: 4 queued\n"
         )
     );
 }

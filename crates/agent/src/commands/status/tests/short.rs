@@ -1,4 +1,5 @@
-//! The short view of `agent status`: the teams with their rounds and a count of their tasks, and the full view as before.
+//! The short view of `agent status`: the teams with their rounds, their tasks that are alive and a count of their tasks,
+//! and the full view as before.
 
 use std::num::NonZeroU32;
 
@@ -15,6 +16,25 @@ use crate::fixtures::{at, task, team_id, team_state};
 /// The header line of the sample team: its items, with no description.
 const HEADER: &str =
     "team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done";
+
+/// The lines of the four tasks of the sample team while they are queued, as both views write them.
+const QUEUED: &str = "  task-20261111-153001-k3x9  coordinator  inv-opus   queued
+  task-20261111-153002-k3x9  member       claude-1   queued
+  task-20261111-153003-k3x9  worker       glm-1      queued
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
+";
+
+/// The lines of the eight tasks of [`team_with_all_statuses`]: the four of the sample team, then its coordinator four
+/// times more, one in each status.
+const EVERY_STATUS: &str = "  task-20261111-153001-k3x9  coordinator  inv-opus   running
+  task-20261111-153002-k3x9  member       claude-1   waiting
+  task-20261111-153003-k3x9  worker       glm-1      questions
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
+  task-20261111-153001-k3x9  coordinator  inv-opus   paused
+  task-20261111-153001-k3x9  coordinator  inv-opus   stopped
+  task-20261111-153001-k3x9  coordinator  inv-opus   failed
+  task-20261111-153001-k3x9  coordinator  inv-opus   done
+";
 
 /// The sample team of the status tests, with no description.
 fn sample() -> TeamSummary {
@@ -45,8 +65,8 @@ fn ask(team: &mut TeamSummary, index: usize, number: u32) {
 }
 
 #[test]
-fn a_team_of_queued_tasks_counts_them_and_lists_none_of_them() {
-    assert_eq!(short(&[sample()]), format!("{HEADER}\n  tasks: 4 queued\n"));
+fn a_team_of_queued_tasks_lists_them_and_counts_them() {
+    assert_eq!(short(&[sample()]), format!("{HEADER}\n{QUEUED}  tasks: 4 queued\n"));
 }
 
 #[test]
@@ -57,7 +77,12 @@ fn a_task_that_waits_for_an_answer_is_named_with_its_question_number() {
     assert_eq!(
         short(&[team]),
         format!(
-            "{HEADER}\n  tasks: 1 with questions, 3 queued; questions number 2 wait for answers (claude-1, {})\n",
+            "{HEADER}\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
+             task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers\n  \
+             task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+             tasks: 1 with questions, 3 queued; questions number 2 wait for answers (claude-1, {})\n",
             task(2)
         )
     );
@@ -73,7 +98,13 @@ fn each_status_is_counted_in_its_own_word_in_a_fixed_order() {
 
     assert_eq!(
         short(&[team]),
-        format!("{HEADER}\n  tasks: 1 running, 1 waiting, 1 paused, 1 done\n")
+        format!(
+            "{HEADER}\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   paused\n  \
+             task-20261111-153002-k3x9  member       claude-1   running\n  \
+             task-20261111-153003-k3x9  worker       glm-1      waiting\n  \
+             tasks: 1 running, 1 waiting, 1 paused, 1 done\n"
+        )
     );
 }
 
@@ -87,7 +118,14 @@ fn the_failed_and_stopped_tasks_are_counted_as_such() {
 
     assert_eq!(
         short(&[team]),
-        format!("{HEADER}\n  tasks: 2 queued, 1 stopped, 1 failed\n")
+        format!(
+            "{HEADER}\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   stopped\n  \
+             task-20261111-153002-k3x9  member       claude-1   failed\n  \
+             task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+             tasks: 2 queued, 1 stopped, 1 failed\n"
+        )
     );
 }
 
@@ -102,7 +140,12 @@ fn every_question_that_waits_is_named_and_the_others_are_not() {
     assert_eq!(
         text,
         format!(
-            "{HEADER}\n  tasks: 2 with questions, 2 queued; questions number 2 wait for answers (claude-1, {member}); \
+            "{HEADER}\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
+             task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers\n  \
+             task-20261111-153003-k3x9  worker       glm-1      questions, questions number 3 wait for answers\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+             tasks: 2 with questions, 2 queued; questions number 2 wait for answers (claude-1, {member}); \
              questions number 3 wait for answers (glm-1, {worker})\n",
             member = task(2),
             worker = task(3),
@@ -111,14 +154,18 @@ fn every_question_that_waits_is_named_and_the_others_are_not() {
 }
 
 #[test]
-fn a_short_team_has_no_line_of_a_task_and_no_plan_step() {
+fn a_short_team_has_a_line_of_each_task_and_no_plan_step() {
     let mut team = sample();
     ask(&mut team, 1, 1);
     team.task_plans.insert(task(2), Vec::new());
 
     let text = short(&[team]);
 
-    assert!(!text.contains("  task-"), "{text}");
+    assert_eq!(
+        text.lines().filter(|line| line.starts_with("  task-")).count(),
+        4,
+        "{text}"
+    );
     assert!(!text.contains("] "), "{text}");
 }
 
@@ -129,12 +176,12 @@ fn a_description_ends_the_line_of_the_team_in_the_short_view_too() {
 
     assert_eq!(
         short(&[team]),
-        format!("{HEADER}  \"Ship the guide\"\n  tasks: 4 queued\n")
+        format!("{HEADER}  \"Ship the guide\"\n{QUEUED}  tasks: 4 queued\n")
     );
 }
 
 #[test]
-fn a_round_is_listed_with_what_it_waits_for_and_the_count_follows_it() {
+fn a_round_is_listed_with_what_it_waits_for_and_the_tasks_and_the_count_follow_it() {
     let mut state = team_state();
     let round: RoundId = "round-20261111-153001-q1w2".parse().unwrap();
     state
@@ -155,7 +202,9 @@ fn a_round_is_listed_with_what_it_waits_for_and_the_count_follows_it() {
     );
 
     assert!(
-        text.contains("  round-20261111-153001-q1w2  item 1.1  open, waits for claude-1 round-20261111-153001-q1w2\n  tasks: 4 queued\n"),
+        text.contains(&format!(
+            "  round-20261111-153001-q1w2  item 1.1  open, waits for claude-1 round-20261111-153001-q1w2\n{QUEUED}  tasks: 4 queued\n"
+        )),
         "{text}"
     );
 }
@@ -296,40 +345,45 @@ fn short_team_table_covers_rounds_waits_questions_splits_descriptions_and_empty(
             name: "one round waiting for named agent",
             teams: vec![one_round.clone()],
             round_suffix: waits_for_agent,
-            expected: format!("{HEADER}\n  {r1}  item 1.1  open, waits for claude-1\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open, waits for claude-1\n{QUEUED}  tasks: 4 queued\n"),
         },
         ShortCase {
             name: "one round waiting for the human",
             teams: vec![one_round],
             round_suffix: waits_for_human,
             expected: format!(
-                "{HEADER}\n  {r1}  item 1.1  open, waits for an answer of the human\n  tasks: 4 queued\n"
+                "{HEADER}\n  {r1}  item 1.1  open, waits for an answer of the human\n{QUEUED}  tasks: 4 queued\n"
             ),
         },
         ShortCase {
             name: "two rounds",
             teams: vec![two_rounds],
             round_suffix: no_round_suffix,
-            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n  {r2}  item 1.2  open\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n  {r2}  item 1.2  open\n{QUEUED}  tasks: 4 queued\n"),
         },
         ShortCase {
             name: "item waiting for a tier",
             teams: vec![tier_wait],
             round_suffix: no_round_suffix,
-            expected: format!("{HEADER}\n    1.1  waiting for investigator agent\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}\n    1.1  waiting for investigator agent\n{QUEUED}  tasks: 4 queued\n"),
         },
         ShortCase {
             name: "team with split parts omits part lines in short view",
             teams: vec![split_team],
             round_suffix: no_round_suffix,
-            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}\n  {r1}  item 1.1  open\n{QUEUED}  tasks: 4 queued\n"),
         },
         ShortCase {
             name: "team with a task that has questions",
             teams: vec![with_question],
             round_suffix: no_round_suffix,
             expected: format!(
-                "{HEADER}\n  tasks: 1 with questions, 3 queued; questions number 4 wait for answers (claude-1, {})\n",
+                "{HEADER}\n  \
+                 task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
+                 task-20261111-153002-k3x9  member       claude-1   questions, questions number 4 wait for answers\n  \
+                 task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+                 task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
+                 tasks: 1 with questions, 3 queued; questions number 4 wait for answers (claude-1, {})\n",
                 task(2)
             ),
         },
@@ -338,20 +392,20 @@ fn short_team_table_covers_rounds_waits_questions_splits_descriptions_and_empty(
             teams: vec![team_with_all_statuses()],
             round_suffix: no_round_suffix,
             expected: format!(
-                "{HEADER}\n  tasks: 1 running, 1 waiting, 1 with questions, 1 queued, 1 paused, 1 stopped, 1 failed, 1 done\n"
+                "{HEADER}\n{EVERY_STATUS}  tasks: 1 running, 1 waiting, 1 with questions, 1 queued, 1 paused, 1 stopped, 1 failed, 1 done\n"
             ),
         },
         ShortCase {
             name: "team without short description",
             teams: vec![sample()],
             round_suffix: no_round_suffix,
-            expected: format!("{HEADER}\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}\n{QUEUED}  tasks: 4 queued\n"),
         },
         ShortCase {
             name: "team with short description",
             teams: vec![with_desc],
             round_suffix: no_round_suffix,
-            expected: format!("{HEADER}  \"Short status by default\"\n  tasks: 4 queued\n"),
+            expected: format!("{HEADER}  \"Short status by default\"\n{QUEUED}  tasks: 4 queued\n"),
         },
     ];
 
