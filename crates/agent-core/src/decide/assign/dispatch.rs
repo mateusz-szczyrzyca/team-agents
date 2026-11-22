@@ -38,7 +38,7 @@ pub struct Dispatch {
 
 /// Chooses available participants without lowering an item's or part's tier.
 #[must_use]
-pub fn dispatch(team: &Team) -> Dispatch {
+pub fn dispatch<'a>(team: &'a Team) -> Dispatch {
     let sets = super::ItemSets::of(team.items());
     let features = team.task_list().list().features();
     let ready = features
@@ -55,13 +55,96 @@ pub fn dispatch(team: &Team) -> Dispatch {
     let mut result = Dispatch::default();
     for item in ready {
         let required = required_tier(team, item);
-        let fitting_member = members.iter().any(|member| member.agent().tier() >= required);
-        let coordinator = team.crew().coordinator().filter(|_| !fitting_member);
         let available = |member: &Member| {
             matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting)
                 && !sets.busy.iter().any(|name| name.as_str() == member.agent().name())
                 && !reserved.contains(member.agent().name())
         };
+
+        if team.next_part(item).is_some() {
+            let candidate_of = |member: &'a Member| crate::decide::part::Candidate {
+                agent: member.agent(),
+                status: member.status(),
+                handed_over: !member.past_holders().is_empty() || member.owes_lead(),
+                busy: sets.busy.iter().any(|name| name.as_str() == member.agent().name())
+                    || reserved.contains(member.agent().name()),
+            };
+            let prev_round = team.rounds().iter().rev().find(|r| r.item() == Some(item));
+            let prev_agent_name = prev_round.and_then(|round| {
+                team.part_assignments().get(round.id()).cloned().or_else(|| {
+                    team.members_in(round.id())
+                        .into_iter()
+                        .find(|(role, _)| matches!(role, Role::Solo | Role::Member | Role::Coordinator))
+                        .map(|(_, m)| m.agent().agent_name())
+                })
+            });
+            let prev_member = prev_agent_name.as_ref().and_then(|name| {
+                team.crew()
+                    .roster()
+                    .iter()
+                    .find(|(_, m)| m.agent().name() == name.as_str())
+                    .map(|(_, m)| *m)
+            });
+            let is_coord = |m: &Member| team.crew().coordinator().is_some_and(|c| c.task() == m.task());
+            let (previous, replacements, lead): (
+                Option<crate::decide::part::Candidate<'_>>,
+                Vec<crate::decide::part::Candidate<'_>>,
+                Option<crate::decide::part::Candidate<'_>>,
+            ) = if let Some(prev) = prev_member {
+                if is_coord(prev) {
+                    (
+                        Some(candidate_of(prev)),
+                        members.iter().map(|m| candidate_of(m)).collect(),
+                        None,
+                    )
+                } else {
+                    let reps = members
+                        .iter()
+                        .filter(|m| m.task() != prev.task())
+                        .map(|m| candidate_of(m))
+                        .collect();
+                    let lead = team.crew().coordinator().map(candidate_of);
+                    (Some(candidate_of(prev)), reps, lead)
+                }
+            } else {
+                let reps = members.iter().map(|m| candidate_of(m)).collect();
+                let lead = team.crew().coordinator().map(candidate_of);
+                (None, reps, lead)
+            };
+
+            match crate::decide::part::who_gets_part(required, previous, &replacements, lead) {
+                crate::decide::part::PartChoice::PreviousMember(agent)
+                | crate::decide::part::PartChoice::Replacement(agent)
+                | crate::decide::part::PartChoice::Lead(agent) => {
+                    reserved.insert(agent.name().to_owned());
+                    result.assigned.push((item, agent.clone()));
+                }
+                crate::decide::part::PartChoice::Nobody => {
+                    let fitting_in_crew = roster.iter().any(|(_, member)| {
+                        !matches!(member.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                            && !member.owes_lead()
+                            && member.agent().tier() >= required
+                    });
+                    result.waiting.push(Waiting {
+                        item,
+                        required,
+                        reason: if fitting_in_crew {
+                            WaitReason::Busy
+                        } else {
+                            WaitReason::Absent
+                        },
+                    });
+                }
+            }
+            continue;
+        }
+
+        let fitting_member = members.iter().any(|member| {
+            !matches!(member.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                && !member.owes_lead()
+                && member.agent().tier() >= required
+        });
+        let coordinator = team.crew().coordinator().filter(|_| !fitting_member);
         let offered: Vec<_> = members
             .iter()
             .filter(|member| available(member))
