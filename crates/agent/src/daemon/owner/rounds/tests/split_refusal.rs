@@ -262,3 +262,29 @@ async fn every_refusal_is_in_the_log_and_the_history_with_its_reason() {
         "{events:?}"
     );
 }
+
+// Rule: with `[split] corrections = 0` the author of a refused line is still told once, and then left to its status.
+#[tokio::test]
+async fn with_no_corrections_the_author_of_a_refused_line_is_told_once() {
+    use agent_core::status::TaskStatus;
+    let mut rig = team_with("proposal:good,split-line:1.1@SLEEPING,split-line:1.1@SLEEPING,sleep").await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[split]\ncorrections = 0\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    rig.prompt(&tasks[0], 3).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let told = messages(&rig)
+        .lines()
+        .filter(|line| line.contains("Item 1.1 is already split"))
+        .count();
+    let runs = rig.runs(&tasks[0]);
+    rig.stop().await.unwrap();
+
+    assert_eq!(told, 1, "{}", messages(&rig));
+    assert_eq!(runs, 3);
+}
