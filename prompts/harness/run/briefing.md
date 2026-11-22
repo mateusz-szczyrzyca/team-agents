@@ -5,7 +5,8 @@ You work on task {{task}} again, in a new session. The session before you went b
 
 - `no_status`: its last runs ended without a `STATUS:` line;
 - `hang`: its last runs showed no activity until the watchdog stopped them;
-- `turn_limit`: its last runs used up their turn budget.
+- `turn_limit`: its last runs used up their turn budget;
+- `no_tool_call`: its run before reported `STATUS: FAILED` without calling a tool step.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 

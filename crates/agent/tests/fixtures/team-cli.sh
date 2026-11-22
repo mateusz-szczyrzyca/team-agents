@@ -12,6 +12,8 @@
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   fail-first:TEXT  the first task of the home to run this action ends with STATUS: FAILED; every other one ends with
 #                   TEXT, a line break and STATUS: DONE: of two reviewers, exactly one cannot work
+#   fail-first-tool:TEXT  like fail-first, and the run that fails records a tool call (a streamed bus tool_use line)
+#                   before it ends: of two reviewers, exactly one fails after real work, so nobody is retried for it
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
@@ -530,6 +532,16 @@ case $action in
       result 'I could not do it.\nSTATUS: FAILED'
     else
       result "${action#fail-first:}"'\nSTATUS: DONE'
+    fi
+    ;;
+  fail-first-tool:*)
+    # Like fail-first, and the run that fails records a tool call (one streamed tool_use line of the bus) before it ends:
+    # the harness counts the run as one that used a tool, so a task that fails this way is not retried for "no tool call".
+    if (set -o noclobber; > "$home/.fake-first-failed") 2> /dev/null; then
+      printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+      result 'I could not do it.\nSTATUS: FAILED'
+    else
+      result "${action#fail-first-tool:}"'\nSTATUS: DONE'
     fi
     ;;
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;

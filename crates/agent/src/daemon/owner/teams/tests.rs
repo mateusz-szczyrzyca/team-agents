@@ -942,6 +942,39 @@ async fn a_member_that_failed_tells_the_coordinator_so() {
 }
 
 #[tokio::test]
+async fn a_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run reported FAILED without calling a tool: it is retried once. The second run (a new session, briefed)
+    // is told the reason and does the work.
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let prompt = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[0]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    assert!(
+        prompt.contains("did not offer or did not use the tools of the bus"),
+        "{prompt}"
+    );
+    assert!(
+        !f.messages().contains("member_failed"),
+        "nobody is told the coordinator's run failed: {}",
+        f.messages()
+    );
+}
+
+#[tokio::test]
 async fn a_message_to_a_member_that_sleeps_starts_its_task_again_with_the_wake() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
