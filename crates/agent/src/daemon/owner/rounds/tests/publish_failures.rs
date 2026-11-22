@@ -1250,7 +1250,7 @@ async fn publish_failure_question_creation_interrupted_before_commit_recovers_wi
 async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_escalates_to_human() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,work"),
+            normal("claude-1", "work,script:hold-retry,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -1258,6 +1258,18 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
         false,
     )
     .await;
+
+    // Create script for run 2 that waits on release marker file before completing:
+    let script_dir = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&script_dir).unwrap();
+    let release_marker = rig.home.root().join("release-retry");
+    let script_content = format!(
+        "while [ ! -f \"{}\" ]; do sleep 0.02; done\necho 'retry' > retry.txt && git add retry.txt && git commit -m 'retry'\n",
+        release_marker.display()
+    );
+    let script_path = script_dir.join("hold-retry.sh");
+    std::fs::write(&script_path, script_content).unwrap();
+    std::fs::set_permissions(&script_path, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
     let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
     config_text.push_str("\n[publish]\ntries = 1\n");
@@ -1274,58 +1286,64 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
-    // Wait for first run to end and lead to transition to waiting:
-    rig.wait_for("first run ended and waiting", || {
-        rig.state()
-            .find_task(&task)
-            .is_some_and(|f| f.member.status() == TaskStatus::Waiting && f.member.runs().len() == 1)
+    // Synchronize on durable first publication failure where lead is released for retry with publish_tries=1:
+    rig.state_where(
+        "lead is released for corrective run with publish_tries=1",
+        |state| {
+            state.teams().iter().any(|t| {
+                t.items().iter().any(|item| item.publish_tries() == 1)
+            })
+        },
+    )
+    .await;
+
+    // Wait until run 2 is actively executing (held by hold-retry.sh script):
+    rig.wait_for("run 2 is actively running and held", || {
+        rig.state().find_task(&task).is_some_and(|f| {
+            f.member.status() == TaskStatus::Running && f.member.runs().len() == 2
+        })
     })
     .await;
 
     // Stop daemon to simulate interruption before the lead finishes its corrective run:
     rig.stop().await.unwrap();
 
-    // Establish exact interrupted state fixture in state.json:
-    // Lead was released for corrective run, publish_tries is 1, and no questions have been created yet:
-    let state_file = rig.home.state_file();
-    let mut state_json: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&state_file).unwrap()).unwrap();
-    state_json["teams"][0]["items"][0]["publish_tries"] = serde_json::json!(1);
-    state_json["teams"][0]["items"][0]["publish_question"] = serde_json::Value::Null;
-    state_json["teams"][0]["items"][0]["publish_question_task"] = serde_json::Value::Null;
-    state_json["teams"][0]["items"][0]["publish_question_number"] = serde_json::Value::Null;
-    state_json["teams"][0]["crew"]["member"]["status"] = serde_json::json!("queued");
-    state_json["teams"][0]["crew"]["member"]["questions"] = serde_json::json!([]);
-    if let Some(runs) = state_json["teams"][0]["crew"]["member"]["runs"].as_array_mut() {
-        runs.truncate(1);
-    }
-    std::fs::write(&state_file, serde_json::to_string_pretty(&state_json).unwrap()).unwrap();
-
-    // Verify concrete pre-restart state:
+    // Verify concrete pre-restart state while daemon is stopped:
     {
         let pre_state = rig.state();
         let member = &pre_state.find_task(&task).unwrap().member;
         assert_eq!(member.status(), TaskStatus::Queued);
-        assert_eq!(member.runs().len(), 1);
+        assert_eq!(member.runs().len(), 2);
         assert_eq!(member.questions(), []);
         assert_eq!(pre_state.teams()[0].items()[0].publish_tries(), 1);
         assert_eq!(pre_state.teams()[0].items()[0].publish_question(), None);
     }
 
-    // Restart daemon: the queued corrective run executes:
-    rig.start().await;
-    rig.wait_for("lead executes run 2 retry", || {
-        rig.state().find_task(&task).is_some_and(|f| f.member.runs().len() >= 2)
-    })
-    .await;
+    // Release the script before restarting:
+    std::fs::write(&release_marker, "").unwrap();
 
-    // After run 2 completes and publication fails again (tries=2 > limit=1),
+    // Restart daemon: the interrupted corrective run resumes and finishes:
+    rig.start().await;
+
+    // Verify run 2 was given the publish failure prompt and that notice was delivered:
+    let prompt2 = rig.prompt(&task, 2).await;
+    assert!(
+        prompt2.contains("# YOUR WORK IS NOT PUBLISHED: THE PUBLICATION FAILED"),
+        "run 2 prompt must contain the publish failure lead notice, got: {prompt2}"
+    );
+    assert!(
+        prompt2.contains("The harness could not publish your branch"),
+        "run 2 prompt must contain the publication failure explanation"
+    );
+
+    // After the corrective run completes and publication fails again (tries=2 > limit=1),
     // it escalates to asking the human with question 1:
     rig.status_is(&task, TaskStatus::Questions).await;
 
     let post_state = rig.state();
     let post_member = &post_state.find_task(&task).unwrap().member;
-    assert_eq!(post_member.runs().len(), 2, "exactly one retry run should execute");
+    assert_eq!(post_member.runs().len(), 3, "retry run resumes as run 3");
+    assert_eq!(rig.runs(&task), 3, "total executed runs is three");
     let q = post_member.open_question().unwrap().clone();
     assert_eq!(q.number(), n(1));
     assert_eq!(post_state.teams()[0].items()[0].publish_tries(), 2);
@@ -1367,11 +1385,6 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
     )
     .await;
 
-    // Set [publish] tries = 0 so publication immediately escalates to asking the human:
-    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
-    config_text.push_str("\n[publish]\ntries = 0\n");
-    std::fs::write(rig.home.config_file(), config_text).unwrap();
-
     // Hook in origin that rejects git push:
     let hook_dir = rig.origin.join("hooks");
     std::fs::create_dir_all(&hook_dir).unwrap();
@@ -1379,26 +1392,42 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
     std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: publish denied' >&2\nexit 1\n").unwrap();
     std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
+    // Start with default tries=3: first publication rejection enters a retry-only backoff state:
     rig.start().await;
 
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
 
-    // Wait until run ends:
-    rig.wait_for("lead run ends", || {
-        rig.state()
-            .find_task(&task)
-            .is_some_and(|f| f.member.status() == TaskStatus::Waiting)
-    })
+    // Synchronize on durable first publication failure entering retry-only backoff state:
+    rig.state_where(
+        "first publication rejection persists retry-only state with publish_tries=1",
+        |state| {
+            state.teams().iter().any(|t| {
+                t.items().iter().any(|item| item.publish_tries() == 1)
+            })
+        },
+    )
     .await;
 
-    // Simulate storage failure: make task directory read-only so question file cannot be written:
+    // Stop daemon safely while idle in backoff (no live race condition):
+    rig.stop().await.unwrap();
+
+    // Now establish failure conditions before restarting:
+    // 1. Set [publish] tries = 0 so next attempt immediately escalates to asking the human:
+    let mut config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config_text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(rig.home.config_file(), config_text).unwrap();
+
+    // 2. Simulate storage failure: make task directory read-only so question file cannot be written:
     let task_dir = rig.home.task_dir(&task);
     std::fs::set_permissions(
         &task_dir,
         <std::fs::Permissions as std::os::unix::fs::PermissionsExt>::from_mode(0o555),
     )
     .unwrap();
+
+    // Restart daemon with failure conditions established:
+    rig.start().await;
 
     // Wait deterministically for daemon to attempt question creation, fail with write error, and stop:
     let deadline = std::time::Instant::now() + PATIENCE;
