@@ -299,13 +299,13 @@ pub(crate) fn render_started(home: &Home, team: &Team) -> String {
 }
 
 /// A line for each agent of a team that has just started that is in another open team too: its messages there are not
-/// for its session here, and `agent say` to it names the task.
+/// for its session here, `agent say` to it names the task, and its task here waits while its run there goes on.
 fn render_shared(shared: &[SharedAgent]) -> String {
     let lines: Vec<String> = shared
         .iter()
         .map(|found| {
             format!(
-                "  {} is also in the open team {} (task {}): its messages there do not reach this team\n",
+                "  {} is also in the open team {} (task {}): its messages there do not reach this team, and its task here waits while its run there goes on\n",
                 found.agent, found.team, found.task
             )
         })
