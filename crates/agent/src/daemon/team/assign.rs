@@ -1,6 +1,7 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::dispatch::dispatch;
+use agent_core::decide::assign::dispatch::dispatch_in_mode;
+use agent_core::decide::replacement::ReplacementMode;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
 
@@ -54,6 +55,17 @@ pub(in crate::daemon) fn agent_name(participant: &Participant) -> Result<AgentNa
 /// # Errors
 /// [`AssignmentError`].
 pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, AssignmentError> {
+    assignable_in_mode(team, ReplacementMode::Auto)
+}
+
+/// The items that start now and the members that take them under `mode`, as decided from `team`.
+///
+/// # Errors
+/// [`AssignmentError`].
+pub(in crate::daemon) fn assignable_in_mode(
+    team: &Team,
+    mode: ReplacementMode,
+) -> Result<Vec<Assigned>, AssignmentError> {
     let takers = team
         .crew()
         .roster()
@@ -61,7 +73,7 @@ pub(in crate::daemon) fn assignable(team: &Team) -> Result<Vec<Assigned>, Assign
         .map(|(_, member)| Ok((agent_name(member.agent())?, member.task())))
         .collect::<Result<Vec<_>, InvalidName>>()?;
     let available: Vec<AgentName> = takers.iter().map(|(name, _)| name.clone()).collect();
-    let decided = dispatch(team).assigned;
+    let decided = dispatch_in_mode(team, mode).assigned;
     if !decided.is_empty() {
         let span = tracing::error_span!("team", team = %team.id());
         let _entered = span.enter();

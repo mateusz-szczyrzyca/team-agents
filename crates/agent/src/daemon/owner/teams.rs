@@ -36,7 +36,8 @@ use tracing::Instrument;
 use super::wakes::Wake;
 use super::{Located, Owner, OwnerError};
 use crate::daemon::team::{
-    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace, assignable,
+    Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
+    assignable_in_mode,
     closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for, reconcile, render_notice,
     request_outcome, shared_agents, start_item, team_done_notification,
 };
@@ -706,7 +707,8 @@ impl Owner {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };
-        let given = assignable(team).map_err(|source| OwnerError::Assign {
+        let mode = self.parts.settings.config.replacement().mode();
+        let given = assignable_in_mode(team, mode).map_err(|source| OwnerError::Assign {
             team: team_id.clone(),
             source,
         })?;
