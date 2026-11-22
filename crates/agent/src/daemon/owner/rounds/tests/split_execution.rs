@@ -1471,10 +1471,16 @@ async fn split_part_with_handed_over_prior_member_opens_for_lead() {
     })
     .await;
 
-    // Mark claude-1 as held_task (handed over to lead):
+    // Persist the stopped member and its outstanding handover to the lead:
     rig.stop().await.unwrap();
     {
         let mut state = rig.state();
+        state
+            .find_task_mut(&tasks[1])
+            .unwrap()
+            .1
+            .transition(TaskStatus::Stopped)
+            .unwrap();
         state
             .owe_lead(
                 &tasks[1],
