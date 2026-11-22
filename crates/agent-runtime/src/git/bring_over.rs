@@ -105,12 +105,23 @@ pub enum Written {
 }
 
 impl Git {
-    /// The files `commit` changes against its first parent, each path once, a rename as both the old and the new path.
+    /// The files the worker's `commit` brings: those it changes since the merge base with the requester's head, which is
+    /// the range [`Git::bring_over`] brings in, whatever the shape of the worker's history (several commits, a merge). A
+    /// history with no commit in common with the head counts from the empty tree. Each path once, a rename as both the
+    /// old and the new path.
     ///
     /// # Errors
     /// [`GitError::Failed`] when the commit is not in the repository; [`GitError::Unexpected`], [`GitError::NotUtf8`],
     /// [`GitError::NotARepoPath`], [`GitError::Run`] and [`GitError::OutputTooLong`] for what git prints.
     pub async fn changed_in(&self, commit: &CommitId) -> Result<Vec<RepoPath>, GitError> {
+        let base = match self
+            .merge_base(&Revision::Head, &Revision::Commit(commit.clone()))
+            .await
+        {
+            Ok(base) => base.to_string(),
+            Err(GitError::NoMergeBase { .. }) => EMPTY_TREE.to_owned(),
+            Err(error) => return Err(error),
+        };
         let operation = GitOperation::DiffTree;
         let revision = commit.to_string();
         let captured = self
@@ -119,12 +130,11 @@ impl Git {
                 Reach::Local,
                 &[
                     arg("diff-tree"),
-                    arg("--no-commit-id"),
                     arg("--name-only"),
                     arg("--no-renames"),
                     arg("-r"),
                     arg("-z"),
-                    arg("--root"),
+                    arg(&base),
                     arg(&revision),
                 ],
             )
