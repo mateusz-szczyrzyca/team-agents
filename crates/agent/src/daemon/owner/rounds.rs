@@ -851,6 +851,10 @@ mod last_step_tests;
 mod agent_slots_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/worker_request_damaged.rs"]
+mod worker_request_damaged_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 

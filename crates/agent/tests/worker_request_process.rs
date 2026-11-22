@@ -1318,7 +1318,7 @@ Integrate the guide.
             );
         }
         eventually("the damaged file to be logged with its name", || {
-            output_of(&world.agent(&["log", "--json", "--event", "restart_corrected"]))
+            output_of(&world.agent(&["log", "--json", "--event", "worker_request_damaged"]))
                 .contains("worker-request-1.json")
         });
 
