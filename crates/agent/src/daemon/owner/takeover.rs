@@ -490,7 +490,7 @@ impl Owner {
             let Some(participant) = self.participant_of(name) else {
                 continue;
             };
-            let cli = self.cli_of(&participant);
+            let cli = self.cli_of_participant(&participant);
             let cli_runs = going.iter().filter(|run| self.cli_of_name(&run.agent) == cli).count();
             offers_data.push((
                 name,
@@ -558,7 +558,7 @@ impl Owner {
     }
 
     /// The CLI of the agent `participant` is, by the configuration; `None` for an agent the configuration does not name.
-    fn cli_of(&self, participant: &Participant) -> Option<CliKind> {
+    fn cli_of_participant(&self, participant: &Participant) -> Option<CliKind> {
         let config = &self.parts.settings.config;
         match participant {
             Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| agent.cli),
@@ -566,10 +566,10 @@ impl Owner {
         }
     }
 
-    /// The CLI of the agent named `name`, as [`Owner::cli_of`] gives it for its participant.
+    /// The CLI of the agent named `name`, as [`Owner::cli_of_participant`] gives it for its participant.
     fn cli_of_name(&self, name: &AgentName) -> Option<CliKind> {
         self.participant_of(name)
-            .and_then(|participant| self.cli_of(&participant))
+            .and_then(|participant| self.cli_of_participant(&participant))
     }
 
     /// The names of the agents in a run now, in any team: a task of theirs runs, or a run of it is going.
