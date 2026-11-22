@@ -722,6 +722,14 @@ case $action in
     ask_worker "${action#ask-worker:}"
     result 'Asked for a worker.\nSTATUS: SLEEPING'
     ;;
+  ask-worker-after:*)
+    # Asks for workers as `ask-worker:NAME` does, once the test says so with `.fake-ask` in the worktree.
+    while [[ ! -f .fake-ask ]]; do
+      sleep 0.05
+    done
+    ask_worker "${action#ask-worker-after:}"
+    result 'Asked for a worker.\nSTATUS: SLEEPING'
+    ;;
   integrate)
     current=$(git rev-parse --abbrev-ref HEAD)
     for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do

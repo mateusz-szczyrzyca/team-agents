@@ -300,6 +300,61 @@ Integrate the guide.
         }
     }
 
+    impl World {
+        /// Waits until the bus has `name`, in its team, asleep: a worker the daemon may give a request to.
+        fn sleeps_on_the_bus(&self, name: &str) {
+            eventually(&format!("{name} to sleep on the bus"), || {
+                let Ok(text) = std::fs::read_to_string(self.home.join("bus/state.json")) else {
+                    return false;
+                };
+                let state: serde_json::Value = serde_json::from_str(&text).unwrap();
+                state["teams"]
+                    .as_object()
+                    .into_iter()
+                    .flat_map(|teams| teams.values())
+                    .any(|team| team["members"][name]["state"] == "sleeping")
+            });
+        }
+
+        /// Calls `delegate` with `arguments` as the agent of `task`'s last run, through the agentbus server of the MCP
+        /// configuration the daemon wrote for that run, with `agent` of this build first on the `PATH` as in a run.
+        fn delegate_as(&self, task: &str, arguments: &str) -> String {
+            let runs = self.home.join("tasks").join(task).join("runs");
+            let mut configs: Vec<PathBuf> = std::fs::read_dir(&runs)
+                .unwrap()
+                .map(|entry| entry.unwrap().path().join("mcp.json"))
+                .filter(|path| path.exists())
+                .collect();
+            configs.sort();
+            let config: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(configs.last().unwrap()).unwrap()).unwrap();
+            let server = &config["mcpServers"]["agentbus"];
+            let args: Vec<&str> = server["args"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|a| a.as_str().unwrap())
+                .collect();
+            let agent_dir = Path::new(env!("CARGO_BIN_EXE_agent")).parent().unwrap();
+            let path = format!("{}:{}", agent_dir.display(), std::env::var("PATH").unwrap());
+            let mut bus = Command::new(server["command"].as_str().unwrap())
+                .args(&args)
+                .env("PATH", path)
+                .env("AGENTS_HOME", &self.home)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null())
+                .spawn()
+                .unwrap();
+            let call = format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"delegate\",\"arguments\":{arguments}}}}}\n"
+            );
+            std::io::Write::write_all(&mut bus.stdin.take().unwrap(), call.as_bytes()).unwrap();
+            let out = bus.wait_with_output().unwrap();
+            String::from_utf8(out.stdout).unwrap()
+        }
+    }
+
     impl Drop for World {
         fn drop(&mut self) {
             if let Some(mut daemon) = self.daemon.take() {
@@ -349,8 +404,8 @@ Integrate the guide.
     #[test]
     fn a_complete_request_of_a_member_and_of_an_investigator_each_start_a_worker_whose_prompt_holds_the_step() {
         let mut world = World::new(&[
-            ("inv-opus", "investigator", "ask-worker:coordinator,sleep"),
-            ("claude-1", "agent", "ask-worker:member,sleep"),
+            ("inv-opus", "investigator", "ask-worker-after:coordinator,sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
             ("glm-1", "worker", "ask-worker:worker,done:Result: done."),
             ("glm-2", "worker", "sleep,done:Result: done."),
         ]);
@@ -366,6 +421,14 @@ Integrate the guide.
         let tasks = world.run(&["claude-1", "inv-opus", "glm-1", "glm-2"]);
 
         let (glm_1, glm_2) = (task(&tasks, "glm-1"), task(&tasks, "glm-2"));
+        // The requesters ask once both workers wait: only a waiting worker is given a request.
+        for name in ["glm-1", "glm-2"] {
+            world.ended(task(&tasks, name), 1);
+            world.sleeps_on_the_bus(name);
+        }
+        for name in ["claude-1", "inv-opus"] {
+            std::fs::write(world.worktree(task(&tasks, name)).join(".fake-ask"), "").unwrap();
+        }
         for name in ["claude-1", "inv-opus", "glm-1"] {
             world.ended(task(&tasks, name), 1);
         }
@@ -484,24 +547,24 @@ Integrate the guide.
     fn a_request_queued_before_a_restart_of_the_daemon_is_served_once_after_it() {
         let mut world = World::new(&[
             ("inv-opus", "investigator", "sleep"),
-            ("claude-1", "agent", "ask-worker:member,sleep"),
-            ("glm-1", "worker", "hold,done:Result: done."),
+            ("claude-1", "agent", "sleep"),
+            ("glm-1", "worker", "sleep,done:Result: done."),
         ]);
-        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
         world.start();
         let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
-        let glm_1 = task(&tasks, "glm-1");
-        world.ended(task(&tasks, "claude-1"), 1);
-        let got = answers(&world.file(task(&tasks, "claude-1"), ".fake-delegate-1"));
-        assert!(!got[0].0, "{got:?}");
-        assert_eq!(
-            world.requests()["1"]["status"],
-            "queued",
-            "the worker still holds its first run"
-        );
+        let (member, glm_1) = (task(&tasks, "claude-1"), task(&tasks, "glm-1"));
+        for name in ["claude-1", "inv-opus", "glm-1"] {
+            world.ended(task(&tasks, name), 1);
+        }
+        world.sleeps_on_the_bus("glm-1");
 
+        // The daemon goes down; the member's request reaches the bus of its run before the daemon is back.
         world.stop();
-        std::fs::write(world.worktree(glm_1).join(".fake-continue"), "").unwrap();
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        let got = answers(&world.delegate_as(member, MEMBER_REQUEST));
+        assert!(!got[0].0, "{got:?}");
+        assert_eq!(world.requests()["1"]["status"], "queued");
         world.start();
 
         eventually("the request to be done", || world.requests()["1"]["status"] == "done");
