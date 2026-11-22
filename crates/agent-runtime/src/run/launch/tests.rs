@@ -18,8 +18,8 @@ fn check_environment_has_the_agents_secrets_path_and_home_but_no_daemon_secret()
     let identity = CommitIdentity::new("Agent".to_owned(), "agent@example.com".to_owned(), None);
     let binary_dir = AbsolutePath::from_str("/opt/agent/bin").expect("binary dir");
 
-    let env = check_environment(&secrets, &binary_dir, &[], Path::new("/home/h/.agents"), &identity)
-        .expect("environment");
+    let env =
+        check_environment(&secrets, &binary_dir, &[], Path::new("/home/h/.agents"), &identity).expect("environment");
     let map: BTreeMap<String, String> = env.into_iter().collect();
 
     assert_eq!(map.get("AGENT_KEY").map(String::as_str), Some("agent-value"));
@@ -28,5 +28,8 @@ fn check_environment_has_the_agents_secrets_path_and_home_but_no_daemon_secret()
         Some(Some("/opt/agent/bin"))
     );
     assert_eq!(map.get(HOME_VARIABLE).map(String::as_str), Some("/home/h/.agents"));
-    assert!(!map.contains_key("NOTIFY_KEY"), "a notification secret is not given to a check");
+    assert!(
+        !map.contains_key("NOTIFY_KEY"),
+        "a notification secret is not given to a check"
+    );
 }
