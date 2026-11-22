@@ -222,6 +222,14 @@ impl Home {
         self.task_dir(task).join(FIX_PASS_FINDINGS_FILE)
     }
 
+    /// The file with the full text of the findings of fix pass number `pass` that `task`, a lead, is answering, in the
+    /// task's directory. Each pass has a file of its own, so that a pass whose file could not be written never points to the
+    /// findings of the one before.
+    #[must_use]
+    pub fn fix_pass_findings_file_of(&self, task: &TaskId, pass: usize) -> PathBuf {
+        self.task_dir(task).join(format!("fix-pass-{pass}-findings.md"))
+    }
+
     /// The report of the review of pull request `pr` that `task` gave after `pass` fix passes, in the task's directory.
     #[must_use]
     pub fn review_report_file(&self, task: &TaskId, pr: PrNumber, pass: u32) -> PathBuf {
