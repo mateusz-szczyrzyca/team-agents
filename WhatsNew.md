@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.68.0 — 22.11.2026 — PR #185
+
+### Enhancements
+- [agent-runtime] The harness can now name the files a worker's commit changes, tell which of them the request's `files` do not name, and bring the commit to the requester's branch after a snapshot of the requester's worktree: the requester's uncommitted and untracked files stay as they were, a commit that conflicts applies nothing and is returned with the files in conflict. The daemon does not use it yet.
+
 ## 0.67.0 — 22.11.2026 — PR #184
 
 ### New features
