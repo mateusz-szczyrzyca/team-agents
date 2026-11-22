@@ -738,6 +738,22 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.reassign(assignee, branch)
     }
 
+    /// See [`ItemProgress::record_rejection`].
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
+    pub fn record_rejection(&mut self, reason: String, at: Timestamp) -> Result<Option<Timestamp>, RejectionError> {
+        self.value.record_rejection(reason, at)
+    }
+
+    /// See [`ItemProgress::next_run_started`].
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::next_run_started`].
+    pub fn next_run_started(&mut self, run: NonZeroU32, at: Timestamp) -> Result<u32, RejectionError> {
+        self.value.next_run_started(run, at)
+    }
+
     /// See [`ItemProgress::submit_review`].
     ///
     /// # Errors
