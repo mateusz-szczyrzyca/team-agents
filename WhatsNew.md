@@ -5,13 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.56.0 — 22.11.2026 — PR #173
-
-### Bug fixes
-- [agent] [agent-core] Rejected publication no longer retries forever without an explanation: after `[publish] tries` failures (default 3), the lead gets one correction pass, then the human gets a question to retry or stop. Conflict publication now observes the same retry backoff.
-- [agent] [agent-core] Publication questions notify the human and enter the questions status directly, without recording a run that never happened. Another failed publication waits while the lead already has a question open.
-- [agent] [agent-core] [agent-runtime] A restart no longer loses publication retry counts or question identity. Interrupted question creation preserves existing questions and answers, adopts an answer already saved, and clears retry backoff only for the publication that was answered.
-
 ## 0.55.0 — 22.11.2026 — PR #172
 
 ### New features
