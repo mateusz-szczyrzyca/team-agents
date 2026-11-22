@@ -53,17 +53,61 @@ pub enum PartChoice<'a> {
     Nobody,
 }
 
-impl<'a> PartChoice<'a> {
+impl PartChoice<'_> {
     /// The name of this choice kind.
     #[must_use]
     pub const fn choice_name(&self) -> &'static str {
-        ""
+        match self {
+            Self::PreviousMember(_) => "previous_member",
+            Self::Replacement(_) => "replacement",
+            Self::Lead(_) => "lead",
+            Self::Nobody => "nobody",
+        }
     }
 
     /// The human- and machine-readable explanation of why this choice was made.
     #[must_use]
-    pub fn explanation(&self, _prev_candidate: Option<&Candidate<'_>>) -> String {
-        String::new()
+    pub fn explanation(&self, prev_candidate: Option<&Candidate<'_>>) -> String {
+        let prev_status_desc = prev_candidate.map(|prev| {
+            if prev.handed_over {
+                format!("previous member {} was handed over", prev.agent.name())
+            } else if prev.busy {
+                format!("previous member {} is busy", prev.agent.name())
+            } else {
+                match prev.status {
+                    TaskStatus::Stopped => format!("previous member {} is stopped", prev.agent.name()),
+                    TaskStatus::Failed => format!("previous member {} failed", prev.agent.name()),
+                    _ => format!("previous member {}", prev.agent.name()),
+                }
+            }
+        });
+
+        match self {
+            Self::PreviousMember(agent) => {
+                format!("previous member {} is available and qualified", agent.name())
+            }
+            Self::Replacement(agent) => {
+                if let Some(desc) = prev_status_desc {
+                    format!("{desc}; replacement {} takes the part", agent.name())
+                } else {
+                    format!("replacement {} takes the part", agent.name())
+                }
+            }
+            Self::Lead(agent) => {
+                if let Some(desc) = prev_status_desc {
+                    format!("{desc}; lead {} takes over", agent.name())
+                } else {
+                    format!("lead {} takes over", agent.name())
+                }
+            }
+            Self::Nobody => {
+                if let Some(desc) = prev_status_desc {
+                    format!("{desc}; no qualified candidate available")
+                } else {
+                    "no qualified candidate available".to_owned()
+                }
+            }
+        }
     }
 }
 

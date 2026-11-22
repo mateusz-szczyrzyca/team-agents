@@ -69,6 +69,15 @@ pub fn dispatch_in_policy(
         .collect();
     let mut reserved = std::collections::HashSet::new();
     let mut result = Dispatch::default();
+    let outside_participants: Vec<Participant> = configured_replacements
+        .iter()
+        .filter(|name| {
+            !members.iter().any(|m| m.agent().name() == name.as_str())
+                && !roster.iter().any(|(_, m)| m.agent().name() == name.as_str())
+        })
+        .map(|name| Participant::Normal(name.clone()))
+        .collect();
+
     for item in ready {
         let required = required_tier(team, item);
         let available = |member: &Member| {
@@ -84,6 +93,7 @@ pub fn dispatch_in_policy(
                 members: &members,
                 mode,
                 configured_replacements,
+                outside_participants: &outside_participants,
             };
             match dispatch_split_item(&ctx, item, required) {
                 Ok(agent) => {
@@ -137,6 +147,7 @@ struct SplitDispatchContext<'a> {
     members: &'a [&'a Member],
     mode: crate::decide::replacement::ReplacementMode,
     configured_replacements: &'a [AgentName],
+    outside_participants: &'a [Participant],
 }
 
 fn fitting_split_crew(
@@ -247,26 +258,33 @@ fn dispatch_split_item<'a>(
         Option<crate::decide::part::Candidate<'_>>,
         Vec<crate::decide::part::Candidate<'_>>,
         Option<crate::decide::part::Candidate<'_>>,
-    ) = if let Some(prev) = prev_member {
-        if is_coord(prev) {
-            (
-                Some(candidate_of(prev)),
-                ordered_members.iter().map(|m| candidate_of(m)).collect(),
-                None,
-            )
-        } else {
-            let reps = ordered_members
-                .iter()
-                .filter(|m| m.task() != prev.task())
-                .map(|m| candidate_of(m))
-                .collect();
-            let lead = ctx.team.crew().coordinator().map(candidate_of);
-            (Some(candidate_of(prev)), reps, lead)
+    ) = {
+        let mut reps = Vec::new();
+        if !ctx.configured_replacements.is_empty() {
+            for rep_name in ctx.configured_replacements {
+                if let Some(m) = ctx.members.iter().find(|m| m.agent().name() == rep_name.as_str()) {
+                    if prev_member.is_none_or(|p| p.task() != m.task()) {
+                        reps.push(candidate_of(m));
+                    }
+                } else if let Some(p) = ctx.outside_participants.iter().find(|p| p.name() == rep_name.as_str()) {
+                    reps.push(crate::decide::part::Candidate {
+                        agent: p,
+                        status: TaskStatus::Waiting,
+                        handed_over: false,
+                        busy: ctx.reserved.contains(p.name()),
+                    });
+                }
+            }
         }
-    } else {
-        let reps = ordered_members.iter().map(|m| candidate_of(m)).collect();
-        let lead = ctx.team.crew().coordinator().map(candidate_of);
-        (None, reps, lead)
+
+        let prev_cand = prev_member.map(candidate_of);
+        let lead_cand = if prev_member.is_some_and(is_coord) {
+            None
+        } else {
+            ctx.team.crew().coordinator().map(candidate_of)
+        };
+
+        (prev_cand, reps, lead_cand)
     };
 
     match crate::decide::part::who_gets_part_in_mode(required, previous, &replacements, lead, ctx.mode) {
