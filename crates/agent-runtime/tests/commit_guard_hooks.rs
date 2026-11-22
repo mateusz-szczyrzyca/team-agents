@@ -8,7 +8,7 @@ mod commit_guard_hooks {
     use std::process::{Command, Output};
     use std::str::FromStr;
 
-    use agent_core::config::AbsolutePath;
+    use agent_core::config::{AbsolutePath, EnvName};
     use agent_runtime::commit_guard::hooks::install_hooks;
     use agent_runtime::git::{CommitIdentity, Git};
 
@@ -271,5 +271,79 @@ mod commit_guard_hooks {
             std::fs::read_to_string(world.root.join("seen")).unwrap_or_default(),
             "pre\n"
         );
+    }
+
+    /// A handle that has, in its environment, the `core.hooksPath` of an outer run: what a `cargo test` started by an
+    /// agent's run inherits.
+    fn under_an_outer_run(dir: &Path, outer_hooks: &Path) -> Git {
+        let name = |text: &str| EnvName::from_str(text).unwrap();
+        handle(dir)
+            .with_env(name("GIT_CONFIG_COUNT"), "1")
+            .with_env(name("GIT_CONFIG_KEY_0"), "core.hooksPath")
+            .with_env(name("GIT_CONFIG_VALUE_0"), outer_hooks.to_str().unwrap())
+    }
+
+    // Rule: the hooks of the repository are found whatever `core.hooksPath` the environment names: the one of an outer
+    // run is not the repository's own.
+    #[tokio::test]
+    async fn the_hooks_of_the_repository_are_found_whatever_hooks_path_the_environment_names() {
+        let world = repository();
+        let seen = world.root.join("seen");
+        executable(
+            &world.repo.join(".git/hooks/pre-commit"),
+            &format!("#!/bin/sh\necho own >> '{}'\n", seen.display()),
+        );
+        let outer = world.root.join("outer-hooks");
+        executable(
+            &outer.join("pre-commit"),
+            &format!("#!/bin/sh\necho outer >> '{}'\n", seen.display()),
+        );
+        let calls = world.root.join("calls");
+        let agent = stand_in(&world.root, &calls, 0);
+        let hooks = install_hooks(
+            &under_an_outer_run(&world.repo, &outer),
+            &world.root.join("hooks"),
+            &agent,
+        )
+        .await
+        .unwrap();
+
+        let output = commit(&world.repo, &hooks, "One");
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(std::fs::read_to_string(&seen).unwrap_or_default(), "own\n");
+    }
+
+    // Rule: the hooks act for the repository they were made for: a commit in another repository, made while the same
+    // environment names this directory, runs that repository's own hooks — also one the first has none of — and never
+    // asks the guard.
+    #[tokio::test]
+    async fn a_commit_in_a_second_repository_runs_its_own_hooks_and_does_not_ask_the_guard() {
+        let world = repository();
+        let seen = world.root.join("seen");
+        executable(
+            &world.repo.join(".git/hooks/pre-commit"),
+            &format!("#!/bin/sh\necho first >> '{}'\n", seen.display()),
+        );
+        let calls = world.root.join("calls");
+        let agent = stand_in(&world.root, &calls, 86);
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &agent)
+            .await
+            .unwrap();
+        let second = world.root.join("second");
+        std::fs::create_dir(&second).unwrap();
+        assert!(git_in(&second, None, &["init", "-q", "-b", "main"]).status.success());
+        for (name, word) in [("pre-commit", "pre"), ("commit-msg", "msg"), ("post-commit", "post")] {
+            executable(
+                &second.join(".git/hooks").join(name),
+                &format!("#!/bin/sh\necho {word} >> '{}'\n", seen.display()),
+            );
+        }
+
+        let output = commit(&second, &hooks, "In the second repository");
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert_eq!(std::fs::read_to_string(&seen).unwrap_or_default(), "pre\nmsg\npost\n");
+        assert!(!calls.exists());
     }
 }
