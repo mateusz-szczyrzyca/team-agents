@@ -394,23 +394,30 @@ impl Git {
         }
     }
 
-    /// Writes the merge `applied`, made on `head`, to the worktree and the branch.
+    /// Writes the merge `applied`, made on `head`, to the worktree and then to the branch. Nothing is written unless the
+    /// branch is still at `head` and no file the merge writes is changed or untracked in the worktree: the requester's
+    /// own commit, made while the merge waited, would otherwise be written over and fall off the branch.
+    ///
+    /// `read-tree -m -u` writes only the files that differ between the two trees. The branch moves with `update-ref`
+    /// against `head`, so that a commit made after the check above still keeps the branch where it is; then the files
+    /// are put back.
     ///
     /// # Errors
-    /// The errors of [`Git::write_applied`].
+    /// [`GitError::HeadMoved`] when the branch is not at `head`; [`GitError::Failed`] when git refuses to write the
+    /// merge or the branch; the errors of reading the status and the trees.
     pub async fn write_merged(&self, head: &CommitId, applied: &CommitId) -> Result<Written, GitError> {
-        let _ = head;
-        self.write_applied(applied).await?;
-        Ok(Written::Done)
-    }
-
-    /// Moves the index and the files of the worktree from the head to `applied`, whose parent is the head, then the
-    /// branch. `read-tree -m -u` writes only the files that differ between the two trees and refuses, changing nothing,
-    /// when one of them is changed uncommitted or an untracked file is in its way. The branch moves only if it is still at
-    /// the head the merge was made on; when it is not, the files are put back.
-    async fn write_applied(&self, applied: &CommitId) -> Result<(), GitError> {
-        let head = self.rev_parse(&Revision::Head).await?;
+        let found = self.rev_parse(&Revision::Head).await?;
+        if found != *head {
+            return Err(GitError::HeadMoved {
+                expected: head.clone(),
+                found,
+            });
+        }
         let (head_text, applied_text) = (head.to_string(), applied.to_string());
+        let files = self.in_the_way(&head_text, &applied_text).await?;
+        if !files.is_empty() {
+            return Ok(Written::InTheWay { files });
+        }
         self.read_tree_update(&head_text, &applied_text).await?;
         let message = format!("Bring over the worker's change {applied_text}");
         let moved = self
@@ -428,12 +435,72 @@ impl Git {
             )
             .await;
         if let Err(error) = moved {
-            // The requester committed while the merge was written: the files go back to the head it had, and the merge is
-            // reported as not applied. A failure to put them back is the worse one and is the one reported.
+            // The requester committed after the check: the files go back to the head it had, and the merge is reported as
+            // not applied. A failure to put them back is the worse one and is the one reported.
             self.read_tree_update(&applied_text, &head_text).await?;
             return Err(error);
         }
-        Ok(())
+        Ok(Written::Done)
+    }
+
+    /// The files the merge `applied` writes over `head` that the requester has changed or has untracked in its worktree.
+    async fn in_the_way(&self, head: &str, applied: &str) -> Result<Vec<RepoPath>, GitError> {
+        let operation = GitOperation::DiffTree;
+        let written = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("diff-tree"),
+                    arg("-r"),
+                    arg("--name-only"),
+                    arg("--no-renames"),
+                    arg("-z"),
+                    arg(head),
+                    arg(applied),
+                ],
+            )
+            .await?;
+        let written = whole(operation, &written.stdout, self.limits)?;
+        let operation = GitOperation::Status;
+        let status = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("status"),
+                    arg("--porcelain=v1"),
+                    arg("-z"),
+                    arg("--untracked-files=all"),
+                ],
+            )
+            .await?;
+        let status = whole(operation, &status.stdout, self.limits)?;
+        let mut touched: BTreeSet<&[u8]> = BTreeSet::new();
+        let mut fields = status.split(|byte| *byte == 0).filter(|field| !field.is_empty());
+        while let Some(field) = fields.next() {
+            let Some(path) = field.get(3..) else {
+                return Err(GitError::Unexpected {
+                    operation,
+                    output: diagnostic(field),
+                });
+            };
+            touched.insert(path);
+            // A rename or a copy is followed by the path it came from.
+            if matches!(field.first(), Some(b'R' | b'C')) || matches!(field.get(1), Some(b'R' | b'C')) {
+                if let Some(origin) = fields.next() {
+                    touched.insert(origin);
+                }
+            }
+        }
+        let mut files = Vec::new();
+        for path in written.split(|byte| *byte == 0).filter(|path| !path.is_empty()) {
+            if touched.contains(path) {
+                files.push(repo_path(GitOperation::DiffTree, path)?);
+            }
+        }
+        files.sort();
+        Ok(files)
     }
 
     /// Moves the index and the worktree from the tree of `from` to the tree of `to`: `git read-tree -m -u`.
