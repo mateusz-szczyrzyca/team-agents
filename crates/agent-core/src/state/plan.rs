@@ -90,6 +90,13 @@ pub enum PlanReason {
         #[serde(default)]
         tail: String,
     },
+    /// Both a plan fault (`LostStep` or `Unfinished`) and a step check [`Self::Mismatch`] occurred on the same run.
+    FaultAndMismatch {
+        /// The structural plan fault (`LostStep` or `Unfinished`).
+        fault: Box<Self>,
+        /// The step check mismatch.
+        mismatch: Box<Self>,
+    },
 }
 
 /// What a task keeps of its plan: the count of its send-backs, what the human granted, the stage, and a reason that

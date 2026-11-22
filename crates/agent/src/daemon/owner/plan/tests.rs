@@ -2430,3 +2430,171 @@ fn refused_gates_lists_only_the_refused_commands_in_order() {
     );
     assert_eq!(super::refused_gates(&[]), Vec::new());
 }
+
+#[tokio::test]
+async fn mismatch_and_fault_bounce_once_with_40_line_tail_and_human_answers_work() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    let plan_with_unfinished_and_failing_cmd = concat!(
+        "Finish it.\n\n1. Work\n",
+        "[x] 1.1 Run command\n",
+        "    Check: /bin/sh -c 'i=1; while [ \"$i\" -le 50 ]; do printf \"line-%s\\n\" \"$i\"; i=$((i + 1)); done; [ -f fixed.txt ]'\n",
+        "[ ] 1.2 Finish later\n",
+    );
+    std::fs::write(dir.join(".agent/plan.md"), plan_with_unfinished_and_failing_cmd).unwrap();
+    daemon.start().await;
+
+    // Run 1 ends DONE with both an unfinished step (1.2) and a command check mismatch (1.1).
+    // It counts as one bounce and Run 2's prompt names both reasons and at most 40 lines of output.
+    sent_back_count(&daemon, 1).await;
+    // Before Run 2 finishes, mark step 1.2 done so Run 2 only fails on step 1.1 and reaches the human question.
+    let plan_only_mismatch = concat!(
+        "Finish it.\n\n1. Work\n",
+        "[x] 1.1 Run command\n",
+        "    Check: /bin/sh -c 'i=1; while [ \"$i\" -le 50 ]; do printf \"line-%s\\n\" \"$i\"; i=$((i + 1)); done; [ -f fixed.txt ]'\n",
+        "[x] 1.2 Finish later\n",
+    );
+    std::fs::write(dir.join(".agent/plan.md"), plan_only_mismatch).unwrap();
+    let _state_at_q1 = daemon.status_is(1, TaskStatus::Questions).await;
+
+    let run2_prompt = daemon.recorded(1, ".fake-args");
+    assert!(
+        run2_prompt.contains("## Your plan is not finished") && run2_prompt.contains("1.2"),
+        "run 2 prompt must name the unfinished step: {run2_prompt}"
+    );
+    assert!(
+        run2_prompt.contains("## Step 1.1 (Run command) check failed"),
+        "run 2 prompt must also name the step check mismatch in the same bounce: {run2_prompt}"
+    );
+    assert!(
+        run2_prompt.contains("line-11\n") && run2_prompt.contains("line-50") && !run2_prompt.contains("line-10\n"),
+        "mismatch tail in prompt must hold at most the last 40 lines: {run2_prompt}"
+    );
+
+    let q1_text = std::fs::read_to_string(daemon.questions_file(1, 1)).expect("read questions-1.md");
+    assert!(
+        q1_text.contains("Step 1.1 (Run command) check failed") && q1_text.contains("fixed.txt"),
+        "questions-1.md must name the step and its check: {q1_text}"
+    );
+
+    // Answer b) ("send it back once more"): grants and counts one more bounce, sending the task back.
+    // Wait for questions-2.md when that extra bounce also ends with fixed.txt still absent.
+    daemon.ask(answer(1, 1, &[(1, "b")])).await.unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    while !daemon.questions_file(1, 2).exists() && std::time::Instant::now() < deadline {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    let state_at_q2 = daemon.status_is(1, TaskStatus::Questions).await;
+    let keeping_at_q2 = keeping(&state_at_q2);
+    assert_eq!(
+        (keeping_at_q2.sent_back(), keeping_at_q2.granted()),
+        (2, 1),
+        "answering b) must grant and count one additional send-back"
+    );
+
+    // Answer a) / "ok" ("go on as it is") on questions-2.md: releases the plan so the next DONE settles as Done.
+    daemon.ask(answer(1, 2, &[(1, "ok")])).await.unwrap();
+    let final_state = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+    assert_eq!(keeping(&final_state).stage(), PlanStage::Released);
+}
+
+#[tokio::test]
+async fn mismatch_across_roles_statuses_and_refused_gate_across_restart() {
+    use crate::fixtures::{investigator, member};
+    use agent_core::state::TeamMembers;
+
+    let mut team_done = State::new();
+    let crew = Crew::team(TeamMembers {
+        coordinator: member(1, investigator("inv-opus")),
+        members: vec![member(2, normal("claude-1"))],
+        workers: Vec::new(),
+    })
+    .unwrap();
+    let list = TaskListText::new("Finish it.".to_owned()).unwrap();
+    team_done
+        .insert_team(Team::new(team_id(0), repo(), at(0), MergeMode::Autopilot, list, crew))
+        .unwrap();
+
+    let combined_plan = "Finish it.\n\n1. Work\n[x] 1.1 Check file\n    Check: exists absent.txt\n[ ] 1.2 Remaining\n";
+    let end_done = agent_core::state::RunEnd::Reported {
+        outcome: agent_core::status::RunOutcome::Done,
+    };
+    for (label, state, task_num) in [
+        ("solo", solo_state(), 1_u32),
+        ("coordinator", team_done.clone(), 1_u32),
+        ("member", team_done, 2_u32),
+    ] {
+        let daemon = with_bounces(&state, 2);
+        let dir = daemon.scenario(task_num, "done");
+        std::fs::create_dir_all(dir.join(".agent")).unwrap();
+        std::fs::write(dir.join(".agent/plan.md"), combined_plan).unwrap();
+
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let t = task(task_num);
+        let located = owner.locate(&t).unwrap();
+        let (_, held) = owner
+            .plan_at_end(
+                &t,
+                &located,
+                &end_done,
+                crate::daemon::settle::Settled::Status(TaskStatus::Done),
+            )
+            .await
+            .unwrap();
+        assert_eq!(held, super::PlanHeld::Yes, "{label} must be held on mismatch");
+        let kept = owner.parts.state.find_task(&t).unwrap().member.plan().unwrap();
+        assert_eq!(kept.sent_back(), 1, "{label} must count 1 bounce");
+        assert!(
+            matches!(kept.pending(), Some(PlanReason::FaultAndMismatch { .. })),
+            "{label} must record FaultAndMismatch, got {:?}",
+            kept.pending()
+        );
+    }
+
+    for (scenario, expected_status) in [("sleep", TaskStatus::Waiting), ("fail", TaskStatus::Failed)] {
+        let mut daemon = with_bounces(&solo_state(), 2);
+        let dir = daemon.scenario(1, scenario);
+        std::fs::create_dir_all(dir.join(".agent")).unwrap();
+        std::fs::write(dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
+        daemon.start().await;
+        let settled_state = daemon.status_is(1, expected_status).await;
+        daemon.stop().await.unwrap();
+
+        let m = settled_state.find_task(&task(1)).unwrap().member;
+        assert_eq!((m.runs().len(), m.plan().unwrap().sent_back()), (1, 0), "{scenario}");
+        assert_eq!(
+            judgement_of(&daemon, "1.1").state,
+            agent_core::plan::judge::JudgementState::Mismatch
+        );
+    }
+
+    let gate_plan = "Finish it.\n\n1. Work\n[x] 1.1 Gate step\n    Check: make gate\n[ ] 1.2 Next step\n";
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "sleep");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), gate_plan).unwrap();
+    daemon.start().await;
+    let mut waiting_state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    let (_, mut m) = waiting_state.find_task_mut(&task(1)).unwrap();
+    m.send_back(PlanReason::Unfinished {
+        steps: vec!["1.2".parse().unwrap()],
+    });
+    m.transition(TaskStatus::Queued).unwrap();
+    std::fs::write(daemon.home.state_file(), waiting_state.to_json().unwrap()).unwrap();
+    daemon.scenario(1, "done");
+
+    daemon.start().await;
+    let _at_questions = daemon.status_is(1, TaskStatus::Questions).await;
+    let first_after_restart = daemon.recorded(1, ".fake-args");
+    assert_eq!(first_after_restart.matches("## Step 1.1 check was refused").count(), 1);
+
+    daemon.ask(answer(1, 1, &[(1, "ok")])).await.unwrap();
+    let _at_done = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+    let second_after_restart = daemon.recorded(1, ".fake-args");
+    assert_eq!(second_after_restart.matches("## Step 1.1 check was refused").count(), 0);
+}
