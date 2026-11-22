@@ -10,7 +10,7 @@ use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::{
-    Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary,
+    Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary, Versions,
 };
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
@@ -23,6 +23,7 @@ use agent_runtime::store::Home;
 use time::UtcOffset;
 
 use crate::client::{ClientError, Connection};
+use crate::versions::of_this_build;
 
 /// Why `agent status` failed.
 #[derive(Debug, thiserror::Error)]
@@ -157,11 +158,63 @@ pub(crate) enum Detail {
     Tasks,
 }
 
-/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
-/// when they were last active.
+/// What a list of `agent status` says, before it is written: its text, the versions of the daemon that answered and
+/// what the history says when it is not whole.
+struct Shown {
+    /// The lines of the list, with what the rounds say after their lines.
+    text: String,
+    /// The versions of the daemon that answered; absent from a daemon before it told them.
+    daemon: Option<Versions>,
+    /// What the history is doing, when it is not whole.
+    history: Option<HistoryHealth>,
+}
+
+/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
+/// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
 ///
 /// # Errors
 /// [`StatusError`].
+pub(crate) async fn status_shown(
+    connection: &mut Connection,
+    target: Option<Target>,
+    activity: &Activity,
+    detail: Detail,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    if let Some(Target::Round(round)) = target {
+        return show_round(connection, round, Some(activity), out).await;
+    }
+    let shown = listing_text(connection, target, activity, detail).await?;
+    write_shown(
+        out,
+        &versions::block(&of_this_build(), shown.daemon.as_ref()),
+        &shown,
+        activity,
+    )
+}
+
+/// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
+/// what is being worked on now, its versions first. `detail` says whether the tasks of the teams are written too.
+///
+/// # Errors
+/// [`StatusError`].
+pub(crate) async fn status_running_shown(
+    connection: &mut Connection,
+    activity: &Activity,
+    detail: Detail,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let shown = running_text(connection, activity, detail).await?;
+    write_shown(
+        out,
+        &versions::block(&of_this_build(), shown.daemon.as_ref()),
+        &shown,
+        activity,
+    )
+}
+
+/// [`status_shown`] without the versions, with the tasks: what the tests of the status compare.
+#[cfg(test)]
 pub(crate) async fn status_active(
     connection: &mut Connection,
     target: Option<Target>,
@@ -171,23 +224,91 @@ pub(crate) async fn status_active(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, Some(activity), out).await;
     }
-    let (teams, history) = teams(connection, target).await?;
-    let told = rounds::told(connection, activity, &teams).await?;
-    let text = render_at(
-        &teams,
+    let shown = listing_text(connection, target, activity, Detail::Tasks).await?;
+    write_shown(out, "", &shown, activity)
+}
+
+/// [`status_running_shown`] without the versions, with the tasks: what the tests of the status compare.
+#[cfg(test)]
+pub(crate) async fn status_running(
+    connection: &mut Connection,
+    activity: &Activity,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let shown = running_text(connection, activity, Detail::Tasks).await?;
+    write_shown(out, "", &shown, activity)
+}
+
+/// What the teams of `target` (every team without one) say, in `detail`, with their rounds and what the rounds say.
+async fn listing_text(
+    connection: &mut Connection,
+    target: Option<Target>,
+    activity: &Activity,
+    detail: Detail,
+) -> Result<Shown, StatusError> {
+    // A team or a task is shown with its tasks, as it always was.
+    let detail = if target.is_some() { Detail::Tasks } else { detail };
+    let listing = teams(connection, target).await?;
+    let told = rounds::told(connection, activity, &listing.teams).await?;
+    let text = render_in(
+        &listing.teams,
+        View::Full,
+        detail,
         &|task| activity.of(task),
         &|round| told.of(round),
         activity.zone,
     );
+    Ok(Shown {
+        text: format!("{text}{}", told.unread()),
+        daemon: listing.daemon,
+        history: listing.history,
+    })
+}
+
+/// What the teams with a round that goes on say, in `detail`, with those rounds only.
+async fn running_text(connection: &mut Connection, activity: &Activity, detail: Detail) -> Result<Shown, StatusError> {
+    let listing = teams(connection, None).await?;
+    // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
+    // part's round is one that is over.
+    let listed: Vec<TeamSummary> = listing
+        .teams
+        .into_iter()
+        .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
+        .collect();
+    let text = if listed.is_empty() {
+        NO_OPEN_ROUNDS.to_owned()
+    } else {
+        let told = rounds::told(connection, activity, &listed).await?;
+        let text = render_in(
+            &listed,
+            View::Running,
+            detail,
+            &|task| activity.of(task),
+            &|round| told.of(round),
+            activity.zone,
+        );
+        format!("{text}{}", told.unread())
+    };
+    Ok(Shown {
+        text,
+        daemon: listing.daemon,
+        history: listing.history,
+    })
+}
+
+/// Writes `prefix`, then what `shown` says, then the line about low disk space if any and the line about the history when
+/// it is not whole.
+fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
     write(
         out,
-        &format!("{text}{}", told.unread()),
-        history.as_ref(),
+        &format!("{prefix}{}", shown.text),
+        shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
 }
 
-/// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
+/// [`status_shown`] without the versions and with the teams as the test helper of the status compares them: what the
+/// tests of the status ask for.
 #[cfg(test)]
 pub(crate) async fn status(
     connection: &mut Connection,
@@ -197,8 +318,8 @@ pub(crate) async fn status(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, None, out).await;
     }
-    let (teams, history) = teams(connection, target).await?;
-    write(out, &render(&teams), history.as_ref(), None)
+    let listing = teams(connection, target).await?;
+    write(out, &render(&listing.teams), listing.history.as_ref(), None)
 }
 
 /// Asks the daemon for every team and writes to `out` what `investigators::render` says of the investigators configured in
@@ -216,44 +337,10 @@ pub(crate) async fn status_investigators(
     let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
     // The configuration keeps the investigators by name: the view lists them in that order.
     let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
-    let (teams, _) = teams(connection, None).await?;
-    let text = investigators::render(&teams, &configured, zone);
+    let listing = teams(connection, None).await?;
+    let text = investigators::render(&listing.teams, &configured, zone);
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
-}
-
-/// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
-/// what is being worked on now.
-///
-/// # Errors
-/// [`StatusError`].
-pub(crate) async fn status_running(
-    connection: &mut Connection,
-    activity: &Activity,
-    out: &mut impl Write,
-) -> Result<(), StatusError> {
-    let (teams, history) = teams(connection, None).await?;
-    // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
-    // part's round is one that is over.
-    let listed: Vec<TeamSummary> = teams
-        .into_iter()
-        .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
-        .collect();
-    let text = if listed.is_empty() {
-        NO_OPEN_ROUNDS.to_owned()
-    } else {
-        let told = rounds::told(connection, activity, &listed).await?;
-        let text = render_in(
-            &listed,
-            View::Running,
-            Detail::Tasks,
-            &|task| activity.of(task),
-            &|round| told.of(round),
-            activity.zone,
-        );
-        format!("{text}{}", told.unread())
-    };
-    write(out, &text, history.as_ref(), activity.disk_line().as_deref())
 }
 
 /// The teams of `teams` that have an open round, each with its open rounds only.
@@ -278,8 +365,8 @@ pub(crate) async fn status_json(
     target: Option<Target>,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    let (teams, _) = teams(connection, target).await?;
-    out.write_all(render_json(&teams)?.as_bytes())
+    let listing = teams(connection, target).await?;
+    out.write_all(render_json(&listing.teams)?.as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
@@ -294,17 +381,34 @@ pub(crate) fn render_json(teams: &[TeamSummary]) -> Result<String, StatusError> 
     Ok(text)
 }
 
-/// The teams the daemon answers a status request for `target` with, and what it says of the history.
-async fn teams(
-    connection: &mut Connection,
-    target: Option<Target>,
-) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
+/// What the daemon answered to a status request.
+struct Listing {
+    /// The teams asked for.
+    teams: Vec<TeamSummary>,
+    /// What the history is doing, when it is not whole.
+    history: Option<HistoryHealth>,
+    /// The versions of the daemon; absent from a daemon before it told them.
+    daemon: Option<Versions>,
+}
+
+/// The teams the daemon answers a status request for `target` with, what it says of the history, and its versions.
+async fn teams(connection: &mut Connection, target: Option<Target>) -> Result<Listing, StatusError> {
     let reply = connection
         .request(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
+    // Read before any other request: the next answer replaces the versions of this one.
+    let daemon = connection.daemon_versions().cloned();
     match reply {
-        Reply::Teams { teams } => Ok((teams, None)),
-        Reply::Overview { teams, history } => Ok((teams, Some(history))),
+        Reply::Teams { teams } => Ok(Listing {
+            teams,
+            history: None,
+            daemon,
+        }),
+        Reply::Overview { teams, history } => Ok(Listing {
+            teams,
+            history: Some(history),
+            daemon,
+        }),
         other => Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
     }
 }
@@ -434,7 +538,7 @@ pub(crate) enum View {
 fn render_in(
     teams: &[TeamSummary],
     view: View,
-    _detail: Detail,
+    detail: Detail,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
@@ -469,19 +573,25 @@ fn render_in(
                 .filter(|round| view == View::Full || *round.life() == RoundLife::Open)
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
-        lines.extend(splits::lines_of(team, view));
-        for (plan, _) in splits::shown(team, view) {
-            lines.extend(
-                crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
-                    .into_iter()
-                    .map(|(_, text)| format!("      {text}")),
-            );
+        if detail == Detail::Tasks {
+            lines.extend(splits::lines_of(team, view));
+            for (plan, _) in splits::shown(team, view) {
+                lines.extend(
+                    crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
+                        .into_iter()
+                        .map(|(_, text)| format!("      {text}")),
+                );
+            }
         }
         for (item, tier) in &team.tier_waits {
             if team.splits.iter().any(|plan| plan.parent() == *item) {
                 continue;
             }
             lines.push(format!("    {item}  waiting for {tier} agent"));
+        }
+        if detail == Detail::Short {
+            lines.push(tasks_line(team));
+            continue;
         }
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
@@ -526,6 +636,67 @@ fn render_in(
 /// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
 pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
+}
+
+/// The line that counts the tasks of `team` by what they do, in the order of [`TASK_COUNTS`], and names each question
+/// that waits for the human's answer with its number, the agent and its task: what the human must act on.
+fn tasks_line(team: &TeamSummary) -> String {
+    let counts: Vec<String> = TASK_COUNTS
+        .iter()
+        .filter_map(|status| {
+            let count = team.members.iter().filter(|member| member.status == *status).count();
+            (count > 0).then(|| format!("{count} {}", count_word(*status)))
+        })
+        .collect();
+    let mut text = if counts.is_empty() {
+        String::from("  tasks: none")
+    } else {
+        format!("  tasks: {}", counts.join(", "))
+    };
+    let questions: Vec<String> = team
+        .members
+        .iter()
+        .filter_map(|member| {
+            member.open_question.map(|number| {
+                format!(
+                    "questions number {number} wait for answers ({}, {})",
+                    member.agent.name(),
+                    member.task
+                )
+            })
+        })
+        .collect();
+    if !questions.is_empty() {
+        text.push_str("; ");
+        text.push_str(&questions.join("; "));
+    }
+    text
+}
+
+/// The statuses a count of tasks lists, in the order it writes them: the tasks that act or wait first.
+const TASK_COUNTS: [TaskStatus; 8] = [
+    TaskStatus::Running,
+    TaskStatus::Waiting,
+    TaskStatus::Questions,
+    TaskStatus::Queued,
+    TaskStatus::Paused,
+    TaskStatus::Stopped,
+    TaskStatus::Failed,
+    TaskStatus::Done,
+];
+
+/// The word a count of tasks writes for a status.
+const fn count_word(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Running => "running",
+        TaskStatus::Waiting => "waiting",
+        TaskStatus::Questions => "with questions",
+        TaskStatus::Queued => "queued",
+        TaskStatus::Paused => "paused",
+        TaskStatus::Stopped => "stopped",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Done => "done",
+    }
 }
 
 /// A round as one line: its ID, its item and whether it is open or how it ended.

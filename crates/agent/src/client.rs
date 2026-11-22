@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use agent_core::protocol::{
     Client, Command, EncodeError, Failure, Frame, MAX_FRAME_BYTES, Outcome, ProtocolError, Reply, ReplyFormat, Request,
-    RequestId, Response,
+    RequestId, Response, Versions,
 };
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
@@ -97,6 +97,8 @@ pub(crate) struct Connection {
     next_id: u64,
     /// Split interpretation attached to the latest response.
     split: Option<String>,
+    /// The versions of the daemon the latest response carried, when it was an answer to a status request that told them.
+    daemon_versions: Option<Versions>,
     /// Socket used for a single reconnect after a rejected read-only negotiation.
     socket: PathBuf,
     /// Negotiation result, cached for subsequent split-aware requests.
@@ -107,6 +109,11 @@ impl Connection {
     /// The split interpretation of the latest response, when it answered a split proposal.
     pub(crate) fn split_acknowledgement(&self) -> Option<&str> {
         self.split.as_deref()
+    }
+
+    /// The versions of the daemon that answered the latest request, when that answer told them.
+    pub(crate) fn daemon_versions(&self) -> Option<&Versions> {
+        self.daemon_versions.as_ref()
     }
 
     /// Connects to the daemon at `socket`.
@@ -148,6 +155,7 @@ impl Connection {
             writer,
             next_id: FIRST_REQUEST,
             split: None,
+            daemon_versions: None,
             socket: socket.to_owned(),
             format: None,
         })
@@ -315,6 +323,7 @@ impl Connection {
             None => conversation.await?,
         };
         self.split = response.split;
+        self.daemon_versions = response.daemon_versions;
         match response.result {
             Outcome::Ok { reply } => Ok(reply),
             Outcome::Error { error } => Err(ClientError::Refused(error)),

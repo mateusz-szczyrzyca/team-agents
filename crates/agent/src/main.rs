@@ -67,7 +67,7 @@ use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
 use crate::commands::status::{
-    Activity, StatusError, status_active, status_investigators, status_json, status_running,
+    Activity, Detail, StatusError, status_investigators, status_json, status_running_shown, status_shown,
 };
 use crate::commands::stop::stop;
 use crate::commands::unpause::unpause;
@@ -371,6 +371,10 @@ struct DaemonArgs {
 
 /// The arguments of `agent status`.
 #[derive(Debug, Args)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is one switch of `agent status`: --running, --task, --investigators, --json"
+)]
 struct StatusArgs {
     /// A team (`team-…`), a task (`task-…`) or a round (`round-…`) to show; every team without one.
     #[arg(value_parser = parse_view_target)]
@@ -707,14 +711,15 @@ async fn execute(environment: &Environment, command: Command, out: &mut impl Wri
             let home = environment.home()?;
             let mut connection = Connection::connect(&home.socket_file()).await?;
             let activity = Activity::new(home.clone(), environment.zone());
+            let detail = if args.task { Detail::Tasks } else { Detail::Short };
             if args.json {
                 status_json(&mut connection, args.target, out).await?;
             } else if args.investigators {
                 status_investigators(&mut connection, &home, environment.zone(), out).await?;
             } else if args.running {
-                status_running(&mut connection, &activity, out).await?;
+                status_running_shown(&mut connection, &activity, detail, out).await?;
             } else {
-                status_active(&mut connection, args.target, &activity, out).await?;
+                status_shown(&mut connection, args.target, &activity, detail, out).await?;
             }
             Ok(())
         }

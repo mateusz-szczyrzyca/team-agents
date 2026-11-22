@@ -224,6 +224,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
         serde_json::Value::Object(object) => {
             let mut changed = false;
             for key in [
+                "daemon_versions",
                 "short_desc",
                 "split",
                 "splits",
@@ -278,12 +279,17 @@ fn strip_plan_fields(value: &mut serde_json::Value) -> bool {
     }
 }
 
-/// Removes metadata introduced by protocol six from older negotiated formats.
+/// Removes metadata introduced by protocol six from older negotiated formats: the executor fields and the versions of
+/// the daemon, which only the answers to a status request carry.
 fn strip_executor_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
             object.retain(|key, _| {
-                key != "part_assignments" && key != "tier_waits" && key != "tier_questions" && key != "short_desc"
+                key != "part_assignments"
+                    && key != "tier_waits"
+                    && key != "tier_questions"
+                    && key != "short_desc"
+                    && key != "daemon_versions"
             });
             for nested in object.values_mut() {
                 strip_executor_fields(nested);
