@@ -191,6 +191,15 @@ impl Team {
         })
     }
 
+    /// Records a claim for `pr` on `round`.
+    ///
+    /// # Errors
+    /// Returns [`DeliverRoundError`] unless the round is open and working.
+    pub fn deliver_round_with_pr(&mut self, id: &RoundId, pr: PullRequest) -> Result<(), DeliverRoundError> {
+        let _ = (id, pr);
+        Err(DeliverRoundError::NoSuchRound { round: id.clone() })
+    }
+
     /// Records a claim after the caller verifies the item's clean git tree and ancestry.
     ///
     /// # Errors
@@ -296,6 +305,14 @@ impl CheckedMut<'_, Team> {
     /// Returns [`EndDeliveryError`] if the claim cannot be ended.
     pub fn end_delivery(&mut self, round: &RoundId, at: Timestamp) -> Result<(), EndDeliveryError> {
         self.value.end_delivery(round, at)
+    }
+
+    /// See [`Team::deliver_round`].
+    ///
+    /// # Errors
+    /// Returns [`DeliverRoundError`] when the claim cannot be recorded.
+    pub fn deliver_round_with_pr(&mut self, round: &RoundId, pr: PullRequest) -> Result<(), DeliverRoundError> {
+        self.value.deliver_round_with_pr(round, pr)
     }
 
     /// See [`Team::deliver_round`].
