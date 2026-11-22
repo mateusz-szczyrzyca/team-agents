@@ -252,6 +252,11 @@ impl CheckedMut<'_, Member> {
         self.value.held_task(holder, at);
     }
 
+    /// See [`Member::start_waiting`].
+    pub(crate) fn start_waiting(&mut self, at: Timestamp) -> Timestamp {
+        self.value.start_waiting(at)
+    }
+
     /// See [`Member::attach_session`].
     ///
     /// # Errors
@@ -421,10 +426,15 @@ pub enum MemberError {
 }
 
 impl Member {
-    /// When the task began to wait for its agent; `None` when it does not wait. Stub: always none.
+    /// When the task began to wait for its agent; `None` when it does not wait.
     #[must_use]
     pub const fn waiting_since(&self) -> Option<Timestamp> {
-        None
+        self.waiting_since
+    }
+
+    /// Records that the task waits for its agent from `at`; a wait that began earlier keeps its moment.
+    pub fn start_waiting(&mut self, at: Timestamp) -> Timestamp {
+        *self.waiting_since.get_or_insert(at)
     }
 
     /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan under step judging.
@@ -770,6 +780,7 @@ impl Member {
     /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own. Only
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
+        self.waiting_since = None;
         let before = std::mem::replace(&mut self.agent, holder);
         self.past_holders.push(holding::Holding {
             agent: before,
@@ -804,6 +815,7 @@ impl Member {
         if self.runs.iter().any(|run| run.id() == &id) {
             return Err(RunError::DuplicateRun { run: id });
         }
+        self.waiting_since = None;
         self.runs.push(Run::started_for(id, at, session, rounds)?);
         Ok(())
     }

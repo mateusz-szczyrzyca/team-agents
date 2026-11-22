@@ -616,10 +616,11 @@ impl State {
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
-    /// Stub: the wait of `task` is not recorded yet.
+    /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
+    /// `None` when the task is not in the state.
     pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {
-        let _ = (task, at);
-        None
+        let (_, mut member) = self.find_task_mut(task)?;
+        Some(member.start_waiting(at))
     }
 
     /// Hands the task over (see the docs of the stub above).
