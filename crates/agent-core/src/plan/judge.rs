@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-use super::{Plan, Step, StepState};
+use super::{Check, Plan, Step, StepState};
 use crate::ids::ItemId;
 
 #[cfg(test)]
@@ -100,4 +100,50 @@ pub fn steps_to_judge_with<'a, 'b>(
     }
 
     to_judge
+}
+
+/// What the daemon does with the check of a step that became done.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckRun<'a> {
+    /// The check is judged without a command: the step has no check, its check is `reviewer`, or it is `exists`.
+    Inline,
+    /// The command is a refused gate: the step is declared and no command runs.
+    Refused,
+    /// Command checks are switched off (`check_seconds = 0`): the step is declared and no command runs.
+    Disabled,
+    /// The command runs in the worktree under the time limit.
+    Run(&'a str),
+}
+
+/// What is done with the check of a step that became done, given `check_seconds` and the refused prefixes.
+#[must_use]
+pub fn check_run<'a>(check: Option<&'a Check>, check_seconds: u64, refused: &[String]) -> CheckRun<'a> {
+    match check {
+        None | Some(Check::Reviewer | Check::Exists(_)) => CheckRun::Inline,
+        Some(Check::Command(command)) => {
+            if refuse_command(command, refused) {
+                CheckRun::Refused
+            } else if check_seconds == 0 {
+                CheckRun::Disabled
+            } else {
+                CheckRun::Run(command)
+            }
+        }
+    }
+}
+
+/// Which steps of `current` are to be judged at the end of a run, in the order of the plan, and what the daemon does
+/// with each step's check.
+#[must_use]
+pub fn steps_to_run<'a>(
+    current: &'a Plan,
+    last_plan: Option<&Plan>,
+    last_state: impl Fn(&ItemId) -> Option<JudgementState>,
+    check_seconds: u64,
+    refused: &[String],
+) -> Vec<(ItemId, CheckRun<'a>)> {
+    steps_to_judge(current, last_plan, last_state)
+        .into_iter()
+        .map(|step| (step.id, check_run(step.check.as_ref(), check_seconds, refused)))
+        .collect()
 }

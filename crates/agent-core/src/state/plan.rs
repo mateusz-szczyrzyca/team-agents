@@ -8,7 +8,31 @@ use std::num::NonZeroU32;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ids::ItemId;
+use super::run::RunEnd;
+use crate::decide::outcome::Pause;
+use crate::ids::{ItemId, RunId};
+
+/// The record of a finished run whose plan checks or settlement are in progress (`docs/state.md`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunningPlanCheck {
+    /// The run whose end is being judged and settled.
+    pub run: RunId,
+    /// How the run ended.
+    pub end: RunEnd,
+    /// The pause the run's end implies, when it ended with a provider limit.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pause: Option<Pause>,
+    /// Whether the run made progress before it ended.
+    #[serde(default)]
+    pub made_progress: bool,
+    /// The agent's final message of the run, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub final_message: Option<String>,
+    /// When the CLI run ended, before its plan command checks started.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ended_at: Option<super::Timestamp>,
+}
 
 /// Where the task is with its plan: going back until it is clean, asked about, or released by the human.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -91,6 +115,9 @@ pub struct PlanKeeping {
     /// Step checks that were refused because they ran the gate, to be told on the next run.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     refused_gate: Vec<(ItemId, String)>,
+    /// A finished run whose command checks or plan settlement are in progress; `None` when none is.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    running_check: Option<RunningPlanCheck>,
 }
 
 impl PlanKeeping {
@@ -184,6 +211,17 @@ impl PlanKeeping {
     /// The refused gate notices for the next run, taken out.
     pub(super) fn take_refused_gate(&mut self) -> Vec<(ItemId, String)> {
         std::mem::take(&mut self.refused_gate)
+    }
+
+    /// The finished run whose command checks or plan settlement are in progress, when one is.
+    #[must_use]
+    pub const fn running_check(&self) -> Option<&RunningPlanCheck> {
+        self.running_check.as_ref()
+    }
+
+    /// Sets or clears the record of a finished run whose command checks or plan settlement are in progress.
+    pub(super) fn set_running_check(&mut self, check: Option<RunningPlanCheck>) {
+        self.running_check = check;
     }
 }
 

@@ -518,6 +518,14 @@ async fn plan_steps_are_preserved_in_status_after_daemon_restart() {
 #[tokio::test]
 async fn plan_steps_with_various_checks_report_declared_and_mismatch() {
     let mut rig = round_with_changes("script:first,fix-script:second").await;
+    // Command checks are switched off here: this test asserts that the command step stays declared (item 1.1 of the
+    // step checks made the daemon run commands; with `check_seconds = 0` the step is still declared as before).
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[plan]\nbounces = 3\n", "[plan]\nbounces = 3\ncheck_seconds = 0\n"),
+    )
+    .unwrap();
     let plan = "\
 Do several.
 

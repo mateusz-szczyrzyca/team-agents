@@ -10,6 +10,7 @@ pub mod activity;
 pub mod compose;
 mod hold;
 mod launch;
+pub use launch::check_environment;
 mod output;
 
 use std::collections::BTreeMap;

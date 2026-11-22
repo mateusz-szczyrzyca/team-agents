@@ -63,3 +63,97 @@ fn legacy_mismatch_reason_without_title_or_reason_loads() {
         other => panic!("expected Mismatch, got {other:?}"),
     }
 }
+
+#[test]
+fn running_plan_check_roundtrips_and_is_omitted_when_cleared() {
+    use crate::status::RunOutcome;
+
+    let mut keeping = PlanKeeping::default();
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        pause: None,
+        made_progress: true,
+        final_message: Some("Finished.\nSTATUS: DONE".to_owned()),
+        ended_at: None,
+    };
+    keeping.set_running_check(Some(check.clone()));
+    assert_eq!(keeping.running_check(), Some(&check));
+
+    let json = serde_json::to_string(&keeping).expect("serialize PlanKeeping with running_check");
+    assert!(json.contains(r#""running_check":"#), "{json}");
+    let loaded: PlanKeeping = serde_json::from_str(&json).expect("deserialize PlanKeeping with running_check");
+    assert_eq!(loaded.running_check(), Some(&check));
+
+    keeping.set_running_check(None);
+    assert_eq!(keeping.running_check(), None);
+    let cleared_json = serde_json::to_string(&keeping).expect("serialize cleared PlanKeeping");
+    assert!(!cleared_json.contains("running_check"), "{cleared_json}");
+}
+
+#[test]
+fn state_from_main_before_running_check_loads() {
+    let fixture = include_str!("../../../tests/fixtures/state-v0-36-before-proposals.json");
+    let state = crate::state::State::from_json(fixture).expect("legacy state from main loads");
+    assert_eq!(state.teams().len(), 3);
+}
+
+#[test]
+fn legacy_member_without_plan_persists_running_plan_check_without_enabling_plan_keeping() {
+    use crate::decide::outcome::{Pause, PauseReason};
+    use crate::state::Member;
+    use crate::state::fixtures::{at, normal, task};
+
+    let mut member = Member::without_plan(task(1), normal("claude-1"));
+    assert_eq!(member.plan(), None);
+    assert_eq!(member.plan_running_check(), None);
+
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::RateLimited,
+        pause: Some(Pause {
+            until: at(600),
+            reason: PauseReason::RateLimit,
+            evidence: "429 Too Many Requests".to_owned(),
+        }),
+        made_progress: false,
+        final_message: None,
+        ended_at: None,
+    };
+    member.set_plan_running_check(Some(check.clone()));
+    assert_eq!(member.plan(), None, "legacy member still has no PlanKeeping");
+    assert_eq!(member.plan_running_check(), Some(&check));
+
+    let json = serde_json::to_string(&member).expect("serialize legacy member with running_check");
+    assert!(json.contains(r#""running_check":"#), "{json}");
+    let loaded: Member = serde_json::from_str(&json).expect("deserialize legacy member with running_check");
+    assert_eq!(loaded.plan(), None);
+    assert_eq!(loaded.plan_running_check(), Some(&check));
+
+    member.set_plan_running_check(None);
+    assert_eq!(member.plan_running_check(), None);
+    let cleared = serde_json::to_string(&member).expect("serialize cleared legacy member");
+    assert!(!cleared.contains("running_check"), "{cleared}");
+}
+
+#[test]
+fn running_plan_check_round_trips_original_ended_at_timestamp() {
+    use crate::state::fixtures::at;
+    use crate::status::RunOutcome;
+
+    let check = RunningPlanCheck {
+        run: "run-20261122-060000-abcd".parse().unwrap(),
+        end: RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        pause: None,
+        made_progress: true,
+        final_message: Some("STATUS: DONE".to_owned()),
+        ended_at: Some(at(123)),
+    };
+    let json = serde_json::to_string(&check).expect("serialize RunningPlanCheck with ended_at");
+    let loaded: RunningPlanCheck = serde_json::from_str(&json).expect("deserialize RunningPlanCheck with ended_at");
+    assert_eq!(loaded.ended_at, Some(at(123)));
+}
