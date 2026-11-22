@@ -98,3 +98,127 @@ fn an_agent_with_no_limit_is_never_held() {
     ];
     assert_eq!(busy_run(&agent("codex-1"), RunLimit::Unlimited, &going), None);
 }
+
+use super::{Queued, Slot, plan_starts, runs_going};
+use crate::ids::TaskId;
+use crate::state::State;
+use crate::state::fixtures::{inv, member, team, team_id};
+
+/// A queued task of `name` (`tier`) in `team_name`, with ID `task_name`.
+fn queued(name: &str, tier: Tier, team_name: &str, task_name: &str) -> Queued {
+    Queued {
+        task: task_name.parse().expect("a valid task ID"),
+        team: team_name.parse().expect("a valid team ID"),
+        agent: agent(name),
+        tier,
+    }
+}
+
+/// The task ID `name`.
+fn task_id(name: &str) -> TaskId {
+    name.parse().expect("a valid task ID")
+}
+
+#[test]
+fn plan_starts_table_covers_every_limit_and_queue_outcome() {
+    let mut state = State::new();
+    state.insert_team(team(1)).expect("sample team inserts");
+    let mut reviewer = member(9, inv("inv-codex"));
+    reviewer
+        .transition(crate::status::TaskStatus::Running)
+        .expect("queued reviewer transitions to running");
+    let reviewer_team = team_id(1).to_string();
+    let reviewer_task = reviewer.task().to_string();
+    state
+        .add_reviewer(&team_id(1), reviewer)
+        .expect("outside reviewer is added");
+    let reviewer_going = runs_going(state.teams());
+
+    let t_a = "team-20261122-140915-aaaa";
+    let t_b = "team-20261122-140915-bbbb";
+    let k_1 = "task-20261122-140915-a1a1";
+    let k_2 = "task-20261122-140915-b1b1";
+    let k_3 = "task-20261122-140915-c1c1";
+
+    let limit_0 = Limits {
+        runs_per_agent: 0,
+        ..Limits::default()
+    };
+    let limit_1 = Limits::default();
+    let limit_2 = Limits {
+        runs_per_agent: 2,
+        ..Limits::default()
+    };
+
+    let cases: Vec<(&str, Vec<Queued>, Vec<Going>, Limits, Vec<(TaskId, Slot)>)> = vec![
+        (
+            "the agent is free",
+            vec![queued("codex-1", Tier::Normal, t_a, k_1)],
+            vec![],
+            limit_1.clone(),
+            vec![(task_id(k_1), Slot::Start)],
+        ),
+        (
+            "running in the same team",
+            vec![queued("codex-1", Tier::Normal, t_a, k_2)],
+            vec![run("codex-1", t_a, k_1)],
+            limit_1.clone(),
+            vec![(task_id(k_2), Slot::Wait(run("codex-1", t_a, k_1)))],
+        ),
+        (
+            "running in another team",
+            vec![queued("codex-1", Tier::Normal, t_b, k_2)],
+            vec![run("codex-1", t_a, k_1)],
+            limit_1.clone(),
+            vec![(task_id(k_2), Slot::Wait(run("codex-1", t_a, k_1)))],
+        ),
+        (
+            "running as a reviewer",
+            vec![queued("inv-codex", Tier::Investigator, t_b, k_2)],
+            reviewer_going,
+            limit_1.clone(),
+            vec![(
+                task_id(k_2),
+                Slot::Wait(run("inv-codex", &reviewer_team, &reviewer_task)),
+            )],
+        ),
+        (
+            "the limit 0",
+            vec![queued("codex-1", Tier::Normal, t_b, k_2)],
+            vec![run("codex-1", t_a, k_1)],
+            limit_0,
+            vec![(task_id(k_2), Slot::Start)],
+        ),
+        (
+            "the limit 2 with one run",
+            vec![queued("codex-1", Tier::Normal, t_b, k_2)],
+            vec![run("codex-1", t_a, k_1)],
+            limit_2.clone(),
+            vec![(task_id(k_2), Slot::Start)],
+        ),
+        (
+            "the limit 2 with two runs",
+            vec![queued("codex-1", Tier::Normal, t_b, k_3)],
+            vec![run("codex-1", t_a, k_1), run("codex-1", t_b, k_2)],
+            limit_2,
+            vec![(task_id(k_3), Slot::Wait(run("codex-1", t_a, k_1)))],
+        ),
+        (
+            "two tasks of one agent queued at once (one starts)",
+            vec![
+                queued("codex-1", Tier::Normal, t_a, k_1),
+                queued("codex-1", Tier::Normal, t_b, k_2),
+            ],
+            vec![],
+            limit_1,
+            vec![
+                (task_id(k_1), Slot::Start),
+                (task_id(k_2), Slot::Wait(run("codex-1", t_a, k_1))),
+            ],
+        ),
+    ];
+
+    for (name, queue, going, limits, expected) in cases {
+        assert_eq!(plan_starts(&queue, &going, &limits), expected, "{name}");
+    }
+}

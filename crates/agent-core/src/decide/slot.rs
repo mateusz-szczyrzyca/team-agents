@@ -94,3 +94,32 @@ pub fn runs_going(teams: &[Team]) -> Vec<Going> {
         })
         .collect()
 }
+
+/// A queued task that asks to start a run: its task, its team, its agent and the agent's tier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Queued {
+    /// The task that is queued.
+    pub task: TaskId,
+    /// The team of the queued task.
+    pub team: TeamId,
+    /// The agent of the queued task.
+    pub agent: AgentName,
+    /// The tier of the agent.
+    pub tier: Tier,
+}
+
+/// Whether a queued task starts a run now or waits for a run of its agent that holds the limit.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Slot {
+    /// The agent is below its limit of runs: the task starts now and takes a slot.
+    Start,
+    /// The agent is at its limit of runs: the task stays queued and waits for this run.
+    Wait(Going),
+}
+
+/// Decides, for each task of `queued` in order, whether it starts now or waits for a run of its agent, given the runs
+/// `going` and `limits`. A task that starts takes a slot of its agent for the tasks queued after it.
+#[must_use]
+pub fn plan_starts(queued: &[Queued], _going: &[Going], _limits: &Limits) -> Vec<(TaskId, Slot)> {
+    queued.iter().map(|item| (item.task.clone(), Slot::Start)).collect()
+}
