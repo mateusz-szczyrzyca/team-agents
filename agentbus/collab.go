@@ -1022,6 +1022,12 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 	var id int64
 	err := transact(s.bus, DelegateStorage, func(st *State) *DelegateError {
 		s.touch(st)
+		// A request for a step of a plan is checked in the transaction that queues it: two requests at once cannot
+		// both take the last free worker.
+		if team := st.Teams[s.team]; named.Step != "" && team != nil && freeWorkers(team, sortedHelpers(st)) <= 0 {
+			return opErr(DelegateNoFreeWorker, "no worker of your team is free now: do step %s yourself, or ask again "+
+				"for a later step", named.Step)
+		}
 		st.NextHelperID++
 		if follows != 0 {
 			first := st.Helpers[helperKey(follows)]
@@ -1490,7 +1496,41 @@ func cmdClaimLead(args []string) {
 	fmt.Println(out)
 }
 
-// freeWorkers counts the workers of team that could take one more request of the team now.
+// freeWorkers counts the workers of team that could take one more request of the team now: the workers that can run
+// (active, sleeping or waking) and serve no request (starting or running), less the team's requests still queued for
+// them. It is zero or below when a new request would wait. A request belongs to the team when its requester is a
+// member; a worker's run of its own does not keep it from a request.
 func freeWorkers(team *Team, helpers []*Helper) int {
-	return 1
+	serving := map[string]bool{}
+	waiting := 0
+	for _, h := range helpers {
+		switch h.Status {
+		case HelperStarting, HelperRunning:
+			serving[h.Worker] = true
+		case HelperQueued:
+			if team.Members[h.From] != nil {
+				waiting++
+			}
+		case HelperDone, HelperFailed, HelperUnclear:
+		}
+	}
+	free := 0
+	for name, m := range team.Members {
+		if m.Tier == TierWorker && workerCanRun(m.State) && !serving[name] {
+			free++
+		}
+	}
+	return free - waiting
+}
+
+// workerCanRun reports whether a worker in state can be given a request: one that is done, excluded, hung, paused or
+// stopped is not started for it.
+func workerCanRun(state MemberState) bool {
+	switch state {
+	case MemberActive, MemberSleeping, MemberWaking:
+		return true
+	case MemberDone, MemberExcluded, MemberHung, MemberPaused, MemberStopped:
+		return false
+	}
+	return false
 }
