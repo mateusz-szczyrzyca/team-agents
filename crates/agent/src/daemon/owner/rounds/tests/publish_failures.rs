@@ -235,6 +235,98 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
 }
 
 #[tokio::test]
+async fn conflict_changes_read_failure_routes_through_publish_failed_keeping_pass_accounted() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate,integrate,merge-base"),
+            normal("claude-1", "work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let config = rig.home.config_file();
+    let mut text = std::fs::read_to_string(&config).unwrap();
+    text.push_str("\n[publish]\ntries = 0\n");
+    std::fs::write(config, text).unwrap();
+
+    rig.start().await;
+
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    let coordinator = tasks[0].clone();
+    let lead = tasks[1].clone();
+
+    // Coordinator asks to split into 2 parts:
+    rig.status_is(&coordinator, TaskStatus::Questions).await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: coordinator.clone(),
+                number: n(1),
+                answers: answers(&[(1, &split_approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Part 1.1a PR #1 is approved; refuse merge for conflict:
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+
+    // Wait until conflict pass starts:
+    let state = rig
+        .state_where("part 1.1a is in conflict pass", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.merge_conflict().is_some() && item.merge_passes() == 1
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    let approved_head = item.conflict_approved_head().unwrap().clone();
+    assert_eq!(item.merge_passes(), 1);
+
+    move_base(&rig);
+
+    // Install post-receive hook on origin that breaks the lead's refs when push succeeds:
+    let hook_dir = rig.origin.join("hooks");
+    std::fs::create_dir_all(&hook_dir).unwrap();
+    let hook = hook_dir.join("post-receive");
+    let link = std::fs::read_to_string(rig.worktree(&coordinator).join(".git")).unwrap();
+    let gitdir = link.trim().strip_prefix("gitdir: ").unwrap().to_string();
+    std::fs::write(
+        &hook,
+        format!(
+            "#!/bin/sh\ngit --git-dir='{gitdir}' update-ref -d refs/heads/main\ngit --git-dir='{gitdir}' update-ref -d refs/remotes/origin/main\n"
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+
+    // Signal fake base ready in coordinator's worktree:
+    std::fs::write(rig.worktree(&coordinator).join(".fake-base-ready"), "").unwrap();
+
+    // Wait until read failure after successful push routes through publish_failed to question:
+    let state = rig
+        .state_where("read failure routes through publish_failed to question", |state| {
+            let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+            item.publish_question().is_some() && item.publish_tries() >= 1
+        })
+        .await;
+    let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.merge_passes(), 1, "pushed conflict pass must stay accounted");
+    assert_eq!(item.conflict_accounted_head(), Some(&approved_head), "accounted head must be retained");
+    assert_eq!(item.conflict_refunded_head(), None, "must not be marked refunded");
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
 async fn split_part_non_conflict_refusal_stays_held_without_bypassing_refusal() {
     let mut rig = Rig::new(
         &[
