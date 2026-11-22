@@ -932,6 +932,21 @@ tests of `RoundState` list its phases and events):
   the passes are; it is never sent back to the team and spends none of its passes. A question about commits alone leaves the
   count of passes as it is.
 
+**The early refusal** (`agent_core::decide::commit_guard`, `agent_runtime::commit_guard`, `agent guard-commit`). The same rule
+asked while the commit is only staged, so that the mistake is told to the agent while it can be undone. `frozen_tests` lists the
+test files that the `RED:` commits of the branch since its merge base with the fetched base branch touched, and `judge_commit`
+refuses a commit that takes lines out of one of them unless its subject starts with `TEST-FIX:` and it changes test files only
+(`Refusal::FrozenTestEdited`, `Refusal::TestFixTouchesOtherFiles`). `judge_staged` reads the index with
+`git diff-index --cached` (against `HEAD`, or against its parent for an amend, which the command finds by looking for
+`--amend` in the command lines of its ancestors in `/proc`) and decides; a commit that a merge, a cherry-pick, a revert or a
+rebase makes is `Judged::NotAuthored`. It writes nothing. The daemon gives every run a hooks directory in the run's directory
+(`commit_guard::hooks::install_hooks`): the repository's hooks linked in and a `commit-msg` that runs
+`agent guard-commit "$1"`, stops the commit on the guard's exit status 1 only, and then runs the repository's own `commit-msg`.
+The directory reaches git as `core.hooksPath` in `GIT_CONFIG_*` of the run's environment, next to the signing configuration. A
+checkout that cannot be given hooks is run without them (a `git_call_failed` warning). The command judges only the worktree of a
+task of its home, for a repository with a checks table; it loads the texts of `prompts/harness/run/commit-refused*.md` from the
+home and fails open where it cannot judge. The checks before the review stay the second look.
+
 **Findings about commits** (`agent_core::decide::checks::commits`). The only finding that names a commit is the edit of a
 frozen test, and the team cannot repair it: the commit is in the branch for good and published history is never rewritten.
 `split` takes it out of the issues; `settle` leaves what nobody has answered: not the commit and path the human allowed or
