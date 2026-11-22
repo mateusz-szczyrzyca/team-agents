@@ -107,6 +107,15 @@ pub enum ConflictPublishResult {
     Failed,
 }
 
+/// The accounting state of a conflict resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AccountingState {
+    /// The pass has not yet been recorded for this conflict resolution.
+    Unrecorded,
+    /// The pass has already been recorded for this conflict resolution.
+    AlreadyRecorded,
+}
+
 /// The outcome of conflict pass accounting on publication.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConflictAccountingStep {
@@ -117,27 +126,49 @@ pub enum ConflictAccountingStep {
 }
 
 #[must_use]
-/// Decides whether a conflict pass should be spent given the publication result and whether this result was already accounted.
-pub fn account_conflict_pass(result: ConflictPublishResult, already_recorded: bool) -> ConflictAccountingStep {
-    match result {
-        ConflictPublishResult::Published if !already_recorded => ConflictAccountingStep::SpendPass,
-        ConflictPublishResult::Published | ConflictPublishResult::Failed => ConflictAccountingStep::RetainBudget,
+/// Decides whether a conflict pass should be spent given the publication result and its accounting state.
+pub fn account_conflict_pass(result: ConflictPublishResult, accounting: AccountingState) -> ConflictAccountingStep {
+    match (result, accounting) {
+        (ConflictPublishResult::Published, AccountingState::Unrecorded) => ConflictAccountingStep::SpendPass,
+        (ConflictPublishResult::Published, AccountingState::AlreadyRecorded)
+        | (ConflictPublishResult::Failed, _) => ConflictAccountingStep::RetainBudget,
     }
 }
 
-/// The status of a pull request and its gated commit for recovery of legacy exhausted rounds.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SplitRoundFacts {
-    /// Whether the pull request is already merged on remote.
-    pub is_merged: bool,
-    /// Whether a valid gated commit hash was verified for this round.
-    pub has_gated_commit: bool,
-    /// Whether the pull request branch is open and available for merging.
-    pub is_open: bool,
-    /// The conflict passes recorded as spent so far.
-    pub spent_passes: u32,
-    /// The configured conflict passes limit.
-    pub limit: u32,
+/// Whether the conflict resolution was published to the pull request branch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConflictPublication {
+    /// The conflict pass was successfully published to the pull request branch.
+    Published,
+    /// The conflict pass was never published to the pull request branch.
+    Unpublished,
+}
+
+/// The gating status of the round's commit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GatingStatus {
+    /// A valid gated commit is recorded for this round.
+    Gated,
+    /// No valid gated commit is recorded.
+    Ungated,
+}
+
+/// The state of the pull request and its conflict publication for split round recovery.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitPullStatus {
+    /// The pull request has already merged on remote.
+    Merged,
+    /// The pull request is open and ready for merge attempts.
+    Open {
+        /// The gating status of the commit to be merged.
+        gating: GatingStatus,
+        /// The conflict budget for the round.
+        budget: ConflictBudget,
+        /// Whether the last conflict pass reached the pull request branch.
+        conflict: ConflictPublication,
+    },
+    /// The pull request was closed without merging.
+    ClosedUnmerged,
 }
 
 /// What the daemon does when recovering an exhausted split round.
@@ -153,13 +184,17 @@ pub enum ExhaustedRoundRecovery {
 
 #[must_use]
 /// Decides how to recover a split round that appeared exhausted.
-pub fn recover_exhausted_split_round(facts: &SplitRoundFacts) -> ExhaustedRoundRecovery {
-    if facts.is_merged {
-        ExhaustedRoundRecovery::CompleteMerged
-    } else if facts.is_open && facts.has_gated_commit && facts.spent_passes < facts.limit {
-        ExhaustedRoundRecovery::ResumeMerge
-    } else {
-        ExhaustedRoundRecovery::WaitHuman
+pub fn recover_exhausted_split_round(status: SplitPullStatus) -> ExhaustedRoundRecovery {
+    match status {
+        SplitPullStatus::Merged => ExhaustedRoundRecovery::CompleteMerged,
+        SplitPullStatus::Open {
+            gating: GatingStatus::Gated,
+            budget,
+            conflict,
+        } if budget.spent < budget.limit || conflict == ConflictPublication::Unpublished => {
+            ExhaustedRoundRecovery::ResumeMerge
+        }
+        SplitPullStatus::Open { .. } | SplitPullStatus::ClosedUnmerged => ExhaustedRoundRecovery::WaitHuman,
     }
 }
 
