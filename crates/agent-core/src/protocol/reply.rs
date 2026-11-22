@@ -542,7 +542,11 @@ impl From<&Team> for TeamSummary {
             part_assignments: team.part_assignments().clone(),
             members: crew
                 .chain(reviewers)
-                .map(|(role, member)| MemberSummary::of(role, member))
+                .map(|(role, member)| {
+                    let mut summary = MemberSummary::of(role, member);
+                    summary.returned = returned_by(team, member);
+                    summary
+                })
                 .collect(),
             activities: team.activities().to_vec(),
             task_plans: std::collections::BTreeMap::new(),
@@ -580,9 +584,31 @@ impl TeamSummary {
     /// The summary with `limit`, the `[replacement] rejections` of the daemon, told to every count of returns; `0` is no
     /// limit.
     #[must_use]
-    pub fn with_rejection_limit(self, _limit: u32) -> Self {
+    pub fn with_rejection_limit(mut self, limit: u32) -> Self {
+        for returned in self.members.iter_mut().filter_map(|member| member.returned.as_mut()) {
+            returned.limit = NonZeroU32::new(limit);
+        }
         self
     }
+}
+
+/// How often the lead returned the item that `member` holds in `team`; `None` when it holds none, or none that was
+/// returned and run again after.
+fn returned_by(team: &Team, member: &Member) -> Option<Returned> {
+    team.items().iter().find_map(|progress| {
+        let (ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }) = progress.phase() else {
+            return None;
+        };
+        if assignee.as_str() != member.agent().name() {
+            return None;
+        }
+        let counted = NonZeroU32::new(progress.counted_rejections(0).get())?;
+        Some(Returned {
+            item: progress.id(),
+            counted,
+            limit: None,
+        })
+    })
 }
 
 #[cfg(test)]
