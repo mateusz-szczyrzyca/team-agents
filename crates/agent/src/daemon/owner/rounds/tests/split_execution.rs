@@ -3,6 +3,7 @@
 use super::rig::{ONE, Rig, investigator, normal};
 use crate::client::Connection;
 use crate::daemon::owner::fixture::{answers, n};
+use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{AnswerRequest, Client, Command, ControlRequest, Target};
 use agent_core::state::{ItemPhase, MergeMode};
 use agent_core::status::TaskStatus;
@@ -1003,8 +1004,8 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
 
     // The coordinator asked the question once; tier_questions records it deterministically:
     let team = rig.state().team(&team_id).unwrap().clone();
-    assert!(team.tier_questions().contains_key(&"1.1".parse().unwrap()));
-    assert_eq!(team.find(&tasks[0]).unwrap().1.status(), &TaskStatus::Questions);
+    assert!(team.tier_waits().contains_key(&"1.1".parse().unwrap()));
+    assert_eq!(team.find(&tasks[0]).unwrap().1.status(), TaskStatus::Questions);
     assert!(!rig.home.questions_file(&tasks[0], n(3)).exists());
 
     rig.stop().await.unwrap();
@@ -1013,17 +1014,339 @@ async fn split_part_nobody_qualified_writes_one_question_and_no_repeated_lead_wa
 #[tokio::test]
 async fn authentic_pre_task_persisted_fixture_loads_and_daemon_resumes() {
     let mut rig = Rig::new(
-        &[investigator("inv-lead", "sleep"), normal("claude-1", "sleep")],
+        &[
+            investigator("inv-lead", "clean-done:DELIVERED: #3,clean-done:DELIVERED: #3,sleep"),
+            normal("claude-1", "sleep"),
+        ],
         5,
         false,
     )
     .await;
-    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-delivery.json");
+    let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-split-delivery.json");
     std::fs::write(rig.home.state_file(), fixture).unwrap();
 
+    let team_id: TeamId = "team-20261121-120000-spl1".parse().unwrap();
+    let lead_task: TaskId = "task-20261121-120001-spl1".parse().unwrap();
+    let member_task: TaskId = "task-20261121-120002-spl1".parse().unwrap();
+
+    std::fs::create_dir_all(rig.home.task_dir(&lead_task)).unwrap();
+    std::fs::create_dir_all(rig.home.task_dir(&member_task)).unwrap();
+    let lead_branch = format!("agents/inv-lead/{lead_task}-1.1");
+    let branch_c = format!("agents/inv-lead/{lead_task}-1.1c");
+    let member_branch = format!("agents/claude-1/{member_task}-1.1");
+    super::rig::git(&rig.repo, &["branch", &lead_branch, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_c, "main"]);
+    super::rig::git(&rig.repo, &["branch", &member_branch, "main"]);
+    super::rig::git(
+        &rig.repo,
+        &[
+            "worktree",
+            "add",
+            rig.worktree(&lead_task).to_str().unwrap(),
+            &lead_branch,
+        ],
+    );
+    super::rig::git(
+        &rig.repo,
+        &[
+            "worktree",
+            "add",
+            rig.worktree(&member_task).to_str().unwrap(),
+            &member_branch,
+        ],
+    );
+
+    rig.github.foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1a");
+    rig.github.foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1b");
+    let pr3 = rig.github.foreign_pull(&branch_c);
+    assert_eq!(pr3, 3);
+    rig.github.merged_by_a_human(3);
+
     rig.start().await;
-    let state = rig.state();
-    assert_eq!(state.teams().len(), 3);
-    assert_eq!(state.teams()[0].id().as_str(), "team-20261111-193000-a1b2");
+
+    // Part c round opens for inv-lead:
+    rig.state_where("round 3 opens for inv-lead on part c", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 3
+            && team.rounds()[2].is_open()
+            && team.rounds()[2].part().map(|p| p.to_string()) == Some("c".to_string())
+    })
+    .await;
+
+    // Restart daemon between opening and delivery:
     rig.stop().await.unwrap();
+    rig.start().await;
+
+    // Team reaches Done after part c delivered:
+    let state = rig
+        .state_where("team done after part c delivered", |state| {
+            let team = state.team(&team_id).unwrap();
+            matches!(
+                team.item("1.1".parse().unwrap()).unwrap().phase(),
+                ItemPhase::Done { .. }
+            )
+        })
+        .await;
+
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds().len(), 3);
+    assert_eq!(team.rounds()[2].delivered_by().unwrap().number.get().get(), 3);
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead() {
+    let mut rig = Rig::new(
+        &[
+            investigator(
+                "inv-lead",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,clean-done:DELIVERED: #3,sleep",
+            ),
+            normal("claude-1", "clean-done:already delivered,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let branch_part_a = format!("agents/claude-1/{}-1.1a", tasks[1]);
+    let branch_part_b = format!("agents/claude-1/{}-1.1b", tasks[1]);
+    let branch_part_c = format!("agents/inv-lead/{}-1.1c", tasks[0]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_a, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_b, "main"]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_c, "main"]);
+
+    let pr1 = rig.github.foreign_pull(&branch_part_a);
+    let pr2 = rig.github.foreign_pull(&branch_part_b);
+    let pr3 = rig.github.foreign_pull(&branch_part_c);
+    assert_eq!(pr1, 1);
+    assert_eq!(pr2, 2);
+    assert_eq!(pr3, 3);
+    rig.github.merged_by_a_human(1);
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(3))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Round 1 closed via PR 1:
+    rig.state_where("round 1 closed", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().first().is_some_and(|r| !r.is_open())
+    })
+    .await;
+
+    // Round 2 opened for part b:
+    rig.state_where("round 2 open for part b", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 2 && team.rounds()[1].is_open()
+    })
+    .await;
+
+    // Stop claude-1 BEFORE part b merges:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(tasks[1].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+
+    // NOW merge PR 2 by a human while member is stopped:
+    rig.github.merged_by_a_human(2);
+    rig.github.merged_by_a_human(3);
+
+    // Round 2 closes via PR 2, and round 3 opens for inv-lead on part c:
+    rig.state_where("round 3 open for inv-lead on part c", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() >= 3
+            && team.rounds()[2].is_open()
+            && team.rounds()[2].part().map(|p| p.to_string()) == Some("c".to_string())
+            && match team.item("1.1".parse().unwrap()).unwrap().phase() {
+                ItemPhase::InProgress { assignee, .. } => assignee.as_str() == "inv-lead",
+                _ => false,
+            }
+    })
+    .await;
+
+    // Team finishes after part c delivered by lead:
+    let state = rig
+        .state_where("team done after part c delivered", |state| {
+            let team = state.team(&team_id).unwrap();
+            matches!(
+                team.item("1.1".parse().unwrap()).unwrap().phase(),
+                ItemPhase::Done { .. }
+            )
+        })
+        .await;
+
+    let team = state.team(&team_id).unwrap();
+    assert_eq!(team.rounds().len(), 3);
+    assert_eq!(team.rounds()[0].part().unwrap().to_string(), "a");
+    assert_eq!(team.rounds()[1].part().unwrap().to_string(), "b");
+    assert_eq!(team.rounds()[2].part().unwrap().to_string(), "c");
+    assert_eq!(team.rounds()[2].delivered_by().unwrap().number.get().get(), 3);
+    assert!(team.rounds().iter().all(|round| !round.is_open()));
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_delivery_with_foreign_repo_is_refused_and_tells_lead() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #99,sleep"),
+            normal("claude-1", "clean-done:already delivered,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let branch_part_a = format!("agents/claude-1/{}-1.1a", tasks[1]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_a, "main"]);
+    let pr1 = rig.github.foreign_pull(&branch_part_a);
+    assert_eq!(pr1, 1);
+    rig.github.merged_by_a_human(1);
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    // Round 1 closed via PR 1:
+    rig.state_where("round 1 closed", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().first().is_some_and(|r| !r.is_open())
+    })
+    .await;
+
+    // Round 2 opens for part b:
+    rig.state_where("round 2 open for part b", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 2 && team.rounds()[1].is_open()
+    })
+    .await;
+
+    // Stop claude-1 so part b opens for lead:
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(tasks[1].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+
+    // Lead tries to deliver unrecorded foreign PR #99:
+    rig.state_where("lead round remains open after foreign pr refusal", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 2 && team.rounds()[1].is_open()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn split_part_assignment_logs_who_gets_part_decision() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,clean-done:DELIVERED: #1,sleep"),
+            normal("claude-1", "clean-done:already delivered,sleep"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    cfg.push_str("\n[log]\nlevel = \"debug\"\n");
+    std::fs::write(rig.home.config_file(), cfg).unwrap();
+
+    rig.start().await;
+    let (team_id, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+
+    let branch_part_a = format!("agents/claude-1/{}-1.1a", tasks[1]);
+    super::rig::git(&rig.origin, &["branch", &branch_part_a, "main"]);
+    let pr1 = rig.github.foreign_pull(&branch_part_a);
+    assert_eq!(pr1, 1);
+    rig.github.merged_by_a_human(1);
+
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+
+    rig.state_where("part b open", |state| {
+        let team = state.team(&team_id).unwrap();
+        team.rounds().len() == 2 && team.rounds()[1].is_open()
+    })
+    .await;
+
+    // History log contains who_gets_part decision:
+    rig.stop().await.unwrap();
+    let reader = agent_runtime::history::Reader::open(&rig.home.history_file()).unwrap();
+    let logs = reader.daemon_logs().unwrap();
+    let logged = logs.iter().any(|row| {
+        row.event() == agent_core::log::LogEvent::DecisionTaken
+            && row.fields().get("decision").and_then(|v| v.as_str()) == Some("who_gets_part")
+    });
+    assert!(logged, "who_gets_part decision must be logged");
 }

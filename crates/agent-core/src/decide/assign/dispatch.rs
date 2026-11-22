@@ -4,7 +4,7 @@ use super::tier::{TierChoice, choose_agent};
 use crate::ids::{AgentName, ItemId};
 use crate::kinds::Role;
 use crate::kinds::Tier;
-use crate::state::{Member, Participant, Team};
+use crate::state::{ItemPhase, Member, Participant, Team};
 use crate::status::TaskStatus;
 
 /// Why a ready item cannot start yet.
@@ -78,16 +78,14 @@ pub fn dispatch_in_policy(
         };
 
         if team.next_part(item).is_some() {
-            match dispatch_split_item(
+            let ctx = SplitDispatchContext {
                 team,
-                item,
-                required,
-                &sets,
-                &reserved,
-                &members,
+                reserved: &reserved,
+                members: &members,
                 mode,
                 configured_replacements,
-            ) {
+            };
+            match dispatch_split_item(&ctx, item, required) {
                 Ok(agent) => {
                     reserved.insert(agent.name().to_owned());
                     result.assigned.push((item, agent));
@@ -133,49 +131,116 @@ pub fn dispatch_in_policy(
     result
 }
 
-fn dispatch_split_item<'a>(
+struct SplitDispatchContext<'a> {
     team: &'a Team,
+    reserved: &'a std::collections::HashSet<String>,
+    members: &'a [&'a Member],
+    mode: crate::decide::replacement::ReplacementMode,
+    configured_replacements: &'a [AgentName],
+}
+
+fn fitting_split_crew(
+    mode: crate::decide::replacement::ReplacementMode,
+    prev_member: Option<&Member>,
+    coordinator: Option<&Member>,
+    ordered_members: &[&Member],
+    required: Tier,
+) -> bool {
+    match mode {
+        crate::decide::replacement::ReplacementMode::Off => prev_member.is_some_and(|prev| {
+            !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                && !prev.owes_lead()
+                && prev.agent().tier() >= required
+        }),
+        crate::decide::replacement::ReplacementMode::Lead => {
+            let prev_ok = prev_member.is_some_and(|prev| {
+                !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                    && !prev.owes_lead()
+                    && prev.agent().tier() >= required
+            });
+            let lead_ok = coordinator.is_some_and(|coord| {
+                !matches!(coord.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                    && !coord.owes_lead()
+                    && coord.agent().tier() >= required
+            });
+            prev_ok || lead_ok
+        }
+        crate::decide::replacement::ReplacementMode::Auto => {
+            let prev_ok = prev_member.is_some_and(|prev| {
+                !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                    && !prev.owes_lead()
+                    && prev.agent().tier() >= required
+            });
+            let min_tier = prev_member.map_or(required, |prev| prev.agent().tier().max(required));
+            let rep_ok = ordered_members
+                .iter()
+                .filter(|m| prev_member.is_none_or(|p| p.task() != m.task()))
+                .any(|m| {
+                    !matches!(m.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                        && !m.owes_lead()
+                        && m.agent().tier() >= min_tier
+                });
+            let lead_ok = coordinator.is_some_and(|coord| {
+                !matches!(coord.status(), TaskStatus::Stopped | TaskStatus::Failed)
+                    && !coord.owes_lead()
+                    && coord.agent().tier() >= required
+            });
+            prev_ok || rep_ok || lead_ok
+        }
+    }
+}
+
+fn dispatch_split_item<'a>(
+    ctx: &SplitDispatchContext<'a>,
     item: ItemId,
     required: Tier,
-    sets: &super::ItemSets<'_>,
-    reserved: &std::collections::HashSet<String>,
-    members: &[&'a Member],
-    mode: crate::decide::replacement::ReplacementMode,
-    configured_replacements: &[AgentName],
 ) -> Result<Participant, Waiting> {
+    let busy_on_other = |agent_name: &str| {
+        ctx.team.items().iter().any(|other| {
+            other.id() != item
+                && match other.phase() {
+                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. } => {
+                        assignee.as_str() == agent_name
+                    }
+                    _ => false,
+                }
+        }) || ctx.reserved.contains(agent_name)
+    };
     let candidate_of = |member: &'a Member| crate::decide::part::Candidate {
         agent: member.agent(),
         status: member.status(),
         handed_over: member.owes_lead(),
-        busy: sets.busy.iter().any(|name| name.as_str() == member.agent().name())
-            || reserved.contains(member.agent().name()),
+        busy: busy_on_other(member.agent().name()),
     };
-    let prev_round = team.rounds().iter().rev().find(|r| r.item() == Some(item));
+    let prev_round = ctx.team.rounds().iter().rev().find(|r| r.item() == Some(item));
     let prev_task = prev_round.and_then(|round| {
-        team.members_in(round.id())
+        ctx.team
+            .members_in(round.id())
             .into_iter()
             .find(|(role, _)| matches!(role, Role::Solo | Role::Member))
             .or_else(|| {
-                team.members_in(round.id())
+                ctx.team
+                    .members_in(round.id())
                     .into_iter()
                     .find(|(role, _)| matches!(role, Role::Coordinator))
             })
             .map(|(_, m)| m.task().clone())
     });
     let prev_member = prev_task.as_ref().and_then(|task| {
-        team.crew()
+        ctx.team
+            .crew()
             .roster()
             .iter()
             .find(|(_, m)| m.task() == task)
             .map(|(_, m)| *m)
     });
-    let is_coord = |m: &Member| team.crew().coordinator().is_some_and(|c| c.task() == m.task());
-    let ordered_members: Vec<&Member> = if configured_replacements.is_empty() {
-        members.to_vec()
+    let is_coord = |m: &Member| ctx.team.crew().coordinator().is_some_and(|c| c.task() == m.task());
+    let ordered_members: Vec<&Member> = if ctx.configured_replacements.is_empty() {
+        ctx.members.to_vec()
     } else {
-        configured_replacements
+        ctx.configured_replacements
             .iter()
-            .filter_map(|name| members.iter().find(|m| m.agent().name() == name.as_str()).copied())
+            .filter_map(|name| ctx.members.iter().find(|m| m.agent().name() == name.as_str()).copied())
             .collect()
     };
     let (previous, replacements, lead): (
@@ -195,66 +260,31 @@ fn dispatch_split_item<'a>(
                 .filter(|m| m.task() != prev.task())
                 .map(|m| candidate_of(m))
                 .collect();
-            let lead = team.crew().coordinator().map(candidate_of);
+            let lead = ctx.team.crew().coordinator().map(candidate_of);
             (Some(candidate_of(prev)), reps, lead)
         }
     } else {
         let reps = ordered_members.iter().map(|m| candidate_of(m)).collect();
-        let lead = team.crew().coordinator().map(candidate_of);
+        let lead = ctx.team.crew().coordinator().map(candidate_of);
         (None, reps, lead)
     };
 
-    match crate::decide::part::who_gets_part_in_mode(required, previous, &replacements, lead, mode) {
+    match crate::decide::part::who_gets_part_in_mode(required, previous, &replacements, lead, ctx.mode) {
         crate::decide::part::PartChoice::PreviousMember(agent)
         | crate::decide::part::PartChoice::Replacement(agent)
         | crate::decide::part::PartChoice::Lead(agent) => Ok(agent.clone()),
         crate::decide::part::PartChoice::Nobody => {
-            let fitting_in_crew = match mode {
-                crate::decide::replacement::ReplacementMode::Off => prev_member.is_some_and(|prev| {
-                    !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                        && !prev.owes_lead()
-                        && prev.agent().tier() >= required
-                }),
-                crate::decide::replacement::ReplacementMode::Lead => {
-                    let prev_ok = prev_member.is_some_and(|prev| {
-                        !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                            && !prev.owes_lead()
-                            && prev.agent().tier() >= required
-                    });
-                    let lead_ok = team.crew().coordinator().is_some_and(|coord| {
-                        !matches!(coord.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                            && !coord.owes_lead()
-                            && coord.agent().tier() >= required
-                    });
-                    prev_ok || lead_ok
-                }
-                crate::decide::replacement::ReplacementMode::Auto => {
-                    let prev_ok = prev_member.is_some_and(|prev| {
-                        !matches!(prev.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                            && !prev.owes_lead()
-                            && prev.agent().tier() >= required
-                    });
-                    let min_tier = prev_member.map_or(required, |prev| prev.agent().tier().max(required));
-                    let rep_ok = ordered_members
-                        .iter()
-                        .filter(|m| prev_member.is_none_or(|p| p.task() != m.task()))
-                        .any(|m| {
-                            !matches!(m.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                                && !m.owes_lead()
-                                && m.agent().tier() >= min_tier
-                        });
-                    let lead_ok = team.crew().coordinator().is_some_and(|coord| {
-                        !matches!(coord.status(), TaskStatus::Stopped | TaskStatus::Failed)
-                            && !coord.owes_lead()
-                            && coord.agent().tier() >= required
-                    });
-                    prev_ok || rep_ok || lead_ok
-                }
-            };
+            let fitting = fitting_split_crew(
+                ctx.mode,
+                prev_member,
+                ctx.team.crew().coordinator(),
+                &ordered_members,
+                required,
+            );
             Err(Waiting {
                 item,
                 required,
-                reason: if fitting_in_crew {
+                reason: if fitting {
                     WaitReason::Busy
                 } else {
                     WaitReason::Absent

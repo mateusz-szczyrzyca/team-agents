@@ -1,6 +1,6 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::dispatch::dispatch_in_mode;
+use agent_core::decide::assign::dispatch::{dispatch_in_policy, required_tier};
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
@@ -100,10 +100,10 @@ pub(in crate::daemon) fn assignable_in_policy(
         );
         for (item, agent) in &decided {
             if let Some((part, _)) = team.next_part(*item) {
-                let required = crate::decide::assign::dispatch::required_tier(team, *item);
+                let required = required_tier(team, *item);
                 agent_runtime::history::log_decision(
                     "who_gets_part",
-                    &format!("team={}, item={item}, part={part}, required={required:?}, mode={mode:?}"),
+                    &format!("team={}, item={item}, part={part}, required={required:?}, mode={mode:?}", team.id()),
                     &[format!("{agent}")],
                 );
             }

@@ -57,14 +57,17 @@ by the harness, with the proposal and the complete approving verdict example. Do
 An explicit human `split` verdict still works; `ok` or free words saying "split" record no plan.
 After approval, deliver only part a in this round and keep its existing branch. The harness records the whole
 plan, then gives each dependency-ready later part its own round, branch and pull request through normal team
-assignment. Follow each part's prompt; other parts are outside that round. The item and team close only after all
-parts merge. A malformed form records nothing and `agent answer` explains why.
+assignment. The previous round's member gets the next part unless stopped or failed; if unavailable, a configured
+replacement agent or the coordinator takes it over. When no available member meets the required capability,
+the harness writes a question for the human once. Follow each part's prompt; other parts are outside that round.
+The item and team close only after all parts merge. A malformed form records nothing and `agent answer` explains why.
 
-If another pull request of this team already contains an item's deliverable, report it instead of creating an
+If another pull request of this team already contains an item's or part's deliverable, report it instead of creating an
 empty pull request for that item. This applies to any deliverable, including documents and images. Report only
 one current item, with no commits of its own outside that pull request or the base branch, and a clean member
-worktree. The pull request may be open or already merged. Put this exact standalone line before your final
-`STATUS: DONE`, replacing N with its number:
+worktree. For a split part, the reported pull request must be on the task branch or the current part's branch.
+Foreign branches, other repositories, and pull requests of earlier split parts are refused. Put this exact standalone
+line before your final `STATUS: DONE`, replacing N with its number:
 
 ```text
 DELIVERED: #N

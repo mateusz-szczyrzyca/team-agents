@@ -20,3 +20,7 @@ The original item stays open until all its parts merge.
 If this work needs splitting again, send the complete proposal to your coordinator. Only the coordinator submits
 a split for harness approval; do not ask the human separately. Follow the proposal-file and `SPLIT:` protocol
 from your role instructions.
+
+### Split part delivery
+
+A split part is delivered on its part branch (`agents/<agent>/<task>-<item><part>`) or on the parent task branch. If another pull request of this team already merged its deliverable, your coordinator can report it with `DELIVERED: #N` to complete this part without an empty pull request.
