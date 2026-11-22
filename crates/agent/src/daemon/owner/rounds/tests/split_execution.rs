@@ -1056,8 +1056,10 @@ async fn authentic_pre_task_persisted_fixture_loads_and_daemon_resumes() {
         ],
     );
 
-    rig.github.foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1a");
-    rig.github.foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1b");
+    rig.github
+        .foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1a");
+    rig.github
+        .foreign_pull("agents/claude-1/task-20261121-120002-spl1-1.1b");
     let pr3 = rig.github.foreign_pull(&branch_c);
     assert_eq!(pr3, 3);
     rig.github.merged_by_a_human(3);
@@ -1216,7 +1218,10 @@ async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead
 async fn split_part_delivery_with_foreign_repo_is_refused_and_tells_lead() {
     let mut rig = Rig::new(
         &[
-            investigator("inv-lead", "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #99,sleep"),
+            investigator(
+                "inv-lead",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #99,sleep",
+            ),
             normal("claude-1", "clean-done:already delivered,sleep"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),

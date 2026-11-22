@@ -685,20 +685,12 @@ fn configured_replacement_ordering_and_exclusion_is_respected() {
     assert_eq!(dispatched.assigned, vec![(item, normal("claude-3"))]);
 
     // With configured replacement ["claude-2"], claude-3 is excluded:
-    let dispatched_2 = dispatch_in_policy(
-        &team,
-        crate::decide::replacement::ReplacementMode::Auto,
-        &[rep_2],
-    );
+    let dispatched_2 = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[rep_2]);
     assert_eq!(dispatched_2.assigned, vec![(item, normal("claude-2"))]);
 
     // With configured replacement ["other"], crew members claude-2 and claude-3 are excluded;
     // falls back to coordinator inv-lead:
     let rep_other: AgentName = "other".parse().unwrap();
-    let dispatched_lead = dispatch_in_policy(
-        &team,
-        crate::decide::replacement::ReplacementMode::Auto,
-        &[rep_other],
-    );
+    let dispatched_lead = dispatch_in_policy(&team, crate::decide::replacement::ReplacementMode::Auto, &[rep_other]);
     assert_eq!(dispatched_lead.assigned, vec![(item, inv("inv-lead"))]);
 }
