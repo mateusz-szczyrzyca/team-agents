@@ -130,3 +130,90 @@ fn only_the_changed_files_of_the_lead_are_listed_in_their_order() {
         vec![path("a.rs"), path("c.rs")]
     );
 }
+
+#[test]
+fn an_unpublished_conflict_result_consumes_no_conflict_pass() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Failed, AccountingState::Unrecorded),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn successful_publication_records_conflict_pass_exactly_once() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Published, AccountingState::Unrecorded),
+        ConflictAccountingStep::SpendPass
+    );
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Published, AccountingState::AlreadyRecorded),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn repeated_failures_of_same_result_cannot_refund_earlier_passes() {
+    assert_eq!(
+        account_conflict_pass(ConflictPublishResult::Failed, AccountingState::AlreadyRecorded),
+        ConflictAccountingStep::RetainBudget
+    );
+}
+
+#[test]
+fn recover_exhausted_split_round_table() {
+    // 1. Merged PR recovers to CompleteMerged
+    assert_eq!(
+        recover_exhausted_split_round(SplitPullStatus::Merged),
+        ExhaustedRoundRecovery::CompleteMerged
+    );
+
+    // 2. Open PR with valid gated commit and unexhausted passes recovers to ResumeMerge
+    let open_ready = SplitPullStatus::Open {
+        gating: GatingStatus::Gated,
+        budget: ConflictBudget { spent: 1, limit: 2 },
+        conflict: ConflictPublication::Published,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(open_ready),
+        ExhaustedRoundRecovery::ResumeMerge
+    );
+
+    // 3. Open PR with exhausted passes but unpublished conflict pass recovers to ResumeMerge
+    let open_unpublished = SplitPullStatus::Open {
+        gating: GatingStatus::Gated,
+        budget: ConflictBudget { spent: 2, limit: 2 },
+        conflict: ConflictPublication::Unpublished,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(open_unpublished),
+        ExhaustedRoundRecovery::ResumeMerge
+    );
+
+    // 4. Open PR with exhausted passes and published conflict pass waits for human
+    let exhausted = SplitPullStatus::Open {
+        gating: GatingStatus::Gated,
+        budget: ConflictBudget { spent: 2, limit: 2 },
+        conflict: ConflictPublication::Published,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(exhausted),
+        ExhaustedRoundRecovery::WaitHuman
+    );
+
+    // 5. Open PR without gated commit waits for human
+    let ungated = SplitPullStatus::Open {
+        gating: GatingStatus::Ungated,
+        budget: ConflictBudget { spent: 0, limit: 2 },
+        conflict: ConflictPublication::Unpublished,
+    };
+    assert_eq!(
+        recover_exhausted_split_round(ungated),
+        ExhaustedRoundRecovery::WaitHuman
+    );
+
+    // 6. Closed unmerged PR waits for human
+    assert_eq!(
+        recover_exhausted_split_round(SplitPullStatus::ClosedUnmerged),
+        ExhaustedRoundRecovery::WaitHuman
+    );
+}
