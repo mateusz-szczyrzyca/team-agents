@@ -1,5 +1,5 @@
-//! `agent status` in its short view and with `--task`: the versions come first, the teams and their rounds follow, and
-//! the tasks only with `--task`.
+//! `agent status` in its short view and with `--task`: the versions come first, the teams, their rounds and their tasks
+//! that are alive follow, and the plans and the parts only with `--task`.
 
 use agent_core::history::MaxTextBytes;
 use agent_core::local_time::Zone;
@@ -32,8 +32,16 @@ fn quiet() -> TeamSummary {
     TeamSummary::from(&team_state().teams()[0])
 }
 
-/// The line of the sample team and its count of tasks, as the short view writes them when nothing runs.
-const QUIET_SHORT: &str = "team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done\n  tasks: 4 queued\n";
+/// The line of the sample team, the lines of its tasks and its count of tasks, as the short view writes them when
+/// nothing runs.
+const QUIET_SHORT: &str = "\
+team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
+  task-20261111-153001-k3x9  coordinator  inv-opus   queued
+  task-20261111-153002-k3x9  member       claude-1   queued
+  task-20261111-153003-k3x9  worker       glm-1      queued
+  task-20261111-153004-k3x9  reviewer     inv-codex  queued
+  tasks: 4 queued
+";
 
 /// The full task listing of [`quiet`] before the short view.
 const QUIET_TASKS_GOLDEN: &str = "\
@@ -184,7 +192,7 @@ async fn the_task_list_follows_the_versions_exactly_as_before() {
 }
 
 #[tokio::test]
-async fn running_names_the_team_and_its_open_round_and_no_task_line() {
+async fn running_names_the_team_its_open_round_and_its_tasks() {
     let dir = tempfile::tempdir().unwrap();
     let env = environment(&dir);
     HistoryDb::open(&env.home().unwrap().history_file(), MaxTextBytes::default()).unwrap();
@@ -238,6 +246,10 @@ async fn running_names_the_team_and_its_open_round_and_no_task_line() {
             "{}daemon: version unknown\n\
              team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done\n  \
              round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00\n  \
+             task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
+             task-20261111-153002-k3x9  member       claude-1   queued\n  \
+             task-20261111-153003-k3x9  worker       glm-1      queued\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  queued\n  \
              tasks: 4 queued\n",
             this_command_line()
         )
