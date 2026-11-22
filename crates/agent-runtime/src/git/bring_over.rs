@@ -696,7 +696,7 @@ impl Git {
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
                 // A file where a directory of the path should be: git reports it as not a directory.
                 Err(source) if source.kind() == std::io::ErrorKind::NotADirectory => {
-                    return Ok(self.unless_tracked(head, prefix).await?);
+                    return self.unless_tracked(head, prefix).await;
                 }
                 Err(source) => {
                     return Err(GitError::Scratch {
@@ -716,7 +716,7 @@ impl Git {
                     return Ok(holds_more.then_some(prefix));
                 }
             } else {
-                return Ok(self.unless_tracked(head, prefix).await?);
+                return self.unless_tracked(head, prefix).await;
             }
         }
         Ok(None)
