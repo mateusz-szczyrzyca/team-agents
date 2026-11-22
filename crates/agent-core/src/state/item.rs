@@ -1164,6 +1164,21 @@ impl ItemProgress {
     /// [`RejectionError::NoReason`] when `reason` says nothing;
     /// [`RejectionError::AlreadyCounted`] when a rejection at `at` is recorded already.
     pub fn record_rejection(&mut self, reason: String, at: Timestamp) -> Result<Option<Timestamp>, RejectionError> {
+        self.record_rejection_of(reason, at, None, None)
+    }
+
+    /// Records the rejection as [`ItemProgress::record_rejection`] does, with the `part` of the split item the work
+    /// belonged to and the `run` of the member that ended `DONE` and was sent back.
+    ///
+    /// # Errors
+    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
+    pub fn record_rejection_of(
+        &mut self,
+        reason: String,
+        at: Timestamp,
+        part: Option<super::split::PartKey>,
+        run: Option<crate::ids::RunId>,
+    ) -> Result<Option<Timestamp>, RejectionError> {
         if !matches!(self.phase, ItemPhase::InProgress { .. } | ItemPhase::Fixing { .. }) {
             return Err(RejectionError::NotWorkedOn { item: self.id });
         }
@@ -1179,27 +1194,10 @@ impl ItemProgress {
             at,
             reason,
             recorded_in: None,
-            part: None,
-            of_run: None,
+            part,
+            of_run: run,
         });
         Ok(settled_at)
-    }
-
-    /// Records the rejection as [`ItemProgress::record_rejection`] does, with the `part` of the split item the work
-    /// belonged to and the `run` of the member that ended `DONE` and was sent back.
-    ///
-    /// # Errors
-    /// [`RejectionError`], as for [`ItemProgress::record_rejection`].
-    pub fn record_rejection_of(
-        &mut self,
-        reason: String,
-        at: Timestamp,
-        part: Option<super::split::PartKey>,
-        run: Option<crate::ids::RunId>,
-    ) -> Result<Option<Timestamp>, RejectionError> {
-        let settled = self.record_rejection(reason, at)?;
-        let _ = (part, run);
-        Ok(settled)
     }
 
     /// How many rejections of the work of `part` were counted against the limit `limit`; `None` is the item that is not
@@ -1210,15 +1208,24 @@ impl ItemProgress {
         part: Option<super::split::PartKey>,
         limit: u32,
     ) -> crate::decide::rejection::Rejections {
-        let _ = part;
-        self.counted_rejections(limit)
+        let counted = self
+            .rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .filter(|rejection| rejection.part == part && rejection.counted_in().is_some())
+            .count();
+        crate::decide::rejection::Rejections::new(u32::try_from(counted).unwrap_or(u32::MAX), limit)
     }
 
     /// Whether the work the member ended `DONE` in `run` was sent back already, whether the member ran again since or not.
     #[must_use]
     pub fn was_rejected(&self, run: &crate::ids::RunId) -> bool {
-        let _ = run;
-        false
+        self.rejections
+            .as_deref()
+            .unwrap_or_default()
+            .iter()
+            .any(|rejection| rejection.of_run.as_ref() == Some(run))
     }
 
     /// Records that run `run` of the item started at `at`, the run the rejections recorded so far count on: returns

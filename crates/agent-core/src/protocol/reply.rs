@@ -602,7 +602,12 @@ fn returned_by(team: &Team, member: &Member) -> Option<Returned> {
         if assignee.as_str() != member.agent().name() {
             return None;
         }
-        let counted = NonZeroU32::new(progress.counted_rejections(0).get())?;
+        let part = team
+            .rounds()
+            .iter()
+            .find(|round| round.item() == Some(progress.id()) && matches!(round.life(), crate::state::RoundLife::Open))
+            .and_then(crate::state::Round::part);
+        let counted = NonZeroU32::new(progress.counted_rejections_of(part, 0).get())?;
         Some(Returned {
             item: progress.id(),
             counted,

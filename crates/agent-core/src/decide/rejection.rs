@@ -23,16 +23,8 @@ const RETURNED: &str = "RETURNED";
 #[must_use]
 pub fn returned_items(message: &str) -> Vec<ItemId> {
     let mut returned: Vec<ItemId> = Vec::new();
-    for line in message.lines() {
-        let plain: String = line.chars().filter(|c| !matches!(*c, '*' | '`')).collect();
-        let Some(value) = plain
-            .trim_start()
-            .strip_prefix(RETURNED)
-            .and_then(|rest| rest.strip_prefix(':'))
-        else {
-            continue;
-        };
-        let Some(item) = value.split_whitespace().next().and_then(|text| text.parse().ok()) else {
+    for word in return_words(message) {
+        let Ok(item) = word.parse() else {
             continue;
         };
         if !returned.contains(&item) {
@@ -40,6 +32,18 @@ pub fn returned_items(message: &str) -> Vec<ItemId> {
         }
     }
     returned
+}
+
+/// The first word after the `:` of every `RETURNED:` line of `message`, in order.
+fn return_words(message: &str) -> Vec<String> {
+    message
+        .lines()
+        .filter_map(|line| {
+            let plain: String = line.chars().filter(|c| !matches!(*c, '*' | '`')).collect();
+            let value = plain.trim_start().strip_prefix(RETURNED)?.strip_prefix(':')?;
+            value.split_whitespace().next().map(str::to_owned)
+        })
+        .collect()
 }
 
 /// What a `RETURNED:` line names: an item, or one part of a split item (`1.1a`).
@@ -70,14 +74,47 @@ impl ReturnTarget {
 /// A line is read as [`returned_items`] reads it, and its answer is an item number or an item number and one lowercase
 /// letter, the key of a part (`1.1a`). Anything else is skipped. A target named twice is returned once.
 #[must_use]
-pub fn returned_targets(_message: &str) -> Vec<ReturnTarget> {
-    Vec::new()
+pub fn returned_targets(message: &str) -> Vec<ReturnTarget> {
+    let mut targets: Vec<ReturnTarget> = Vec::new();
+    for word in return_words(message) {
+        let Some(target) = target_of(&word) else {
+            continue;
+        };
+        if !targets.contains(&target) {
+            targets.push(target);
+        }
+    }
+    targets
+}
+
+/// The item or the part `word` names: `1.1`, or `1.1` and a lowercase letter.
+fn target_of(word: &str) -> Option<ReturnTarget> {
+    if let Ok(item) = word.parse() {
+        return Some(ReturnTarget { item, part: None });
+    }
+    let letter = word.chars().next_back().filter(char::is_ascii_lowercase)?;
+    let item = word.strip_suffix(letter)?.parse().ok()?;
+    let part = crate::state::split::PartKey::try_from(letter.to_string()).ok()?;
+    Some(ReturnTarget { item, part: Some(part) })
 }
 
 /// The run of `runs` that the member's last hand-over was made after: the last one that ended `DONE`.
 #[must_use]
-pub fn handed_over_run(_runs: &[crate::state::Run]) -> Option<&crate::ids::RunId> {
-    None
+pub fn handed_over_run(runs: &[crate::state::Run]) -> Option<&crate::ids::RunId> {
+    runs.iter()
+        .rev()
+        .find(|run| {
+            matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::Reported {
+                        outcome: crate::status::RunOutcome::Done
+                    },
+                    ..
+                }
+            )
+        })
+        .map(crate::state::Run::id)
 }
 
 /// How many times a lead returned an item, and the limit `[replacement] rejections` it is compared with.
