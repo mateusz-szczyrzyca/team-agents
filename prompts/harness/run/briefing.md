@@ -1,11 +1,13 @@
 # A NEW SESSION ON A TASK THAT WAS ALREADY STARTED
 
-You work on task {{task}} again, in a new session. The session before you went bad; the harness recorded why as
-`{{reason}}`:
+You work on task {{task}} again, in a new session. The session before you did not finish the work; the harness recorded
+why as `{{reason}}`:
 
 - `no_status`: its last runs ended without a `STATUS:` line;
 - `hang`: its last runs showed no activity until the watchdog stopped them;
-- `turn_limit`: its last runs used up their turn budget.
+- `turn_limit`: its last runs used up their turn budget;
+- `busy`: no run of it went bad: its agent was busy in another team for longer than `[replacement] busy_after`, and a
+  free agent took the task over while it waited.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 

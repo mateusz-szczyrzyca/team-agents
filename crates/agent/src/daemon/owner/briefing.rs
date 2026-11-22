@@ -23,8 +23,9 @@ use agent_runtime::run::compose::{
 use agent_runtime::snapshot::{SnapshotError, take_snapshot};
 use agent_runtime::text_file::read_text_file;
 
-use super::Owner;
+use super::round_state;
 use super::start::{StartProblem, work_branch};
+use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, lead_takes_work};
 
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
@@ -97,6 +98,9 @@ pub(super) enum BriefingProblem {
     /// The clock gives no valid time for the snapshot.
     #[error("cannot read the time of the snapshot")]
     Clock(#[from] InvalidTimestamp),
+    /// The rounds the next run of the task works for cannot be told.
+    #[error("cannot tell the rounds the next run of the task works for")]
+    Rounds(#[source] OwnerError),
 }
 
 impl Owner {
@@ -139,6 +143,14 @@ impl Owner {
             .flat_map(|run| run.rounds().iter().rev())
             .find(|round| team.round(round).is_some_and(agent_core::state::Round::is_open))
             .cloned();
+        // A task that never ran works for the rounds its first run is given: a busy agent's hand-over briefs it so.
+        let round = match round {
+            Some(round) => Some(round),
+            None => round_state::rounds_for(&self.parts.state, task, None)
+                .map_err(BriefingProblem::Rounds)?
+                .into_iter()
+                .find(|round| team.round(round).is_some_and(agent_core::state::Round::is_open)),
+        };
         let Some(round) = round else {
             // A snapshot is kept under a round: a task that works for none (a state of an older version) starts its new
             // session with its whole prompt, unbriefed, rather than not at all.
@@ -354,6 +366,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::NoStatus => "no_status",
         Trouble::Hang => "hang",
         Trouble::TurnLimit => "turn_limit",
+        Trouble::Busy => "busy",
     }
 }
 
