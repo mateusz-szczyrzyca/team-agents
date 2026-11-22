@@ -30,6 +30,24 @@ pub struct Response {
     /// Which split parts an answer recorded, or why it recorded none; absent for ordinary answers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub split: Option<String>,
+    /// The versions of the daemon that answered, on the answer to a status request; absent from the answers of a daemon
+    /// before it told them, and from every other answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub daemon_versions: Option<Versions>,
+}
+
+/// The versions of the four crates of one build, each taken from its own crate at build time.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Versions {
+    /// The version of the `agent` crate: the command and the daemon.
+    pub agent: String,
+    /// The version of the `agent-core` crate.
+    pub agent_core: String,
+    /// The version of the `agent-runtime` crate.
+    pub agent_runtime: String,
+    /// The version of the `agent-web` crate.
+    pub agent_web: String,
 }
 
 /// What came of a request.
@@ -523,6 +541,7 @@ impl Response {
             id,
             result: Outcome::Ok { reply },
             split: None,
+            daemon_versions: None,
         }
     }
 
@@ -534,6 +553,7 @@ impl Response {
             id,
             result: Outcome::Error { error },
             split: None,
+            daemon_versions: None,
         }
     }
 }
@@ -996,3 +1016,6 @@ mod short_desc_tests;
 
 #[cfg(test)]
 mod described_tests;
+
+#[cfg(test)]
+mod daemon_versions_tests;

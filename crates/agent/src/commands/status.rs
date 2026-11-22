@@ -10,7 +10,7 @@ use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::{
-    Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary,
+    Client, Command, PlanStepSummary, Reply, RoundDetail, ShowRequest, StatusRequest, Target, TeamSummary, Versions,
 };
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
@@ -23,6 +23,7 @@ use agent_runtime::store::Home;
 use time::UtcOffset;
 
 use crate::client::{ClientError, Connection};
+use crate::versions::of_this_build;
 
 /// Why `agent status` failed.
 #[derive(Debug, thiserror::Error)]
@@ -147,11 +148,88 @@ pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
     zone.stamp(at)
 }
 
-/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`; the tasks that run say
-/// when they were last active.
+/// What a list of the teams prints of each team: the short view of the team, its rounds and a count of its tasks, or
+/// the tasks with their plans and parts as before the short view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Detail {
+    /// The team, its rounds and a count of its tasks, with the questions that wait for answers named.
+    Short,
+    /// The team, its rounds, its tasks with their plans, and its parts.
+    Tasks,
+}
+
+/// What a list of `agent status` says, before it is written: its text, the versions of the daemon that answered and
+/// what the history says when it is not whole.
+struct Shown {
+    /// The lines of the list, with what the rounds say after their lines.
+    text: String,
+    /// The versions of the daemon that answered; absent from a daemon before it told them.
+    daemon: Option<Versions>,
+    /// What the history is doing, when it is not whole.
+    history: Option<HistoryHealth>,
+}
+
+/// Whether a status request negotiates the daemon's crate versions for the opening list header.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum VersionsQuery {
+    /// Negotiates protocol seven so the daemon attaches `daemon_versions` to the status reply.
+    Include,
+    /// Uses ordinary executor-aware status negotiation without requesting `daemon_versions`.
+    Omit,
+}
+
+/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
+/// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
 ///
 /// # Errors
 /// [`StatusError`].
+pub(crate) async fn status_shown(
+    connection: &mut Connection,
+    target: Option<Target>,
+    activity: &Activity,
+    detail: Detail,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    if let Some(Target::Round(round)) = target {
+        return show_round(connection, round, Some(activity), out).await;
+    }
+    let is_list = target.is_none();
+    let query = if is_list {
+        VersionsQuery::Include
+    } else {
+        VersionsQuery::Omit
+    };
+    let shown = listing_text(connection, target, activity, detail, query).await?;
+    let prefix = if is_list {
+        versions::block(&of_this_build(), shown.daemon.as_ref())
+    } else {
+        String::new()
+    };
+    write_shown(out, &prefix, &shown, activity)
+}
+
+/// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
+/// what is being worked on now, its versions first. `detail` says whether the tasks of the teams are written too.
+///
+/// # Errors
+/// [`StatusError`].
+pub(crate) async fn status_running_shown(
+    connection: &mut Connection,
+    activity: &Activity,
+    detail: Detail,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let shown = running_text(connection, activity, detail, VersionsQuery::Include).await?;
+    write_shown(
+        out,
+        &versions::block(&of_this_build(), shown.daemon.as_ref()),
+        &shown,
+        activity,
+    )
+}
+
+/// [`status_shown`] without the versions, with the tasks: what the tests of the status compare.
+#[cfg(test)]
 pub(crate) async fn status_active(
     connection: &mut Connection,
     target: Option<Target>,
@@ -161,23 +239,97 @@ pub(crate) async fn status_active(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, Some(activity), out).await;
     }
-    let (teams, history) = teams(connection, target).await?;
-    let told = rounds::told(connection, activity, &teams).await?;
-    let text = render_at(
-        &teams,
+    let shown = listing_text(connection, target, activity, Detail::Tasks, VersionsQuery::Omit).await?;
+    write_shown(out, "", &shown, activity)
+}
+
+/// [`status_running_shown`] without the versions, with the tasks: what the tests of the status compare.
+#[cfg(test)]
+pub(crate) async fn status_running(
+    connection: &mut Connection,
+    activity: &Activity,
+    out: &mut impl Write,
+) -> Result<(), StatusError> {
+    let shown = running_text(connection, activity, Detail::Tasks, VersionsQuery::Omit).await?;
+    write_shown(out, "", &shown, activity)
+}
+
+/// What the teams of `target` (every team without one) say, in `detail`, with their rounds and what the rounds say.
+async fn listing_text(
+    connection: &mut Connection,
+    target: Option<Target>,
+    activity: &Activity,
+    detail: Detail,
+    query: VersionsQuery,
+) -> Result<Shown, StatusError> {
+    // A team or a task is shown with its tasks, as it always was.
+    let detail = if target.is_some() { Detail::Tasks } else { detail };
+    let listing = teams(connection, target, query).await?;
+    let told = rounds::told(connection, activity, &listing.teams).await?;
+    let text = render_in(
+        &listing.teams,
+        View::Full,
+        detail,
         &|task| activity.of(task),
         &|round| told.of(round),
         activity.zone,
     );
+    Ok(Shown {
+        text: format!("{text}{}", told.unread()),
+        daemon: listing.daemon,
+        history: listing.history,
+    })
+}
+
+/// What the teams with a round that goes on say, in `detail`, with those rounds only.
+async fn running_text(
+    connection: &mut Connection,
+    activity: &Activity,
+    detail: Detail,
+    query: VersionsQuery,
+) -> Result<Shown, StatusError> {
+    let listing = teams(connection, None, query).await?;
+    // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
+    // part's round is one that is over.
+    let listed: Vec<TeamSummary> = listing
+        .teams
+        .into_iter()
+        .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
+        .collect();
+    let text = if listed.is_empty() {
+        NO_OPEN_ROUNDS.to_owned()
+    } else {
+        let told = rounds::told(connection, activity, &listed).await?;
+        let text = render_in(
+            &listed,
+            View::Running,
+            detail,
+            &|task| activity.of(task),
+            &|round| told.of(round),
+            activity.zone,
+        );
+        format!("{text}{}", told.unread())
+    };
+    Ok(Shown {
+        text,
+        daemon: listing.daemon,
+        history: listing.history,
+    })
+}
+
+/// Writes `prefix`, then what `shown` says, then the line about low disk space if any and the line about the history when
+/// it is not whole.
+fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
     write(
         out,
-        &format!("{text}{}", told.unread()),
-        history.as_ref(),
+        &format!("{prefix}{}", shown.text),
+        shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
 }
 
-/// [`status_active`] without the last activity of the tasks: what the tests of the status ask for.
+/// [`status_shown`] without the versions and with the teams as the test helper of the status compares them: what the
+/// tests of the status ask for.
 #[cfg(test)]
 pub(crate) async fn status(
     connection: &mut Connection,
@@ -187,8 +339,8 @@ pub(crate) async fn status(
     if let Some(Target::Round(round)) = target {
         return show_round(connection, round, None, out).await;
     }
-    let (teams, history) = teams(connection, target).await?;
-    write(out, &render(&teams), history.as_ref(), None)
+    let listing = teams(connection, target, VersionsQuery::Omit).await?;
+    write(out, &render(&listing.teams), listing.history.as_ref(), None)
 }
 
 /// Asks the daemon for every team and writes to `out` what `investigators::render` says of the investigators configured in
@@ -206,43 +358,10 @@ pub(crate) async fn status_investigators(
     let settings = Settings::load(home).await.map_err(StatusError::Settings)?;
     // The configuration keeps the investigators by name: the view lists them in that order.
     let configured: Vec<_> = settings.config.investigators().keys().cloned().collect();
-    let (teams, _) = teams(connection, None).await?;
-    let text = investigators::render(&teams, &configured, zone);
+    let listing = teams(connection, None, VersionsQuery::Omit).await?;
+    let text = investigators::render(&listing.teams, &configured, zone);
     out.write_all(text.as_bytes()).map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
-}
-
-/// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:
-/// what is being worked on now.
-///
-/// # Errors
-/// [`StatusError`].
-pub(crate) async fn status_running(
-    connection: &mut Connection,
-    activity: &Activity,
-    out: &mut impl Write,
-) -> Result<(), StatusError> {
-    let (teams, history) = teams(connection, None).await?;
-    // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
-    // part's round is one that is over.
-    let listed: Vec<TeamSummary> = teams
-        .into_iter()
-        .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
-        .collect();
-    let text = if listed.is_empty() {
-        NO_OPEN_ROUNDS.to_owned()
-    } else {
-        let told = rounds::told(connection, activity, &listed).await?;
-        let text = render_in(
-            &listed,
-            View::Running,
-            &|task| activity.of(task),
-            &|round| told.of(round),
-            activity.zone,
-        );
-        format!("{text}{}", told.unread())
-    };
-    write(out, &text, history.as_ref(), activity.disk_line().as_deref())
 }
 
 /// The teams of `teams` that have an open round, each with its open rounds only.
@@ -267,8 +386,8 @@ pub(crate) async fn status_json(
     target: Option<Target>,
     out: &mut impl Write,
 ) -> Result<(), StatusError> {
-    let (teams, _) = teams(connection, target).await?;
-    out.write_all(render_json(&teams)?.as_bytes())
+    let listing = teams(connection, target, VersionsQuery::Omit).await?;
+    out.write_all(render_json(&listing.teams)?.as_bytes())
         .map_err(StatusError::Output)?;
     out.flush().map_err(StatusError::Output)
 }
@@ -283,17 +402,40 @@ pub(crate) fn render_json(teams: &[TeamSummary]) -> Result<String, StatusError> 
     Ok(text)
 }
 
-/// The teams the daemon answers a status request for `target` with, and what it says of the history.
+/// What the daemon answered to a status request.
+struct Listing {
+    /// The teams asked for.
+    teams: Vec<TeamSummary>,
+    /// What the history is doing, when it is not whole.
+    history: Option<HistoryHealth>,
+    /// The versions of the daemon; absent from a daemon before it told them.
+    daemon: Option<Versions>,
+}
+
+/// The teams the daemon answers a status request for `target` with, what it says of the history, and its versions.
 async fn teams(
     connection: &mut Connection,
     target: Option<Target>,
-) -> Result<(Vec<TeamSummary>, Option<HistoryHealth>), StatusError> {
-    let reply = connection
-        .request(Client::Cli, Command::Status(StatusRequest { target }))
-        .await?;
+    query: VersionsQuery,
+) -> Result<Listing, StatusError> {
+    let command = Command::Status(StatusRequest { target });
+    let reply = match query {
+        VersionsQuery::Include => connection.request_versions(Client::Cli, command).await?,
+        VersionsQuery::Omit => connection.request(Client::Cli, command).await?,
+    };
+    // Read before any other request: the next answer replaces the versions of this one.
+    let daemon = connection.daemon_versions().cloned();
     match reply {
-        Reply::Teams { teams } => Ok((teams, None)),
-        Reply::Overview { teams, history } => Ok((teams, Some(history))),
+        Reply::Teams { teams } => Ok(Listing {
+            teams,
+            history: None,
+            daemon,
+        }),
+        Reply::Overview { teams, history } => Ok(Listing {
+            teams,
+            history: Some(history),
+            daemon,
+        }),
         other => Err(StatusError::UnexpectedReply { kind: kind_of(&other) }),
     }
 }
@@ -395,7 +537,7 @@ fn render_at(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_in(teams, View::Full, activity, rounds, zone)
+    render_in(teams, View::Full, Detail::Tasks, activity, rounds, zone)
 }
 
 /// What a view of the status prints, the running view being the same teams with their open rounds only.
@@ -404,6 +546,7 @@ pub(crate) fn render_running(teams: &[TeamSummary]) -> String {
     render_in(
         teams,
         View::Running,
+        Detail::Tasks,
         &|_| None,
         &|_| String::new(),
         Zone::Fixed(UtcOffset::UTC),
@@ -422,6 +565,7 @@ pub(crate) enum View {
 fn render_in(
     teams: &[TeamSummary],
     view: View,
+    detail: Detail,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
@@ -456,19 +600,25 @@ fn render_in(
                 .filter(|round| view == View::Full || *round.life() == RoundLife::Open)
                 .map(|round| format!("  {}{}", round_line(round), rounds(round))),
         );
-        lines.extend(splits::lines_of(team, view));
-        for (plan, _) in splits::shown(team, view) {
-            lines.extend(
-                crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
-                    .into_iter()
-                    .map(|(_, text)| format!("      {text}")),
-            );
+        if detail == Detail::Tasks {
+            lines.extend(splits::lines_of(team, view));
+            for (plan, _) in splits::shown(team, view) {
+                lines.extend(
+                    crate::split_context::lines(plan, &team.rounds, &team.part_assignments)
+                        .into_iter()
+                        .map(|(_, text)| format!("      {text}")),
+                );
+            }
         }
         for (item, tier) in &team.tier_waits {
-            if team.splits.iter().any(|plan| plan.parent() == *item) {
+            if detail == Detail::Tasks && team.splits.iter().any(|plan| plan.parent() == *item) {
                 continue;
             }
             lines.push(format!("    {item}  waiting for {tier} agent"));
+        }
+        if detail == Detail::Short {
+            lines.push(tasks_line(team));
+            continue;
         }
         for member in &team.members {
             let waiting = member.open_question.map_or_else(String::new, |number| {
@@ -513,6 +663,109 @@ fn render_in(
 /// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
 pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
+}
+
+/// Tallies of a team's tasks by status, in the order the short view prints them: the tasks that act or wait first.
+#[derive(Default)]
+struct StatusCounts {
+    /// Tasks currently in a model run.
+    running: usize,
+    /// Tasks waiting for a message, assignment or merge.
+    waiting: usize,
+    /// Tasks waiting for the human's answers.
+    questions: usize,
+    /// Tasks queued to start their next run.
+    queued: usize,
+    /// Tasks paused by the human or a quota limit.
+    paused: usize,
+    /// Tasks stopped by the human.
+    stopped: usize,
+    /// Tasks whose last run failed.
+    failed: usize,
+    /// Finished tasks.
+    done: usize,
+}
+
+impl StatusCounts {
+    /// Increments the counter for `status` through an exhaustive match so no [`TaskStatus`] variant can be omitted.
+    const fn record(&mut self, status: TaskStatus) {
+        let slot = match status {
+            TaskStatus::Running => &mut self.running,
+            TaskStatus::Waiting => &mut self.waiting,
+            TaskStatus::Questions => &mut self.questions,
+            TaskStatus::Queued => &mut self.queued,
+            TaskStatus::Paused => &mut self.paused,
+            TaskStatus::Stopped => &mut self.stopped,
+            TaskStatus::Failed => &mut self.failed,
+            TaskStatus::Done => &mut self.done,
+        };
+        *slot = slot.saturating_add(1);
+    }
+
+    /// The non-zero counts in display order, each paired with its status label.
+    fn non_zero(&self) -> Vec<String> {
+        [
+            (self.running, count_word(TaskStatus::Running)),
+            (self.waiting, count_word(TaskStatus::Waiting)),
+            (self.questions, count_word(TaskStatus::Questions)),
+            (self.queued, count_word(TaskStatus::Queued)),
+            (self.paused, count_word(TaskStatus::Paused)),
+            (self.stopped, count_word(TaskStatus::Stopped)),
+            (self.failed, count_word(TaskStatus::Failed)),
+            (self.done, count_word(TaskStatus::Done)),
+        ]
+        .into_iter()
+        .filter(|(count, _)| *count > 0)
+        .map(|(count, word)| format!("{count} {word}"))
+        .collect()
+    }
+}
+
+/// The line that counts the tasks of `team` by what they do, in the order of [`StatusCounts`], and names each question
+/// that waits for the human's answer with its number, the agent and its task: what the human must act on.
+fn tasks_line(team: &TeamSummary) -> String {
+    let mut tally = StatusCounts::default();
+    for member in &team.members {
+        tally.record(member.status);
+    }
+    let counts = tally.non_zero();
+    let mut text = if counts.is_empty() {
+        String::from("  tasks: none")
+    } else {
+        format!("  tasks: {}", counts.join(", "))
+    };
+    let questions: Vec<String> = team
+        .members
+        .iter()
+        .filter_map(|member| {
+            member.open_question.map(|number| {
+                format!(
+                    "questions number {number} wait for answers ({}, {})",
+                    member.agent.name(),
+                    member.task
+                )
+            })
+        })
+        .collect();
+    if !questions.is_empty() {
+        text.push_str("; ");
+        text.push_str(&questions.join("; "));
+    }
+    text
+}
+
+/// The word a count of tasks writes for a status.
+const fn count_word(status: TaskStatus) -> &'static str {
+    match status {
+        TaskStatus::Running => "running",
+        TaskStatus::Waiting => "waiting",
+        TaskStatus::Questions => "with questions",
+        TaskStatus::Queued => "queued",
+        TaskStatus::Paused => "paused",
+        TaskStatus::Stopped => "stopped",
+        TaskStatus::Failed => "failed",
+        TaskStatus::Done => "done",
+    }
 }
 
 /// A round as one line: its ID, its item and whether it is open or how it ended.
@@ -660,6 +913,7 @@ mod reviewer;
 mod rounds;
 mod snapshots;
 mod splits;
+pub(crate) mod versions;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]
@@ -682,3 +936,15 @@ mod short_desc_tests;
 #[cfg(test)]
 #[path = "status/tests/part_states.rs"]
 mod part_state_tests;
+
+#[cfg(test)]
+#[path = "status/tests/short.rs"]
+mod short_tests;
+
+#[cfg(test)]
+#[path = "status/tests/versions.rs"]
+mod versions_tests;
+
+#[cfg(test)]
+#[path = "status/tests/split_tier.rs"]
+mod split_tier_tests;

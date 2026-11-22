@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use agent_core::protocol::{
     Client, Command, EncodeError, Failure, Frame, MAX_FRAME_BYTES, Outcome, ProtocolError, Reply, ReplyFormat, Request,
-    RequestId, Response,
+    RequestId, Response, Versions,
 };
 use tokio::io::BufReader;
 use tokio::net::UnixStream;
@@ -97,6 +97,8 @@ pub(crate) struct Connection {
     next_id: u64,
     /// Split interpretation attached to the latest response.
     split: Option<String>,
+    /// The versions of the daemon the latest response carried, when it was an answer to a status request that told them.
+    daemon_versions: Option<Versions>,
     /// Socket used for a single reconnect after a rejected read-only negotiation.
     socket: PathBuf,
     /// Negotiation result, cached for subsequent split-aware requests.
@@ -107,6 +109,11 @@ impl Connection {
     /// The split interpretation of the latest response, when it answered a split proposal.
     pub(crate) fn split_acknowledgement(&self) -> Option<&str> {
         self.split.as_deref()
+    }
+
+    /// The versions of the daemon that answered the latest request, when that answer told them.
+    pub(crate) fn daemon_versions(&self) -> Option<&Versions> {
+        self.daemon_versions.as_ref()
     }
 
     /// Connects to the daemon at `socket`.
@@ -148,6 +155,7 @@ impl Connection {
             writer,
             next_id: FIRST_REQUEST,
             split: None,
+            daemon_versions: None,
             socket: socket.to_owned(),
             format: None,
         })
@@ -184,6 +192,20 @@ impl Connection {
         self.converse(client, command, None).await
     }
 
+    /// Requests status replies carrying the daemon's crate versions, falling back to earlier supported formats.
+    pub(crate) async fn request_versions(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        let (format, probe_reply) = self.negotiate_versions(&client).await?;
+        if matches!(
+            &command,
+            Command::Status(agent_core::protocol::StatusRequest { target: None })
+        ) && let Some(reply) = probe_reply
+        {
+            return Ok(reply);
+        }
+        self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
+            .await
+    }
+
     /// Requests executor-aware status, falling back to earlier supported formats.
     pub(crate) async fn request_plan(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
         let (format, probe_reply) = self.negotiate_plan(&client).await?;
@@ -205,12 +227,31 @@ impl Connection {
             .await
     }
 
+    /// Probes version-seven, executor and plan formats before falling back to split or legacy replies.
+    async fn negotiate_versions(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
+        self.negotiate_formats(
+            client,
+            &[ReplyFormat::Versions, ReplyFormat::Executor, ReplyFormat::Plan],
+        )
+        .await
+    }
+
     /// Probes executor and plan formats before falling back to split or legacy replies.
     async fn negotiate_plan(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
+        self.negotiate_formats(client, &[ReplyFormat::Executor, ReplyFormat::Plan])
+            .await
+    }
+
+    /// Probes `formats` in order before falling back to split or legacy replies.
+    async fn negotiate_formats(
+        &mut self,
+        client: &Client,
+        formats: &[ReplyFormat],
+    ) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
         if let Some(format) = self.format {
             return Ok((format, None));
         }
-        for format in [ReplyFormat::Executor, ReplyFormat::Plan] {
+        for &format in formats {
             let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
             match self
                 .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), format)
@@ -315,6 +356,7 @@ impl Connection {
             None => conversation.await?,
         };
         self.split = response.split;
+        self.daemon_versions = response.daemon_versions;
         match response.result {
             Outcome::Ok { reply } => Ok(reply),
             Outcome::Error { error } => Err(ClientError::Refused(error)),
@@ -329,7 +371,9 @@ impl Connection {
                 .ok_or(ClientError::Closed)?;
             let frame = match format {
                 ReplyFormat::Legacy => Frame::from_line(&line)?,
-                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor => Frame::from_line_negotiated(&line)?,
+                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor | ReplyFormat::Versions => {
+                    Frame::from_line_negotiated(&line)?
+                }
             };
             match frame {
                 Frame::Response(response) if response.id == id => return Ok(response),
