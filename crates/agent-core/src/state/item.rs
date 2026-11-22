@@ -1174,6 +1174,8 @@ impl ItemProgress {
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
 
+    getter!("The gate record of this item, if one has run.", pub fn gate(&self) -> Option<&GateResult> = self.gate.as_ref());
+
     /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
     #[must_use]
     pub const fn merge_passes(&self) -> u32 {
@@ -1198,6 +1200,12 @@ impl ItemProgress {
     #[must_use]
     pub const fn conflict_approved_head(&self) -> Option<&CommitId> {
         self.conflict_approved_head.as_ref()
+    }
+
+    /// The conflict head for which the pass was recorded as published, if any.
+    #[must_use]
+    pub const fn conflict_accounted_head(&self) -> Option<&CommitId> {
+        self.conflict_accounted_head.as_ref()
     }
 
     /// Records the approved head GitHub refused to merge before the current conflict pass or question.

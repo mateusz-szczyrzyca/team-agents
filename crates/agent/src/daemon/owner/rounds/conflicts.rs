@@ -2,7 +2,9 @@
 //! and pushed, and then the merge is tried again, the change is reviewed first, or the human is asked. The state of the
 //! item says where the pass is, so a restart of the daemon goes on from it.
 
-use agent_core::decide::merge_refusal::{AfterLead, LeadEnd, after_lead, changed_by_lead};
+use agent_core::decide::merge_refusal::{
+    AccountingState, AfterLead, ConflictPublishResult, LeadEnd, account_conflict_pass, after_lead, changed_by_lead,
+};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
@@ -211,6 +213,17 @@ impl Owner {
         let changed = match self.read_change(&lead, &pr, &approved_head, &tip).await {
             Ok(changed) => changed,
             Err(error) => {
+                let step = account_conflict_pass(ConflictPublishResult::Failed, AccountingState::Unrecorded);
+                log_decision(
+                    "account_conflict_pass",
+                    &format!("pr={}, result=failed", pr.number),
+                    &format!("{step:?}"),
+                );
+                self.each_item(team, &items, |item| {
+                    item.refund_conflict_pass();
+                    Ok(())
+                })?;
+                self.save().await?;
                 return self.publish_failed(site, &publication, &error, now, look).await;
             }
         };
@@ -307,6 +320,18 @@ impl Owner {
         self.each_item(team, items, |item| {
             item.reset_publish_tries();
             item.clear_publish_question();
+            let accounting = if item.conflict_accounted_head() == Some(approved_head) {
+                AccountingState::AlreadyRecorded
+            } else {
+                AccountingState::Unrecorded
+            };
+            let step = account_conflict_pass(ConflictPublishResult::Published, accounting);
+            log_decision(
+                "account_conflict_pass",
+                &format!("pr={pr}, result=published, accounting={accounting:?}"),
+                &format!("{step:?}"),
+            );
+            item.record_published_conflict_pass();
             Ok(())
         })?;
         match decided {
