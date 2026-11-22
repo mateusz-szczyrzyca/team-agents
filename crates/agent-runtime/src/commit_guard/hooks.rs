@@ -47,6 +47,9 @@ const COMMIT_MSG: &str = "commit-msg";
 /// The ending of the example hooks git puts into a new repository: they are no hooks.
 const SAMPLE_SUFFIX: &str = ".sample";
 
+/// The exit status of `agent guard-commit` that refuses a commit.\nconst REFUSED: u8 = 1;\n\n/// The exit status of `agent guard-commit` that refuses a commit.
+const REFUSED: u8 = 1;
+
 /// The mode of the hook: it is run by git.
 const HOOK_MODE: u32 = 0o755;
 
@@ -67,7 +70,13 @@ fn commit_msg_hook(agent: &Path, original: &Path) -> Result<String, HooksError> 
     Ok(format!(
         "#!/bin/sh\n\
          # Made by team-agents for the runs of an agent; it is not part of the repository.\n\
-         {agent} guard-commit \"$1\" || exit \"$?\"\n\
+         # Only the refusal of the guard (status {REFUSED}) stops the commit: a program that is missing or fails in\n\
+         # another way is a fault of the harness, and the checks before the review look at the commit again.\n\
+         agent={agent}\n\
+         if [ -x \"$agent\" ]; then\n\
+         \t\"$agent\" guard-commit \"$1\"\n\
+         \tif [ \"$?\" -eq {REFUSED} ]; then exit {REFUSED}; fi\n\
+         fi\n\
          original={original}\n\
          if [ -x \"$original\" ]; then\n\
          \texec \"$original\" \"$@\"\n\
