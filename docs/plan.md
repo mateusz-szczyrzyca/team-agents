@@ -154,11 +154,11 @@ commands and keeps them declared; commands matching prefixes in `[plan] check_re
 running daemon, the command of a done step runs in the background when its run ends: one batch per run, the commands of a
 batch one after another, with the agent's environment (its secrets, `PATH`, `AGENTS_HOME`, `CARGO_INCREMENTAL` from `[build]`, and commit identity; the
 notification secrets are not given, nor the CLI's own variables or the commit guard hooks). While a batch runs the
-daemon serves its requests; the run is finished with the plan's decision when the batch ends. The process group of the
-running command is recorded in `tasks/<task>/checks/running` and removed when it ends: a daemon that stops ends it, and
-a daemon that starts after a crash ends the group the record names. While command checks or plan settlement run for a
-finished CLI run, `state.json` keeps the unsettled finished run in the task's plan (`running_check`): a daemon that
-restarts ends any leftover check process group first, re-runs any check not yet judged in `history.db` for that run, and
+daemon serves its requests; the run is finished with the plan's decision when the batch ends. The process group ID and kernel start time of the
+running command are recorded in `tasks/<task>/checks/running` (`<pid> <start_ticks>`) and removed when it ends: a daemon that stops ends it, and
+a daemon that starts after a crash ends the group the record names when its start time still matches. While command checks or plan settlement run for a
+finished CLI run, `state.json` keeps the unsettled finished run on the task's member (`running_check`, saved before the batch starts): a daemon that
+restarts ends any leftover check process group first, re-runs any check not yet judged in `history.db` for that run (each command's judgement is persisted before the next command starts), and
 settles the finished run once without starting a second CLI run or writing a duplicate judgement.
 Each judgement records the task, run, step ID, check, state, reason, output path, and duration in
 [`history.db`](history.md#step_judgements).
