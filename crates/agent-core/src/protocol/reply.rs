@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 use super::ProtocolVersion;
 use super::request::RequestId;
 use crate::config::{AbsolutePath, Limits, RepoName};
-use crate::decide::slot::Going;
+use crate::decide::slot::{Going, busy_run, limit_for};
 use crate::history::HistoryHealth;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
@@ -573,7 +573,13 @@ impl From<&Team> for TeamSummary {
 /// Marks each queued member whose agent holds its run limit with the run that holds it, as `waits_for`; the other members
 /// keep none. `going` lists the runs that go over every team, and `limits` gives the limit of each tier.
 pub fn mark_runs_elsewhere(members: &mut [MemberSummary], going: &[Going], limits: &Limits) {
-    let _ = (members, going, limits);
+    for member in members.iter_mut().filter(|member| member.status == TaskStatus::Queued) {
+        let limit = limit_for(limits, member.agent.tier());
+        member.waits_for = busy_run(&member.agent.agent_name(), limit, going).map(|run| RunElsewhere {
+            team: run.team.clone(),
+            task: run.task.clone(),
+        });
+    }
 }
 
 impl Response {
