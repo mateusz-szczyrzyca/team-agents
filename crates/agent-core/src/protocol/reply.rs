@@ -612,6 +612,8 @@ fn returned_by(team: &Team, member: &Member) -> Option<Returned> {
 }
 
 #[cfg(test)]
+mod returned_parts_tests;
+#[cfg(test)]
 mod returned_tests;
 
 #[cfg(test)]

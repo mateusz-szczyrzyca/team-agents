@@ -19,6 +19,8 @@ mod holding;
 mod holding_tests;
 mod item;
 #[cfg(test)]
+mod item_parts_tests;
+#[cfg(test)]
 mod item_tests;
 mod member;
 mod migrate;

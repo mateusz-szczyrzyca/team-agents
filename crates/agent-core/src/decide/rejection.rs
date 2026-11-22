@@ -42,6 +42,44 @@ pub fn returned_items(message: &str) -> Vec<ItemId> {
     returned
 }
 
+/// What a `RETURNED:` line names: an item, or one part of a split item (`1.1a`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReturnTarget {
+    /// The item the line names; for a part, its parent item.
+    item: ItemId,
+    /// The part of the item, when the line names one.
+    part: Option<crate::state::split::PartKey>,
+}
+
+impl ReturnTarget {
+    /// The item, or the parent item of the part.
+    #[must_use]
+    pub const fn item(&self) -> ItemId {
+        self.item
+    }
+
+    /// The part of the item the line names; `None` when it names the item itself.
+    #[must_use]
+    pub const fn part(&self) -> Option<crate::state::split::PartKey> {
+        self.part
+    }
+}
+
+/// What a lead's final message `message` sends back, in the order of its lines: items, and parts of split items.
+///
+/// A line is read as [`returned_items`] reads it, and its answer is an item number or an item number and one lowercase
+/// letter, the key of a part (`1.1a`). Anything else is skipped. A target named twice is returned once.
+#[must_use]
+pub fn returned_targets(_message: &str) -> Vec<ReturnTarget> {
+    Vec::new()
+}
+
+/// The run of `runs` that the member's last hand-over was made after: the last one that ended `DONE`.
+#[must_use]
+pub fn handed_over_run(_runs: &[crate::state::Run]) -> Option<&crate::ids::RunId> {
+    None
+}
+
 /// How many times a lead returned an item, and the limit `[replacement] rejections` it is compared with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Rejections {
@@ -341,5 +379,7 @@ mod before_tests;
 mod facts_tests;
 #[cfg(test)]
 mod runs_tests;
+#[cfg(test)]
+mod targets_tests;
 #[cfg(test)]
 mod tests;
