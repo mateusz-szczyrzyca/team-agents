@@ -836,3 +836,47 @@ async fn the_wait_for_the_human_starts_when_the_question_was_asked() {
         )
     );
 }
+
+#[tokio::test]
+async fn the_wait_line_of_a_queued_round_behind_its_agents_run_names_the_agent_and_the_team() {
+    let (mut state, team, round) = round_of_waiting_tasks(false);
+    {
+        let mut found = state.team_mut(&team).unwrap();
+        let (_, mut member) = found.find_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let other_team_id = team_id(9);
+    let mut other_team = state.team(&team).unwrap().clone();
+    let other_json = serde_json::to_string(&other_team)
+        .unwrap()
+        .replace(team.as_str(), other_team_id.as_str())
+        .replace(task(1).as_str(), "task-20261111-153051-k3x9")
+        .replace(task(2).as_str(), "task-20261111-153052-k3x9")
+        .replace(task(3).as_str(), "task-20261111-153053-k3x9")
+        .replace(task(4).as_str(), "task-20261111-153054-k3x9")
+        .replace(round.as_str(), "round-20261119-090059-wait");
+    other_team = serde_json::from_str(&other_json).unwrap();
+    state.insert_team(other_team).unwrap();
+    {
+        let mut other = state.team_mut(&other_team_id).unwrap();
+        let busy_task: TaskId = "task-20261111-153052-k3x9".parse().unwrap();
+        let (_, mut busy_member) = other.find_mut(&busy_task).unwrap();
+        busy_member.transition(TaskStatus::Running).unwrap();
+    }
+    let daemon = home_with_token(&state);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.set_pulls(pulls_of(&owner).await.expect("the fixture home has a GitHub token"));
+    let found_team = owner.parts.state.team(&team).unwrap();
+    let found_round = found_team.round(&round).unwrap();
+
+    let line = owner.wait_line(found_team, found_round);
+
+    assert_eq!(
+        line,
+        Some(format!(
+            "the queued run of its task to start, owed by the harness since {}, after the run of claude-1 in {}",
+            agent_core::local_time::Zone::Utc.stamp(at(30)),
+            other_team_id
+        ))
+    );
+}

@@ -758,4 +758,43 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
         release(&world, &second);
     }
+
+    #[test]
+    fn an_old_state_with_two_runs_of_one_agent_going_loads_and_both_finish() {
+        let mut world = World::new(&agents_with(&[("claude-1", "agent", "hold")]));
+        configure(&world, "\n[limits]\nruns_per_agent = 0\n");
+        world.start();
+        let first = solo_task(&world.agent(&["run", "claude-1", "First."]));
+        let second = solo_task(&world.agent(&["run", "claude-1", "Second."]));
+        world.status_where("both tasks to run in the state before the limit", |status| {
+            line_of(status, &first).contains("running") && line_of(status, &second).contains("running")
+        });
+
+        let config_path = world.home.join("agents.toml");
+        let without_zero = std::fs::read_to_string(&config_path)
+            .unwrap()
+            .replace("\n[limits]\nruns_per_agent = 0\n", "");
+        std::fs::write(&config_path, without_zero).unwrap();
+        world.restart();
+
+        let status = world.status_where(
+            "the first task to run and the second to wait under the new default limit",
+            |status| {
+                line_of(status, &first).contains("running")
+                    && line_of(status, &second).contains("queued, waits for claude-1, running in team-")
+            },
+        );
+        assert!(!status.contains("failed"), "{status}");
+
+        release(&world, &first);
+        world.status_where("the first task to finish its run and the second to run", |status| {
+            line_of(status, &first).contains("waiting") && line_of(status, &second).contains("running")
+        });
+        release(&world, &second);
+        world.status_where("both runs of the old state to finish", |status| {
+            line_of(status, &first).contains("waiting") && line_of(status, &second).contains("waiting")
+        });
+        assert_eq!(world.runs(&first), 2);
+        assert_eq!(world.runs(&second), 2);
+    }
 }
