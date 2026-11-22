@@ -57,6 +57,16 @@ impl Team {
         self.refresh_tier_waits_in_policy(mode, &[])
     }
 
+    /// Refreshes capability waits with configured outside participant facts.
+    pub fn refresh_tier_waits_with_candidates(
+        &mut self,
+        mode: crate::decide::replacement::ReplacementMode,
+        configured_replacements: &[crate::ids::AgentName],
+        _outside: &[crate::decide::part::Candidate<'_>],
+    ) -> Vec<(ItemId, Tier)> {
+        self.refresh_tier_waits_in_policy(mode, configured_replacements)
+    }
+
     /// Refreshes capability waits under a specific replacement policy.
     pub fn refresh_tier_waits_in_policy(
         &mut self,
