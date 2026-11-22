@@ -76,3 +76,28 @@ fn the_bus_is_told_the_tier_and_role_of_the_run() {
         Some("investigator")
     );
 }
+
+#[test]
+fn a_run_that_keeps_a_plan_is_given_the_agent_command_that_checks_its_requests() {
+    let planned = bus_words(Role::Member, &ROLES, Tier::Normal, Path::new("/w"));
+    let unplanned = bus_words(Role::Worker, &ROLES, Tier::Worker, Path::new("/w"));
+
+    assert_eq!(value_of(&planned, "--agent-cmd"), Some("agent"));
+    assert_eq!(value_of(&unplanned, "--agent-cmd"), None);
+}
+
+#[test]
+fn the_words_of_the_bus_are_flags_each_with_its_value() {
+    for (role, tier) in [
+        (Role::Coordinator, Tier::Investigator),
+        (Role::Member, Tier::Normal),
+        (Role::Worker, Tier::Worker),
+    ] {
+        let words = bus_words(role, &ROLES, tier, Path::new("/w"));
+        assert_eq!(words.len() % 2, 0, "{words:?}");
+        for pair in words.chunks(2) {
+            assert!(pair[0].starts_with("--"), "{words:?}");
+            assert!(!pair[1].starts_with("--"), "{words:?}");
+        }
+    }
+}
