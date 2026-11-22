@@ -513,6 +513,12 @@ impl Member {
         }
     }
 
+    /// The refused gate command notices waiting for the next run, if any.
+    #[must_use]
+    pub fn plan_refused_gate(&self) -> &[(ItemId, String)] {
+        self.plan.as_ref().map_or(&[], PlanKeeping::refused_gate)
+    }
+
     /// Takes the refused gate command notices from the member's plan keeping, clearing them for future runs.
     pub fn take_plan_refused_gate(&mut self) -> Vec<(ItemId, String)> {
         self.plan.as_mut().map_or_else(Vec::new, PlanKeeping::take_refused_gate)

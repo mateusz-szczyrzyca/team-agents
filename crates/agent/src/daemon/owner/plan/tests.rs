@@ -2598,3 +2598,168 @@ async fn mismatch_across_roles_statuses_and_refused_gate_across_restart() {
     let second_after_restart = daemon.recorded(1, ".fake-args");
     assert_eq!(second_after_restart.matches("## Step 1.1 check was refused").count(), 0);
 }
+
+#[tokio::test]
+async fn legacy_member_and_roles_deliver_refused_gate_and_plain_mismatch_end_to_end() {
+    use crate::fixtures::{investigator, member};
+    use agent_core::state::TeamMembers;
+
+    // 1. Legacy member (Member::without_plan) with `Check: make gate`, ends SLEEPING, restarts, and queues next run.
+    let mut legacy_state = State::new();
+    let legacy_crew = Crew::solo(Member::without_plan(task(1), normal("claude-1"))).unwrap();
+    legacy_state
+        .insert_team(Team::new(
+            team_id(0),
+            repo(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(LIST.to_owned()).unwrap(),
+            legacy_crew,
+        ))
+        .unwrap();
+    let mut daemon = with_bounces(&legacy_state, 2);
+    let dir = daemon.scenario(1, "sleep");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(
+        dir.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Gate step\n    Check: make gate\n",
+    )
+    .unwrap();
+    daemon.start().await;
+    let mut waiting = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    waiting
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Queued)
+        .unwrap();
+    std::fs::write(daemon.home.state_file(), waiting.to_json().unwrap()).unwrap();
+    daemon.scenario(1, "done");
+    daemon.start().await;
+    let settled = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+    let legacy_prompt = daemon.recorded(1, ".fake-args");
+    assert_eq!(
+        legacy_prompt.matches("## Step 1.1 check was refused").count(),
+        1,
+        "legacy member must receive refused gate notice once: {legacy_prompt}"
+    );
+    assert_eq!(settled.find_task(&task(1)).unwrap().member.plan(), None);
+
+    // 2. End-to-end daemon.start() plain mismatch bounce and repair for both coordinator (task 1) and member (task 2).
+    for (active_task, inactive_task) in [(1_u32, 2_u32), (2_u32, 1_u32)] {
+        let mut team_done = State::new();
+        let crew = Crew::team(TeamMembers {
+            coordinator: member(1, investigator("inv-opus")),
+            members: vec![member(2, normal("claude-1"))],
+            workers: Vec::new(),
+        })
+        .unwrap();
+        let list = TaskListText::new("Finish it.".to_owned()).unwrap();
+        team_done
+            .insert_team(Team::new(team_id(0), repo(), at(0), MergeMode::Autopilot, list, crew))
+            .unwrap();
+        {
+            let (_, mut other) = team_done.find_task_mut(&task(inactive_task)).unwrap();
+            other.transition(TaskStatus::Running).unwrap();
+            other.transition(TaskStatus::Stopped).unwrap();
+        }
+        let mut role_daemon = with_bounces(&team_done, 1);
+        let role_dir = role_daemon.scenario(active_task, "done-on-resume-after absent.txt");
+        std::fs::create_dir_all(role_dir.join(".agent")).unwrap();
+        std::fs::write(role_dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
+        role_daemon.start().await;
+        role_daemon
+            .state_where("1 send-back of the active role", |s| {
+                s.find_task(&task(active_task))
+                    .and_then(|f| f.member.plan().map(|k| k.sent_back() == 1))
+                    .unwrap_or(false)
+            })
+            .await;
+        std::fs::write(role_dir.join("absent.txt"), "repaired").unwrap();
+        let role_settled = role_daemon.status_is(active_task, TaskStatus::Waiting).await;
+        role_daemon.stop().await.unwrap();
+        let role_prompt = role_daemon.recorded(active_task, ".fake-args");
+        assert!(
+            role_prompt.contains("the check of step 1.1 (`exists absent.txt`) failed"),
+            "{role_prompt}"
+        );
+        assert_eq!(
+            role_settled
+                .find_task(&task(active_task))
+                .unwrap()
+                .member
+                .plan()
+                .unwrap()
+                .sent_back(),
+            1
+        );
+    }
+}
+
+#[tokio::test]
+async fn aborted_unpolled_run_preserves_refused_gate_across_restart_and_missing_output_is_reported() {
+    let mut daemon = with_bounces(&solo_state(), 1);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), FINISHED).unwrap();
+
+    let mut initial = daemon.state();
+    initial
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .add_plan_refused_gate("1.1".parse().unwrap(), "make gate".to_owned());
+    std::fs::write(daemon.home.state_file(), initial.to_json().unwrap()).unwrap();
+
+    {
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        owner.start(task(1)).await.unwrap();
+        owner.runs.abort_all();
+    }
+
+    daemon.start().await;
+    let settled = daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert_eq!(
+        prompt.matches("## Step 1.1 check was refused").count(),
+        1,
+        "recovered run after aborted unpolled engine task must receive refused gate notice once: {prompt}"
+    );
+    assert_eq!(
+        settled.find_task(&task(1)).unwrap().member.plan_refused_gate(),
+        &[],
+        "refused gate notice must be cleared once the recovered run finishes"
+    );
+
+    let parsed = agent_core::plan::parse_plan("Finish.\n\n1. Work\n[x] 1.1 Run cmd\n    Check: cargo test\n").unwrap();
+    let run_id: agent_core::ids::RunId = "run-20261122-060000-abcd".parse().unwrap();
+    let mut judgements = std::collections::HashMap::new();
+    judgements.insert(
+        "1.1".parse().unwrap(),
+        agent_runtime::history::JudgementRecord {
+            task: task(1),
+            team: team_id(0),
+            run: Some(run_id.clone()),
+            at: at(10),
+            step: "1.1".parse().unwrap(),
+            check: Some("cargo test".to_owned()),
+            state: agent_core::plan::judge::JudgementState::Mismatch,
+            reason: Some("exit status 1".to_owned()),
+            output_path: Some("checks/run-20261122-060000-abcd/1.1.log".to_owned()),
+            duration_ms: 15,
+        },
+    );
+    let reason = super::first_mismatch(&daemon.home.task_dir(&task(1)), &parsed, &judgements, Some(&run_id))
+        .await
+        .expect("mismatch reason when output file is missing");
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let rendered = super::correction(&owner.parts.texts, &reason).unwrap();
+    assert!(
+        rendered.contains("cannot read the check output"),
+        "missing output file must be reported in correction tail: {rendered}"
+    );
+}

@@ -99,6 +99,64 @@ pub enum PlanReason {
     },
 }
 
+/// A structural fault of a parsed plan that can occur alongside a step check mismatch (`LostStep` or `Unfinished`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlanFault {
+    /// Steps are still to do or in hand.
+    Unfinished {
+        /// The steps, in the order of the plan.
+        steps: Vec<ItemId>,
+    },
+    /// Steps the version before had are gone.
+    LostStep {
+        /// The steps, in the order of the version before.
+        steps: Vec<ItemId>,
+    },
+}
+
+/// A step check that failed or timed out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepMismatch {
+    /// The step ID.
+    pub step: ItemId,
+    /// The step title.
+    #[serde(default)]
+    pub title: String,
+    /// The check that was executed, if any.
+    #[serde(default)]
+    pub check: Option<String>,
+    /// Why the check failed.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// The trailing lines of the check's output.
+    #[serde(default)]
+    pub tail: String,
+}
+
+impl PlanReason {
+    /// Combines a structural [`PlanFault`] and a [`StepMismatch`] into a single [`Self::FaultAndMismatch`] bounce reason.
+    #[must_use]
+    pub fn fault_and_mismatch(fault: PlanFault, mismatch: StepMismatch) -> Self {
+        let fault = match fault {
+            PlanFault::Unfinished { steps } => Self::Unfinished { steps },
+            PlanFault::LostStep { steps } => Self::LostStep { steps },
+        };
+        let mismatch = Self::Mismatch {
+            step: mismatch.step,
+            title: mismatch.title,
+            check: mismatch.check,
+            reason: mismatch.reason,
+            tail: mismatch.tail,
+        };
+        Self::FaultAndMismatch {
+            fault: Box::new(fault),
+            mismatch: Box::new(mismatch),
+        }
+    }
+}
+
 /// What a task keeps of its plan: the count of its send-backs, what the human granted, the stage, and a reason that
 /// waits for the run it goes to.
 ///

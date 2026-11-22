@@ -157,3 +157,37 @@ fn running_plan_check_round_trips_original_ended_at_timestamp() {
     let loaded: RunningPlanCheck = serde_json::from_str(&json).expect("deserialize RunningPlanCheck with ended_at");
     assert_eq!(loaded.ended_at, Some(at(123)));
 }
+
+#[test]
+fn fault_and_mismatch_rejects_meaningless_fault_and_legacy_member_persists_refused_gate() {
+    use crate::state::Member;
+    use crate::state::fixtures::{normal, task};
+
+    let bad_fault =
+        r#"{"kind":"fault_and_mismatch","fault":{"kind":"mismatch","step":"1.1"},"mismatch":{"step":"1.1"}}"#;
+    assert!(
+        serde_json::from_str::<PlanReason>(bad_fault).is_err(),
+        "FaultAndMismatch must refuse a mismatch inside fault"
+    );
+    let bad_nested = r#"{"kind":"fault_and_mismatch","fault":{"kind":"fault_and_mismatch","fault":{"kind":"unfinished","steps":["1.2"]},"mismatch":{"step":"1.1"}},"mismatch":{"step":"1.1"}}"#;
+    assert!(
+        serde_json::from_str::<PlanReason>(bad_nested).is_err(),
+        "FaultAndMismatch must refuse nesting itself"
+    );
+
+    let step1 = ItemId::from_str("1.1").unwrap();
+    let mut legacy = Member::without_plan(task(1), normal("claude-1"));
+    legacy.add_plan_refused_gate(step1, "make gate".to_owned());
+    assert_eq!(legacy.plan(), None, "legacy member must stay without PlanKeeping");
+    assert_eq!(
+        legacy.plan_refused_gate(),
+        &[(step1, "make gate".to_owned())],
+        "legacy member must retain refused gate notice"
+    );
+    let json = serde_json::to_string(&legacy).expect("serialize legacy member with refused_gate");
+    let mut loaded: Member = serde_json::from_str(&json).expect("deserialize legacy member with refused_gate");
+    assert_eq!(loaded.plan(), None);
+    assert_eq!(loaded.plan_refused_gate(), &[(step1, "make gate".to_owned())]);
+    assert_eq!(loaded.take_plan_refused_gate(), vec![(step1, "make gate".to_owned())]);
+    assert_eq!(loaded.plan_refused_gate(), &[]);
+}
