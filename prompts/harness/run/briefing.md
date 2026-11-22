@@ -5,7 +5,7 @@ You work on task {{task}} again, in a new session. The session before you went b
 
 - `no_status`: its last runs ended without a `STATUS:` line;
 - `hang`: its last runs showed no activity until the watchdog stopped them;
-- `turn_limit`: its last runs used up their turn budget;
+- `turn_limit`: its last runs used up their turn budget.
 - `busy`: no run of it went bad: its agent was busy in another team for longer than `[replacement] busy_after`, and a
   free agent took the task over while it waited.
 
