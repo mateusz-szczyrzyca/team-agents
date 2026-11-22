@@ -25,6 +25,7 @@ mod takeover;
 mod teams;
 mod tier_questions;
 mod wakes;
+mod worker_result;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
@@ -176,6 +177,9 @@ pub(crate) enum OwnerError {
         /// What the state refused.
         source: agent_core::state::RejectionError,
     },
+    /// The request of a worker whose run ended cannot be kept or read.
+    #[error(transparent)]
+    WorkerRequest(#[from] agent_runtime::worker_request::PendingError),
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),

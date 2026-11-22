@@ -1240,7 +1240,7 @@ impl Owner {
     }
 
     /// Keeps `records` in the history and returns the latest judgement of every step of `task`, as known now.
-    async fn record_judgements(
+    pub(super) async fn record_judgements(
         &mut self,
         task: &TaskId,
         records: Vec<JudgementRecord>,

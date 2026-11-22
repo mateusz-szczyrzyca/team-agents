@@ -57,11 +57,17 @@ pub(super) struct Outbound {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Served {
     /// The request.
-    request: RequestId,
+    pub(super) request: RequestId,
     /// The member that asked and gets the result.
-    requester: AgentName,
+    pub(super) requester: AgentName,
+    /// Its task.
+    pub(super) requester_task: TaskId,
     /// The worker that serves it.
-    worker: AgentName,
+    pub(super) worker: AgentName,
+    /// When the request was given to the worker.
+    pub(super) started: Timestamp,
+    /// The commit the worker's worktree was at then; `None` when it could not be read.
+    pub(super) base: Option<String>,
 }
 
 /// The workers of a team and which of them cannot take a request now.
@@ -437,6 +443,7 @@ impl Owner {
             self.assign_items(team, &mut look).await?;
             self.refresh_tier_waits(team, &mut look)?;
             self.ask_tier_waits(team).await?;
+            self.settle_worker_results(team).await?;
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
@@ -857,13 +864,19 @@ impl Owner {
                 &json!({"workers": &names, "busy": &busy}),
                 &json!({"worker": &worker, "request_id": request.id}),
             );
+            // The commit the worker's worktree is at: the files the worker changes are those since.
+            let base = self.worker_head(team_id, &task, &worker).await;
+            let started = Timestamp::now(&self.parts.clock)?;
             self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),
                 Served {
                     request: request.id,
                     requester: request.from.clone(),
+                    requester_task: request.from_task.clone(),
                     worker: worker.clone(),
+                    started,
+                    base,
                 },
             );
             self.tell_bus(
@@ -1018,11 +1031,20 @@ impl Owner {
                 && let Some(outcome) = request_outcome(end, found.member.status(), message)
             {
                 self.serving.remove(task);
-                for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
-                    self.outbox.push_back(Outbound {
-                        team: located.team.clone(),
-                        job,
-                    });
+                match outcome {
+                    // The result of a worker that ended DONE is checked, and its commit brought over, before the requester
+                    // is told: the next look at the team settles it.
+                    RequestOutcome::Done { summary } => {
+                        self.keep_worker_result(&located.team, &served, task, summary)?;
+                    }
+                    outcome @ RequestOutcome::Failed { .. } => {
+                        for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
+                            self.outbox.push_back(Outbound {
+                                team: located.team.clone(),
+                                job,
+                            });
+                        }
+                    }
                 }
             }
         }
