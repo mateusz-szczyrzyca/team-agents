@@ -12,7 +12,7 @@ pub enum Activity {
 }
 
 /// An outstanding action with an owner that can advance a round.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::EnumIter)]
 pub enum Obligation {
     /// The PR delivering this item must merge before its round can finish.
     Merge,
@@ -30,6 +30,52 @@ pub enum Obligation {
     LeadCorrection,
     /// A task of the round is queued, or waits for a free agent or a limit of runs, and its run starts the round.
     QueuedRun,
+}
+
+/// Who is obliged to act on an [`Obligation`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WaitOwner {
+    /// The lead of the team.
+    Lead,
+    /// The human.
+    Human,
+    /// The reviewers and the investigators that answer for the review.
+    Reviewers,
+    /// The daemon itself, or GitHub through it: nobody has to be asked.
+    Harness,
+}
+
+/// How whoever owes an [`Obligation`] learns what is expected of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Told {
+    /// In its next prompt or a message on the bus, which also wakes it.
+    ByPrompt,
+    /// In a question or a notification that reaches the human.
+    ByNotification,
+    /// It needs no telling: the daemon does the work itself.
+    NoOneToTell,
+}
+
+impl Obligation {
+    /// Who is obliged to act.
+    #[must_use]
+    pub const fn owner(self) -> WaitOwner {
+        WaitOwner::Harness
+    }
+
+    /// How the owner is told what is expected of it.
+    #[must_use]
+    pub const fn told(self) -> Told {
+        Told::NoOneToTell
+    }
+}
+
+impl WaitOwner {
+    /// The name of the owner in a wait line, from the harness's prompt catalog.
+    #[must_use]
+    pub const fn text(self) -> &'static str {
+        ""
+    }
 }
 
 /// What an idle open round waits for.
@@ -58,6 +104,15 @@ impl Waiting {
             Self::For(Obligation::QueuedRun) => include_str!("../../../../prompts/harness/pr/wait-queued.md"),
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
+    }
+}
+
+impl Waiting {
+    /// The wait as a line that names who is obliged and, when it is known, since when: `since` is the time as the reader
+    /// is shown it. An unowned round names nobody.
+    #[must_use]
+    pub fn line(self, _since: Option<&str>) -> String {
+        self.text().to_owned()
     }
 }
 
