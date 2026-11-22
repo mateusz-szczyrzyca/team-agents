@@ -3,8 +3,8 @@
 //! A worker's run ends, and the harness checks what it left: its status line, the files it changed, the request's
 //! check and the time it took. [`decide`] reads those facts and answers what the harness does with the result: take it
 //! and bring the worker's commit to the requester's branch ([`Verdict::Accept`]), give the request once more to a free
-//! worker of another provider, or of the same one when no other is free ([`Verdict::GiveToAnother`]), or return the step to the requester with every reason
-//! ([`Verdict::Return`]). A request that names no path to write is looked up: its result goes to the requester as it
+//! worker of another provider, or of the same one when no other is free ([`Verdict::GiveToAnother`]), or return the
+//! step to the requester with every reason ([`Verdict::Return`]). A request that names no path to write is looked up: its result goes to the requester as it
 //! always did, and a check that fails still makes it a wrong result.
 //!
 //! The decision is a pure function of what [`Facts`] says; [`worker_for_second_try`] is the second one, of who may
