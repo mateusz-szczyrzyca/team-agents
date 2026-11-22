@@ -1022,7 +1022,8 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "delegate":
 		return toolResult(s.delegateFields(DelegateFields{Goal: a.str("goal"), Workdir: a.str("workdir"), Steps: a.str("steps"),
 			Returns: a.str("returns"), Terms: a.str("terms"), Requires: a.strings("requires"),
-			AnswersTo: a.str("answers_to"), Answers: a.str("answers")}))
+			AnswersTo: a.str("answers_to"), Answers: a.str("answers"), Step: a.str("for"), Files: a.str("files"),
+			Check: a.str("check"), Doing: a.str("do")}))
 	case "delegation_feedback":
 		return toolResult(s.delegationFeedback(a.str("id"), a.str("verdict"), a.str("note")))
 	case "delegation_status":
@@ -1121,9 +1122,12 @@ func (s *Server) fail(id json.RawMessage, code int, msg string) {
 func (s *Server) tools() []map[string]any {
 	tools := append(toolDefs(), invToolDefs(s.role)...)
 	tools = append(tools, teamToolDefs(s.team != "")...)
+	// An investigator sees nothing of the board or the quiz, but it may hand a mechanical step to a worker.
 	if s.role != RoleInvestigator {
 		tools = append(tools, collabToolDefs(s.team != "", s.tier)...)
 		tools = append(tools, consultToolDefs(s.team != "")...)
+	} else {
+		tools = append(tools, delegationToolDefs()...)
 	}
 	if s.remote != "" {
 		tools = withoutRemoteUnavailable(tools)

@@ -33,6 +33,11 @@ func harnessCheck(t *testing.T, answer func(step string) string) *[]string {
 	return &calls
 }
 
+// missingPiece returns the check of a refusal with the cause want.
+func missingPiece(t *testing.T, want DelegateCause) func(error) {
+	return func(e error) { expectToolError(t, e, want) }
+}
+
 // toError is an operation's error as a plain error, nil when the operation succeeded.
 func toError[C opCause](_ string, err *OpError[C]) error {
 	if err == nil {
@@ -48,7 +53,7 @@ func asInvestigator(s *Server) { s.role = RoleInvestigator }
 func planPath(t *testing.T) string {
 	t.Helper()
 	plan := filepath.Join(t.TempDir(), "plan.md")
-	if err := os.WriteFile(plan, []byte("1. Draft\n[ ] 1.1 Write it\n"), 0o644); err != nil {
+	if err := os.WriteFile(plan, []byte("1. Draft\n[ ] 1.1 Write it\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return plan
@@ -61,7 +66,9 @@ func namedFields(dir string) DelegateFields {
 	return d
 }
 
-const acceptedStep = "ACCEPTED\n" +
+// acceptedAnswer is what the harness prints for an accepted request. The bus quotes it as it came: the step is a
+// block of text, not one line, and the bus does not parse it.
+const acceptedAnswer = "ACCEPTED\n" +
 	"The step of the requester's plan:\nStep 1.1 Write it\n" +
 	"Files: docs/guide.md\nCheck: exists docs/guide.md\n" +
 	"Request files: docs/guide.md\nRequest check: exists docs/guide.md\nDo: Write the guide."
@@ -72,7 +79,7 @@ func TestDelegateWithAPlanAsksTheHarnessForThePlanAtTheMomentOfTheRequest(t *tes
 	plan := planPath(t)
 	n.plan = plan
 	n.agentCmd, n.home = "agent", "/home/fake"
-	calls := harnessCheck(t, func(string) string { return acceptedStep })
+	calls := harnessCheck(t, func(string) string { return acceptedAnswer })
 	var spawned []string
 	old := agentCmdFn
 	agentCmdFn = func(_, _ string, args ...string) { spawned = append(spawned, strings.Join(args, " ")) }
@@ -94,7 +101,7 @@ func TestDelegateWithAPlanAsksTheHarnessForThePlanAtTheMomentOfTheRequest(t *tes
 	if h == nil || h.Step != "1.1" {
 		t.Fatalf("the request should carry its step, got %+v", h)
 	}
-	for _, want := range []string{"The step of the requester's plan:\nStep 1.1 Write it", "Request files: docs/guide.md", "Request check: exists docs/guide.md", "Do: Write the guide."} {
+	for _, want := range []string{strings.TrimPrefix(acceptedAnswer, "ACCEPTED\n")} {
 		if !strings.Contains(h.Request, want) {
 			t.Fatalf("the worker's request should hold %q:\n%s", want, h.Request)
 		}
@@ -106,25 +113,25 @@ func TestDelegateWithAPlanRefusesEachMissingPieceWithItsOwnCause(t *testing.T) {
 	for _, row := range []struct {
 		name  string
 		clear func(*DelegateFields)
-		check func(string, error)
+		check func(error)
 	}{
-		{"for", func(d *DelegateFields) { d.Step = " " }, func(_ string, e error) { expectToolError(t, e, DelegateMissingFor) }},
-		{"files", func(d *DelegateFields) { d.Files = "" }, func(_ string, e error) { expectToolError(t, e, DelegateMissingFiles) }},
-		{"check", func(d *DelegateFields) { d.Check = "" }, func(_ string, e error) { expectToolError(t, e, DelegateMissingCheck) }},
-		{"do", func(d *DelegateFields) { d.Doing = "\n" }, func(_ string, e error) { expectToolError(t, e, DelegateMissingDo) }},
+		{"for", func(d *DelegateFields) { d.Step = " " }, missingPiece(t, DelegateMissingFor)},
+		{"files", func(d *DelegateFields) { d.Files = "" }, missingPiece(t, DelegateMissingFiles)},
+		{"check", func(d *DelegateFields) { d.Check = "" }, missingPiece(t, DelegateMissingCheck)},
+		{"do", func(d *DelegateFields) { d.Doing = "\n" }, missingPiece(t, DelegateMissingDo)},
 	} {
 		t.Run(row.name, func(t *testing.T) {
 			n := server(b, "n1")
 			n.plan = planPath(t)
 			n.agentCmd, n.home = "agent", "/home/fake"
-			harnessCheck(t, func(string) string { return acceptedStep })
+			harnessCheck(t, func(string) string { return acceptedAnswer })
 			var spawned []string
 			old := agentCmdFn
 			agentCmdFn = func(_, _ string, args ...string) { spawned = append(spawned, strings.Join(args, " ")) }
 			t.Cleanup(func() { agentCmdFn = old })
 			d := namedFields(t.TempDir())
 			row.clear(&d)
-			row.check(toolResult(n.delegateFields(d)))
+			row.check(toError(n.delegateFields(d)))
 			if len(spawned) != 0 {
 				t.Fatalf("a refused request must not dispatch a worker, got %v", spawned)
 			}
@@ -276,7 +283,7 @@ func TestDelegatePlanArgsThroughTheDispatcher(t *testing.T) {
 	n := server(b, "n1")
 	n.plan = planPath(t)
 	n.agentCmd, n.home = "agent", "/home/fake"
-	harnessCheck(t, func(string) string { return acceptedStep })
+	harnessCheck(t, func(string) string { return acceptedAnswer })
 	old := agentCmdFn
 	agentCmdFn = func(_, _ string, _ ...string) {}
 	t.Cleanup(func() { agentCmdFn = old })
