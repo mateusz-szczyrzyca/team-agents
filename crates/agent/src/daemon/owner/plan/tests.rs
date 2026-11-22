@@ -2658,7 +2658,9 @@ async fn legacy_member_and_roles_deliver_refused_gate_and_plain_mismatch_end_to_
     assert_eq!(settled.find_task(&task(1)).unwrap().member.plan(), None);
 
     // 2. End-to-end daemon.start() plain mismatch bounce and repair for both coordinator (task 1) and member (task 2).
-    for (active_task, inactive_task) in [(1_u32, 2_u32), (2_u32, 1_u32)] {
+    for (active_task, inactive_task, settled_status) in
+        [(1_u32, 2_u32, TaskStatus::Done), (2_u32, 1_u32, TaskStatus::Waiting)]
+    {
         let mut team_done = super::super::fixture::pair_state();
         {
             let (_, mut other) = team_done.find_task_mut(&task(inactive_task)).unwrap();
@@ -2678,7 +2680,7 @@ async fn legacy_member_and_roles_deliver_refused_gate_and_plain_mismatch_end_to_
             })
             .await;
         std::fs::write(role_dir.join("absent.txt"), "repaired").unwrap();
-        let role_settled = role_daemon.status_is(active_task, TaskStatus::Waiting).await;
+        let role_settled = role_daemon.status_is(active_task, settled_status).await;
         role_daemon.stop().await.unwrap();
         let role_prompt = role_daemon.recorded(active_task, ".fake-args");
         assert!(
