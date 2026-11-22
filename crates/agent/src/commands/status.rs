@@ -395,7 +395,7 @@ struct Listing {
 /// The teams the daemon answers a status request for `target` with, what it says of the history, and its versions.
 async fn teams(connection: &mut Connection, target: Option<Target>) -> Result<Listing, StatusError> {
     let reply = connection
-        .request(Client::Cli, Command::Status(StatusRequest { target }))
+        .request_versions(Client::Cli, Command::Status(StatusRequest { target }))
         .await?;
     // Read before any other request: the next answer replaces the versions of this one.
     let daemon = connection.daemon_versions().cloned();

@@ -192,6 +192,20 @@ impl Connection {
         self.converse(client, command, None).await
     }
 
+    /// Requests status replies carrying the daemon's crate versions, falling back to earlier supported formats.
+    pub(crate) async fn request_versions(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        let (format, probe_reply) = self.negotiate_versions(&client).await?;
+        if matches!(
+            &command,
+            Command::Status(agent_core::protocol::StatusRequest { target: None })
+        ) && let Some(reply) = probe_reply
+        {
+            return Ok(reply);
+        }
+        self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
+            .await
+    }
+
     /// Requests executor-aware status, falling back to earlier supported formats.
     pub(crate) async fn request_plan(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
         let (format, probe_reply) = self.negotiate_plan(&client).await?;
@@ -213,12 +227,31 @@ impl Connection {
             .await
     }
 
+    /// Probes version-seven, executor and plan formats before falling back to split or legacy replies.
+    async fn negotiate_versions(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
+        self.negotiate_formats(
+            client,
+            &[ReplyFormat::Versions, ReplyFormat::Executor, ReplyFormat::Plan],
+        )
+        .await
+    }
+
     /// Probes executor and plan formats before falling back to split or legacy replies.
     async fn negotiate_plan(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
+        self.negotiate_formats(client, &[ReplyFormat::Executor, ReplyFormat::Plan])
+            .await
+    }
+
+    /// Probes `formats` in order before falling back to split or legacy replies.
+    async fn negotiate_formats(
+        &mut self,
+        client: &Client,
+        formats: &[ReplyFormat],
+    ) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
         if let Some(format) = self.format {
             return Ok((format, None));
         }
-        for format in [ReplyFormat::Executor, ReplyFormat::Plan] {
+        for &format in formats {
             let probe = Command::Status(agent_core::protocol::StatusRequest { target: None });
             match self
                 .converse_format(client.clone(), probe, Some(REQUEST_TIMEOUT), format)
