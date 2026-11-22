@@ -136,6 +136,14 @@ impl Owner {
         else {
             return self.wake_unasked_conflict_lead(team, look).await;
         };
+        if self
+            .watch
+            .retry_at
+            .get(&(team.clone(), pr.branch.clone()))
+            .is_some_and(|retry| *retry > now)
+        {
+            return Ok(());
+        }
         let lead = self.lead_of(team)?;
         let member = self
             .parts
