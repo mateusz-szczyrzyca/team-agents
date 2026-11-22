@@ -300,6 +300,12 @@ impl Step {
         self.check.as_ref()
     }
 
+    /// Who does the step: its holder, or a worker the holder gives it to (`By: worker`).
+    #[must_use]
+    pub fn doer(&self) -> Doer {
+        Doer::Holder
+    }
+
     /// The text of the step that is not its `Files:` or `Check:` line, dedented; for a step given up, why.
     #[must_use]
     pub fn note(&self) -> &str {
@@ -337,6 +343,15 @@ impl Step {
         let paths: Vec<&str> = self.files.iter().map(RepoPath::as_str).collect();
         Some(format!("{TEXT_INDENT}{FILES_PREFIX} {}\n", paths.join(", ")))
     }
+}
+
+/// Who does a step of a plan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Doer {
+    /// The agent whose plan it is: the default.
+    Holder,
+    /// A worker the holder gives the step to, as the line `By: worker` marks it.
+    Worker,
 }
 
 /// The state of a step: its mark.
