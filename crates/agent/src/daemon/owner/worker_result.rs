@@ -999,11 +999,11 @@ fn returned_for_damage(
 /// Whether the bus has the request `known` still in the hands of the worker whose task is `worker_task`: only such a request
 /// is settled from a file; one that is answered, queued or another worker's is not the file's to settle.
 fn is_running_for(known: &DelegationRequest, worker_task: &TaskId, worker: &AgentName) -> bool {
-    // The task is told to the bus with the status; until that update lands the request has the worker's name only.
-    let hers = match &known.helper_task {
-        Some(task) => task == worker_task,
-        None => known.worker.as_ref() == Some(worker),
-    };
+    // The bus names the worker at once, when the request is handed out, and the task only with the update that follows: until
+    // that lands the task may still be the earlier worker's. Whatever the bus names must be this worker; it must name one.
+    let hers = (known.helper_task.is_some() || known.worker.is_some())
+        && known.worker.as_ref().is_none_or(|name| name == worker)
+        && known.helper_task.as_ref().is_none_or(|task| task == worker_task);
     matches!(known.status, DelegationStatus::Running | DelegationStatus::Starting) && hers
 }
 

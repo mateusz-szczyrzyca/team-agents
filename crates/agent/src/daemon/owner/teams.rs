@@ -1085,6 +1085,7 @@ impl Owner {
                                 error = %error_chain(&error),
                                 "the result of a worker cannot be kept: the requester is given the worker's report unchecked"
                             );
+                            Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                             for job in answer_jobs(&self.parts.team_texts, &served, RequestOutcome::Done { summary })? {
                                 self.outbox.push_back(Outbound {
                                     team: located.team.clone(),
@@ -1094,6 +1095,8 @@ impl Owner {
                         }
                     }
                     outcome @ RequestOutcome::Failed { .. } => {
+                        // The request is answered here, not from a file: the try that came with it goes with it.
+                        Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                         for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
                             self.outbox.push_back(Outbound {
                                 team: located.team.clone(),

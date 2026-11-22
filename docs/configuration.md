@@ -185,7 +185,7 @@ reasons of both. A restart of the daemon while the request waits for the second 
 
 | Key | Default | Meaning |
 |---|---|---|
-| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`) |
+| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`). A request gets one second try at most: a value above `2` behaves as `2` |
 | `seconds` | `0` | how long a worker's run may last, in seconds; a run past it is a wrong result. `0` has no limit |
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.

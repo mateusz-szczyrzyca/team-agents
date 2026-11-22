@@ -162,8 +162,12 @@ impl Owner {
                     return Ok(false);
                 }
             }
-            // Another worker has it, or it was answered: the second try is given, or there is nothing to give.
-            _ => return Ok(true),
+            // Another worker has it, or it was answered: the second try is given, or there is nothing to give, and what was
+            // remembered for it is not wanted.
+            _ => {
+                self.again.remove(&pending.request);
+                return Ok(true);
+            }
         }
         let tried = self.try_of(pending);
         let mut earlier = tried.earlier.clone();
@@ -217,7 +221,7 @@ impl Owner {
     }
 
     /// Removes the file of the try of `request` from `task_dir`; one that is not there needs nothing.
-    pub(super) fn drop_try(task_dir: &Path, request: agent_runtime::agentbus::RequestId) {
+    pub(in crate::daemon::owner) fn drop_try(task_dir: &Path, request: agent_runtime::agentbus::RequestId) {
         let path = agent_runtime::worker_request::try_path(task_dir, request);
         if let Err(error) = std::fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
