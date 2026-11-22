@@ -393,7 +393,7 @@ Task files and git output are bounded to 4 MiB each; task files together to 64 M
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
 History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
 the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
-source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps show UTC and the machine's local offset.
+source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS +HH:MM`, or `UTC` when the zone cannot be found), as `agent log` does.
 Each task shows its latest run's reason, final message and steps; earlier runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
@@ -469,17 +469,17 @@ Every view of `agent status` prints the same state for a part of a split, whethe
 is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed
 without a merge is not `done`. In `agent status --running`, an item whose every part merged shows no part line.
 
-`agent status` ends the line of a task that runs with `last activity HH:MM:SS`: the local time the output of its run last
-changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs.
+`agent status` ends the line of a task that runs with `last activity YYYY-MM-DD HH:MM:SS +HH:MM`: the local time the output of its run last
+changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs. Every time `agent status` prints is in the zone of this machine with the offset of that moment, as `agent log` writes it; `agent status --json` stays in UTC.
 
 The line of a reviewer says what it did or does, from the record of the team's investigators, instead of the one word of
 its status (a reviewer that waits between its reviews said only `waiting`):
 
 | Says | Means |
 |---|---|
-| `working`, with `last activity HH:MM:SS` while its run writes | a review goes, or one is queued for it |
-| `done, 1st review finished 12:08:17` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
-| `stopped at 12:10:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
+| `working`, with `last activity YYYY-MM-DD HH:MM:SS +HH:MM` while its run writes | a review goes, or one is queued for it |
+| `done, 1st review finished 2026-11-19 12:08:17 +01:00` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
+| `stopped at 2026-11-19 12:10:00 +01:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
 
 A reviewer task without recorded activity shows the word of its status as before. The lines of the coordinator, the
 members and the workers do not change.
@@ -487,17 +487,17 @@ members and the workers do not change.
 `agent status --investigators` shows every investigator of `[investigators.NAME]` in `agents.toml`, in the order of
 their names, with the last two of its activities in the teams that are not closed, the newest first: the task, the kind of
 the activity (`team-member`, `reviewer`, `investigator`, `task-allocator`), the investigator, the team, and what it did:
-`done at 12:15:15, 1st review finished`, `working, 2nd review`, `done at 12:00:00, tasks allocated`, or, for one that
-ended without its report, `stopped at 12:10:00, reason: …` as on a reviewer's line. A team counts as open while it has a
+`done at 2026-11-19 12:15:15 +01:00, 1st review finished`, `working, 2nd review`, `done at 2026-11-19 12:00:00 +01:00, tasks allocated`, or, for one that
+ended without its report, `stopped at 2026-11-19 12:10:00 +01:00, reason: …` as on a reviewer's line. A team counts as open while it has a
 round that goes on. An investigator with no activity in an open team is listed as `free, no activity in an open team`:
 
 ```text
 task-20261119-094409-saal  reviewer  inv-gemini-argon  for team-20261119-094000-saal  working, 2nd review
-task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119-094000-p4vt  done at 12:00:00, tasks allocated
+task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119-094000-p4vt  done at 2026-11-19 12:00:00 +01:00, tasks allocated
 inv-opus  free, no activity in an open team
 ```
 
-The line of a round ends with when the round started, in local time (`started DD-MM-YYYY HH:MM`), and for a round that
+The line of a round ends with when the round started, in local time (`started YYYY-MM-DD HH:MM +HH:MM`), and for a round that
 is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
 
 | Says | Means |
@@ -669,7 +669,7 @@ History schema 14 adds the `delivery_closed` warning and migrates existing logs,
 Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 14.
 
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
-description of the pull requests, tried 4 times, next try 01:07` and the step is tried again by itself, after 30
+description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00` and the step is tried again by itself, after 30
 seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
 do it) the line says `refused: <GitHub's answer>`, you are told once while it waits, and `agent resume <team>` tries it
 again at once after you fixed the cause. Such a resume is for the waiting steps only: it starts no task of the team; a
@@ -739,7 +739,7 @@ per-file questions and verdict rules, including `ok` accepting the recommendatio
 A task file can say what it is in one line: `Short desc: Fix the typo in the README`, among the header lines before the
 brief, at most 70 characters ([the format](docs/task-list.md)). For a task given as text use
 `agent run --short-desc "Fix the typo" claude-1 "..."`. Every notification the daemon sends about a task starts with
-`Repo`, `Time` and `Task:` (that description), then the agent, `Task ID:`, the team, the status and the note; when it
+`Repo`, `Time` (the minute in the daemon's local time zone with its offset, `Time: 2026-11-21 17:30 +01:00`) and `Task:` (that description), then the agent, `Task ID:`, the team, the status and the note; when it
 concerns an item it names it, number and title, on a line of its own after the fields (the title of the part for a
 split part), and it ends with a block `TASK (<task>):` with the first sentences of the task's brief. A task without the
 line has a description derived from its brief: its first sentence cut to 70 characters. `agent status` ends the line of

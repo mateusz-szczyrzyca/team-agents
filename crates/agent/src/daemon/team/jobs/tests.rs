@@ -189,7 +189,7 @@ async fn the_notification_that_a_team_is_finished_names_the_team_the_repository_
         cli: Some(agent_core::kinds::CliKind::Codex),
         model: None,
         time: crate::fixtures::at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: &task_id,
         team: Some(team.id()),
         pr: None,

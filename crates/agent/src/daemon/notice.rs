@@ -10,11 +10,11 @@ pub(crate) mod sample;
 
 use std::num::NonZeroU32;
 use std::path::PathBuf;
-use time::UtcOffset;
 
 use agent_core::decide::outcome::PauseReason;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
+use agent_core::local_time::Zone;
 use agent_core::notice_status::NoticeStatus;
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::Timestamp;
@@ -104,8 +104,12 @@ impl NoticeKind {
 }
 
 /// The facts about the task and environment needed to lay out a notification.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct NoticeContext<'a> {
+///
+/// The type parameter `Z` defaults to [`Zone`] for daemon callers while accepting [`time::UtcOffset`] via
+/// `From<UtcOffset> for Zone` so that the existing tests in `words/catalog_tests.rs` and `words/legacy_tests.rs` keep
+/// passing `offset: UtcOffset` without modification.
+#[derive(Debug, Clone)]
+pub(super) struct NoticeContext<'a, Z = Zone> {
     /// The repository name.
     pub(super) repo: &'a str,
     /// The agent name.
@@ -116,8 +120,9 @@ pub(super) struct NoticeContext<'a> {
     pub(super) model: Option<&'a str>,
     /// The time the event occurred.
     pub(super) time: Timestamp,
-    /// The host's local offset from UTC.
-    pub(super) offset: UtcOffset,
+    /// The zone of the host: the times a notification shows are written in it, with the offset of each moment.
+    /// Named `offset` so that existing tests in `words/catalog_tests.rs` and `words/legacy_tests.rs` compile unchanged.
+    pub(super) offset: Z,
     /// The task ID.
     pub(super) task: &'a TaskId,
     /// The team ID, if the task belongs to a team.
@@ -142,9 +147,9 @@ pub(super) fn client_label(cli: Option<CliKind>, model: Option<&str>) -> String 
 ///
 /// # Errors
 /// [`InvalidNotification`] when title or body violates limits or format rules.
-pub(super) fn layout_notification(
+pub(super) fn layout_notification<Z: Into<Zone> + Copy>(
     notice: NoticeKind,
-    context: &NoticeContext<'_>,
+    context: &NoticeContext<'_, Z>,
     rendered: &str,
 ) -> Result<Notification, InvalidNotification> {
     let (note, original_body) = rendered.split_once('\n').unwrap_or((rendered, ""));
@@ -154,15 +159,7 @@ pub(super) fn layout_notification(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let local_dt = context.time.as_utc().to_offset(context.offset);
-    let time_str = format!(
-        "{:04}-{:02}-{:02} {:02}:{:02}",
-        local_dt.year(),
-        u8::from(local_dt.month()),
-        local_dt.day(),
-        local_dt.hour(),
-        local_dt.minute(),
-    );
+    let time_str = context.offset.into().stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {

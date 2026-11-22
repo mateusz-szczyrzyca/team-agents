@@ -1,3 +1,6 @@
+//! Unit tests for round snapshot lines, expecting snapshot timestamps in `YYYY-MM-DD HH:MM:SS <zone>`.
+
+use agent_core::local_time::Zone;
 use std::str::FromStr;
 
 use agent_core::history::SnapshotRecord;
@@ -21,7 +24,7 @@ fn snapshot(task: &str, number: u32, seconds: i64, bytes: u64) -> SnapshotRecord
 
 #[test]
 fn a_round_without_snapshots_shows_no_line() {
-    assert_eq!(snapshot_lines(&[], UtcOffset::UTC), "");
+    assert_eq!(snapshot_lines(&[], Zone::Fixed(UtcOffset::UTC)), "");
 }
 
 #[test]
@@ -33,9 +36,9 @@ fn each_task_shows_its_last_snapshot_with_its_number_time_and_size() {
     ];
 
     assert_eq!(
-        snapshot_lines(&snapshots, UtcOffset::UTC),
-        "  snapshot task-20261120-100000-aaaa number 2 at 01:01:05, 20 bytes\n\
-         \x20 snapshot task-20261120-100000-bbbb number 1 at 01:02:05, 30 bytes\n"
+        snapshot_lines(&snapshots, Zone::Fixed(UtcOffset::UTC)),
+        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05 +00:00, 20 bytes\n\
+         \x20 snapshot task-20261120-100000-bbbb number 1 at 1970-01-01 01:02:05 +00:00, 30 bytes\n"
     );
 }
 
@@ -53,7 +56,7 @@ fn snapshots_of_reads_the_history_or_reports_when_it_cannot_be_read() {
     let home = Home::new(&AbsolutePath::from_str(root.to_str().unwrap()).unwrap());
     let round = RoundId::from_str("round-20261120-100000-r1r1").unwrap();
 
-    let unreadable = snapshots_of(&home, &round, UtcOffset::UTC);
+    let unreadable = snapshots_of(&home, &round, Zone::Fixed(UtcOffset::UTC));
     assert!(
         unreadable.starts_with("  snapshots: cannot read the history ("),
         "{unreadable:?}"
@@ -68,7 +71,7 @@ fn snapshots_of_reads_the_history_or_reports_when_it_cannot_be_read() {
     drop(db);
 
     assert_eq!(
-        snapshots_of(&home, &round, UtcOffset::UTC),
-        "  snapshot task-20261120-100000-aaaa number 2 at 01:01:05, 20 bytes\n"
+        snapshots_of(&home, &round, Zone::Fixed(UtcOffset::UTC)),
+        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05 +00:00, 20 bytes\n"
     );
 }

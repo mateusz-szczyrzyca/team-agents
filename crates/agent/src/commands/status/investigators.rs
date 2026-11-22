@@ -8,9 +8,9 @@ use std::cmp::Reverse;
 
 use agent_core::ids::InvestigatorName;
 use agent_core::kinds::ActivityKind;
+use agent_core::local_time::Zone;
 use agent_core::protocol::TeamSummary;
 use agent_core::state::{Activity, ActivityEnd, ActivityOutcome, RoundLife};
-use time::UtcOffset;
 
 use super::clock_of;
 use super::reviewer::{Place, ordinal, ordinal_text, placed, stopped};
@@ -19,9 +19,9 @@ use super::reviewer::{Place, ordinal, ordinal_text, placed, stopped};
 const SHOWN: usize = 2;
 
 /// The view of the investigators `configured` in `teams`: a line for each of the last two activities of each of them in
-/// the teams that are not closed, newest first, and a line for the one that has none. The times are the local ones at
-/// `offset`.
-pub(crate) fn render(teams: &[TeamSummary], configured: &[InvestigatorName], offset: UtcOffset) -> String {
+/// the teams that are not closed, newest first, and a line for the one that has none. The times are the local ones in
+/// `zone`.
+pub(crate) fn render(teams: &[TeamSummary], configured: &[InvestigatorName], zone: Zone) -> String {
     let mut lines = Vec::new();
     for investigator in configured {
         let mut found = Shown::all_of(investigator, teams);
@@ -30,7 +30,7 @@ pub(crate) fn render(teams: &[TeamSummary], configured: &[InvestigatorName], off
             lines.push(format!("{investigator}  free, no activity in an open team"));
             continue;
         }
-        lines.extend(found.into_iter().take(SHOWN).map(|shown| shown.text(offset)));
+        lines.extend(found.into_iter().take(SHOWN).map(|shown| shown.text(zone)));
     }
     let mut text = lines.join("\n");
     text.push('\n');
@@ -62,21 +62,21 @@ impl<'a> Shown<'a> {
             .collect()
     }
 
-    /// The line of the activity at the local time `offset` gives.
-    fn text(&self, offset: UtcOffset) -> String {
+    /// The line of the activity at the local time `zone` gives.
+    fn text(&self, zone: Zone) -> String {
         format!(
             "{}  {}  {}  for {}  {}",
             self.activity.task(),
             self.activity.request().kind().as_str(),
             self.activity.investigator(),
             self.team.id,
-            self.state(offset),
+            self.state(zone),
         )
     }
 
     /// What the activity did or does: what it is doing, when it was done and what, or when it stopped without its
     /// report and why, in the words of a reviewer's line.
-    fn state(&self, offset: UtcOffset) -> String {
+    fn state(&self, zone: Zone) -> String {
         match self.activity.outcome() {
             ActivityOutcome::Working => match self.activity.request().kind() {
                 ActivityKind::Reviewer => format!("working, {} review", self.review()),
@@ -87,8 +87,8 @@ impl<'a> Shown<'a> {
             ActivityOutcome::Finished {
                 at,
                 end: ActivityEnd::Reported,
-            } => format!("done at {}, {}", clock_of(*at, offset), self.done()),
-            ActivityOutcome::Finished { at, end } => stopped(*at, end, offset),
+            } => format!("done at {}, {}", clock_of(*at, zone), self.done()),
+            ActivityOutcome::Finished { at, end } => stopped(*at, end, zone),
         }
     }
 

@@ -228,3 +228,47 @@ fn a_moment_at_the_edge_of_the_year_range_falls_back_to_utc_marked_when_the_offs
     assert_eq!(east.stamp(stamp("9999-12-31T23:30:00Z")), "9999-12-31 23:30:00 UTC");
     assert_eq!(west.stamp(stamp("0000-01-01T00:30:00Z")), "0000-01-01 00:30:00 UTC");
 }
+
+#[test]
+fn a_minute_stamp_writes_the_date_the_hour_and_the_minute_with_the_zone() {
+    let at = stamp("2026-11-21T12:50:02Z");
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid")).stamp_minute(at),
+        "2026-11-21 13:50 +01:00"
+    );
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid")).stamp_minute(at),
+        "2026-11-21 07:50 -05:00"
+    );
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(5, 30, 0).expect("valid")).stamp_minute(at),
+        "2026-11-21 18:20 +05:30"
+    );
+    assert_eq!(
+        Zone::Lookup(central_european).stamp_minute(stamp("2026-03-29T00:59:59Z")),
+        "2026-03-29 01:59 +01:00"
+    );
+    assert_eq!(
+        Zone::Lookup(central_european).stamp_minute(stamp("2026-03-29T01:00:00Z")),
+        "2026-03-29 03:00 +02:00"
+    );
+    assert_eq!(Zone::Lookup(unknown).stamp_minute(at), "2026-11-21 12:50 UTC");
+    assert_eq!(Zone::Utc.stamp_minute(at), "2026-11-21T12:50:02Z");
+}
+
+#[test]
+fn waiting_lines_reformat_their_retry_minute_into_the_zone() {
+    let line = "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21T00:07:00Z";
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let west = Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid"));
+    assert_eq!(
+        east.stamp_waiting(line),
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"
+    );
+    assert_eq!(
+        west.stamp_waiting(line),
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00"
+    );
+    assert_eq!(Zone::Utc.stamp_waiting(line), line);
+    assert_eq!(east.stamp_waiting("an answer of the human"), "an answer of the human");
+}

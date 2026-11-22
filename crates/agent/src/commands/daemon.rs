@@ -72,6 +72,7 @@ pub(crate) async fn daemon(environment: &Environment, prompts_dir: Option<PathBu
         prompts_dir: prompts_dir.unwrap_or_else(|| home.prompts_dir()),
         home,
         clock: SharedClock::new(SystemClock),
+        zone: environment.zone(),
         local_offset: environment.local_offset(),
         timings: None,
         agent_binary_dir: None,

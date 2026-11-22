@@ -44,8 +44,8 @@ pub(super) struct Collection {
     pub(super) checkout: Option<PathBuf>,
     /// Notice for merged worktrees whose retained branches were read in the clone.
     pub(super) git_notice: Option<String>,
-    /// Local timezone offset for presentation; defaults to UTC.
-    pub(super) local_offset: time::UtcOffset,
+    /// Zone for human-facing timestamps; defaults to UTC.
+    pub(super) zone: agent_core::local_time::Zone,
     /// Relative artifact paths and their unredacted bytes; never logged.
     artifacts: Vec<(PathBuf, Vec<u8>)>,
     /// Secret patterns applied before truncating or encoding structured observations.
@@ -166,7 +166,7 @@ impl Collection {
             },
             checkout: None,
             git_notice: None,
-            local_offset: time::UtcOffset::UTC,
+            zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             artifacts: vec![],
             copied_bytes: 0,
             cut: SecretsCut::new(&agent_core::config::Secrets::default(), []),
@@ -267,7 +267,7 @@ impl Collection {
             last_run_started: last.map(agent_core::state::Run::started_at),
             last_run_ended: ended,
             last_activity: None,
-            last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.local_offset)),
+            last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -486,7 +486,7 @@ impl Collection {
                 .and_then(|metadata| metadata.modified())
             {
                 Ok(at) => match Timestamp::from_utc(time::UtcDateTime::from(at)) {
-                    Ok(at) => agent_core::debug_summary::format_time(at, self.local_offset),
+                    Ok(at) => agent_core::debug_summary::format_time(at, self.zone),
                     Err(error) => {
                         self.gate_failed(format!("gate time {}", escaped_path(&source)), error_chain(&error));
                         "unreadable".to_owned()
@@ -1419,7 +1419,7 @@ fn diagnostic_error(error: &ObservationError) -> String {
 }
 
 /// Describes a run end as the diagnosis a reader can act on.
-fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
+fn run_detail_at(state: &RunState, zone: agent_core::local_time::Zone) -> String {
     let RunState::Ended { at, end } = state else {
         return "running".to_owned();
     };
@@ -1430,7 +1430,7 @@ fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
         RunEnd::QuotaExhausted { resets_at: Some(at) } => {
             format!(
                 "quota exhausted, resets at {}",
-                agent_core::debug_summary::format_time(*at, offset)
+                agent_core::debug_summary::format_time(*at, zone)
             )
         }
         RunEnd::QuotaExhausted { resets_at: None } => "quota exhausted".to_owned(),
@@ -1439,8 +1439,5 @@ fn run_detail_at(state: &RunState, offset: time::UtcOffset) -> String {
         RunEnd::TurnLimit => "turn limit reached".to_owned(),
         RunEnd::Stopped => "stopped by the human".to_owned(),
     };
-    format!(
-        "ended, {how}, at {}",
-        agent_core::debug_summary::format_time(*at, offset)
-    )
+    format!("ended, {how}, at {}", agent_core::debug_summary::format_time(*at, zone))
 }

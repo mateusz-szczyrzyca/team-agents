@@ -143,7 +143,7 @@ fn context<'a>(task_id: &'a TaskId, team: Option<&'a TeamId>, words: TaskWords) 
         cli: Some(CliKind::Claude),
         model: Some("sonnet"),
         time: at(0),
-        offset: time::UtcOffset::UTC,
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         task: task_id,
         team,
         pr: None,
@@ -166,7 +166,7 @@ fn a_notification_starts_with_repo_time_and_task_and_ends_with_the_first_sentenc
 
     let expected = "\
 Repo: team-agents
-Time: 2026-11-11 19:15
+Time: 2026-11-11 19:15 +00:00
 Task: Notifications name the task
 Agent: claude-1 (claude, sonnet)
 Task ID: task-20261111-153001-k3x9
@@ -192,7 +192,7 @@ fn a_notification_without_an_item_a_team_or_a_message_has_no_empty_sections() {
 
     let expected = "\
 Repo: team-agents
-Time: 2026-11-11 19:15
+Time: 2026-11-11 19:15 +00:00
 Task: Fix the typo.
 Agent: claude-1 (claude, sonnet)
 Task ID: task-20261111-153001-k3x9
@@ -287,7 +287,7 @@ fn every_kind_of_notification_has_the_same_head_and_tail() {
         let lines: Vec<&str> = notification.body().lines().collect();
 
         assert_eq!(lines.first().copied(), Some("Repo: team-agents"), "{kind:?}");
-        assert_eq!(lines.get(1).copied(), Some("Time: 2026-11-11 19:15"), "{kind:?}");
+        assert_eq!(lines.get(1).copied(), Some("Time: 2026-11-11 19:15 +00:00"), "{kind:?}");
         assert_eq!(
             lines.get(2).copied(),
             Some("Task: Notifications name the task"),

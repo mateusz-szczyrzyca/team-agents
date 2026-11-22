@@ -161,6 +161,13 @@ impl Environment {
         self
     }
 
+    /// The same, in `zone`.
+    #[cfg(test)]
+    pub(crate) const fn with_zone(mut self, zone: Zone) -> Self {
+        self.zone = zone;
+        self
+    }
+
     /// The directory the command runs in.
     ///
     /// # Errors

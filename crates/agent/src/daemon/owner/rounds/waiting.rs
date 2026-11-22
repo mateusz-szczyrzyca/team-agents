@@ -44,7 +44,7 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         let outlook = outlook_of(error);
-        let offset = self.parts.local_offset;
+        let zone = self.parts.zone;
         let (failure, wait) =
             self.watch
                 .github_waits
@@ -61,10 +61,10 @@ impl Owner {
                     Outlook::WillNotPass => "will_not_pass",
                 },
                 next_try = wait.next_at.map_or_else(String::new, |at| at.to_string()),
-                detail = %wait.line(offset),
+                detail = %wait.line(zone),
                 error = %error_chain(error),
                 "a step of the round failed and waits for GitHub: {}",
-                wait.line(offset)
+                wait.line(zone)
             );
         }
         if outlook == Outlook::WillNotPass && starts {
@@ -282,7 +282,7 @@ impl Owner {
                 .or_else(|| {
                     self.watch
                         .github_waits
-                        .line_of(team.id(), round.id(), self.parts.local_offset)
+                        .line_of(team.id(), round.id(), self.parts.zone)
                         .map(|_| Obligation::Human)
                 })
         };

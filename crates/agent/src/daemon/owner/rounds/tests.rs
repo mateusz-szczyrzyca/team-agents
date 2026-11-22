@@ -2946,3 +2946,42 @@ async fn description_instructions_and_gate_provenance_reach_leads_reviewers_and_
         }
     }
 }
+
+#[tokio::test]
+async fn standing_item_legacy_utc_notice_is_not_duplicated_after_restart_in_a_non_utc_zone() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,work"),
+            normal("claude-1", "fail"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let notice = rig.notification_with("waits with item 1.1 behind failed member").await;
+    assert!(notice.contains("Z with: STATUS: FAILED"), "{notice}");
+    rig.stop().await.unwrap();
+
+    rig.set_zone(agent_core::local_time::Zone::Fixed(
+        time::UtcOffset::from_hms(1, 0, 0).expect("valid"),
+    ));
+    rig.start().await;
+    looked_again(&rig).await;
+    looked_again(&rig).await;
+    rig.stop().await.unwrap();
+
+    let notices: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("waits with item 1.1 behind failed member"))
+        .collect();
+    assert_eq!(notices, vec![notice]);
+}

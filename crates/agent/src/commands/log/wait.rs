@@ -6,6 +6,7 @@ mod tests;
 use std::path::Path;
 
 use agent_core::ids::RoundId;
+use agent_core::local_time::Zone;
 use agent_core::protocol::{Client, Command, Reply, ShowRequest, Target};
 use agent_runtime::process::error_chain;
 
@@ -24,9 +25,15 @@ pub(crate) enum Asked {
 }
 
 /// The line that tells `asked` of `round`.
+#[cfg(test)]
 pub(crate) fn wait_text(round: &RoundId, asked: &Asked) -> String {
+    wait_text_in(round, asked, Zone::Utc)
+}
+
+/// The line that tells `asked` of `round`, with any retry timestamp formatted in `zone`.
+pub(crate) fn wait_text_in(round: &RoundId, asked: &Asked, zone: Zone) -> String {
     match asked {
-        Asked::Waits(what) => format!("round {round} waits for {what}"),
+        Asked::Waits(what) => format!("round {round} waits for {}", zone.stamp_waiting(what)),
         Asked::Nothing => format!("round {round} waits for nothing: a run of it goes on, or it is closed"),
         Asked::Unknown(why) => {
             format!("round {round}: what it waits for is not known, the daemon was not asked: {why}")
@@ -34,11 +41,11 @@ pub(crate) fn wait_text(round: &RoundId, asked: &Asked) -> String {
     }
 }
 
-/// Asks the daemon at `socket` what `round` waits for, and tells it in a line.
+/// Asks the daemon at `socket` what `round` waits for, and tells it in a line in `zone`.
 ///
 /// A daemon that cannot be asked is told in the line, not left out: the follow goes on without it.
-pub(crate) async fn wait_line(socket: &Path, round: &RoundId) -> String {
-    wait_text(round, &ask(socket, round).await)
+pub(crate) async fn wait_line_in(socket: &Path, round: &RoundId, zone: Zone) -> String {
+    wait_text_in(round, &ask(socket, round).await, zone)
 }
 
 /// What the daemon at `socket` says of `round`.
