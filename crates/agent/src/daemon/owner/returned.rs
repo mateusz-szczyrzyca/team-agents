@@ -16,7 +16,7 @@ use agent_core::log::LogEvent;
 use agent_core::state::split::PartKey;
 use agent_core::state::{ItemPhase, Timestamp};
 use agent_core::status::RunOutcome;
-use agent_runtime::agentbus::{Finished, Reader};
+use agent_runtime::agentbus::Reader;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 
@@ -61,17 +61,12 @@ impl Owner {
             };
             match classify(&ReturnLine::returned(&item), found.facts()) {
                 Some(Rejection::Counted) => {
-                    let who = found.member().map(|member| {
-                        (
-                            member.task().clone(),
-                            member.bus_agent().agent_name(),
-                            member.agent().name().to_owned(),
-                        )
-                    });
+                    let who = found
+                        .member()
+                        .map(|member| (member.task().clone(), member.bus_agent().agent_name()));
                     let reason = match &who {
-                        Some((member, bus_name, agent)) => {
-                            self.reason_on_the_bus(lead, &located.team, item, (member, bus_name, agent))
-                                .await
+                        Some((member, bus_name)) => {
+                            self.reason_on_the_bus(lead, &located.team, (member, bus_name)).await
                         }
                         None => NO_REASON_ON_THE_BUS.to_owned(),
                     };
@@ -93,16 +88,34 @@ impl Owner {
 }
 
 impl Owner {
-    /// What the lead `lead` told the member `(task, bus name, agent name)` directly after the notice that it finished
-    /// `item` in `team`: the reason of the rejection, whole, whether the member read it or not. A bus that cannot be read,
-    /// or that holds no such notice or no message after it, gives [`NO_REASON_ON_THE_BUS`]: the return stands, and its
-    /// reason is what is known.
+    /// Marks the run of `task` that begins now, when it is a lead's: the newest message of the bus, after which what the
+    /// lead says is its answer in this run. A bus that cannot be read leaves the run without a mark, and its returns
+    /// without a reason: nothing older is taken for one.
+    pub(super) async fn mark_lead_run(&mut self, task: &TaskId, role: Role) {
+        if role != Role::Coordinator {
+            return;
+        }
+        self.lead_marks.remove(task);
+        match self.parts.bus.newest_message_id().await {
+            Ok(Some(mark)) => {
+                self.lead_marks.insert(task.clone(), mark);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(event = LogEvent::BusDown.as_str(), task = %task,
+                    error = %error_chain(&error), "the bus cannot be read at the start of a lead's run");
+            }
+        }
+    }
+
+    /// What the lead `lead` told the member `(task, bus name)` during the run that ends now: the reason of the rejection,
+    /// whole, whether the member read it or not. A bus that cannot be read, or that holds no message of the lead for the
+    /// member since the run began, gives [`NO_REASON_ON_THE_BUS`]: the return stands, and its reason is what is known.
     async fn reason_on_the_bus(
         &self,
         lead: &TaskId,
         team: &TeamId,
-        item: ItemId,
-        (member, bus_name, agent): (&TaskId, &AgentName, &str),
+        (member, bus_name): (&TaskId, &AgentName),
     ) -> String {
         let Some(lead_name) = self
             .parts
@@ -112,31 +125,29 @@ impl Owner {
         else {
             return NO_REASON_ON_THE_BUS.to_owned();
         };
-        let item = item.to_string();
+        let Some(mark) = self.lead_marks.get(lead).copied() else {
+            return NO_REASON_ON_THE_BUS.to_owned();
+        };
         let said = self
             .parts
             .bus
-            .said_since_finished(
+            .said_after(
                 Reader {
                     agent: bus_name,
                     team,
                     task: member,
                 },
                 &lead_name,
-                Finished {
-                    lead: &lead_name,
-                    member: agent,
-                    item: &item,
-                },
+                Some(mark),
             )
             .await;
         match said {
-            Ok(Some(messages)) if !messages.is_empty() => messages
+            Ok(messages) if !messages.is_empty() => messages
                 .into_iter()
                 .map(|message| message.text)
                 .collect::<Vec<_>>()
                 .join("\n\n"),
-            Ok(Some(_) | None) => NO_REASON_ON_THE_BUS.to_owned(),
+            Ok(_) => NO_REASON_ON_THE_BUS.to_owned(),
             Err(error) => {
                 tracing::warn!(event = LogEvent::BusDown.as_str(), team = %team, task = %member,
                     error = %error_chain(&error), "the reason of a rejection cannot be read from the bus");

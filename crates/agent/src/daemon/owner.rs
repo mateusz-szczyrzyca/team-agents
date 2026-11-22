@@ -466,6 +466,10 @@ pub(super) struct Owner {
     /// not briefed again until the bus took it, when the state is told so. Empty after a restart, so that what is still
     /// owed is told again.
     leads_being_told: HashSet<TaskId>,
+    /// The newest message of the bus when each lead's run that goes on began: what the lead says to its member after it is
+    /// the reason of what it returns in that run. Not kept over a restart: a run that was going is not finished by the
+    /// daemon that starts. A task whose mark could not be read has none.
+    lead_marks: HashMap<TaskId, std::num::NonZeroU64>,
     /// How often each task was woken for the newest message that waits for it.
     wake_counts: HashMap<TaskId, wakes::WakeCount>,
     /// What the log line of the run of a task that was woken says of the wake-up; read when the run starts.
@@ -559,6 +563,7 @@ impl Owner {
             hangs: HashMap::new(),
             reasons: HashMap::new(),
             leads_being_told: HashSet::new(),
+            lead_marks: HashMap::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
@@ -889,6 +894,7 @@ impl Owner {
             })?;
         // A member that is started again for items its lead returned makes those returns rejections.
         self.confirm_returns(task, now)?;
+        self.mark_lead_run(task, located.role).await;
         // The run's prompt has the reason it was sent back for its plan, if any: no later run is told it again.
         // So are the answers about its plan that no run asked for.
         if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
