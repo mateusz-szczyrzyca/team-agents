@@ -267,3 +267,56 @@ async fn publication_question_notifies_and_transitions_directly_from_waiting_or_
         assert_eq!(statuses, [TaskStatus::Questions]);
     }
 }
+
+#[tokio::test]
+async fn publication_failures_defer_while_the_lead_has_any_open_question() {
+    for same_publication in [true, false] {
+        let (state, team_id) = state_with_waiting_lead();
+        let plan = plan_publications(state.team(&team_id).unwrap()).unwrap();
+        let (daemon, mut owner, _sinks, pulls) = owner_of(&state).await;
+        let lead = owner.lead_of(&team_id).unwrap();
+        std::fs::create_dir_all(daemon.home.questions_file(&lead.task, n(1)).parent().unwrap()).unwrap();
+        let site = Site {
+            pulls: &pulls,
+            team: &team_id,
+            lead: &lead,
+        };
+        owner
+            .ask_human_publish_failed(site, &plan[0], "refused", (4, 3), crate::fixtures::at(100))
+            .await
+            .unwrap();
+        if !same_publication {
+            owner
+                .each_item(&team_id, &item_ids_of(&plan[0]), |item| {
+                    item.clear_publish_question();
+                    Ok(())
+                })
+                .unwrap();
+        }
+        let before = owner.parts.state.team(&team_id).unwrap().items().to_vec();
+        owner
+            .publish_failed(
+                site,
+                &plan[0],
+                &PublishError::Lost,
+                crate::fixtures::at(101),
+                &mut Look::default(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(owner.parts.state.team(&team_id).unwrap().items(), before);
+        assert!(!daemon.home.questions_file(&lead.task, n(2)).exists());
+        assert_eq!(
+            owner
+                .parts
+                .state
+                .find_task(&lead.task)
+                .unwrap()
+                .member
+                .open_question()
+                .unwrap()
+                .number(),
+            n(1)
+        );
+    }
+}
