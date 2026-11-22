@@ -88,3 +88,43 @@ fn a_wait_is_written_and_read_back() {
         Some(at("2026-11-21T10:00:00Z"))
     );
 }
+
+#[test]
+fn a_busy_hand_over_before_any_run_is_written_and_read_back() {
+    use crate::decide::ladder::Trouble;
+    use crate::state::{Crew, MergeMode, TaskListText, Team};
+
+    let mut state = old_state();
+    let fresh_task: TaskId = "task-20261121-100000-frsh".parse().unwrap();
+    let fresh_team = Team::new(
+        "team-20261121-100000-frsh".parse().unwrap(),
+        "team-agents".parse().unwrap(),
+        at("2026-11-21T10:00:00Z"),
+        MergeMode::NoMerge,
+        TaskListText::new("Solo task.\n".to_owned()).unwrap(),
+        Crew::solo(Member::new(
+            fresh_task.clone(),
+            Participant::Normal("claude-1".parse().unwrap()),
+        ))
+        .unwrap(),
+    );
+    state.insert_team(fresh_team).unwrap();
+    state
+        .hand_over_task(
+            &fresh_task,
+            Participant::Normal("claude-2".parse().unwrap()),
+            at("2026-11-21T10:06:00Z"),
+        )
+        .unwrap();
+    assert!(
+        state
+            .begin_holder_session(&fresh_task, Trouble::Busy, at("2026-11-21T10:06:00Z"))
+            .unwrap()
+    );
+
+    let text = state.to_json().expect("the state is written");
+    let read = State::from_json(&text).expect("a pre-run busy hand-over loads back");
+    let member = read.find_task(&fresh_task).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2");
+    assert!(member.awaits_new_session());
+}
