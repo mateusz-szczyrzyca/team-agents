@@ -25,6 +25,7 @@ mod takeover;
 mod teams;
 mod tier_questions;
 mod wakes;
+mod worker_result;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::num::NonZeroUsize;
@@ -177,6 +178,9 @@ pub(crate) enum OwnerError {
         /// What the state refused.
         source: agent_core::state::RejectionError,
     },
+    /// The request of a worker whose run ended cannot be kept or read.
+    #[error(transparent)]
+    WorkerRequest(#[from] agent_runtime::worker_request::PendingError),
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),
@@ -545,6 +549,14 @@ pub(super) struct Owner {
     aborted_checks: HashSet<tokio::task::Id>,
     /// The finished runs whose end waits for their command checks, by task: each is finished when its batch ends.
     parked: HashMap<TaskId, plan::Parked>,
+    /// The checks of the requests of workers, which run in the background.
+    request_checks: JoinSet<agent_runtime::worker_request::Found>,
+    /// What each of them judges, by its task ID in the runtime.
+    request_checking: HashMap<tokio::task::Id, worker_result::Checking>,
+    /// The files of requests of workers that were told as unreadable, so that each is told once.
+    unreadable_requests: HashSet<String>,
+    /// The requests of workers that were answered by this daemon, so that a file that could not be removed is not answered again.
+    answered_requests: HashSet<agent_runtime::agentbus::RequestId>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -618,6 +630,10 @@ impl Owner {
             task_plans: HashMap::new(),
             checks: JoinSet::new(),
             checking: HashMap::new(),
+            request_checks: JoinSet::new(),
+            request_checking: HashMap::new(),
+            unreadable_requests: HashSet::new(),
+            answered_requests: HashSet::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
         }
@@ -678,6 +694,7 @@ impl Owner {
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
                 Some(joined) = self.checks.join_next_with_id() => self.check_batch_done(joined).await?,
+                Some(joined) = self.request_checks.join_next_with_id() => self.request_check_done(joined).await?,
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();

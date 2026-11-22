@@ -933,12 +933,32 @@ the old form, which is for look-ups only and waits
 in the queue as before.
 
 **A worker's result is checked before it reaches your branch.** The bus keeps, next to the step, the paths the request
-names (`files`), its check (`check`) and what to do (`doing`) — a request that names no path is a look-up, in the old form,
-and its result goes to the requester as before. From the version that wires it the harness runs the request's check in the worker's
-worktree, brings the worker's commit to the requester's branch only when it passes, gives a wrong request once more to a
-free worker of another CLI (of the same CLI when no other is free), and returns the step to the requester with the reasons. The decision and the texts are in
-this version (`[workers]` in [`docs/configuration.md`](docs/configuration.md#workers)); the daemon uses them from the
-version that wires them.
+names (`files`), its check (`check`) and what to do (`doing`) — a request that names no path and no check is a look-up, in
+the old form, and its result goes to the requester as before. When a worker's run ends `STATUS: DONE`, the daemon runs the
+request's check in the worker's worktree (a command, with `[plan] check_seconds` as its limit, or `exists PATH`; never the
+repository's gate), decides what the result is worth, and only when it is good brings the worker's commit to the requester's
+branch: it takes a snapshot of the requester's worktree first, and the requester's uncommitted and untracked files are left
+as they were. The commit that is brought over is what the worker committed since its request was given to it, not
+everything its branch holds. A commit that conflicts, or one that would write over a file the requester changed or has, is
+not applied: the requester is told, with the files. A result that is wrong — the check failed or ran past its limit, the worker changed a
+file the request did not name, it left a file the request names uncommitted, it committed nothing, its run lasted past
+`[workers] seconds`, or the daemon cannot read what it left (the commit the worker started from, its commits) — is returned
+to the requester with the reasons, and the request is answered as `failed`; what cannot be judged is never brought over. The
+check runs beside the daemon, which goes on with the other tasks meanwhile; a worker whose result is not settled yet (its file is
+still in its task directory) is busy and is not given the next request, and only a request the bus still has running for that
+worker's task is settled from a file. A good result is told to the requester with the step,
+the commit, the files and the end of the check's output, and the step is recorded `confirmed` in the history with the
+worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.json` before the next starts, so that a
+daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
+A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
+`worker-request-<n>.json` that is cut short, has a field this version does not know, holds another request than its name says, cannot be read, or a stage that cannot
+be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
+as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
+the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
+cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
+log line to learn what happened to the worker's work: nothing was brought over.
+A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
+returned steps, come with the next version.
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),

@@ -32,3 +32,4 @@ pub mod snapshot;
 pub mod store;
 pub mod team_prompts;
 pub mod text_file;
+pub mod worker_request;

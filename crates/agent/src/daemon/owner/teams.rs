@@ -48,20 +48,26 @@ const BUS_SENDER: &str = "agentbus";
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Outbound {
     /// The team.
-    team: TeamId,
+    pub(super) team: TeamId,
     /// What is to be done.
-    job: BusJob,
+    pub(super) job: BusJob,
 }
 
 /// A request for a worker that is being served.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct Served {
     /// The request.
-    request: RequestId,
+    pub(super) request: RequestId,
     /// The member that asked and gets the result.
-    requester: AgentName,
+    pub(super) requester: AgentName,
+    /// Its task.
+    pub(super) requester_task: TaskId,
     /// The worker that serves it.
-    worker: AgentName,
+    pub(super) worker: AgentName,
+    /// When the request was given to the worker.
+    pub(super) started: Timestamp,
+    /// The commit the worker's worktree was at then; `None` when it could not be read.
+    pub(super) base: Option<String>,
 }
 
 /// The workers of a team and which of them cannot take a request now.
@@ -437,6 +443,7 @@ impl Owner {
             self.assign_items(team, &mut look).await?;
             self.refresh_tier_waits(team, &mut look)?;
             self.ask_tier_waits(team).await?;
+            self.settle_worker_results(team).await?;
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
@@ -515,7 +522,7 @@ impl Owner {
     }
 
     /// Does one thing on the bus. The outer error is the daemon's own, the inner one the bus's.
-    async fn carry_out(&self, outbound: &Outbound) -> Result<Result<(), AgentBusError>, OwnerError> {
+    pub(super) async fn carry_out(&self, outbound: &Outbound) -> Result<Result<(), AgentBusError>, OwnerError> {
         let bus = &self.parts.bus;
         Ok(match &outbound.job {
             BusJob::Tell { to, notice } => {
@@ -946,13 +953,19 @@ impl Owner {
                 &json!({"workers": &names, "busy": &busy}),
                 &json!({"worker": &worker, "request_id": request.id}),
             );
+            // The commit the worker's worktree is at: the files the worker changes are those since.
+            let base = self.worker_head(team_id, &task, &worker).await;
+            let started = Timestamp::now(&self.parts.clock)?;
             self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
             self.serving.insert(
                 task.clone(),
                 Served {
                     request: request.id,
                     requester: request.from.clone(),
+                    requester_task: request.from_task.clone(),
                     worker: worker.clone(),
+                    started,
+                    base,
                 },
             );
             self.tell_bus(
@@ -1012,7 +1025,11 @@ impl Owner {
             .filter(|(role, _)| *role == Role::Worker)
         {
             let name: AgentName = member.agent().name().parse()?;
-            if member.status() != TaskStatus::Waiting || self.serving.contains_key(member.task()) {
+            // A worker whose result is not settled yet is busy: its worktree is what the check reads and the commit comes from.
+            if member.status() != TaskStatus::Waiting
+                || self.serving.contains_key(member.task())
+                || agent_runtime::worker_request::has_pending(&self.parts.store.home().task_dir(member.task()))
+            {
                 busy.push(name.clone());
             }
             workers.push((name, member.task().clone()));
@@ -1107,11 +1124,34 @@ impl Owner {
                 && let Some(outcome) = request_outcome(end, found.member.status(), message)
             {
                 self.serving.remove(task);
-                for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
-                    self.outbox.push_back(Outbound {
-                        team: located.team.clone(),
-                        job,
-                    });
+                match outcome {
+                    // The result of a worker that ended DONE is checked, and its commit brought over, before the requester
+                    // is told: the next look at the team settles it.
+                    RequestOutcome::Done { summary } => {
+                        if let Err(error) = self.keep_worker_result(&located.team, &served, task, summary.clone()) {
+                            // Without its file the result cannot be settled: the requester gets the worker's report, as
+                            // before, rather than nothing.
+                            tracing::error!(
+                                request = %served.request,
+                                error = %error_chain(&error),
+                                "the result of a worker cannot be kept: the requester is given the worker's report unchecked"
+                            );
+                            for job in answer_jobs(&self.parts.team_texts, &served, RequestOutcome::Done { summary })? {
+                                self.outbox.push_back(Outbound {
+                                    team: located.team.clone(),
+                                    job,
+                                });
+                            }
+                        }
+                    }
+                    outcome @ RequestOutcome::Failed { .. } => {
+                        for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
+                            self.outbox.push_back(Outbound {
+                                team: located.team.clone(),
+                                job,
+                            });
+                        }
+                    }
                 }
             }
         }
@@ -1266,7 +1306,7 @@ fn git_failure(what: &str, error: &GitError) -> Failure {
 
 /// Whether an error of the bus may pass: a bus that is not there, is slow or has trouble with its files is tried again;
 /// one that refuses the request itself is not.
-fn is_transient(error: &AgentBusError) -> bool {
+pub(super) fn is_transient(error: &AgentBusError) -> bool {
     matches!(
         error.class(),
         None | Some(FailureClass::Storage | FailureClass::Process | FailureClass::Unclassified)

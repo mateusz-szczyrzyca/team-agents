@@ -249,6 +249,65 @@ pub(in crate::daemon) fn failure_reason(
     })
 }
 
+/// The text that tells a requester its worker's commit is on its branch: the step, the commit, the files and the end of
+/// the output of the check that passed.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn worker_result_brought(
+    texts: &TeamPrompts,
+    worker: &AgentName,
+    step: &str,
+    commit: &str,
+    files: &str,
+    tail: &str,
+) -> Result<String, NoticeRenderError> {
+    let values = Variables::new()
+        .with("worker", worker.as_str())?
+        .with("step", step)?
+        .with("commit", commit)?
+        .with("files", files)?
+        .with("tail", tail)?;
+    Ok(texts.render(TeamPrompt::WorkerResultBrought, &values)?)
+}
+
+/// The text that tells a requester the worker's commit does not apply to its branch: the files in conflict.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn worker_result_conflict(
+    texts: &TeamPrompts,
+    worker: &AgentName,
+    step: &str,
+    commit: &str,
+    files: &str,
+) -> Result<String, NoticeRenderError> {
+    let values = Variables::new()
+        .with("worker", worker.as_str())?
+        .with("step", step)?
+        .with("commit", commit)?
+        .with("files", files)?;
+    Ok(texts.render(TeamPrompt::WorkerResultConflict, &values)?)
+}
+
+/// The text that gives a step back to the requester: every reason a result was wrong, one on a line.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn worker_step_returned(
+    texts: &TeamPrompts,
+    request: RequestId,
+    step: &str,
+    reasons: &[String],
+) -> Result<String, NoticeRenderError> {
+    let listed: Vec<String> = reasons.iter().map(|reason| format!("- {reason}")).collect();
+    let values = Variables::new()
+        .with("request_id", request.number().to_string())?
+        .with("step", step)?
+        .with("reasons", listed.join("\n"))?;
+    Ok(texts.render(TeamPrompt::WorkerStepReturned, &values)?)
+}
+
 /// Why the notification that a team is finished cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DoneNoticeError {
