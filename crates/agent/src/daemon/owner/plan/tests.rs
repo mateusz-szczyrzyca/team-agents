@@ -2396,3 +2396,37 @@ async fn wait_for_questions(daemon: &Daemon) {
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }
+
+#[test]
+fn refused_gates_lists_only_the_refused_commands_in_order() {
+    use agent_core::plan::judge::JudgementState;
+    use agent_runtime::plan::check::JudgementResult;
+
+    let judged = |state, check: Option<&str>, refused: bool| JudgementResult {
+        state,
+        check_line: check.map(str::to_owned),
+        reason: None,
+        duration_ms: 0,
+        output_path: None,
+        tail: String::new(),
+        gate_refused: refused,
+    };
+    let one: ItemId = "1.1".parse().unwrap();
+    let two: ItemId = "1.2".parse().unwrap();
+    let three: ItemId = "1.3".parse().unwrap();
+    let results = [
+        (one, judged(JudgementState::Declared, Some("make gate"), true)),
+        (two, judged(JudgementState::Confirmed, Some("exists ok.txt"), false)),
+        (
+            three,
+            judged(JudgementState::Declared, Some("agent gate --locked"), true),
+        ),
+        (one, judged(JudgementState::Declared, None, false)),
+    ];
+
+    assert_eq!(
+        super::refused_gates(&results),
+        vec![(one, "make gate".to_owned()), (three, "agent gate --locked".to_owned())]
+    );
+    assert_eq!(super::refused_gates(&[]), Vec::new());
+}
