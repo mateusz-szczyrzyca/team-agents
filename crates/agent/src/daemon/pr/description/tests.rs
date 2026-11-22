@@ -136,6 +136,9 @@ fn request(id: u64, step: Option<&str>, worker: Option<&str>, status: Delegation
         step: step.map(|step| step.parse().unwrap()),
         worker: worker.map(|worker| worker.parse().unwrap()),
         status,
+        files: Vec::new(),
+        check: None,
+        doing: None,
     }
 }
 

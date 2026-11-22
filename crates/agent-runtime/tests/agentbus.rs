@@ -678,12 +678,18 @@ mod agentbus_commands {
                     step: None,
                     worker: None,
                     status: DelegationStatus::Queued,
+                    files: Vec::new(),
+                    check: None,
+                    doing: None,
                 },
                 TaskRequest {
                     id: second,
                     step: None,
                     worker: None,
                     status: DelegationStatus::Queued,
+                    files: Vec::new(),
+                    check: None,
+                    doing: None,
                 },
             ]
         );
