@@ -1370,6 +1370,25 @@ async fn publish_failure_interrupted_lead_release_recovers_after_restart_and_esc
     rig.stop().await.unwrap();
 }
 
+fn assert_publish_write_error(
+    stop_err: crate::daemon::DaemonError,
+    expected_task: &agent_core::ids::TaskId,
+    expected_path: &std::path::Path,
+) {
+    let crate::daemon::DaemonError::Owner(crate::daemon::owner::OwnerError::PublishQuestion(
+        crate::daemon::owner::rounds::PublishQuestionError::Write {
+            task: err_task,
+            path: err_path,
+            ..
+        },
+    )) = stop_err
+    else {
+        panic!("unexpected daemon error: {stop_err:?}");
+    };
+    assert_eq!(&err_task, expected_task);
+    assert_eq!(&err_path, expected_path);
+}
+
 #[tokio::test]
 async fn publish_failure_question_write_failure_recovers_when_storage_restored() {
     let mut rig = Rig::new(
@@ -1446,18 +1465,7 @@ async fn publish_failure_question_write_failure_recovers_when_storage_restored()
         .stop()
         .await
         .expect_err("owner should record write failure when directory is unwritable");
-    let crate::daemon::DaemonError::Owner(crate::daemon::owner::OwnerError::PublishQuestion(
-        crate::daemon::owner::rounds::PublishQuestionError::Write {
-            task: err_task,
-            path: err_path,
-            ..
-        },
-    )) = stop_err
-    else {
-        panic!("unexpected daemon error: {stop_err:?}");
-    };
-    assert_eq!(err_task, task);
-    assert_eq!(err_path, rig.home.questions_file(&task, n(1)));
+    assert_publish_write_error(stop_err, &task, &rig.home.questions_file(&task, n(1)));
 
     // State before recovery must remain in Waiting without orphaned question:
     let pre_state = rig.state();
