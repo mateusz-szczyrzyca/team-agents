@@ -280,7 +280,7 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
 // ---- a reviewer that cannot work ---------------------------------------------------------------------------------
 
 /// One of two reviewers that run it fails; the others approve.
-const ONE_FAILS: &str = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
+const ONE_FAILS: &str = "fail-first-tool:VERDICT: APPROVE\\nSUMMARY: fine";
 
 // Rule: a reviewer whose task failed is replaced by another free investigator, and the pass is decided by the reviews
 // of those that worked.
