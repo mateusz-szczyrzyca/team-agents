@@ -2736,25 +2736,47 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
         Some(gated_tip.as_str()),
         "approved head must update to gated tip upon merge refusal"
     );
+    assert_eq!(
+        item.merge_passes(),
+        2,
+        "exact merge passes after publication under controlled refusal must be 2"
+    );
+    assert_eq!(
+        item.publish_tries(),
+        0,
+        "exact publish tries after publication under controlled refusal must be 0"
+    );
+
+    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
+    let baseline_calls = rig.github.calls("GET", &pull_path).len();
 
     // Restart daemon after push:
     rig.stop().await.unwrap();
     rig.start().await;
 
-    // Observe daemon evaluation after restart:
-    let pull_path = format!("/repos/{}/pulls/1", super::fake_github::SLUG);
+    // Observe post-restart daemon evaluation: wait until a new GET look arrives past baseline
     rig.wait_for("daemon evaluation after restart", || {
-        !rig.github.calls("GET", &pull_path).is_empty()
+        rig.github.calls("GET", &pull_path).len() > baseline_calls
     })
     .await;
 
-    // Verify after restart the persisted approved_head is still preserved across push:
+    // Verify after restart the persisted approved_head and exact accounting survive across push:
     let state = rig.state();
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(
         item.conflict_approved_head().map(agent_core::state::CommitId::as_str),
         Some(gated_tip.as_str()),
         "persisted approved head must survive restart after push"
+    );
+    assert_eq!(
+        item.merge_passes(),
+        2,
+        "exact merge passes must survive restart after push"
+    );
+    assert_eq!(
+        item.publish_tries(),
+        0,
+        "exact publish tries must survive restart after push"
     );
 
     rig.stop().await.unwrap();
