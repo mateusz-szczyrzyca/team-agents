@@ -180,4 +180,37 @@ mod commit_guard_hooks {
                 .starts_with("guard-commit ")
         );
     }
+
+    // Rule: only the guard's refusal (exit status 1) stops a commit: where the program of the harness is missing or
+    // fails in another way, the commit is made and the checks before the review look at it.
+    #[tokio::test]
+    async fn a_guard_that_is_missing_or_fails_otherwise_does_not_stop_the_commit() {
+        let world = repository();
+        let calls = world.root.join("calls");
+        let missing = world.root.join("no-such-agent");
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &missing)
+            .await
+            .unwrap();
+
+        let without_program = commit(&world.repo, &hooks, "One");
+
+        assert!(
+            without_program.status.success(),
+            "{}",
+            String::from_utf8_lossy(&without_program.stderr)
+        );
+
+        let crashing = stand_in(&world.root, &calls, 101);
+        let hooks = install_hooks(&handle(&world.repo), &world.root.join("hooks"), &crashing)
+            .await
+            .unwrap();
+
+        let after_a_crash = commit(&world.repo, &hooks, "Two");
+
+        assert!(
+            after_a_crash.status.success(),
+            "{}",
+            String::from_utf8_lossy(&after_a_crash.stderr)
+        );
+    }
 }
