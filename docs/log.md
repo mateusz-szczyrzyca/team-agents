@@ -292,7 +292,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
 | `bus_down` | `warn` | An `agentbus` operation fails and what waits for it is retried or dropped; also a member that did not read the message it was woken for `limits.wake_ups_per_message` times is not woken for it again (`task`, `message_id`, `from`, `wake_ups`). |
-| `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried. |
+| `git_call_failed` | `warn` | A `git` call, worktree operation or branch operation fails or is retried; also a run that starts without the hook that refuses a commit of a frozen test outside a `TEST-FIX:` commit, because its checkout cannot be given hooks (the checks before the review look at its commits instead). |
 | `github_call_failed` | `warn` | A GitHub API call, a publication or a merge fails or is retried, or the home has no GitHub token. |
 | `gate_cannot_start` | `warn` | A gate command cannot start or be recorded. |
 | `gate_timed_out` | `warn` | A gate command exceeds its timeout and is killed. |

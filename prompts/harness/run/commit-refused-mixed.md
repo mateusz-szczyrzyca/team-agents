@@ -1,0 +1,1 @@
+- This commit is a `TEST-FIX:` commit and also changes files that are not tests: {{files}}. A `TEST-FIX:` commit holds test files only.

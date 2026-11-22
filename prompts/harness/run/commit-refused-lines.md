@@ -1,0 +1,1 @@
+- `{{path}}`: this commit takes {{count}} line(s) out of it (removes or replaces them); the `RED:` commit {{red}} froze it.

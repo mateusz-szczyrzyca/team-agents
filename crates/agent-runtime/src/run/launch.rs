@@ -6,12 +6,14 @@ use std::str::FromStr;
 
 use agent_core::cli::{OutputParser, RunRequest};
 use agent_core::config::{AbsolutePath, EnvName};
+use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
 
 use super::{EngineParts, ExcludeCause, MAX_PROMPT_ARGUMENT_BYTES, RunError, RunJob};
 use crate::cli::adapter_for;
+use crate::commit_guard::hooks::install_hooks;
 use crate::git::{CommitIdentity, Git};
-use crate::process::ProcessSpec;
+use crate::process::{ProcessSpec, error_chain};
 use crate::store::HOME_VARIABLE;
 use tokio::io::AsyncWriteExt;
 
@@ -23,6 +25,12 @@ const STDERR_FILE: &str = "err.log";
 
 /// The file a prompt too long for a command line is written to, in the run's directory.
 const PROMPT_FILE: &str = "prompt.md";
+
+/// The directory of a run, in its run directory, that holds the hooks its `git` is pointed at.
+const HOOKS_DIR: &str = "hooks";
+
+/// The program the hook runs: the executable of the harness, which sits in the directory of the agents' `PATH`.
+const AGENT_PROGRAM: &str = "agent";
 
 /// The environment variable the agents' programs are looked up through.
 const PATH_VARIABLE: &str = "PATH";
@@ -63,34 +71,70 @@ fn env_name(name: &'static str) -> Result<EnvName, RunError> {
     EnvName::from_str(name).map_err(|source| RunError::EnvName { name, source })
 }
 
+/// The names of the environment variables that carry the `n`th item of the configuration given to git: its key and its
+/// value. Git reads as many as `GIT_CONFIG_COUNT` says.
+const CONFIG_VARIABLES: [(&str, &str); 4] = [
+    ("GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"),
+    ("GIT_CONFIG_KEY_1", "GIT_CONFIG_VALUE_1"),
+    ("GIT_CONFIG_KEY_2", "GIT_CONFIG_VALUE_2"),
+    ("GIT_CONFIG_KEY_3", "GIT_CONFIG_VALUE_3"),
+];
+
+/// The configuration of the `git` of a run, given in its environment so that it wins over the files of the human and of
+/// the repository: how commits are signed, and where the hooks are (`hooks`, when the run has them).
+fn git_config(identity: &CommitIdentity, hooks: Option<&Path>) -> Result<Vec<(&'static str, String)>, RunError> {
+    let mut config = Vec::new();
+    match identity.signing_key() {
+        Some(key) => config.extend([
+            ("commit.gpgsign", "true".to_owned()),
+            ("gpg.format", "ssh".to_owned()),
+            ("user.signingkey", utf8(key.as_path())?.to_owned()),
+        ]),
+        // The human's own configuration may sign every commit with a key the agent does not have.
+        None => config.push(("commit.gpgsign", "false".to_owned())),
+    }
+    if let Some(hooks) = hooks {
+        config.push(("core.hooksPath", utf8(hooks)?.to_owned()));
+    }
+    Ok(config)
+}
+
 /// What makes the `git` an agent runs commit as `identity`: the author and the committer, and whether and with which
-/// key a commit is signed. Without it the commits of a run are the human's, whose configuration git reads.
-fn identity_env(identity: &CommitIdentity) -> Result<Vec<(&'static str, String)>, RunError> {
+/// key a commit is signed. Without it the commits of a run are the human's, whose configuration git reads. `hooks` is
+/// the hooks directory of the run, if it has one.
+fn identity_env(identity: &CommitIdentity, hooks: Option<&Path>) -> Result<Vec<(&'static str, String)>, RunError> {
     let mut env = vec![
         ("GIT_AUTHOR_NAME", identity.name().to_owned()),
         ("GIT_AUTHOR_EMAIL", identity.email().to_owned()),
         ("GIT_COMMITTER_NAME", identity.name().to_owned()),
         ("GIT_COMMITTER_EMAIL", identity.email().to_owned()),
     ];
-    // Configuration given in the environment wins over the files of the human and of the repository.
-    match identity.signing_key() {
-        Some(key) => env.extend([
-            ("GIT_CONFIG_COUNT", "3".to_owned()),
-            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
-            ("GIT_CONFIG_VALUE_0", "true".to_owned()),
-            ("GIT_CONFIG_KEY_1", "gpg.format".to_owned()),
-            ("GIT_CONFIG_VALUE_1", "ssh".to_owned()),
-            ("GIT_CONFIG_KEY_2", "user.signingkey".to_owned()),
-            ("GIT_CONFIG_VALUE_2", utf8(key.as_path())?.to_owned()),
-        ]),
-        // The human's own configuration may sign every commit with a key the agent does not have.
-        None => env.extend([
-            ("GIT_CONFIG_COUNT", "1".to_owned()),
-            ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_owned()),
-            ("GIT_CONFIG_VALUE_0", "false".to_owned()),
-        ]),
+    let config = git_config(identity, hooks)?;
+    env.push(("GIT_CONFIG_COUNT", config.len().to_string()));
+    for ((key, value), (key_variable, value_variable)) in config.into_iter().zip(CONFIG_VARIABLES) {
+        env.push((key_variable, key.to_owned()));
+        env.push((value_variable, value));
     }
     Ok(env)
+}
+
+/// Makes the hooks directory of a run in its `run_dir`, which `core.hooksPath` is to name. A checkout that cannot be
+/// given hooks (it is no repository, or git fails) is run without them and the reason is logged: the checks before the
+/// review look at the commits again.
+async fn guard_hooks(parts: &EngineParts, job: &RunJob, run_dir: &Path) -> Option<PathBuf> {
+    let agent = parts.agent_binary_dir.as_path().join(AGENT_PROGRAM);
+    match install_hooks(&lookup_git(&job.working_dir), &run_dir.join(HOOKS_DIR), &agent).await {
+        Ok(hooks) => Some(hooks),
+        Err(error) => {
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                task = %job.task,
+                error = %error_chain(&error),
+                "the git of the run gets no hook that refuses a commit of a frozen test"
+            );
+            None
+        }
+    }
 }
 
 /// Writes `content` to `path`, with its directories.
@@ -143,7 +187,8 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
     // The `agent` commands the run starts (`agent gate`) find the daemon of this home.
     env.insert(env_name(HOME_VARIABLE)?, utf8(parts.store.home().root())?.to_owned());
     // The commits of the run are the agent's: this wins over a secret of the same name.
-    for (name, value) in identity_env(&job.identity)? {
+    let hooks = guard_hooks(parts, job, &run_dir).await;
+    for (name, value) in identity_env(&job.identity, hooks.as_deref())? {
         env.insert(env_name(name)?, value);
     }
     // What the adapter sets is what its CLI needs to work: it wins over a secret of the same name.

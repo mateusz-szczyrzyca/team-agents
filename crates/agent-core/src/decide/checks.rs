@@ -36,7 +36,7 @@ pub mod commits;
 pub mod markers;
 
 /// What a subject starts with when its commit is the first half of a test-first cycle.
-const RED_PREFIX: &str = "RED:";
+pub(crate) const RED_PREFIX: &str = "RED:";
 
 /// What a subject starts with when its commit corrects a test that a `RED:` commit committed (TDD-14).
 pub(crate) const TEST_FIX_PREFIX: &str = "TEST-FIX:";

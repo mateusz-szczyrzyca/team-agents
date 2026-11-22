@@ -3,6 +3,7 @@
 use std::io::{self, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
+use agent_core::config::RepoName;
 use agent_core::ids::TaskId;
 use agent_core::protocol::{Client, Command, GateRequest, Reply};
 use agent_core::state::{GateOutcome, GateTree};
@@ -53,17 +54,17 @@ pub(crate) enum GateError {
     Output(#[source] io::Error),
 }
 
-/// The task whose worktree `directory` is in or is, if it is one of `home`.
+/// The repository and the task whose worktree `directory` is in or is, if it is one of `home`.
 ///
 /// A worktree is `<home>/worktrees/<repository>/<task>`; the working directory of a process is a resolved path, and
 /// `AGENTS_HOME` may name the home through a link, so the home's own resolved path is tried too.
-pub(crate) async fn task_in(home: &Home, directory: &Path) -> Option<TaskId> {
+pub(crate) async fn worktree_in(home: &Home, directory: &Path) -> Option<(RepoName, TaskId)> {
     let worktrees = home.worktrees_dir();
-    if let Some(task) = task_under(&worktrees, directory) {
-        return Some(task);
+    if let Some(found) = worktree_under(&worktrees, directory) {
+        return Some(found);
     }
     match tokio::fs::canonicalize(&worktrees).await {
-        Ok(resolved) => task_under(&resolved, directory),
+        Ok(resolved) => worktree_under(&resolved, directory),
         Err(error) => {
             // A home with no worktrees directory has no task in it: the answer is "none", which the command reports.
             tracing::debug!(%error, path = %worktrees.display(), "the worktrees of the home cannot be resolved");
@@ -72,17 +73,27 @@ pub(crate) async fn task_in(home: &Home, directory: &Path) -> Option<TaskId> {
     }
 }
 
-/// The task of `directory` when it is `<repository>/<task>[/...]` under `worktrees`.
-fn task_under(worktrees: &Path, directory: &Path) -> Option<TaskId> {
+/// The task whose worktree `directory` is in or is, if it is one of `home`.
+pub(crate) async fn task_in(home: &Home, directory: &Path) -> Option<TaskId> {
+    worktree_in(home, directory).await.map(|(_, task)| task)
+}
+
+/// The repository and the task of `directory` when it is `<repository>/<task>[/...]` under `worktrees`.
+fn worktree_under(worktrees: &Path, directory: &Path) -> Option<(RepoName, TaskId)> {
     let Ok(inside) = directory.strip_prefix(worktrees) else {
         // Not under the worktrees: the directory is no task's.
         return None;
     };
     let mut names = inside.components();
-    let _repository = names.next()?;
+    let repository = names.next()?.as_os_str().to_str()?;
     let name = names.next()?.as_os_str().to_str()?;
+    let Ok(repository) = repository.parse() else {
+        // A directory not named like a repository holds no task's worktree.
+        tracing::debug!(%repository, "a directory under the worktrees is not named like a repository");
+        return None;
+    };
     match name.parse() {
-        Ok(task) => Some(task),
+        Ok(task) => Some((repository, task)),
         // A directory not named like a task is no task's worktree.
         Err(not_a_task) => {
             tracing::debug!(%not_a_task, "a directory under the worktrees is not named like a task");

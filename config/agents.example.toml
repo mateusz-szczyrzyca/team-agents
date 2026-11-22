@@ -261,8 +261,12 @@ gate_timeout_minutes = 30
 #   code_paths       the production code: a round that changes it has to add lines to a test file
 #   protected_paths  what judges a round (the gate's scripts, lint and CI configuration, the rules): changing one needs
 #                    your word
+#   commit_guard     true (the default): the git of every agent's run refuses, while it can still be undone, a commit that
+#                    takes lines out of a test a RED: commit froze unless it is a TEST-FIX: commit of test files only;
+#                    false: every commit is made and only the checks before a review look at it
 
 [repos.team-agents.checks]
 test_paths = ["**/tests/", "**/tests.rs", "*_test.go", "*.bats"]
 code_paths = ["bin/", "agentbus/", "live/", "crates/", "tools/"]
+commit_guard = true
 protected_paths = [".github/", "AGENTS.md", "CLAUDE.md", "GEMINI.md", "Makefile", "tools/gate.sh", "tools/test-lock.sh", "Cargo.toml", "clippy.toml", "rustfmt.toml", "rust-toolchain.toml"]
