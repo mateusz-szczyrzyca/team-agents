@@ -26,6 +26,7 @@ use std::time::Duration;
 use agent_core::config::{AbsolutePath, Program, RepoName};
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
+use agent_core::repo_path::RepoPath;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -788,6 +789,18 @@ pub struct DelegationRequest {
     /// The result; empty before.
     #[serde(default)]
     pub summary: String,
+    /// The step of the requester's plan it is for; `None` for the old form.
+    #[serde(default)]
+    pub step: Option<ItemId>,
+    /// The paths the worker may write, as the request named them; empty for the old form.
+    #[serde(default)]
+    pub files: Vec<RepoPath>,
+    /// What shows the result is right: a command or `exists PATH`; `None` for the old form.
+    #[serde(default)]
+    pub check: Option<String>,
+    /// What to do, in the requester's words; `None` for the old form.
+    #[serde(default)]
+    pub doing: Option<String>,
 }
 
 /// A request for a worker as the harness shows it among the requests of its task: its number, the step of the
@@ -805,6 +818,15 @@ pub struct TaskRequest {
     pub worker: Option<AgentName>,
     /// Where it is in its life.
     pub status: DelegationStatus,
+    /// The paths the worker may write; empty for the old form or a request for facts only.
+    #[serde(default)]
+    pub files: Vec<RepoPath>,
+    /// What shows the result is right: a command or `exists PATH`; `None` when the request has no check.
+    #[serde(default)]
+    pub check: Option<String>,
+    /// What to do, in the requester's words; `None` when the bus kept none.
+    #[serde(default)]
+    pub doing: Option<String>,
 }
 
 /// Changes to a request for a worker; what is `None` stays as it is.
@@ -1612,15 +1634,61 @@ mod tests {
                     step: Some("1.2".parse().unwrap()),
                     worker: Some("glm-1".parse().unwrap()),
                     status: DelegationStatus::Done,
+                    files: Vec::new(),
+                    check: None,
+                    doing: None,
                 },
                 TaskRequest {
                     id: RequestId::new(NonZeroU64::new(4).unwrap()),
                     step: None,
                     worker: None,
                     status: DelegationStatus::Queued,
+                    files: Vec::new(),
+                    check: None,
+                    doing: None,
                 },
             ]
         );
+    }
+
+    #[test]
+    fn a_request_that_served_a_step_reads_its_files_check_and_to_do_and_an_old_one_reads_without() {
+        let output = r#"[{"id":5,"from":"claude-1","from_task":"task-a","step":"2.1","files":["docs/guide.md","docs/count.txt"],
+            "check":"test -s docs/count.txt","doing":"Count the headings and write the number.","worker":"glm-1","status":"running"},
+            {"id":6,"from":"claude-1","from_task":"task-a","request":"look it up","status":"queued"}]"#;
+
+        let read: Vec<TaskRequest> = decode_json(BusCommand::HelperDump, output).unwrap();
+
+        let served = read.first().expect("the served request");
+        assert_eq!(served.step, Some("2.1".parse().unwrap()));
+        assert_eq!(
+            served.files,
+            ["docs/guide.md", "docs/count.txt"]
+                .map(|path| path.parse::<RepoPath>().expect("a repository path"))
+                .to_vec()
+        );
+        assert_eq!(served.check, Some("test -s docs/count.txt".to_owned()));
+        assert_eq!(
+            served.doing.as_deref(),
+            Some("Count the headings and write the number.")
+        );
+        let old = read.get(1).expect("the request in the old form");
+        assert_eq!(old.files, Vec::<RepoPath>::new());
+        assert_eq!(old.check, None);
+        assert_eq!(old.doing, None);
+    }
+
+    #[test]
+    fn a_request_for_a_worker_reads_its_files_check_and_to_do_and_a_forgotten_one_reads_without() {
+        let output = r#"{"id":7,"from":"claude-1","from_task":"task-20261122-131050-26tg","repo":"team-agents","branch":"agents/claude-1/task-a",
+            "worktree":"/tmp/w","request":"Do it.","context":"","status":"running","step":"1.1",
+            "files":["docs/guide.md"],"check":"exists docs/guide.md","doing":"Write the guide."}"#;
+
+        let read: DelegationRequest = decode_json(BusCommand::HelperNext, output).unwrap();
+        assert_eq!(read.step, Some("1.1".parse().unwrap()));
+        assert_eq!(read.files, ["docs/guide.md"].map(|p| p.parse().unwrap()).to_vec());
+        assert_eq!(read.check, Some("exists docs/guide.md".to_owned()));
+        assert_eq!(read.doing.as_deref(), Some("Write the guide."));
     }
 
     fn captured(exit: ExitReport, stdout: &[u8], stderr: &[u8]) -> Captured {
