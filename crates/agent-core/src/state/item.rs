@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
 use super::gate::GateResult;
-use super::strict::{checked, strict_enum};
+use super::strict::strict_enum;
 use super::values::{PrNumber, Timestamp};
 use super::{CommitId, Findings};
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, TaskId};
@@ -444,15 +444,34 @@ pub struct ItemProgress {
     /// How many times publication of this item was tried; absent while zero.
     #[serde(default, skip_serializing_if = "is_zero")]
     publish_tries: u32,
-    /// When the publication failure question was asked to the human, if one is open; absent while none is open.
+    /// Complete ownership of the publication question, absent while none is open.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    publish_question: Option<Timestamp>,
-    /// Which task was asked about publication, if a question is open.
+    publish_question: Option<PublishQuestion>,
+}
+
+/// Exact ownership of a publication question; legacy questions may lack a recorded branch.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PublishQuestion {
+    /// Task whose questions file owns the answer.
+    task: TaskId,
+    /// Number within that task.
+    number: NonZeroU32,
+    /// When the question was registered.
+    at: Timestamp,
+    /// Publication destination, absent only for older records.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    publish_question_task: Option<TaskId>,
-    /// The question number asked about publication, if a question is open.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    publish_question_number: Option<NonZeroU32>,
+    branch: Option<BranchName>,
+}
+
+/// Both supported on-disk publication question formats.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum PublishQuestionWire {
+    /// A complete current identity.
+    Current(PublishQuestion),
+    /// Earlier versions stored the timestamp separately from the identity.
+    Legacy(Timestamp),
 }
 
 /// A merge of an approved pull request that GitHub refused for a conflict, while the harness works on it.
@@ -483,9 +502,9 @@ fn is_zero(count: &u32) -> bool {
     *count == 0
 }
 
-/// How an [`ItemProgress`] is read; see [`checked!`].
+/// Backward-compatible reading of item progress.
 #[derive(Deserialize)]
-#[serde(remote = "ItemProgress", deny_unknown_fields)]
+#[serde(deny_unknown_fields)]
 struct ItemProgressWire {
     /// See [`ItemProgress`].
     id: ItemId,
@@ -517,7 +536,7 @@ struct ItemProgressWire {
     publish_tries: u32,
     /// See [`ItemProgress`]; a state written before publication questions has none.
     #[serde(default)]
-    publish_question: Option<Timestamp>,
+    publish_question: Option<PublishQuestionWire>,
     /// See [`ItemProgress`]; a state written before publication question task has none.
     #[serde(default)]
     publish_question_task: Option<TaskId>,
@@ -526,7 +545,40 @@ struct ItemProgressWire {
     publish_question_number: Option<NonZeroU32>,
 }
 
-checked!(ItemProgress, ItemProgressWire, check_item_progress);
+impl<'de> Deserialize<'de> for ItemProgress {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = ItemProgressWire::deserialize(deserializer)?;
+        let publish_question = match wire.publish_question {
+            Some(PublishQuestionWire::Current(question)) => Some(question),
+            Some(PublishQuestionWire::Legacy(at)) => match (wire.publish_question_task, wire.publish_question_number) {
+                (Some(task), Some(number)) => Some(PublishQuestion {
+                    task,
+                    number,
+                    at,
+                    branch: None,
+                }),
+                // Incomplete old records cannot authorize any task's answer. Leave them available for escalation.
+                _ => None,
+            },
+            None => None,
+        };
+        let value = Self {
+            id: wire.id,
+            phase: wire.phase,
+            fix_passes: wire.fix_passes,
+            gate: wire.gate,
+            findings: wire.findings,
+            merge_passes: wire.merge_passes,
+            conflict_verifications: wire.conflict_verifications,
+            conflict_approved_head: wire.conflict_approved_head,
+            merge_conflict: wire.merge_conflict,
+            publish_tries: wire.publish_tries,
+            publish_question,
+        };
+        check_item_progress(&value).map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
 
 /// An item's progress inside a team, to change through its operations only.
 ///
@@ -561,24 +613,25 @@ impl CheckedMut<'_, ItemProgress> {
         self.value.reset_publish_tries();
     }
 
-    /// See [`ItemProgress::ask_human_about_publication`].
-    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
-        self.value.ask_human_about_publication(at);
-    }
-
     /// See [`ItemProgress::record_publish_question`].
     pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
         self.value.record_publish_question(task, number, at);
     }
 
+    /// See [`ItemProgress::record_publish_question_branch`].
+    pub fn record_publish_question_branch(
+        &mut self,
+        task: TaskId,
+        number: NonZeroU32,
+        at: Timestamp,
+        branch: BranchName,
+    ) {
+        self.value.record_publish_question_branch(task, number, at, branch);
+    }
+
     /// See [`ItemProgress::clear_publish_question`].
     pub fn clear_publish_question(&mut self) {
         self.value.clear_publish_question();
-    }
-
-    /// See [`ItemProgress::record_published_conflict_pass`].
-    pub fn record_published_conflict_pass(&mut self) -> u32 {
-        self.value.record_published_conflict_pass()
     }
 
     /// See [`ItemProgress::set_conflict_approved_head`].
@@ -1001,8 +1054,6 @@ impl ItemProgress {
             merge_conflict: None,
             publish_tries: 0,
             publish_question: None,
-            publish_question_task: None,
-            publish_question_number: None,
         }
     }
 
@@ -1023,40 +1074,38 @@ impl ItemProgress {
         self.publish_tries = 0;
     }
 
-    /// When the publication failure question was asked to the human, if one is open.
+    /// When the publication failure question was registered.
     #[must_use]
-    pub const fn publish_question(&self) -> Option<Timestamp> {
-        self.publish_question
+    pub fn publish_question(&self) -> Option<Timestamp> {
+        self.publish_question.as_ref().map(|q| q.at)
     }
 
-    /// Which task was asked about publication, if a question is open.
+    /// Task that owns the publication answer.
     #[must_use]
-    pub const fn publish_question_task(&self) -> Option<&TaskId> {
-        self.publish_question_task.as_ref()
+    pub fn publish_question_task(&self) -> Option<&TaskId> {
+        self.publish_question.as_ref().map(|q| &q.task)
     }
 
-    /// The question number asked about publication, if a question is open.
+    /// Number of the publication question.
     #[must_use]
-    pub const fn publish_question_number(&self) -> Option<NonZeroU32> {
-        self.publish_question_number
-    }
-
-    /// Records that the human was asked about publication failure at `at`.
-    pub fn ask_human_about_publication(&mut self, at: Timestamp) {
-        self.publish_question = Some(at);
-    }
-
-    /// Records that the human was asked about publication failure for `task` in question `number` at `at`.
-    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
-        self.publish_question = Some(at);
-        self.publish_question_task = Some(task);
-        self.publish_question_number = Some(number);
+    pub fn publish_question_number(&self) -> Option<NonZeroU32> {
+        self.publish_question.as_ref().map(|q| q.number)
     }
 
     /// Destination recorded with the publication question, if known.
     #[must_use]
     pub fn publish_question_branch(&self) -> Option<&BranchName> {
-        None
+        self.publish_question.as_ref().and_then(|q| q.branch.as_ref())
+    }
+
+    /// Records a complete question identity from a caller without a destination.
+    pub fn record_publish_question(&mut self, task: TaskId, number: NonZeroU32, at: Timestamp) {
+        self.publish_question = Some(PublishQuestion {
+            task,
+            number,
+            at,
+            branch: None,
+        });
     }
 
     /// Records the exact publication destination with its question identity.
@@ -1067,20 +1116,17 @@ impl ItemProgress {
         at: Timestamp,
         branch: BranchName,
     ) {
-        drop(branch);
-        self.record_publish_question(task, number, at);
+        self.publish_question = Some(PublishQuestion {
+            task,
+            number,
+            at,
+            branch: Some(branch),
+        });
     }
 
-    /// Clears the open publication question.
+    /// Clears the publication question identity together.
     pub fn clear_publish_question(&mut self) {
         self.publish_question = None;
-        self.publish_question_task = None;
-        self.publish_question_number = None;
-    }
-
-    /// Records that a merge conflict pass was published and increments spent merge passes.
-    pub fn record_published_conflict_pass(&mut self) -> u32 {
-        self.spend_merge_pass()
     }
 
     getter!("The item's number in the task list.", pub const fn id(&self) -> ItemId = self.id);
