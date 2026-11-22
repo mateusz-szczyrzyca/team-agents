@@ -1900,7 +1900,7 @@ impl Owner {
                     .github_waits
                     .line_of(team.id(), round, Zone::Utc)
                     .map(|line| format!("GitHub: {line}"))
-                    .or_else(|| self.waiting_for(team, found).map(|wait| wait.text().to_owned()));
+                    .or_else(|| self.wait_line(team, found));
                 Ok(Reply::Round {
                     round: Box::new(detail),
                 })

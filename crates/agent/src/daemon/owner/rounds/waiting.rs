@@ -259,6 +259,17 @@ impl Owner {
         }
     }
 
+    /// What `agent status` says `round` waits for: the wait and who owes it, since when.
+    pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
+        self.waiting_for(team, round)
+            .map(|waiting| Self::wait_text(team, round, waiting))
+    }
+
+    /// `waiting` as a line that names who owes it and since when.
+    pub(in crate::daemon::owner) fn wait_text(_team: &Team, _round: &Round, waiting: Waiting) -> String {
+        waiting.text().to_owned()
+    }
+
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
         let activity = if *round.life() != RoundLife::Open {

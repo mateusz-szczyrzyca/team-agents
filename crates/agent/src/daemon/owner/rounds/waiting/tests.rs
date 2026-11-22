@@ -742,3 +742,25 @@ async fn a_round_whose_member_is_queued_again_after_a_run_in_it_waits_for_the_ru
 
     assert_eq!(found, Some(Waiting::For(Obligation::QueuedRun)));
 }
+
+// Rule: the wait of a round names who is obliged and since when: the lead whose run ended without a status owes the
+// correction from the end of that run.
+#[tokio::test]
+async fn the_wait_line_of_a_round_names_who_owes_it_and_since_when() {
+    let (state, team, round) = idle_round(in_progress(), RunEnd::NoStatus { exit_code: Some(1) });
+    let team = state.team(&team).unwrap();
+
+    let line = crate::daemon::owner::Owner::wait_text(
+        team,
+        team.round(&round).unwrap(),
+        Waiting::For(Obligation::LeadCorrection),
+    );
+
+    assert_eq!(
+        line,
+        format!(
+            "the lead's correction, owed by the lead since {}",
+            agent_core::local_time::Zone::Utc.stamp(at(30))
+        )
+    );
+}
