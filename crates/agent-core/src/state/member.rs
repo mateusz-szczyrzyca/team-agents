@@ -756,16 +756,21 @@ impl Member {
         at: Timestamp,
         start: SessionStart,
     ) -> Result<bool, renewal::RenewalError> {
-        let Some(last) = self.runs.last() else {
-            return Ok(false);
-        };
-        if last.started_at().as_utc() > at.as_utc() {
-            return Err(renewal::RenewalError::NotAfterTheLastRun {
-                at,
-                started_at: last.started_at(),
-            });
-        }
         let after_runs = self.runs.len();
+        match self.runs.last() {
+            Some(last) => {
+                if last.started_at().as_utc() > at.as_utc() {
+                    return Err(renewal::RenewalError::NotAfterTheLastRun {
+                        at,
+                        started_at: last.started_at(),
+                    });
+                }
+            }
+            // A task that never ran has no session to end. A busy agent's hand-over still briefs its new holder on it,
+            // so the boundary is recorded with no run before it; any other task records nothing, as before.
+            None if start == SessionStart::HandOver && trouble == ladder::Trouble::Busy => {}
+            None => return Ok(false),
+        }
         match (&mut self.renewals, start) {
             (Some(renewals), SessionStart::Renewal) => renewals.record(at, trouble, after_runs),
             (Some(renewals), SessionStart::HandOver) => renewals.hand_over(at, trouble, after_runs),
