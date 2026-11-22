@@ -16,7 +16,7 @@ RETURNED: 1.1
 STATUS: SLEEPING
 ```
 
-The harness counts a line only where it saw the same itself: the member ended a run with `STATUS: DONE` on the item and is started again for it. Write the line for work you read and did not take — not for an answer to a question of the member, and not for a plan or a gate the harness sent back itself. A line you do not write is a return nobody counts. The count of an item is kept and `agent status` shows it as `returned 3 of 5`.
+For one part of a split item write the part, `RETURNED: 1.1a`. The harness counts a line only where it saw the same itself: the member ended a run with `STATUS: DONE` on the item and is started again for it. Write the line for work you read and did not take — not for an answer to a question of the member, and not for a plan or a gate the harness sent back itself. A line you do not write is a return nobody counts. The count of an item is kept and `agent status` shows it as `returned 3 of 5`.
 
 When you have nothing to do until a message arrives, end your turn with `STATUS: SLEEPING`: the next message wakes you.
 
