@@ -1676,8 +1676,8 @@ async fn conflict_publication_adopts_an_answer_saved_before_question_registratio
     assert_eq!(std::fs::read_to_string(file).unwrap(), answer);
     assert!(!rig.home.questions_file(&task, n(2)).exists());
     rig.item_where(
-        "conflict publication merges after automatic answer adoption",
         "1.1",
+        "conflict publication merges after automatic answer adoption",
         |phase| matches!(phase, ItemPhase::Done { .. }),
     )
     .await;
