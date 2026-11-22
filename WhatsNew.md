@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.61.0 — 22.11.2026 — PR #177
+
+### Bug fixes
+- [agent] [agent-core] An unsuccessful publication of a conflict resolution no longer spends a conflict pass: passes are accounted upon confirmed push, and provisional passes reserved for a conflict head are refunded if publication fails without erasing earlier valid passes.
+- [agent] [agent-core] An exhausted split round stuck waiting in `AskingHuman` is recovered when its gated commit is ready to merge or when its pull request is already merged, preserving legitimate passes and holding for active questions, running leads, or non-conflict refusals.
+
 ## 0.60.0 — 22.11.2026 — PR #178
 
 ### Enhancements
