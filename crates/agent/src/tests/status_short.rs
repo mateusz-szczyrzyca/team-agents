@@ -213,3 +213,12 @@ fn json_is_taken_with_and_without_task() {
     Cli::try_parse_from(["agent", "status", "--json", "--task"]).expect("--json takes --task too");
     Cli::try_parse_from(["agent", "status", "--investigators", "--task"]).expect_err("--investigators takes no --task");
 }
+
+// Rule: `--task` shows the tasks of a team list, so it is refused with a target (which already shows its tasks) and with
+// the investigators view; `--json` already carries every task, so it is accepted with it.
+#[test]
+fn task_is_refused_with_a_target_and_with_the_investigators() {
+    Cli::try_parse_from(["agent", "status", "team-20261111-153000-t5m8", "--task"])
+        .expect_err("a target takes no --task");
+    Cli::try_parse_from(["agent", "status", "--investigators", "--task"]).expect_err("--investigators takes no --task");
+}
