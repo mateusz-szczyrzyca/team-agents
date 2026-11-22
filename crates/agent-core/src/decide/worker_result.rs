@@ -119,8 +119,30 @@ pub enum Verdict {
 /// What the harness does with a worker's result.
 #[must_use]
 pub fn decide(facts: &Facts) -> Verdict {
-    let _ = facts;
-    Verdict::Accept
+    let mut wrong = Vec::new();
+    if facts.ending != WorkerEnding::Done {
+        wrong.push(Wrong::EndedOtherwise(facts.ending));
+    }
+    if facts.changed_outside_files {
+        wrong.push(Wrong::OutsideFiles);
+    }
+    if facts.past_seconds {
+        wrong.push(Wrong::PastSeconds);
+    }
+    match facts.check {
+        CheckOutcome::Passed | CheckOutcome::Absent => {}
+        CheckOutcome::Failed => wrong.push(Wrong::CheckFailed),
+        CheckOutcome::TimedOut => wrong.push(Wrong::CheckTimedOut),
+    }
+    if wrong.is_empty() {
+        return Verdict::Accept;
+    }
+    let first_try = facts.try_number <= 1;
+    if first_try && facts.tries > 1 && facts.elsewhere == Elsewhere::Free {
+        Verdict::GiveToAnother { wrong }
+    } else {
+        Verdict::Return { wrong }
+    }
 }
 
 /// The free worker that serves the second try of a request: one whose `cli` differs from the one that failed, in the
@@ -131,8 +153,12 @@ pub fn worker_for_second_try<'a>(
     failed: CliKind,
     busy: &[AgentName],
 ) -> Option<&'a AgentName> {
-    let _ = (workers, failed, busy);
-    None
+    let is_free = |name: &AgentName| !busy.contains(name);
+    workers
+        .iter()
+        .find(|(name, cli)| is_free(name) && *cli != failed)
+        .or_else(|| workers.iter().find(|(name, cli)| is_free(name) && *cli == failed))
+        .map(|(name, _)| *name)
 }
 
 #[cfg(test)]
