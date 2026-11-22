@@ -315,7 +315,8 @@ fn render_shared(shared: &[SharedAgent], team: &Team, limits: &agent_core::confi
                 .map_or(Tier::Normal, |(_, member)| member.agent().tier());
             let wait = match limit_for(limits, tier) {
                 RunLimit::Unlimited => "",
-                RunLimit::AtMost(_) => ", and its task here waits while its run there goes on",
+                RunLimit::AtMost(one) if one.get() == 1 => ", and its task here waits while its run there goes on",
+                RunLimit::AtMost(_) => ", and its task here waits when its limit of runs is reached",
             };
             format!(
                 "  {} is also in the open team {} (task {}): its messages there do not reach this team{wait}\n",
