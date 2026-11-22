@@ -285,4 +285,58 @@ mod guard_process {
         );
         assert_eq!(elsewhere.status.code(), Some(0));
     }
+
+    // Rule: `git commit -a` stages with an index of its own while the hook runs: what it takes out of a frozen test is
+    // seen and refused, and what it only adds is made.
+    #[tokio::test]
+    async fn git_commit_a_is_judged_by_what_it_stages() {
+        let world = World::new(true).await;
+        world.red();
+        std::fs::write(world.worktree.join("tests/a.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+
+        let added = world.git(&world.worktree, &["commit", "-q", "-a", "-m", "Cover one more case"]);
+
+        assert!(added.status.success(), "{}", stderr(&added));
+        let before = world.count();
+        std::fs::write(world.worktree.join("tests/a.rs"), "one\nTWO\nthree\nfour\n").unwrap();
+
+        let edited = world.git(&world.worktree, &["commit", "-q", "-a", "-m", "Format the test"]);
+
+        assert!(!edited.status.success());
+        assert!(
+            stderr(&edited).contains("This commit was not made."),
+            "{}",
+            stderr(&edited)
+        );
+        assert_eq!(world.count(), before);
+    }
+
+    // Rule: the commit of a real merge is not judged: what the other side brings is not an edit of this commit.
+    #[tokio::test]
+    async fn the_commit_of_a_real_merge_is_not_refused() {
+        let world = World::new(true).await;
+        world.red();
+        let run = |args: &[&str]| {
+            let output = world.git(&world.worktree, args);
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        };
+        run(&["switch", "-q", "-c", "other"]);
+        std::fs::write(world.worktree.join("tests/a.rs"), "ONE\ntwo\nthree\n").unwrap();
+        run(&["add", "-A"]);
+        // Made without the hook: the branch being merged was not made in this run.
+        run(&["commit", "-q", "--no-verify", "-m", "Tidy the test elsewhere"]);
+        run(&["switch", "-q", "feature"]);
+        std::fs::write(world.worktree.join("src.txt"), "work\n").unwrap();
+        run(&["add", "-A"]);
+        run(&["commit", "-q", "-m", "Do the work"]);
+        let before = world.count();
+
+        let merged = world.git(
+            &world.worktree,
+            &["merge", "-q", "--no-ff", "-m", "Merge other", "other"],
+        );
+
+        assert!(merged.status.success(), "{}", stderr(&merged));
+        assert_eq!(world.count(), before + 2);
+    }
 }
