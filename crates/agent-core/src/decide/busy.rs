@@ -87,9 +87,12 @@ const fn rank(tier: Tier) -> u8 {
     crate::decide::replacement::rank(tier)
 }
 
-/// Whether the task of `waiting` may be handed over at all: a worker's and a reviewer's are not, nor a coordinator's while
-/// one of its members runs.
+/// Whether the task of `waiting` may be handed over at all: a task that is not waiting for its busy agent, a worker's and
+/// a reviewer's are not, nor a coordinator's while one of its members runs.
 const fn may_be_handed_over(waiting: &Waiting<'_>) -> bool {
+    if !matches!(waiting.wait, TaskWait::BusyAgent) {
+        return false;
+    }
     match waiting.role {
         Role::Worker | Role::Reviewer => false,
         Role::Coordinator => !waiting.member_runs,
