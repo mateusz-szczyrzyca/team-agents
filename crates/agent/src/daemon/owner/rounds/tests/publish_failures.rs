@@ -158,9 +158,8 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
         .await
         .unwrap();
 
-    // Part 1.1a PR #1 is approved; refuse merge for conflict and move base:
+    // Part 1.1a PR #1 is approved; refuse merge for conflict:
     rig.github.answer_merges(MergeAnswer::Refuse(405));
-    move_base(&rig);
 
     // Wait until conflict pass starts:
     let state = rig
@@ -172,11 +171,18 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(item.merge_passes(), 1, "conflict pass initiation spends one merge pass");
 
+    // Move base on origin:
+    move_base(&rig);
+
     // Install pre-receive hook in origin that rejects git push during conflict publication:
     let hook_dir = rig.origin.join("hooks");
     std::fs::create_dir_all(&hook_dir).unwrap();
     let hook = hook_dir.join("pre-receive");
-    std::fs::write(&hook, "#!/bin/sh\necho 'pre-receive: denied' >&2\nexit 1\n").unwrap();
+    std::fs::write(
+        &hook,
+        "#!/bin/sh\nwhile read -r oldrev newrev refname; do\n  case \"$refname\" in\n    refs/heads/agents/*)\n      echo 'pre-receive: denied' >&2\n      exit 1\n      ;;\n  esac\ndone\nexit 0\n",
+    )
+    .unwrap();
     std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
 
     // Signal fake base ready in coordinator's worktree:
@@ -186,7 +192,7 @@ async fn conflict_publication_failure_preserves_budget_and_recovers_after_restar
     let state = rig
         .state_where("conflict publication fails and pass is refunded", |state| {
             let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
-            item.publish_tries() >= 1 && item.merge_passes() == 0
+            item.conflict_refunded_head().is_some() && item.publish_tries() >= 1 && item.merge_passes() == 0
         })
         .await;
     let item = state.team(&team_id).unwrap().item("1.1".parse().unwrap()).unwrap();
