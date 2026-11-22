@@ -713,6 +713,7 @@ fn decide_plan_with_mismatch_table() {
     let k2 = keeping(2, PlanStage::Open);
     let k3 = keeping(3, PlanStage::Open);
     let k4 = keeping(4, PlanStage::Open);
+    let pre_judging = PlanKeeping::default();
     let done = ended(RunOutcome::Done);
     let sleeping = ended(RunOutcome::Sleeping);
     let failed = ended(RunOutcome::Failed);
@@ -764,6 +765,11 @@ fn decide_plan_with_mismatch_table() {
         (
             "legacy task",
             facts(Role::Solo, &done, &clean, &[], None, &def_policy),
+            PlanVerdict::Accept,
+        ),
+        (
+            "task older than first judging version (keeping present without judging marker)",
+            facts(Role::Solo, &done, &clean, &[], Some(&pre_judging), &def_policy),
             PlanVerdict::Accept,
         ),
         (

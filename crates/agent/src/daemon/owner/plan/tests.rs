@@ -2764,3 +2764,68 @@ async fn aborted_unpolled_run_preserves_refused_gate_across_restart_and_missing_
         "missing output file must be reported in correction tail: {rendered}"
     );
 }
+
+#[tokio::test]
+async fn pre_judging_task_with_plan_keeping_is_judged_and_never_sent_back_for_mismatch() {
+    use agent_core::plan::judge::JudgementState;
+    use agent_runtime::history::Reader;
+
+    let mut pre_judging_state = State::new();
+    let crew = Crew::solo(Member::before_judging(task(1), normal("claude-1"))).unwrap();
+    pre_judging_state
+        .insert_team(Team::new(
+            team_id(0),
+            repo(),
+            at(0),
+            MergeMode::Autopilot,
+            TaskListText::new(LIST.to_owned()).unwrap(),
+            crew,
+        ))
+        .unwrap();
+    let json = pre_judging_state.to_json().unwrap();
+    let reloaded = State::from_json(&json).unwrap();
+    assert!(
+        reloaded
+            .find_task(&task(1))
+            .unwrap()
+            .member
+            .plan()
+            .is_some_and(|k| !k.judging()),
+        "pre-judging task must keep a PlanKeeping without the judging marker"
+    );
+
+    let mut daemon = with_bounces(&reloaded, 3);
+    let dir = daemon.scenario(1, "done");
+    std::fs::create_dir_all(dir.join(".agent")).unwrap();
+    std::fs::write(dir.join(".agent/plan.md"), MISSING_FILE_PLAN).unwrap();
+
+    daemon.start().await;
+    let settled = daemon
+        .state_where("pre-judging run 1 settled", |s| {
+            s.find_task(&task(1)).is_some_and(|f| {
+                f.member.runs().first().is_some_and(|r| !r.is_running())
+                    && f.member.status() != TaskStatus::Running
+                    && f.member.plan_running_check().is_none()
+            })
+        })
+        .await;
+    daemon.stop().await.unwrap();
+
+    let member = settled.find_task(&task(1)).unwrap().member;
+    let keeping = member.plan().expect("pre-judging task keeps its plan record");
+    assert!(!keeping.judging());
+    assert_eq!(
+        keeping.sent_back(),
+        0,
+        "pre-judging task with PlanKeeping must not be sent back for a step mismatch"
+    );
+    assert_eq!(member.status(), TaskStatus::Done);
+    assert_eq!(member.runs().len(), 1);
+
+    let reader = Reader::open(&daemon.home.history_file()).unwrap();
+    let judgements = reader.latest_judgements(&task(1)).unwrap();
+    assert_eq!(
+        judgements[&ItemId::from_str("1.1").unwrap()].state,
+        JudgementState::Mismatch
+    );
+}

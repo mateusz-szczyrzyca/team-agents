@@ -12,7 +12,6 @@ use super::plan::{PlanKeeping, PlanReason, RunningPlanCheck};
 use super::question::{AnswerBeforeQuestion, AnsweredVia, Question};
 use super::renewal;
 use super::run::{Run, RunEnd, RunError, RunState};
-use super::strict::checked;
 use super::values::{SessionId, Timestamp};
 use crate::decide::ladder;
 use crate::ids::{AgentName, InvestigatorName, ItemId, RoundId, RunId, TaskId};
@@ -86,8 +85,11 @@ pub struct Member {
     /// Its rounds of questions, oldest first.
     questions: Vec<Question>,
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none", serialize_with = "serialize_member_plan")]
     plan: Option<PlanKeeping>,
+    /// Whether `plan` was created under step judging (`#163` or newer); omitted for tasks created before `#163`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    plan_judging: bool,
     /// Step checks refused because they ran the gate, kept on the member when `plan` is absent so legacy tasks deliver
     /// the notice once without enabling plan send-backs.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -134,6 +136,9 @@ struct MemberWire {
     plan: Option<PlanKeeping>,
     /// See [`Member`].
     #[serde(default)]
+    plan_judging: bool,
+    /// See [`Member`].
+    #[serde(default)]
     refused_gate: Vec<(ItemId, String)>,
     /// See [`Member`].
     #[serde(default)]
@@ -146,7 +151,25 @@ struct MemberWire {
     past_holders: Vec<holding::Holding>,
 }
 
-checked!(Member, MemberWire, check_member);
+/// Serializes a member's [`PlanKeeping`] while storing its `judging` marker in `plan_judging` on the enclosing
+/// [`Member`], so the inner `plan` object preserves its `0.35.0` shape.
+fn serialize_member_plan<T, S>(plan: &T, serializer: S) -> Result<S::Ok, S::Error>
+where
+    T: std::borrow::Borrow<Option<PlanKeeping>>,
+    S: serde::Serializer,
+{
+    let stripped = plan.borrow().as_ref().map(PlanKeeping::without_judging_marker);
+    stripped.serialize(serializer)
+}
+
+impl<'de> serde::Deserialize<'de> for Member {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut value = MemberWire::deserialize(deserializer)?;
+        value.sync_plan_judging();
+        check_member(&value).map_err(serde::de::Error::custom)?;
+        Ok(value)
+    }
+}
 
 /// A member inside a state or a team, to change through its operations only.
 ///
@@ -392,7 +415,7 @@ pub enum MemberError {
 }
 
 impl Member {
-    /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan.
+    /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan under step judging.
     #[must_use]
     pub fn new(task: TaskId, agent: Participant) -> Self {
         Self {
@@ -401,7 +424,27 @@ impl Member {
             status: TaskStatus::Queued,
             runs: Vec::new(),
             questions: Vec::new(),
+            plan: Some(PlanKeeping::new()),
+            plan_judging: true,
+            refused_gate: Vec::new(),
+            running_check: None,
+            renewals: None,
+            past_holders: Vec::new(),
+        }
+    }
+
+    /// A member of a task created after plans (`0.35.0`) and before step judging (`#163`): it keeps a plan for
+    /// structural plan faults, and its runs are never sent back for a step check mismatch.
+    #[must_use]
+    pub fn before_judging(task: TaskId, agent: Participant) -> Self {
+        Self {
+            task,
+            agent,
+            status: TaskStatus::Queued,
+            runs: Vec::new(),
+            questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
+            plan_judging: false,
             refused_gate: Vec::new(),
             running_check: None,
             renewals: None,
@@ -419,10 +462,22 @@ impl Member {
             runs: Vec::new(),
             questions: Vec::new(),
             plan: None,
+            plan_judging: false,
             refused_gate: Vec::new(),
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+        }
+    }
+
+    /// Synchronizes [`Self::plan_judging`] with [`PlanKeeping::judging`] after deserialization.
+    fn sync_plan_judging(&mut self) {
+        if let Some(plan) = &mut self.plan {
+            let judging = self.plan_judging || plan.judging();
+            plan.set_judging(judging);
+            self.plan_judging = judging;
+        } else {
+            self.plan_judging = false;
         }
     }
 
@@ -926,6 +981,9 @@ mod tests {
         plan: Option<PlanKeeping>,
         /// See [`Member`].
         #[serde(default)]
+        plan_judging: bool,
+        /// See [`Member`].
+        #[serde(default)]
         refused_gate: Vec<(ItemId, String)>,
         /// See [`Member`].
         #[serde(default)]
@@ -936,18 +994,20 @@ mod tests {
         type Error = MemberError;
 
         fn try_from(wire: MemberWire) -> Result<Self, Self::Error> {
-            let member = Self {
+            let mut member = Self {
                 task: wire.task,
                 agent: wire.agent,
                 status: wire.status,
                 runs: wire.runs,
                 questions: wire.questions,
                 plan: wire.plan,
+                plan_judging: wire.plan_judging,
                 refused_gate: wire.refused_gate,
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
             };
+            member.sync_plan_judging();
             check_member(&member)?;
             Ok(member)
         }

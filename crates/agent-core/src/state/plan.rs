@@ -157,6 +157,10 @@ pub struct PlanKeeping {
     granted: u32,
     /// Where the task is with its plan.
     stage: PlanStage,
+    /// Whether the task was created under step judging (`#163` or newer) and therefore bounces on a step check
+    /// mismatch. Tasks created between `0.35.0` and `#163` have a plan record without this marker.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    judging: bool,
     /// The reason of a send-back the next run of the task delivers; `None` when none waits, and not written then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PlanReason>,
@@ -172,6 +176,36 @@ pub struct PlanKeeping {
 }
 
 impl PlanKeeping {
+    /// The plan keeping of a new task created under step judging (`#163` or newer).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            judging: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the task was created under step judging (`#163` or newer) and therefore bounces on a step check
+    /// mismatch.
+    #[must_use]
+    pub const fn judging(&self) -> bool {
+        self.judging
+    }
+
+    /// Sets whether the task's plan was created under step judging.
+    pub(super) const fn set_judging(&mut self, judging: bool) {
+        self.judging = judging;
+    }
+
+    /// A copy of this plan keeping without the `judging` marker on the inner object when serialized inside
+    /// [`super::Member`].
+    #[must_use]
+    pub(super) fn without_judging_marker(&self) -> Self {
+        let mut copy = self.clone();
+        copy.judging = false;
+        copy
+    }
+
     /// How many times the task's runs went back for its plan.
     #[must_use]
     pub const fn sent_back(&self) -> u32 {
