@@ -272,13 +272,17 @@ the pull request: a plan an agent commits by mistake is taken out of its branch 
 delivery". See [configuration](docs/configuration.md#plan).
 
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
-folder inside the worktree; an absent path or a symlink outside it is a mismatch. Steps without checks, with
-`reviewer`, or with commands remain declared. `agent status <task>` and `agent status <round>` show these states
-beside the steps. Judgements are retained in history schema 17, which automatically upgrades older histories;
-keep a backup before upgrading if you need to return to an older daemon. This release provides the runtime engine
-and configuration (`[plan] check_seconds`, default 120; `[plan] check_refuse`, default `["agent gate", "make gate"]`)
-for command checks; in the daemon, commands remain declared, and durable command execution with mismatch bounces follows
-in a dedicated task.
+folder inside the worktree; an absent path or a symlink outside it is a mismatch. A command check runs in the
+background in the task's worktree, one at a time per task without blocking the daemon, with the agent's environment
+and a timeout of `[plan] check_seconds` (default 120; `0` disables command checks and leaves them declared; commands
+matching `[plan] check_refuse`, default `["agent gate", "make gate"]`, are refused and remain declared): exit `0`
+confirms the step, while a non-zero exit, a signal or a timeout is a mismatch with output saved to
+`tasks/<task>/checks/<run>/<step>.log`. Steps without checks or with `reviewer` remain declared. Stopping or
+restarting the daemon kills any running check process group (`tasks/<task>/checks/running`) and, on startup, finishes
+judging and settling any run that was waiting for its check without re-running the agent CLI or duplicating a
+recorded judgement. `agent status <task>` and `agent status <round>` show these states beside the steps. Judgements
+are retained in history schema 17, which automatically upgrades older histories; keep a backup before upgrading if
+you need to return to an older daemon.
 
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt

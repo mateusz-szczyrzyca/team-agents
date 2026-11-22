@@ -98,7 +98,10 @@ pub struct LimitContext<'a> {
 }
 
 /// Why a task is paused.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display, strum::IntoStaticStr)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display, strum::IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum PauseReason {
     /// The quota, usage limit or credits are exhausted.
@@ -108,7 +111,8 @@ pub enum PauseReason {
 }
 
 /// A pause a run's end implies.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Pause {
     /// When the task is queued again.
     pub until: Timestamp,
