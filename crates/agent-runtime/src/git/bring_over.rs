@@ -26,11 +26,16 @@ use agent_core::state::CommitId;
 
 use super::changes::{close_scratch, make_scratch};
 use super::snapshot::Snapshot;
-use super::{Git, GitError, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, text, whole};
+use super::{
+    Git, GitError, GitLimits, GitOperation, Reach, Revision, ScratchError, arg, diagnostic, failed, text, whole,
+};
 use crate::process::{CaptureLimits, capture_with_input};
 
 /// The name of the environment variable that points git at the index of a merge.
 const INDEX_VARIABLE: &str = "GIT_INDEX_FILE";
+
+/// The bytes of the output of a listing of a whole tree that are kept: 64 MiB, which is a tree of about 600,000 files.
+const TREE_OUTPUT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// The ID of the tree with no file, which every repository knows without holding it: the base of a merge of two
 /// histories with no commit in common.
@@ -197,16 +202,23 @@ impl Git {
         // The merge is read in a scratch index and written in the repository's own objects: the merged commit must
         // outlive the scratch directory to be written to the worktree, and the reference of the round and task keeps
         // it. Nothing is written to the worktree or its index here.
-        let handle = self.clone().with_env(
-            index_name()?,
-            scratch
-                .join("index")
-                .to_str()
-                .map(str::to_owned)
-                .ok_or_else(|| GitError::Scratch {
-                    source: ScratchError::NotText(scratch.join("index")),
-                })?,
-        );
+        // A tree of a big repository is listed in more bytes than a command's output may be by default.
+        let handle = self
+            .clone()
+            .with_limits(GitLimits {
+                max_output_bytes: TREE_OUTPUT_BYTES,
+                ..self.limits
+            })
+            .with_env(
+                index_name()?,
+                scratch
+                    .join("index")
+                    .to_str()
+                    .map(str::to_owned)
+                    .ok_or_else(|| GitError::Scratch {
+                        source: ScratchError::NotText(scratch.join("index")),
+                    })?,
+            );
         // No hooks run and no filter is asked: the merge writes the bytes of commits, not the output of programs of the
         // repository's configuration.
         let overrides = handle
@@ -471,7 +483,15 @@ impl Git {
     /// the merge was made. Files of the merge that the requester changed or has untracked are an answer, not an error:
     /// [`BringOver::InTheWay`]. Whatever the outcome, an error leaves the worktree and the branch as they were.
     pub async fn bring_over(&self, commit: &CommitId, round: &RoundId, task: &TaskId) -> Result<BringOver, GitError> {
-        let snapshot = self.snapshot(round, task).await?;
+        // The snapshot lists every file of the worktree: a big repository needs more bytes than a command may print.
+        let snapshot = self
+            .clone()
+            .with_limits(GitLimits {
+                max_output_bytes: TREE_OUTPUT_BYTES,
+                ..self.limits
+            })
+            .snapshot(round, task)
+            .await?;
         match self.merge_into_scratch(&snapshot.head, commit, round, task).await? {
             Merged::Conflicts(files) => Ok(BringOver::Conflicted {
                 snapshot,
@@ -640,7 +660,7 @@ impl Git {
             .map(|path| path.to_vec())
             .collect();
         for path in added {
-            if let Some(obstacle) = self.obstacle_in_worktree(path).await? {
+            if let Some(obstacle) = self.obstacle_in_worktree(head, path, &touched, &changes).await? {
                 files.insert(obstacle);
             }
         }
@@ -652,9 +672,17 @@ impl Git {
         Ok(found)
     }
 
-    /// What the worktree has where the merge adds `path`: the path itself, in whatever form, or the first file in the
-    /// place of one of its directories. `None` when the way is free.
-    async fn obstacle_in_worktree(&self, path: &[u8]) -> Result<Option<Vec<u8>>, GitError> {
+    /// What the worktree has where the merge adds `path` that the merge does not clear itself: the path itself, in
+    /// whatever form, or the first file in the place of one of its directories. A tracked file the merge replaces by a
+    /// directory, and a directory of tracked files it replaces by a file, are the merge's to clear (when they are clean;
+    /// the status of the paths the merge writes says when they are not). `None` when the way is free.
+    async fn obstacle_in_worktree(
+        &self,
+        head: &str,
+        path: &[u8],
+        touched: &BTreeSet<&[u8]>,
+        changes: &[&[u8]],
+    ) -> Result<Option<Vec<u8>>, GitError> {
         let root = self.dir.as_path();
         let mut prefix = Vec::new();
         for (n, part) in path.split(|byte| *byte == b'/').enumerate() {
@@ -663,20 +691,47 @@ impl Git {
             }
             prefix.extend_from_slice(part);
             let last = prefix.len() == path.len();
-            match tokio::fs::symlink_metadata(root.join(OsStr::from_bytes(&prefix))).await {
-                Ok(metadata) if last || !metadata.is_dir() => return Ok(Some(prefix)),
-                Ok(_) => {}
+            let metadata = match tokio::fs::symlink_metadata(root.join(OsStr::from_bytes(&prefix))).await {
+                Ok(metadata) => metadata,
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-                // A file where a directory of the path should be is an obstacle too; git reports it as not a directory.
-                Err(source) if source.kind() == std::io::ErrorKind::NotADirectory => return Ok(Some(prefix)),
+                // A file where a directory of the path should be: git reports it as not a directory.
+                Err(source) if source.kind() == std::io::ErrorKind::NotADirectory => {
+                    return Ok(self.unless_tracked(head, prefix).await?);
+                }
                 Err(source) => {
                     return Err(GitError::Scratch {
                         source: ScratchError::Make(source),
                     });
                 }
+            };
+            if metadata.is_dir() {
+                if last {
+                    // A directory where the merge adds a file: in the way only if it holds something the merge does not
+                    // write over or remove, which is what is untracked in it.
+                    let mut under = prefix.clone();
+                    under.push(b'/');
+                    let holds_more = touched
+                        .iter()
+                        .any(|touched| touched.starts_with(&under) && !changes.contains(touched));
+                    return Ok(holds_more.then_some(prefix));
+                }
+            } else {
+                return Ok(self.unless_tracked(head, prefix).await?);
             }
         }
         Ok(None)
+    }
+
+    /// `path` as an obstacle, unless the head tracks it: then the merge removes or replaces it.
+    async fn unless_tracked(&self, head: &str, path: Vec<u8>) -> Result<Option<Vec<u8>>, GitError> {
+        let operation = GitOperation::LsTree;
+        let mut spec = OsString::from(head);
+        spec.push(":");
+        spec.push(OsStr::from_bytes(&path));
+        let tracked = self
+            .run(operation, Reach::Local, &[arg("cat-file"), arg("-e"), &spec])
+            .await?;
+        Ok((!tracked.exit.succeeded()).then_some(path))
     }
 
     /// Moves the index and the worktree from the tree of `from` to the tree of `to`: `git read-tree -m -u`.
