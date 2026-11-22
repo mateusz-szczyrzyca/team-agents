@@ -55,6 +55,15 @@ fn counted(state: &State, team: &TeamId) -> u32 {
         .get()
 }
 
+/// Whether the state of `team` counts `returns` returns of item 1.1 and its member `claude-1` has finished the run they
+/// started: the status line of the member is then settled.
+fn settled(state: &State, team: &TeamId, returns: u32) -> bool {
+    counted(state, team) == returns
+        && state.team(team).unwrap().crew().roster().iter().any(|(_, member)| {
+            member.agent().name() == "claude-1" && member.status() == agent_core::status::TaskStatus::Waiting
+        })
+}
+
 /// The status of `team` as the daemon answers it, rendered as `agent status` prints it.
 async fn status_text(rig: &Rig, team: &TeamId) -> String {
     let reply = Connection::connect(&rig.home.socket_file())
@@ -81,7 +90,7 @@ async fn a_lead_that_returns_the_work_twice_is_counted_twice_with_its_reasons_an
     .await;
 
     let state = rig
-        .state_where("two returns counted", |state| counted(state, &team) == 2)
+        .state_where("two returns counted", |state| settled(state, &team, 2))
         .await;
     let text = status_text(&rig, &team).await;
     rig.stop().await.unwrap();
@@ -101,7 +110,7 @@ async fn a_lead_that_returns_the_work_twice_is_counted_twice_with_its_reasons_an
     assert_eq!(reasons.len(), 2, "{reasons:?}");
     assert!(reasons[0].contains("fix the reader first"), "{reasons:?}");
     assert!(reasons[1].contains("add the tests too"), "{reasons:?}");
-    assert!(text.contains("claude-1   waiting, returned 2 of 5"), "{text}");
+    assert!(text.contains("claude-1  waiting, returned 2 of 5"), "{text}");
     assert_eq!(counted(&restarted, &team), 2);
     assert!(after.contains("returned 2 of 5"), "{after}");
 }
@@ -112,12 +121,12 @@ async fn a_lead_that_returns_the_work_twice_is_counted_twice_with_its_reasons_an
 async fn with_no_limit_the_returns_are_counted_and_status_shows_the_count_only() {
     let (mut rig, team) = team_of("sleep,return:claude-1:fix the reader first,sleep", "rejections = 0\n").await;
 
-    rig.state_where("one return counted", |state| counted(state, &team) == 1)
+    rig.state_where("one return counted", |state| settled(state, &team, 1))
         .await;
     let text = status_text(&rig, &team).await;
     rig.stop().await.unwrap();
 
-    assert!(text.contains("claude-1   waiting, returned 1\n"), "{text}");
+    assert!(text.contains("claude-1  waiting, returned 1\n"), "{text}");
 }
 
 // Rule: a lead that answers its member without the line sends no work back: nothing is counted.
