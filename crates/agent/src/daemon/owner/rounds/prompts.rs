@@ -345,51 +345,45 @@ pub(super) async fn fix_pass(
     let Some((progress, branch, pr)) = fixing else {
         return Ok(None);
     };
+    let passes = progress.fix_passes().len();
+    let findings_file = ctx.home.fix_pass_findings_file_of(found.member.task(), passes);
     if let Some(correction) = progress
         .findings()
         .and_then(|l| l.disputes())
         .and_then(|d| d.correction.as_ref())
     {
-        return Ok(Some(correction.clone()));
+        // A pass begun by an older daemon has no file: it is written from what the state holds, and then named.
+        if let Some(asked) = progress.fix_passes().last() {
+            ensure_findings_file(ctx, texts, progress, asked, pr.number, &findings_file).await?;
+        }
+        return Ok(Some(named_findings_file(texts, correction.clone(), &findings_file)?));
     }
-    let findings_file = ctx.home.fix_pass_findings_file(found.member.task());
     let Some(asked) = progress.fix_passes().last() else {
         return Ok(None);
     };
-    let passes = progress.fix_passes().len();
     let asked_at = asked.requested_by.iter().map(|request| request.requested_at).max();
     if woken && asked_at.is_some_and(|at| found.member.runs().iter().any(|run| run.started_at() >= at)) {
         let values = Variables::new()
             .with("pr", pr.number.to_string())?
             .with("pass", passes.to_string())?;
         let open = texts.render(AutopilotPrompt::ReviewFixPassOpen, &values)?;
-        let mut text = open.trim_end().to_owned();
-        if let Some(line) = findings_file_line(texts, &findings_file)? {
-            text.push_str("\n\n");
-            text.push_str(&line);
-        }
-        return Ok(Some(text));
+        ensure_findings_file(ctx, texts, progress, asked, pr.number, &findings_file).await?;
+        return Ok(Some(named_findings_file(
+            texts,
+            open.trim_end().to_owned(),
+            &findings_file,
+        )?));
     }
-    // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
-    let kept = count(progress.completed_review_passes().saturating_sub(1));
-    let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
-    if ctx.settings.config.review().second_opinion() == agent_core::review_response::opinion::Permission::Enabled {
-        findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
-    }
-    findings.extend(reports_of(ctx, texts, &asked.requested_by, pr.number, kept).await?);
-    let findings = findings.join("\n\n");
+    let findings = findings_block(ctx, texts, progress, asked, pr.number).await?;
     // The same text goes to a file the prompts of the pass name: a lead that has lost it reads it again.
-    // The findings are in the prompt either way: a file that cannot be written is a warning, and is then not named.
-    if let Err(error) = replace_text_file(&findings_file, &findings, 0o600).await {
-        tracing::warn!(path = %findings_file.display(), error = %agent_runtime::process::error_chain(&error), "cannot write the findings of the fix pass to a file");
-    }
+    keep_findings_file(&findings_file, &findings).await;
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("pass", passes.to_string())?
         .with("passes", ctx.settings.config.review().fix_passes.to_string())?
         .with("branch", branch.as_str())?
         .with("findings", findings)?;
-    let mut text = texts
+    let text = texts
         .render(
             if progress.findings().is_some_and(|l| l.disputes().is_some()) {
                 AutopilotPrompt::ReviewFixResponse
@@ -400,10 +394,7 @@ pub(super) async fn fix_pass(
         )?
         .trim_end()
         .to_owned();
-    if let Some(line) = findings_file_line(texts, &findings_file)? {
-        text.push_str("\n\n");
-        text.push_str(&line);
-    }
+    let mut text = named_findings_file(texts, text, &findings_file)?;
     if matches!(found.role, Role::Member | Role::Worker) {
         let integration = texts.render(
             AutopilotPrompt::ReviewMemberFix,
@@ -413,6 +404,58 @@ pub(super) async fn fix_pass(
         text.push_str(integration.trim_end());
     }
     Ok(Some(text))
+}
+
+/// The findings of the pass `asked` as the lead is given them: the open findings, the offer of a second opinion and the
+/// reports of the reviewers.
+async fn findings_block(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    progress: &ItemProgress,
+    asked: &agent_core::state::FixPass,
+    pr: PrNumber,
+) -> Result<String, SectionError> {
+    // The reports of the review pass that asked for this pass were kept under the number of the passes before it.
+    let kept = count(progress.completed_review_passes().saturating_sub(1));
+    let mut findings = vec![super::findings::open_text(texts, progress.findings())?];
+    if ctx.settings.config.review().second_opinion() == agent_core::review_response::opinion::Permission::Enabled {
+        findings.push(texts.render(AutopilotPrompt::ReviewOpinionOffer, &Variables::new())?);
+    }
+    findings.extend(reports_of(ctx, texts, &asked.requested_by, pr, kept).await?);
+    Ok(findings.join("\n\n"))
+}
+
+/// Writes `findings` to `file`. The findings are in the prompt either way: a file that cannot be written is a warning, and
+/// a prompt names only a file that is there.
+async fn keep_findings_file(file: &std::path::Path, findings: &str) {
+    if let Err(error) = replace_text_file(file, findings, 0o600).await {
+        tracing::warn!(path = %file.display(), error = %agent_runtime::process::error_chain(&error), "cannot write the findings of the fix pass to a file");
+    }
+}
+
+/// Writes the findings file of the pass when it is not there: a pass begun by a daemon that kept none.
+async fn ensure_findings_file(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    progress: &ItemProgress,
+    asked: &agent_core::state::FixPass,
+    pr: PrNumber,
+    file: &std::path::Path,
+) -> Result<(), SectionError> {
+    if file.is_file() {
+        return Ok(());
+    }
+    let findings = findings_block(ctx, texts, progress, asked, pr).await?;
+    keep_findings_file(file, &findings).await;
+    Ok(())
+}
+
+/// `text` with the line that names `file` after it, when the file is there.
+fn named_findings_file(texts: &AutopilotPrompts, text: String, file: &std::path::Path) -> Result<String, SectionError> {
+    Ok(match findings_file_line(texts, file)? {
+        Some(line) => format!("{}\n\n{line}", text.trim_end()),
+        None => text,
+    })
 }
 
 /// The line that names `file`, which holds the full text of the findings of the fix pass, when the file is there: a pass

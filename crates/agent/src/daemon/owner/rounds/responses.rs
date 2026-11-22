@@ -155,14 +155,7 @@ impl Owner {
                     }
                     None
                 }
-                FixAnswer::Correction(text) => {
-                    // A lead that lost the findings reads them again from the file the pass named in its first prompt.
-                    let file = self.parts.store.home().fix_pass_findings_file(&lead.task);
-                    match super::prompts::findings_file_line(&pulls.texts, &file)? {
-                        Some(line) => Some(format!("{}\n\n{line}", text.trim_end())),
-                        None => Some(text),
-                    }
-                }
+                FixAnswer::Correction(text) => Some(text),
             };
             let Some(disputes) = ledger.disputes_mut() else {
                 continue;
@@ -223,6 +216,19 @@ impl Owner {
         };
         tracing::warn!(event = LogEvent::ChecksDecided.as_str(), task = %lead.task, bounces, "invalid lead finding response: verification remains held");
         if bounces <= super::verdicts::MAX_VERDICT_BOUNCES {
+            // The run that follows is given the correction and the file that holds the findings of the pass, when it is there;
+            // the correction kept in the state has none, so a run that follows a restart is given it by the prompt builder.
+            let passes = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|team| team.item(id))
+                .map_or(0, |item| item.fix_passes().len());
+            let file = self.parts.store.home().fix_pass_findings_file_of(&lead.task, passes);
+            let text = match super::prompts::findings_file_line(&pulls.texts, &file)? {
+                Some(line) => format!("{}\n\n{line}", text.trim_end()),
+                None => text,
+            };
             self.release(&lead.task, Why::Gate(text), look)?;
         } else {
             let values = Variables::new()
