@@ -26,9 +26,17 @@ pub fn after_failed_without_tool(
     first_of_session: bool,
     already_retried: bool,
 ) -> AfterFailedWithoutTool {
-    // RED: the decision is implemented in the GREEN commit; a stub returns Fail so that only the new tests fail.
-    let _ = (end, used_a_tool, first_of_session, already_retried);
-    AfterFailedWithoutTool::Fail
+    if matches!(
+        end,
+        RunEnd::Reported {
+            outcome: crate::status::RunOutcome::Failed
+        }
+    ) && !used_a_tool && first_of_session && !already_retried
+    {
+        AfterFailedWithoutTool::Retry
+    } else {
+        AfterFailedWithoutTool::Fail
+    }
 }
 
 #[cfg(test)]

@@ -216,7 +216,9 @@ pub enum RenewTaskError {
         /// The task.
         task: TaskId,
     },
-    /// The task's role is never started anew: a worker serves one request, a reviewer one review.
+    /// The task's role is never started anew by the ladder: a worker serves one request, a reviewer one review. The
+    /// one exception is the retry of a run that reported `STATUS: FAILED` without a tool call, which applies to every
+    /// role.
     #[error("task {task} is a {role} and is never started in a new session")]
     Role {
         /// The task.

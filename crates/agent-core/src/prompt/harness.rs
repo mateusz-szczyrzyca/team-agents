@@ -138,6 +138,7 @@ impl HarnessPrompt {
         Self::ResumeLimit,
         Self::ResumeTurnLimit,
         Self::ResumeNoStatus,
+        Self::NoToolCall,
         Self::Briefing,
         Self::LeadBriefing,
         Self::BriefingMessagesLeftOut,

@@ -37,9 +37,10 @@ use std::time::Duration;
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
+use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
-use agent_core::history::{HistoryEvent, RunWhy};
+use agent_core::history::{HistoryEvent, RunWhy, StepKind};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
@@ -49,15 +50,15 @@ use agent_core::protocol::{
     TeamSummary, mark_runs_elsewhere,
 };
 use agent_core::state::{
-    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Participant, Question, QuestionError, RunEnd, RunError,
-    SessionId, State, StateOpenRoundError, Team, Timestamp,
+    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Participant, Question, QuestionError, Run, RunEnd,
+    RunError, SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{History, Scoped, log_decision};
+use agent_runtime::history::{History, Reader, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
@@ -1551,7 +1552,7 @@ impl Owner {
             }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
-                (TaskStatus::Failed, Some(notice))
+                self.settle_failed_without_tool(task, now, notice).await?
             }
             Settled::Questions => {
                 self.hangs.remove(task);
@@ -1583,6 +1584,73 @@ impl Owner {
             return Ok(asked);
         }
         Ok(next)
+    }
+
+    /// What the run of `task` that reported `STATUS: FAILED` does with its task, at `at`: a run that opened its
+    /// session, called no tool step, and was not already retried for a failed run without a tool call is sent to a new
+    /// session (queued, nobody told); any other failed run fails the task and the human is told, as before.
+    async fn settle_failed_without_tool(
+        &mut self,
+        task: &TaskId,
+        at: Timestamp,
+        notice: Notice,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let (used_a_tool, first_of_session, already_retried) = match self.parts.state.find_task(task) {
+            Some(found) => {
+                let used = self.run_used_a_tool(found.member.runs().last()).await;
+                let first = found.member.session_runs().len() == 1;
+                let already = found
+                    .member
+                    .renewals()
+                    .is_some_and(|renewals| renewals.reason() == Trouble::NoToolCall);
+                (used, first, already)
+            }
+            None => (true, false, false),
+        };
+        // A `Settled::Failed(Notice::Failed)` is exactly what a run that reported `STATUS: FAILED` settles to.
+        let end = RunEnd::Reported {
+            outcome: RunOutcome::Failed,
+        };
+        if after_failed_without_tool(&end, used_a_tool, first_of_session, already_retried)
+            == AfterFailedWithoutTool::Retry
+        {
+            self.parts.state.renew_task(task, Trouble::NoToolCall, at)?;
+            log_decision(
+                "retry",
+                &format!("task={task}, reason=no_tool_call"),
+                "queued in a new session",
+            );
+            Ok((TaskStatus::Queued, None))
+        } else {
+            Ok((TaskStatus::Failed, Some(notice)))
+        }
+    }
+
+    /// Whether the run `run` recorded a tool step: a call of the bus, a call of any tool, a command or a change of a
+    /// file. When the history is off, missing or unreadable, the run counts as one that used a tool, so that only a
+    /// history that says otherwise can send the task to a new session.
+    async fn run_used_a_tool(&self, run: Option<&Run>) -> bool {
+        let Some(run) = run else {
+            return true;
+        };
+        self.history.flush();
+        let path = self.parts.store.home().history_file();
+        let run_id = run.id().clone();
+        let looked =
+            tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.steps(&run_id))).await;
+        let steps = match looked {
+            Ok(Ok(steps)) => steps,
+            // A missing or unreadable history is not evidence that no tool was called: keep the task failed.
+            Ok(Err(_)) | Err(_) => return true,
+        };
+        steps
+            .iter()
+            .any(|stored| {
+                matches!(
+                    StepKind::of(&stored.value.event),
+                    StepKind::BusCall | StepKind::ToolCall | StepKind::Command | StepKind::FileEdit
+                )
+            })
     }
 
     /// Decide continuation from the persisted suffix of the session, so a restart never resets its budget: the same

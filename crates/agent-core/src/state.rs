@@ -463,12 +463,13 @@ impl State {
     }
 
     /// Starts `task` anew in a new session after `trouble`, at `at`: the runs after now are the new session's, and no
-    /// session before it is resumed. Only a task of a solo agent, a coordinator or a member is started anew, and only
-    /// after a run of it. Returns whether the task was started anew.
+    /// session before it is resumed. Only a task of a solo agent, a coordinator or a member is started anew — and a
+    /// worker's or a reviewer's task is, exactly when `trouble` is the retry of a run that reported `STATUS: FAILED`
+    /// without a tool call — and only after a run of it. Returns whether the task was started anew.
     ///
     /// # Errors
-    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the renewal does not fit
-    /// its runs.
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer for any other trouble, or the
+    /// renewal does not fit its runs.
     pub fn renew_task(
         &mut self,
         task: &TaskId,
@@ -478,14 +479,15 @@ impl State {
         let (role, mut member) = self
             .find_task_mut(task)
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
-        match role {
-            Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => {
-                return Err(RenewTaskError::Role {
-                    task: task.clone(),
-                    role,
-                });
-            }
+        // The ladder never starts a worker or a reviewer anew; the retry of a failed run without a tool call applies to
+        // every role, so it is the one trouble their task may be renewed for.
+        if matches!(role, Role::Worker | Role::Reviewer)
+            && !matches!(trouble, crate::decide::ladder::Trouble::NoToolCall)
+        {
+            return Err(RenewTaskError::Role {
+                task: task.clone(),
+                role,
+            });
         }
         member.renew(trouble, at).map_err(|source| RenewTaskError::Renewal {
             task: task.clone(),
