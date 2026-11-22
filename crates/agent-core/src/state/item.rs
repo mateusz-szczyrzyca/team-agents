@@ -1437,7 +1437,7 @@ mod tests {
     ];
 
     /// Restores a branchless question as written before destinations were persisted.
-    fn record_legacy_publish_question(item: &mut ItemProgress, task: TaskId, number: NonZeroU32, at: Timestamp) {
+    fn record_legacy_publish_question(item: &mut ItemProgress, task: &TaskId, number: NonZeroU32, at: Timestamp) {
         let mut fixture = serde_json::to_value(&*item).unwrap();
         fixture["publish_question"] = json!({ "task": task, "number": number, "at": at });
         *item = serde_json::from_value(fixture).unwrap();
@@ -1946,7 +1946,7 @@ mod tests {
         assert_eq!(item.record_publish_try(), 2);
         record_legacy_publish_question(
             &mut item,
-            "task-20261111-153001-k3x9".parse().unwrap(),
+            &"task-20261111-153001-k3x9".parse().unwrap(),
             NonZeroU32::new(3).unwrap(),
             at(100),
         );
@@ -1973,7 +1973,7 @@ mod tests {
 
         let t: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
         let num = NonZeroU32::new(3).unwrap();
-        record_legacy_publish_question(&mut item, t.clone(), num, at(100));
+        record_legacy_publish_question(&mut item, &t, num, at(100));
 
         assert_eq!(item.publish_question(), Some(at(100)));
         assert_eq!(item.publish_question_task(), Some(&t));

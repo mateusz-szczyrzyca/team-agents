@@ -17,7 +17,7 @@ fn nz(n: u32) -> NonZeroU32 {
 fn with_legacy_publish_question(
     team: Team,
     item: agent_core::ids::ItemId,
-    task: agent_core::ids::TaskId,
+    task: &agent_core::ids::TaskId,
     number: NonZeroU32,
     at: agent_core::state::Timestamp,
 ) -> Team {
@@ -65,7 +65,7 @@ async fn after_answer_ignores_unrelated_member_and_wrong_question_number() {
     )
     .unwrap();
 
-    team = with_legacy_publish_question(team, item_id, task_lead.clone(), nz(2), at(100));
+    team = with_legacy_publish_question(team, item_id, &task_lead, nz(2), at(100));
 
     let mut state = State::new();
     state.insert_team(team).unwrap();
@@ -155,7 +155,7 @@ async fn after_answer_clears_retry_timers_only_for_matching_branches() {
     )
     .unwrap();
 
-    team = with_legacy_publish_question(team, item_id, task_lead.clone(), nz(1), at(100));
+    team = with_legacy_publish_question(team, item_id, &task_lead, nz(1), at(100));
 
     let mut state = State::new();
     state.insert_team(team).unwrap();
