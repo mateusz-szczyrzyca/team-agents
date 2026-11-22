@@ -395,6 +395,32 @@ impl Check {
     fn to_text(&self) -> String {
         format!("{TEXT_INDENT}{CHECK_PREFIX} {self}\n")
     }
+
+    /// Whether a worker may be given this check: a command or an `exists PATH`, never `reviewer`, which is a person's
+    /// judgement, and never `exists` with no path, which shows nothing.
+    #[must_use]
+    pub fn is_for_a_worker(&self) -> bool {
+        matches!(self, Self::Command(_) | Self::Exists(_))
+    }
+
+    /// Whether a step given this check shows a step done by the machine, which is what a worker's result must carry.
+    #[must_use]
+    pub fn shows_a_result(&self) -> bool {
+        false
+    }
+}
+
+impl std::str::FromStr for Check {
+    type Err = ();
+
+    /// Reads a step's `Check:` line as [`read_check`] reads it, without a line number; `Err(())` for the text that
+    /// function refuses.
+    ///
+    /// The error is untyped on purpose: the caller has no line to put in a [`PlanError`], and says what is wrong with
+    /// the text in its own words.
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        read_check(NonZeroUsize::MIN, text).map_err(|error| error.accounted())
+    }
 }
 
 /// The part of a step's text that a label starts: `Files:` or `Check:`.
@@ -585,6 +611,16 @@ pub enum PlanError {
 }
 
 impl PlanError {
+    /// The same fault with no line to show it on, for a reader outside a plan's text (a request's `Check:` line): it
+    /// is the fault's kind alone, and the caller words it.
+    #[expect(
+        unused_must_use,
+        reason = "the line is not wanted, and the call is there to make this conversion explicit"
+    )]
+    fn accounted(self) -> () {
+        self.line();
+    }
+
     /// The number of the line the fault is on; `None` for [`Empty`](Self::Empty), [`TooLarge`](Self::TooLarge) and
     /// [`TooLargeWrittenBack`](Self::TooLargeWrittenBack), which are faults of the whole text.
     #[must_use]
