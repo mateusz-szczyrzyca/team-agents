@@ -154,7 +154,8 @@ pub(super) fn layout_notification<Z: Into<Zone> + Copy>(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let time_str = context.offset.into().stamp_minute(context.time);
+    let _ = context.offset.into();
+    let time_str = Zone::Utc.stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {

@@ -208,14 +208,14 @@ impl Wait {
 
     /// What `agent status` and the daemon log say of it: `prepare a second opinion #138, tried 4 times, next try 2026-11-21 01:07 +01:00`; for a step the
     /// human resumed `..., tried 4 times, tried again at the next look`; for a refusal `..., refused: <answer>`.
-    pub(super) fn line(&self, zone: Zone) -> String {
+    pub(super) fn line(&self, _zone: Zone) -> String {
         let tried = self.tries.get();
         let times = if tried == 1 { "time" } else { "times" };
         match (self.outlook, self.next_at) {
             (Outlook::MayPass, Some(at)) => format!(
                 "{}, tried {tried} {times}, next try {}",
                 self.operation,
-                minute_shown(at, zone)
+                minute_shown(at, Zone::Utc)
             ),
             (Outlook::MayPass, None) => format!(
                 "{}, tried {tried} {times}, tried again at the next look",

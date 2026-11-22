@@ -369,5 +369,10 @@ mod daemon_process {
             .expect("debug prints the summary path");
         let summary = std::fs::read_to_string(summary_path).unwrap();
         assert!(summary.contains(" +01:00\n"), "{summary}");
+        let collected = summary
+            .lines()
+            .find(|line| line.starts_with("Collected at: "))
+            .expect("summary has a Collected at line");
+        assert!(collected.ends_with(" +01:00"), "{collected}");
     }
 }

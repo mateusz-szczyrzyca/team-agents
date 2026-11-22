@@ -666,4 +666,9 @@ impl Rig {
             ticks: Arc::new(AtomicU32::new(0)),
         };
     }
+
+    /// Sets the zone the daemon uses when started again.
+    pub(super) fn set_zone(&mut self, zone: agent_core::local_time::Zone) {
+        self.zone = zone;
+    }
 }

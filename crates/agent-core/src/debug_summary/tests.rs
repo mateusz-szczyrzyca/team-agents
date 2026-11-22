@@ -1117,3 +1117,19 @@ fn machine_preserves_observed_descendants_when_another_process_cannot_be_read() 
     assert!(rendered.contains("  - PID 101: age 42s, cmdline: agent"), "{rendered}");
     assert!(rendered.contains("procfs permission denied"), "{rendered}");
 }
+
+#[test]
+fn format_time_and_render_summary_write_single_zoned_local_timestamps() {
+    let input = sample_input();
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(
+        format_time("2026-11-17T12:00:00Z".parse().expect("valid"), east),
+        "2026-11-17 13:00:00 +01:00"
+    );
+    let rendered = render_summary(&input, east).expect("render summary");
+    assert!(
+        rendered.contains("\nCollected at: 2026-11-17 21:00:00 +01:00\n"),
+        "{rendered}"
+    );
+}

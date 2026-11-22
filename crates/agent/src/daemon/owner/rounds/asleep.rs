@@ -76,7 +76,7 @@ async fn standing_was_announced(
             .read_to_string(&mut text)
             .await
             .map_err(|source| SavedNoticeError { path, source })?;
-        if text.contains(&item) && (text.contains(&standing.line) || text.contains(&standing.legacy_line)) {
+        if text.contains(&item) && (text.contains(&standing.line) || standing.legacy_line.is_empty()) {
             return Ok(true);
         }
     }

@@ -332,3 +332,25 @@ fn the_waits_of_a_round_that_closed_or_a_team_that_is_gone_are_dropped() {
     assert!(waits.due(&closed, OPINION, at("2026-11-20T00:00:00Z")));
     assert!(waits.due(&gone, OPINION, at("2026-11-20T00:00:00Z")));
 }
+
+#[test]
+fn wait_line_formats_next_try_with_the_offset_of_that_minute_in_zone() {
+    let mut waits = Waits::default();
+    let (_, wait) = waits
+        .failed(
+            &round(),
+            &team(),
+            OPINION,
+            Some(PrNumber::new(NonZeroU32::new(138).unwrap())),
+            "timed out".to_owned(),
+            Outlook::MayPass,
+            at("2026-11-21T00:06:10Z"),
+        )
+        .unwrap();
+    let east = agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap());
+
+    assert_eq!(
+        wait.line(east),
+        "prepare a second opinion #138, tried 1 time, next try 2026-11-21 01:07 +01:00"
+    );
+}

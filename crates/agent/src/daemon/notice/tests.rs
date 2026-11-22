@@ -763,3 +763,28 @@ fn longest_allowed_repository_name_stays_within_notification_limit() {
     assert!(notification.title().len() <= agent_runtime::notify::MAX_TITLE_BYTES);
     assert_eq!(notification.title(), format!("✅✅ {long_repo}"));
 }
+
+#[test]
+fn layout_notification_formats_time_header_with_the_offset_of_the_event_in_zone() {
+    let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "agent-1",
+        cli: Some(CliKind::Claude),
+        model: None,
+        time: "2026-11-21T16:30:00Z".parse().unwrap(),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+
+    let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();
+
+    assert!(
+        notification.body().contains("\nTime: 2026-11-21 17:30 +01:00\n"),
+        "{}",
+        notification.body()
+    );
+}

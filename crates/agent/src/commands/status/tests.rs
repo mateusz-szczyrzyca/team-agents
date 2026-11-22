@@ -1555,3 +1555,22 @@ fn a_round_with_a_github_retry_wait_shows_its_next_try_in_the_client_zone() {
         "{west_text}"
     );
 }
+
+#[test]
+fn clock_time_and_clock_of_format_moments_with_the_offset_of_their_day_in_zone() {
+    use std::time::{Duration, SystemTime};
+    let summer: Timestamp = "2026-07-15T12:00:00Z".parse().expect("valid");
+    let winter: Timestamp = "2026-11-21T16:29:53Z".parse().expect("valid");
+    let cet_cest = Zone::Lookup(|moment| {
+        if u8::from(moment.month()) == 7 {
+            time::UtcOffset::from_hms(2, 0, 0).ok()
+        } else {
+            time::UtcOffset::from_hms(1, 0, 0).ok()
+        }
+    });
+    let winter_system = SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_278_593);
+
+    assert_eq!(clock_of(summer, cet_cest), "2026-07-15 14:00:00 +02:00");
+    assert_eq!(clock_of(winter, cet_cest), "2026-11-21 17:29:53 +01:00");
+    assert_eq!(clock_time(winter_system, cet_cest), "2026-11-21 17:29:53 +01:00");
+}
