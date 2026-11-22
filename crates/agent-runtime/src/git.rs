@@ -37,7 +37,7 @@ mod range;
 mod size;
 mod snapshot;
 
-pub use bring_over::{BringOver, ScratchMerge};
+pub use bring_over::BringOver;
 pub use changes::WorkChanges;
 pub use range::StagedAgainst;
 pub use snapshot::Snapshot;
@@ -288,6 +288,9 @@ pub enum GitOperation {
     /// `git commit`, of a change the harness makes itself.
     #[strum(serialize = "commit")]
     Commit,
+    /// `git merge-recursive`, which merges the worker's commit into the requester's head in a scratch index.
+    #[strum(serialize = "merge-recursive")]
+    MergeRecursive,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.

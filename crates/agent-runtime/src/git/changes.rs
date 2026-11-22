@@ -187,6 +187,14 @@ impl Git {
         }
     }
 
+    /// The directory the repository keeps its objects in, shared by all its worktrees, for a caller outside this module.
+    ///
+    /// # Errors
+    /// The errors of [`Git::rev_parse`] through `git rev-parse --git-path objects`.
+    pub(super) async fn shared_objects(&self) -> Result<PathBuf, GitError> {
+        self.objects_dir().await
+    }
+
     /// Disable every configured filter, the filesystem monitor and repository hooks for this scratch snapshot. The
     /// snapshot records worktree bytes, not the output of arbitrary programs from repository or user configuration.
     pub(super) async fn capture_overrides(&self, hooks: &str) -> Result<Vec<OsString>, GitError> {
