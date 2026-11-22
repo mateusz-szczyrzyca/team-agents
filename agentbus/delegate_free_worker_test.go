@@ -28,8 +28,8 @@ func TestFreeWorkersOfATeam(t *testing.T) {
 	}{
 		{"no worker", map[string][2]string{"m": member}, nil, 0},
 		{"a sleeping worker", map[string][2]string{"m": member, "w": {"worker", "sleeping"}}, nil, 1},
-		{"a worker in a run of its own", map[string][2]string{"m": member, "w": {"worker", "active"}}, nil, 1},
-		{"a waking worker", map[string][2]string{"m": member, "w": {"worker", "waking"}}, nil, 1},
+		{"a worker in a run of its own is not free", map[string][2]string{"m": member, "w": {"worker", "active"}}, nil, 0},
+		{"a waking worker is not free", map[string][2]string{"m": member, "w": {"worker", "waking"}}, nil, 0},
 		{"a worker that serves a request", map[string][2]string{"m": member, "w": {"worker", "active"}},
 			[]*Helper{{ID: 1, From: "m", Status: HelperRunning, Worker: "w"}}, 0},
 		{"a worker that is starting a request", map[string][2]string{"m": member, "w": {"worker", "active"}},
