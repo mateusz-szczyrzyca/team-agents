@@ -545,6 +545,18 @@ pub struct Git {
     limits: GitLimits,
     /// Absolute end of a best-effort snapshot, shared by clones and scratch handles.
     deadline: Option<tokio::time::Instant>,
+    /// Whether the configuration that the environment of this process gives git (`GIT_CONFIG_COUNT`,
+    /// `GIT_CONFIG_PARAMETERS`) is kept or taken away: a run's `core.hooksPath` is not the repository's own.
+    ambient_config: AmbientConfig,
+}
+
+/// Whether the configuration given to git in the environment reaches the commands of a [`Git`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AmbientConfig {
+    /// It does: git reads what the process was given.
+    Kept,
+    /// It does not: only the files of the repository, the user and the machine count.
+    Dropped,
 }
 
 impl Git {
@@ -557,7 +569,16 @@ impl Git {
             env: BTreeMap::new(),
             limits: GitLimits::default(),
             deadline: None,
+            ambient_config: AmbientConfig::Kept,
         }
+    }
+
+    /// This handle, with the configuration that the environment gives git (`GIT_CONFIG_COUNT`, `GIT_CONFIG_PARAMETERS`)
+    /// taken away from its commands, so that they answer what the repository itself says.
+    #[must_use]
+    pub fn without_ambient_config(mut self) -> Self {
+        self.ambient_config = AmbientConfig::Dropped;
+        self
     }
 
     /// The same, with `name` set to `value` in the environment of every command: a credential helper's variables, or
@@ -1074,6 +1095,24 @@ impl Git {
         Ok((!continues).then_some(pushed))
     }
 
+    /// The git directory that every worktree of this checkout's repository shares, as an absolute path: what tells
+    /// that two checkouts are of one repository.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the directory is no repository; [`GitError::Run`], [`GitError::OutputTooLong`] and
+    /// [`GitError::NotUtf8`].
+    pub async fn common_dir(&self) -> Result<PathBuf, GitError> {
+        let operation = GitOperation::GitPath;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[arg("rev-parse"), arg("--path-format=absolute"), arg("--git-common-dir")],
+            )
+            .await?;
+        Ok(PathBuf::from(text(operation, &captured.stdout)?.trim_end()))
+    }
+
     /// Where git keeps `name` for this checkout: a file of its own directory (`MERGE_HEAD`, `rebase-merge`) or of the
     /// repository's shared one (`hooks`, `info/exclude`).
     ///
@@ -1388,6 +1427,12 @@ impl Git {
             .env("LC_ALL", "C");
         for (name, value) in &self.env {
             command.env(name.as_str(), value);
+        }
+        if self.ambient_config == AmbientConfig::Dropped {
+            // Git ignores the numbered keys without the count.
+            command
+                .env_remove("GIT_CONFIG_COUNT")
+                .env_remove("GIT_CONFIG_PARAMETERS");
         }
         command
     }
