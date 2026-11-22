@@ -598,7 +598,14 @@ fn render_in(
             team.rounds
                 .iter()
                 .filter(|round| view == View::Full || *round.life() == RoundLife::Open)
-                .map(|round| format!("  {}{}", round_line(round), rounds(round))),
+                .map(|round| {
+                    format!(
+                        "  {}{}{}",
+                        round_line(round),
+                        returned::round_note(round, &team.members),
+                        rounds(round)
+                    )
+                }),
         );
         if detail == Detail::Tasks {
             lines.extend(splits::lines_of(team, view));
@@ -627,6 +634,7 @@ fn render_in(
             let renewed = member
                 .new_sessions
                 .map_or_else(String::new, |_| ", in a new session".to_owned());
+            let returned = returned::task_note(member);
             let taken_over = member
                 .held_by
                 .as_ref()
@@ -643,7 +651,7 @@ fn render_in(
                 Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
             };
             lines.push(format!(
-                "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{active}{waiting}",
+                "  {}  {:<role_width$}  {:<agent_width$}  {status}{renewed}{taken_over}{returned}{active}{waiting}",
                 member.task,
                 member.role.to_string(),
                 member.agent.name(),
@@ -909,6 +917,7 @@ const NO_TEAMS: &str = "no teams\n";
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
+mod returned;
 mod reviewer;
 mod rounds;
 mod snapshots;
