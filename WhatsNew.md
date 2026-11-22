@@ -12,6 +12,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] A lead can report a split part delivered with `DELIVERED: #N` when its pull request was merged outside the harness. The next part opens, and the last part closes the item and team; unrelated, open or unmerged pull requests are refused.
 - [agent] [agent-core] An outside replacement starts its own CLI session and failure history when taking over a task, instead of resuming the previous holder's session; the earlier runs remain in history.
 
+### Configuration
+- [agent] [agent-core] changed: `[replacement] mode` (default `"auto"`) also controls who takes the next split part when its previous holder cannot continue; `auto` tries configured replacements then the lead, `lead` tries the lead, and `off` asks the human.
+- [agent] [agent-core] changed: `[replacement] agents` (default `[]`) also orders the qualified replacements considered for the next split part; an empty list leaves the lead as the automatic fallback.
+
 ## 0.70.0 — 22.11.2026 — PR #187
 
 ### New features
