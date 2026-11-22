@@ -1,6 +1,7 @@
 //! Tests for split part assignment pure decisions.
 
 use super::*;
+use crate::decide::replacement::ReplacementMode;
 use crate::kinds::Tier;
 use crate::state::fixtures::{inv, normal};
 use crate::status::TaskStatus;
@@ -237,4 +238,26 @@ fn who_gets_part_in_mode_respects_replacement_modes() {
         ),
         PartChoice::Nobody
     );
+}
+
+#[test]
+fn replacement_cannot_lower_tier_below_previous_holder() {
+    let inv_prev = inv("prev-inv");
+    let normal_rep = normal("rep-normal");
+    let inv_lead = inv("lead-inv");
+
+    let stopped_prev = Candidate {
+        agent: &inv_prev,
+        status: TaskStatus::Stopped,
+        handed_over: false,
+        busy: false,
+    };
+    let choice = who_gets_part_in_mode(
+        Tier::Normal,
+        Some(stopped_prev),
+        &[Candidate::available(&normal_rep)],
+        Some(Candidate::available(&inv_lead)),
+        ReplacementMode::Auto,
+    );
+    assert_eq!(choice, PartChoice::Lead(&inv_lead));
 }
