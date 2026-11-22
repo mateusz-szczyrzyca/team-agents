@@ -10,6 +10,9 @@ use std::collections::BTreeSet;
 
 use crate::ids::ItemId;
 
+/// What a line of the final message starts with when it submits a split; the item follows.
+const SPLIT_PREFIX: &str = "SPLIT:";
+
 /// What the `SPLIT:` lines of a message ask.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Submission {
@@ -41,8 +44,30 @@ pub enum Refusal {
 /// A line that names an item that is not split wins, in the order of `items`; otherwise the first line that names a split
 /// item is refused as such, and otherwise the first line is refused as naming no item.
 #[must_use]
-pub fn judge_submission(_items: &[ItemId], _split: &BTreeSet<ItemId>, _message: Option<&str>) -> Submission {
-    Submission::NotSubmitted
+pub fn judge_submission(items: &[ItemId], split: &BTreeSet<ItemId>, message: Option<&str>) -> Submission {
+    let named: Vec<&str> = message
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix(SPLIT_PREFIX))
+        .map(str::trim)
+        .collect();
+    let Some(first) = named.first() else {
+        return Submission::NotSubmitted;
+    };
+    let is_named = |item: &ItemId| named.iter().any(|text| *text == item.to_string());
+    if let Some(item) = items.iter().find(|item| !split.contains(item) && is_named(item)) {
+        return Submission::Taken(*item);
+    }
+    if let Some(item) = named.iter().find_map(|text| {
+        items
+            .iter()
+            .find(|item| split.contains(item) && item.to_string() == *text)
+    }) {
+        return Submission::Refused(Refusal::AlreadySplit { item: *item });
+    }
+    Submission::Refused(Refusal::UnknownItem {
+        text: (*first).to_owned(),
+    })
 }
 
 #[cfg(test)]
