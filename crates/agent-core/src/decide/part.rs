@@ -53,6 +53,20 @@ pub enum PartChoice<'a> {
     Nobody,
 }
 
+impl<'a> PartChoice<'a> {
+    /// The name of this choice kind.
+    #[must_use]
+    pub const fn choice_name(&self) -> &'static str {
+        ""
+    }
+
+    /// The human- and machine-readable explanation of why this choice was made.
+    #[must_use]
+    pub fn explanation(&self, _prev_candidate: Option<&Candidate<'_>>) -> String {
+        String::new()
+    }
+}
+
 /// Decides who gets a split part under a specific replacement mode.
 #[must_use]
 pub fn who_gets_part_in_mode<'a>(

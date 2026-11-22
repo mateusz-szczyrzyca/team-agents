@@ -261,3 +261,45 @@ fn replacement_cannot_lower_tier_below_previous_holder() {
     );
     assert_eq!(choice, PartChoice::Lead(&inv_lead));
 }
+
+#[test]
+fn part_choice_explains_outcome_and_reasons() {
+    let normal_prev = normal("prev-normal");
+    let normal_rep = normal("rep-normal");
+    let normal_lead = normal("lead-normal");
+
+    let prev_cand = Candidate {
+        agent: &normal_prev,
+        status: TaskStatus::Stopped,
+        handed_over: false,
+        busy: false,
+    };
+
+    let choice_prev = PartChoice::PreviousMember(&normal_prev);
+    assert_eq!(choice_prev.choice_name(), "previous_member");
+    assert_eq!(
+        choice_prev.explanation(None),
+        "previous member prev-normal is available and qualified"
+    );
+
+    let choice_rep = PartChoice::Replacement(&normal_rep);
+    assert_eq!(choice_rep.choice_name(), "replacement");
+    assert_eq!(
+        choice_rep.explanation(Some(&prev_cand)),
+        "previous member prev-normal is stopped; replacement rep-normal takes the part"
+    );
+
+    let choice_lead = PartChoice::Lead(&normal_lead);
+    assert_eq!(choice_lead.choice_name(), "lead");
+    assert_eq!(
+        choice_lead.explanation(Some(&prev_cand)),
+        "previous member prev-normal is stopped; lead lead-normal takes over"
+    );
+
+    let choice_nobody = PartChoice::Nobody;
+    assert_eq!(choice_nobody.choice_name(), "nobody");
+    assert_eq!(
+        choice_nobody.explanation(Some(&prev_cand)),
+        "previous member prev-normal is stopped; no qualified candidate available"
+    );
+}
