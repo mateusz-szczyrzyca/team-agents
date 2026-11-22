@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan, done_ends_with};
+use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan_with_mismatch, done_ends_with};
 use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -18,7 +18,7 @@ use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::protocol::PlanStepSummary;
 use agent_core::questions::{Entry, QuestionsFile, Verdict, quote};
 use agent_core::repo_path::{InvalidRepoPath, RepoPath};
-use agent_core::state::{ItemProgress, PlanKeeping, PlanReason, PlanStage};
+use agent_core::state::{ItemProgress, PlanFault, PlanKeeping, PlanReason, PlanStage};
 use agent_core::state::{RunEnd, RunState, Team, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
@@ -219,6 +219,19 @@ pub(super) enum PlanHeld {
     No,
     /// The run reported `DONE` and was sent back, or the human is asked: nobody is told it is done.
     Yes,
+}
+
+/// What the decision on the plan of a run reads besides the run's facts: the run's end, the plan read, the versions kept
+/// before, and the first failed check of the run.
+struct AtEnd<'a> {
+    /// How the run ended.
+    end: &'a RunEnd,
+    /// What the end found of the plan.
+    found: &'a Found,
+    /// The versions of the plan kept from runs before this one.
+    earlier: &'a [Plan],
+    /// The first step of the run whose check failed, when the run judged one.
+    mismatch: Option<PlanReason>,
 }
 
 /// What the end of a run found of the plan: what the decision reads, and the text as the task wrote it.
@@ -467,6 +480,52 @@ async fn run_command_checks(job: CheckJob) -> CheckBatch {
     CheckBatch { records: Ok(records) }
 }
 
+/// The first step of `plan`, in its order, that is done and whose judgement in `judgements` is a mismatch of run `run`, as
+/// the mismatch a run is sent back for: its check, the reason and the last lines of its output. A check whose output
+/// cannot be read says so in its tail.
+async fn first_mismatch(
+    task_dir: &Path,
+    plan: &Plan,
+    judgements: &HashMap<ItemId, JudgementRecord>,
+    run: Option<&RunId>,
+) -> Option<PlanReason> {
+    for step in plan.steps() {
+        if step.state() != StepState::Done {
+            continue;
+        }
+        let Some(record) = judgements
+            .get(&step.id())
+            .filter(|record| record.state == JudgementState::Mismatch && record.run.as_ref() == run)
+        else {
+            continue;
+        };
+        let tail = match &record.output_path {
+            None => String::new(),
+            Some(output) => match agent_runtime::plan::check::read_check_tail(&task_dir.join(output)).await {
+                Ok(tail) => tail,
+                Err(error) => format!("cannot read the check output {output}: {}", error_chain(&error)),
+            },
+        };
+        return Some(PlanReason::Mismatch {
+            step: step.id(),
+            title: step.title().to_owned(),
+            check: record.check.clone(),
+            reason: record.reason.clone(),
+            tail,
+        });
+    }
+    None
+}
+
+/// The commands of the judgements that the gate refused, with their steps, in the order of `results`.
+fn refused_gates(results: &[(ItemId, JudgementResult)]) -> Vec<(ItemId, String)> {
+    results
+        .iter()
+        .filter(|(_, judged)| judged.gate_refused)
+        .filter_map(|(step, judged)| judged.check_line.clone().map(|command| (*step, command)))
+        .collect()
+}
+
 /// A judgement of a step that failed, with the check it failed on, if any, and why.
 fn mismatch(check: Option<String>, reason: String) -> JudgementResult {
     JudgementResult {
@@ -628,7 +687,7 @@ impl Owner {
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, its
     /// command checks are started in the background, and a run that reported `DONE` against its plan is sent back or the
-    /// human asked, by [`decide_plan`]. `settled` is what the run's end comes to otherwise. The decision is
+    /// human asked, by [`decide_plan_with_mismatch`]. `settled` is what the run's end comes to otherwise. The decision is
     /// [`PlanStep::Waiting`] while command checks run: [`Owner::check_batch_done`] makes it when they have ended.
     ///
     /// # Errors
@@ -670,8 +729,19 @@ impl Owner {
             .and_then(|found| found.member.plan_running_check())
             .is_some_and(|check| Some(&check.run) == run.as_ref());
         if !already_keeping_check {
+            if let Some((_, mut member)) = self.parts.state.find_task_mut(task) {
+                let delivered = member.take_plan_refused_gate();
+                if !delivered.is_empty() {
+                    tracing::debug!(
+                        task = %task,
+                        refused = delivered.len(),
+                        "the run finished after being told of its refused gate checks"
+                    );
+                }
+            }
             self.keep_plan(task, located, run.clone(), &found)?;
         }
+        let mut failed = None;
         if let PlanRead::Parsed(_) = &found.read {
             let judged = self
                 .judge_steps_at_end(
@@ -687,6 +757,8 @@ impl Owner {
                 Judged::Known(latest) => {
                     if let PlanRead::Parsed(plan) = &found.read {
                         self.refresh_task_plan(task, plan, &latest);
+                        let task_dir = self.parts.store.home().task_dir(task);
+                        failed = first_mismatch(&task_dir, plan, &latest, run.as_ref()).await;
                     }
                 }
                 Judged::Waiting {
@@ -712,7 +784,17 @@ impl Owner {
             self.invalidate_task_plan(task);
         }
         let (settled, held) = self
-            .decide_at_end(task, located, end, &found, &earlier, settled)
+            .decide_at_end(
+                task,
+                located,
+                AtEnd {
+                    end,
+                    found: &found,
+                    earlier: &earlier,
+                    mismatch: failed,
+                },
+                settled,
+            )
             .await?;
         Ok(PlanStep::Done(settled, held))
     }
@@ -745,11 +827,15 @@ impl Owner {
         &mut self,
         task: &TaskId,
         located: &Located,
-        end: &RunEnd,
-        found: &Found,
-        earlier: &[Plan],
+        at: AtEnd<'_>,
         settled: Settled,
     ) -> Result<(Settled, PlanHeld), OwnerError> {
+        let AtEnd {
+            end,
+            found,
+            earlier,
+            mismatch,
+        } = at;
         let ends = self.parts.state.team(&located.team).map_or(DoneEnds::Work, |team| {
             done_ends_with(located.role, team.items().iter().map(ItemProgress::phase), |agent| {
                 member_works(team, agent)
@@ -767,14 +853,22 @@ impl Owner {
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
                 .member;
-            decide_plan(PlanFacts {
-                role: located.role,
-                end,
-                read: &found.read,
-                earlier,
-                keeping: member.plan(),
-                policy: self.parts.settings.config.plan(),
-            })
+            let mismatch = if member.plan().is_some_and(PlanKeeping::judging) {
+                mismatch
+            } else {
+                None
+            };
+            decide_plan_with_mismatch(
+                PlanFacts {
+                    role: located.role,
+                    end,
+                    read: &found.read,
+                    earlier,
+                    keeping: member.plan(),
+                    policy: self.parts.settings.config.plan(),
+                },
+                mismatch,
+            )
         };
         log_decision("plan", &task.as_str(), &format!("{verdict:?}"));
         Ok(match verdict {
@@ -877,9 +971,9 @@ impl Owner {
                 }
             }
         }
+        self.note_refused_gates(task, &inline)?;
         if commands.is_empty() {
-            let records = self.records_of(task, located, run, inline)?;
-            return Ok(Judged::Known(self.record_judgements(task, records).await?));
+            return self.known_judgements(task, located, run, inline).await;
         }
         match self.check_environment(located) {
             Ok(envs) => {
@@ -925,8 +1019,7 @@ impl Owner {
                         ),
                     ));
                 }
-                let records = self.records_of(task, located, run, inline)?;
-                Ok(Judged::Known(self.record_judgements(task, records).await?))
+                self.known_judgements(task, located, run, inline).await
             }
         }
     }
@@ -1079,22 +1172,53 @@ impl Owner {
                 }
             }
         }
+        let mut mismatch = None;
         if let PlanRead::Parsed(plan) = &found.read {
             self.refresh_task_plan(&task, plan, &latest);
+            let task_dir = self.parts.store.home().task_dir(&task);
+            mismatch = first_mismatch(&task_dir, plan, &latest, run.as_ref()).await;
         }
         let (settled, held) = self
             .decide_at_end(
                 &task,
                 &parked.located,
-                &parked.run.classified.end,
-                &found,
-                &earlier,
+                AtEnd {
+                    end: &parked.run.classified.end,
+                    found: &found,
+                    earlier: &earlier,
+                    mismatch,
+                },
                 settled,
             )
             .await?;
         let result = self.finish(&task, parked.located, parked.run, settled, held).await;
         self.release_run_worktree_targets(&task);
         result
+    }
+
+    /// The judgements of a run that waits for no command, recorded.
+    async fn known_judgements(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        run: Option<&RunId>,
+        inline: Vec<(ItemId, JudgementResult)>,
+    ) -> Result<Judged, OwnerError> {
+        let records = self.records_of(task, located, run, inline)?;
+        Ok(Judged::Known(self.record_judgements(task, records).await?))
+    }
+
+    /// Keeps the commands of the judgements that the gate refused in the plan keeping of `task`, for the next run to be
+    /// told once.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone.
+    fn note_refused_gates(&mut self, task: &TaskId, results: &[(ItemId, JudgementResult)]) -> Result<(), OwnerError> {
+        let (_, mut member) = self.member_mut(task)?;
+        for (step, command) in refused_gates(results) {
+            member.add_plan_refused_gate(step, command);
+        }
+        Ok(())
     }
 
     /// The judgement records of `results` of a run of `task`, stamped now.
@@ -1710,6 +1834,28 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
                 .with("reason", reason.as_deref().unwrap_or(""))?
                 .with("output", tail.as_str())?,
         )?,
+        PlanReason::FaultAndMismatch { fault, mismatch } => {
+            let fault_text = match fault {
+                PlanFault::Unfinished { steps: ids } => texts.render(
+                    HarnessPrompt::PlanUnfinished,
+                    &Variables::new().with("steps", steps(ids))?,
+                )?,
+                PlanFault::LostStep { steps: ids } => texts.render(
+                    HarnessPrompt::PlanLostStep,
+                    &Variables::new().with("steps", steps(ids))?,
+                )?,
+            };
+            let mismatch_text = texts.render(
+                HarnessPrompt::PlanMismatch,
+                &Variables::new()
+                    .with("step", mismatch.step.to_string())?
+                    .with("title", mismatch.title.as_str())?
+                    .with("check", mismatch.check.as_deref().unwrap_or(""))?
+                    .with("reason", mismatch.reason.as_deref().unwrap_or(""))?
+                    .with("output", mismatch.tail.as_str())?,
+            )?;
+            format!("{fault_text}\n\n{mismatch_text}")
+        }
     };
     Ok(text)
 }

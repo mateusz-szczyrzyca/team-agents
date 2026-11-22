@@ -14,7 +14,7 @@ use crate::config::Plan as Policy;
 use crate::ids::{AgentName, ItemId};
 use crate::kinds::Role;
 use crate::plan::{Plan, PlanError, Step, StepState};
-use crate::state::{ItemPhase, PlanKeeping, PlanReason, PlanStage, RunEnd};
+use crate::state::{ItemPhase, PlanFault, PlanKeeping, PlanReason, PlanStage, RunEnd, StepMismatch};
 use crate::status::RunOutcome;
 
 #[cfg(test)]
@@ -159,8 +159,49 @@ pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReas
     if limit == 0 {
         return PlanVerdict::Accept;
     }
-    let Some(reason) = fault(facts.read, facts.earlier).or(mismatch) else {
-        return PlanVerdict::Accept;
+    let mismatch = if keeping.judging() { mismatch } else { None };
+    let reason = match (fault(facts.read, facts.earlier), mismatch) {
+        (
+            Some(PlanReason::Unfinished { steps }),
+            Some(PlanReason::Mismatch {
+                step,
+                title,
+                check,
+                reason,
+                tail,
+            }),
+        ) => PlanReason::fault_and_mismatch(
+            PlanFault::Unfinished { steps },
+            StepMismatch {
+                step,
+                title,
+                check,
+                reason,
+                tail,
+            },
+        ),
+        (
+            Some(PlanReason::LostStep { steps }),
+            Some(PlanReason::Mismatch {
+                step,
+                title,
+                check,
+                reason,
+                tail,
+            }),
+        ) => PlanReason::fault_and_mismatch(
+            PlanFault::LostStep { steps },
+            StepMismatch {
+                step,
+                title,
+                check,
+                reason,
+                tail,
+            },
+        ),
+        (Some(fault), _) => fault,
+        (None, Some(mismatch)) => mismatch,
+        (None, None) => return PlanVerdict::Accept,
     };
     if keeping.sent_back() < limit {
         PlanVerdict::SendBack(reason)

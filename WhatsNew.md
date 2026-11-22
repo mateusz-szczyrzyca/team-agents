@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.66.0 — 22.11.2026
+## 0.67.0 — 22.11.2026 — PR #184
 
 ### New features
 - [agent-core] [agent-runtime] The request a worker's result is checked with keeps the paths it may write, its check and what to do, next to its step; the daemon reads them from the bus (`files`, `check`, `doing` in the bus state).
@@ -13,6 +13,13 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-core] The harness decides, in one pure decision, whether a worker's result serves the request: accept it, give the request once more to a free worker of another CLI, or return the step to the requester with every reason. The requester is told each of those in its own text; the daemon uses them from the version that wires them.
+
+## 0.66.0 — 22.11.2026 — PR #182
+
+### New features
+- [agent] [agent-core] [agent-runtime] A run of a role in `[plan] roles` that ends `STATUS: DONE` while a step it marked done fails its check (`mismatch`) now goes back to the same agent with the step, its check, the reason and up to 40 trailing lines of the check's output (counting against `[plan] bounces`, and combined in one send-back when an unfinished or lost step is present at the same time); after `[plan] bounces` send-backs you are asked once, in the task's questions file, whether to go on as it is or send it back once more.
+- [agent] [agent-core] A step whose check matches `[plan] check_refuse` (`agent gate`, `make gate`) stays `declared`, and the task's next run is told once in its prompt that the gate is never a step's check.
+- [agent] [agent-core] **Action:** the first run after this update may send a `STATUS: DONE` run back for a failed step check (up to `[plan] bounces`, default `3`); set `[plan] check_seconds = 0` in `agents.toml` to disable command checks, or `[plan] bounces = 0` to record plans and judgements without sending runs back.
 
 ## 0.65.0 — 22.11.2026 — PR #183
 

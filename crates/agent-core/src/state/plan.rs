@@ -90,6 +90,57 @@ pub enum PlanReason {
         #[serde(default)]
         tail: String,
     },
+    /// Both a plan fault (`LostStep` or `Unfinished`) and a step check [`Self::Mismatch`] occurred on the same run.
+    FaultAndMismatch {
+        /// The structural plan fault (`LostStep` or `Unfinished`).
+        fault: PlanFault,
+        /// The step check mismatch.
+        mismatch: StepMismatch,
+    },
+}
+
+/// A structural fault of a parsed plan that can occur alongside a step check mismatch (`LostStep` or `Unfinished`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum PlanFault {
+    /// Steps are still to do or in hand.
+    Unfinished {
+        /// The steps, in the order of the plan.
+        steps: Vec<ItemId>,
+    },
+    /// Steps the version before had are gone.
+    LostStep {
+        /// The steps, in the order of the version before.
+        steps: Vec<ItemId>,
+    },
+}
+
+/// A step check that failed or timed out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepMismatch {
+    /// The step ID.
+    pub step: ItemId,
+    /// The step title.
+    #[serde(default)]
+    pub title: String,
+    /// The check that was executed, if any.
+    #[serde(default)]
+    pub check: Option<String>,
+    /// Why the check failed.
+    #[serde(default)]
+    pub reason: Option<String>,
+    /// The trailing lines of the check's output.
+    #[serde(default)]
+    pub tail: String,
+}
+
+impl PlanReason {
+    /// Combines a structural [`PlanFault`] and a [`StepMismatch`] into a single [`Self::FaultAndMismatch`] bounce reason.
+    #[must_use]
+    pub const fn fault_and_mismatch(fault: PlanFault, mismatch: StepMismatch) -> Self {
+        Self::FaultAndMismatch { fault, mismatch }
+    }
 }
 
 /// What a task keeps of its plan: the count of its send-backs, what the human granted, the stage, and a reason that
@@ -106,6 +157,10 @@ pub struct PlanKeeping {
     granted: u32,
     /// Where the task is with its plan.
     stage: PlanStage,
+    /// Whether the task was created under step judging (`#163` or newer) and therefore bounces on a step check
+    /// mismatch. Tasks created between `0.35.0` and `#163` have a plan record without this marker.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    judging: bool,
     /// The reason of a send-back the next run of the task delivers; `None` when none waits, and not written then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PlanReason>,
@@ -121,6 +176,36 @@ pub struct PlanKeeping {
 }
 
 impl PlanKeeping {
+    /// The plan keeping of a new task created under step judging (`#163` or newer).
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            judging: true,
+            ..Self::default()
+        }
+    }
+
+    /// Whether the task was created under step judging (`#163` or newer) and therefore bounces on a step check
+    /// mismatch.
+    #[must_use]
+    pub const fn judging(&self) -> bool {
+        self.judging
+    }
+
+    /// Sets whether the task's plan was created under step judging.
+    pub(super) const fn set_judging(&mut self, judging: bool) {
+        self.judging = judging;
+    }
+
+    /// A copy of this plan keeping without the `judging` marker on the inner object when serialized inside
+    /// [`super::Member`].
+    #[must_use]
+    pub(super) fn without_judging_marker(&self) -> Self {
+        let mut copy = self.clone();
+        copy.judging = false;
+        copy
+    }
+
     /// How many times the task's runs went back for its plan.
     #[must_use]
     pub const fn sent_back(&self) -> u32 {

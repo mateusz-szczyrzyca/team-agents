@@ -265,11 +265,13 @@ state schema `2`, and migrates history to schema `8`. See [configuration](docs/c
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
 `[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
-or lost a step of its last version goes back to the same agent with the reason, at most `[plan] bounces` times per task
-(default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go on as it is
-or send it back once more. Tasks created before this version are never sent back. The plan is kept out of git and out of
-the pull request: a plan an agent commits by mistake is taken out of its branch by a commit "Keep the plan out of the
-delivery". See [configuration](docs/configuration.md#plan).
+lost a step of its last version, or has a done step whose check failed (`mismatch`, sent back with the step, its check,
+the reason and up to 40 trailing lines of output) goes back to the same agent with the reason, at most `[plan] bounces`
+times per task (default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go
+on as it is or send it back once more. A step whose check matches `[plan] check_refuse` stays `declared`, and the task's
+next run is told once in its prompt that the gate is never a step's check. Tasks created before this version are never
+sent back. The plan is kept out of git and out of the pull request: a plan an agent commits by mistake is taken out of
+its branch by a commit "Keep the plan out of the delivery". See [configuration](docs/configuration.md#plan).
 
 At every run's end, the daemon also judges done steps, for every role and outcome. `exists PATH` confirms a file or
 folder inside the worktree; an absent path or a symlink outside it is a mismatch. A command check runs in the

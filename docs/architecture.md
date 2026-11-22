@@ -1305,9 +1305,7 @@ its note (`Step::doer`).
 and provides `execute_command_check` for sequential command check execution with agent environment variables, closed input,
 process group isolation, output logging to `checks/<run_id>/<step_id>.log`, and a configurable `[plan] check_seconds` timeout
 (commands matching `[plan] check_refuse` are refused before spawn and remain declared).
-The owner runs existence checks sequentially after reading a plan at every run's end, independently of role and outcome,
-and awaits durable history acknowledgement before settling the run. In the daemon, commands stay declared pending durable
-owner background lifecycle; durable command execution with mismatch bounce handling follows in a dedicated task.
+The owner runs existence checks after reading a plan at every run's end, spawns a per-task background worker for command checks (`running_check` in `state.json` tracks unsettled finished runs across restarts), awaits durable history acknowledgement for each judgement, sends `STATUS: DONE` runs of roles in `[plan] roles` with a `mismatch` back within `[plan] bounces` (or asks the human once after the limit), and delivers a one-time prompt notice for steps whose check matched `[plan] check_refuse`.
 Task and round status use cached plan summaries; their read path does no filesystem or database work.
 History schema 17 adds append-only step judgements and migrates older databases.
 
