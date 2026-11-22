@@ -35,7 +35,7 @@
 #                   is of an older commit
 #   ask-here        writes questions-1.md in this task's directory, including on a resumed assignment
 #   ask-or-hold     asks like `ask-here` when the prompt says `Asks the human.`, and holds like `hold` for every other run
-#   work-or-hold    does `work` when the prompt says `Holds the agent`, holds like `hold` for every other run
+#   work-or-hold    holds when the prompt says `Holds the agent`, otherwise does `work`
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
@@ -109,9 +109,12 @@ cp .fake-runs ".fake-prompt-$n" "$records_dir/"
 
 IFS=, read -r -a actions <<< "$scenario"
 action=${actions[$((n - 1))]:-${actions[${#actions[@]}-1]}}
-# The busy tests: the run whose prompt says `Holds the agent` holds like `hold`, every other run does `work`.
+# Busy-exclusion scenarios choose existing actions so their behavior stays consistent with the original fixtures.
 if [[ $action == work-or-hold ]]; then
   if grep -q 'Holds the agent' <<< "$prompt"; then action=hold; else action=work; fi
+fi
+if [[ $action == ask-or-hold ]]; then
+  if grep -q 'Asks the human' <<< "$prompt"; then action=ask-here; else action=hold; fi
 fi
 
 init() {
@@ -506,21 +509,6 @@ case $action in
     name=$(tr -d ' \n' < "$mcp_config" | sed -n 's/.*"--agent","\([^"]*\)".*/\1/p')
     read_messages
     result 'Nothing to do now.\nSTATUS: SLEEPING'
-    ;;
-  ask-or-hold)
-    # A new action for the busy exclusions: the run whose prompt says `Asks the human.` asks like `ask-here`; every other run
-    # holds like `hold`, so that the agent it runs for is busy while the asking task waits for the human.
-    if grep -q 'Asks the human' <<< "$prompt"; then
-      file="$home/tasks/$(basename "$PWD")/questions-1.md"
-      mkdir -p "$(dirname "$file")"
-      printf '# Questions — fake\n\n## 1. Continue the part?\na) continue — finish the document\nb) stop — leave it open\n\n**Recommended:** a) — finish the independent part (fake)\n\n**Verdict:**\n' > "$file"
-      result 'I have to ask.\nSTATUS: QUESTIONS'
-    else
-      while [[ ! -f .fake-continue ]]; do
-        sleep 0.05
-      done
-      result 'Nothing to do now.\nSTATUS: SLEEPING'
-    fi
     ;;
   hold)
     # Works until the run is stopped, as a member that the human stops while it runs; `.fake-continue` ends it.
