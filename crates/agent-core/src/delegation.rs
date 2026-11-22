@@ -13,7 +13,8 @@
 //! ```
 
 use crate::ids::{InvalidItemId, ItemId};
-use crate::plan::{Check, Plan, Step};
+use crate::plan::judge::refuse_command;
+use crate::plan::{Check, Plan, Step, StepState};
 use crate::repo_path::{InvalidRepoPath, RepoPath};
 
 /// The pieces of a request to a worker that tie it to a step of the requester's plan.
@@ -135,9 +136,81 @@ pub struct Accepted {
 /// The [`Rejection`] of the first thing missing or wrong, in the order a requester writes them: the step, the files,
 /// the check, what to do.
 pub fn decide(plan: &Plan, request: &Request) -> Result<Accepted, Rejection> {
-    let _ = plan;
-    let _ = request;
-    Err(Rejection::MissingStep)
+    let named = &request.named;
+    let step = name_step(plan, named.step.trim())?;
+    let files = name_files(&named.files)?;
+    let check = name_check(named.check.trim(), &request.refused)?;
+    let doing = named.doing.trim();
+    if doing.is_empty() {
+        return Err(Rejection::MissingDo);
+    }
+    Ok(Accepted {
+        step: step.clone(),
+        files,
+        check,
+        doing: doing.to_owned(),
+    })
+}
+
+/// The step of `plan` that `text` names, which must still be open to a request: to do or in hand.
+fn name_step<'a>(plan: &'a Plan, text: &str) -> Result<&'a Step, Rejection> {
+    if text.is_empty() {
+        return Err(Rejection::MissingStep);
+    }
+    let id: ItemId = text.parse().map_err(|source| Rejection::BadStep {
+        step: text.to_owned(),
+        source,
+    })?;
+    let step = plan.step(&id).ok_or_else(|| Rejection::NoSuchStep {
+        step: id,
+        steps: listed(plan),
+    })?;
+    match step.state() {
+        StepState::Todo | StepState::InHand => Ok(step),
+        StepState::Done => Err(Rejection::StepClosed {
+            step: id,
+            state: "done",
+        }),
+        StepState::GivenUp => Err(Rejection::StepClosed {
+            step: id,
+            state: "given up",
+        }),
+    }
+}
+
+/// The paths a request gives, each one a path of the repository.
+fn name_files(given: &[String]) -> Result<Vec<RepoPath>, Rejection> {
+    if given.is_empty() {
+        return Err(Rejection::MissingFiles);
+    }
+    given
+        .iter()
+        .map(|path| {
+            let path = path.trim();
+            path.parse().map_err(|source| Rejection::BadFiles {
+                path: path.to_owned(),
+                source,
+            })
+        })
+        .collect()
+}
+
+/// The check a request gives, which a worker's result must be shown by.
+fn name_check(text: &str, refused: &[String]) -> Result<Check, Rejection> {
+    if text.is_empty() {
+        return Err(Rejection::MissingCheck);
+    }
+    let check: Check = text
+        .parse()
+        .map_err(|()| Rejection::BadCheck { check: text.to_owned() })?;
+    let refused_kind = match &check {
+        Check::Command(command) => refuse_command(command, refused),
+        Check::Exists(_) | Check::Reviewer => false,
+    };
+    if !check.shows_a_result() || refused_kind {
+        return Err(Rejection::CheckRefused { check: text.to_owned() });
+    }
+    Ok(check)
 }
 
 /// The steps of `plan` as a request may name them.

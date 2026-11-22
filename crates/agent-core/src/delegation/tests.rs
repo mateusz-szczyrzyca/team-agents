@@ -159,7 +159,7 @@ fn every_missing_or_wrong_piece_is_refused_with_its_own_outcome() {
         (
             "exists without a path",
             |r: &mut Request| r.named.check = "exists".to_owned(),
-            Rejection::CheckRefused {
+            Rejection::BadCheck {
                 check: "exists".to_owned(),
             },
         ),

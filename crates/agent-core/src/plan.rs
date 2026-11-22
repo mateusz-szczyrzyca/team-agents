@@ -398,15 +398,10 @@ impl Check {
 
     /// Whether a worker may be given this check: a command or an `exists PATH`, never `reviewer`, which is a person's
     /// judgement, and never `exists` with no path, which shows nothing.
-    #[must_use]
-    pub fn is_for_a_worker(&self) -> bool {
-        matches!(self, Self::Command(_) | Self::Exists(_))
-    }
-
     /// Whether a step given this check shows a step done by the machine, which is what a worker's result must carry.
     #[must_use]
     pub fn shows_a_result(&self) -> bool {
-        false
+        matches!(self, Self::Command(_) | Self::Exists(_))
     }
 }
 
@@ -419,7 +414,7 @@ impl std::str::FromStr for Check {
     /// The error is untyped on purpose: the caller has no line to put in a [`PlanError`], and says what is wrong with
     /// the text in its own words.
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        read_check(NonZeroUsize::MIN, text).map_err(|error| error.accounted())
+        read_check(NonZeroUsize::MIN, text).map_err(PlanError::accounted)
     }
 }
 
@@ -617,7 +612,7 @@ impl PlanError {
         unused_must_use,
         reason = "the line is not wanted, and the call is there to make this conversion explicit"
     )]
-    fn accounted(self) -> () {
+    fn accounted(self) {
         self.line();
     }
 
