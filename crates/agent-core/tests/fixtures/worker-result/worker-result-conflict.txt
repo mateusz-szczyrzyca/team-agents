@@ -1,0 +1,5 @@
+The worker glm-1 did step 1.2 of your plan and its check passed, but its commit 0123456789abcdef0123456789abcdef01234567 does not apply to your branch as it is now. Nothing of it was applied, and your worktree is exactly as it was.
+
+The files in conflict: docs/guide.md
+
+Do the step yourself, or make it smaller and delegate it again; do not try to apply the worker's commit by force.

@@ -90,6 +90,14 @@ pub enum TeamPrompt {
     WorkerStopped,
     /// How a worker's run that failed a request ended: the watchdog gave up on it.
     WorkerHung,
+    /// The message to a member that a worker's result serves its step and was brought to its branch.
+    WorkerResultBrought,
+    /// The message to a member that a worker's commit does not apply to its branch, with the files in conflict.
+    WorkerResultConflict,
+    /// The message to a member that its request went once more to another worker, with the reason the first failed.
+    WorkerGivenAgain,
+    /// The message to a member that no result serves its step, which it does itself.
+    WorkerStepReturned,
     /// The coordinator is told that an observed unmerged close returned an item to its member.
     DeliveryClosed,
     /// The notification that a team finished its work.
@@ -138,6 +146,10 @@ impl TeamPrompt {
         Self::WorkerNoStatus,
         Self::WorkerStopped,
         Self::WorkerHung,
+        Self::WorkerResultBrought,
+        Self::WorkerResultConflict,
+        Self::WorkerGivenAgain,
+        Self::WorkerStepReturned,
         Self::NoticeTeamDone,
     ];
 
@@ -250,6 +262,26 @@ impl TeamPrompt {
             Self::WorkerNoStatus => PromptSpec::new("harness/team/worker-no-status.md", Audience::Model, &[]),
             Self::WorkerStopped => PromptSpec::new("harness/team/worker-stopped.md", Audience::Model, &[]),
             Self::WorkerHung => PromptSpec::new("harness/team/worker-hung.md", Audience::Model, &[]),
+            Self::WorkerResultBrought => PromptSpec::new(
+                "harness/team/worker-result-brought.md",
+                Audience::Model,
+                &["worker", "step", "commit", "files", "tail"],
+            ),
+            Self::WorkerResultConflict => PromptSpec::new(
+                "harness/team/worker-result-conflict.md",
+                Audience::Model,
+                &["worker", "step", "commit", "files"],
+            ),
+            Self::WorkerGivenAgain => PromptSpec::new(
+                "harness/team/worker-given-again.md",
+                Audience::Model,
+                &["worker", "request_id", "reason", "next"],
+            ),
+            Self::WorkerStepReturned => PromptSpec::new(
+                "harness/team/worker-step-returned.md",
+                Audience::Model,
+                &["request_id", "step", "reasons"],
+            ),
             Self::NoticeTeamDone => PromptSpec::new(
                 "harness/team/notice-team-done.md",
                 Audience::Human,
