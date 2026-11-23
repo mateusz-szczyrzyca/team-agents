@@ -371,3 +371,35 @@ fn a_session_above_its_bound_begins_anew_for_every_role_and_counts_no_renewal() 
         assert_eq!(member.last_session(), None, "{task}: no session before it is resumed");
     }
 }
+
+/// The state of 0.80.0, which this change does not alter in format: its task has runs and a session to resume.
+#[test]
+fn a_state_of_0_80_0_begins_a_session_above_its_bound_and_its_next_run_starts_a_new_session() {
+    let mut state = State::from_json(include_str!("../../tests/fixtures/state-0.80.0-session.json"))
+        .expect("a state of 0.80.0 loads");
+    let before = state.find_task(&task()).expect("the task").member;
+    assert!(before.last_session().is_some(), "the task has a session to resume");
+    assert_eq!(before.renewals(), None, "no renewal before the change");
+    let late: Timestamp = "2026-11-21T00:00:00Z".parse().unwrap();
+
+    let begun = state.begin_context_session(&task(), late);
+    assert!(matches!(begun, Ok(true)), "{begun:?}");
+    let saved = state.to_json().expect("the state saves");
+    let mut loaded = State::from_json(&saved).expect("a restart reads it");
+
+    {
+        let member = loaded.find_task(&task()).expect("the task").member;
+        assert_eq!(member.last_session(), None, "the session above the bound is not resumed");
+        assert!(member.awaits_new_session());
+        let renewals = member.renewals().expect("the new session was recorded");
+        assert_eq!(renewals.reason(), Trouble::ContextBound);
+        assert_eq!(renewals.used(), 0);
+    }
+    let (_, mut member) = loaded.find_task_mut(&task()).expect("the task");
+    let next: Timestamp = "2026-11-21T01:00:00Z".parse().unwrap();
+    member
+        .begin_run("run-20261121-010000-c0nt".parse().unwrap(), next, None)
+        .expect("the next run starts");
+    let session_runs: Vec<_> = member.session_runs().iter().map(|run| run.id().to_string()).collect();
+    assert_eq!(session_runs, ["run-20261121-010000-c0nt"], "the next run is the only run of its session");
+}
