@@ -115,10 +115,13 @@ async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losi
 }
 
 /// Checks that removal stays absent from status and state across a daemon restart.
-async fn assert_removed_after_restart(rig: &mut Rig, task: &agent_core::ids::TaskId) -> anyhow::Result<()> {
+async fn assert_removed_after_restart(
+    rig: &mut Rig,
+    task: &agent_core::ids::TaskId,
+) -> Result<(), crate::client::ClientError> {
     for restart in [false, true] {
         if restart {
-            rig.stop().await?;
+            rig.stop().await.unwrap();
             rig.start().await;
         }
         let status = Connection::connect(&rig.home.socket_file())
