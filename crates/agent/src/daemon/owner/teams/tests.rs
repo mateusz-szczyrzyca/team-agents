@@ -3152,3 +3152,61 @@ async fn a_plan_the_base_branch_tracks_is_left_on_the_branch() {
     );
     assert_eq!(git(&worktree, &["log", "-1", "--format=%s"]), "Edit the tracked plan");
 }
+
+/// An actual configuration switch exercises the OpenCode adapter after a Claude session.
+#[tokio::test]
+async fn a_coordinator_switched_to_opencode_retries_its_first_failed_run_without_tools() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+    let before = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let changed = before
+        .replace(
+            "[investigators.inv-opus]\ncli = \"claude\"",
+            "[investigators.inv-opus]\ncli = \"opencode\"",
+        )
+        .replacen(r#""sleep""#, r#""opencode-startup""#, 1)
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    assert_ne!(changed, before);
+    std::fs::write(f.home.config_file(), changed).unwrap();
+    f.start().await;
+    f.bus()
+        .send(
+            &agent("claude-1"),
+            &Recipient::Agent(agent("inv-opus")),
+            &Outgoing::Chat {
+                text: "Continue after the CLI change.".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let state = f
+        .state_where("changed CLI to settle", |state| {
+            let member = state.find_task(&tasks[0]).unwrap().member;
+            member.runs().len() >= 2 && member.status() == TaskStatus::Waiting
+        })
+        .await;
+    f.stop().await.unwrap();
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 3, "exactly one fresh-session retry");
+    assert_ne!(member.runs()[0].session(), member.runs()[1].session());
+    assert_ne!(member.runs()[1].session(), member.runs()[2].session());
+    assert!(f.prompt(&tasks[0], 3).await.contains("agentbus"));
+    let args = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
+    assert!(!args.contains("--session"), "the retry starts fresh: {args}");
+    assert_eq!(f.notifications(), Vec::<String>::new());
+}

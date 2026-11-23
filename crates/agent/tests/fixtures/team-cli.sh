@@ -240,6 +240,11 @@ fi
 init
 read_messages
 case $action in
+  opencode-startup)
+    # OpenCode's first launch after the configuration switch fails without tools; the next session works.
+    if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: %s"}}\n' "$n" "$status"
+    ;;
   proposal:*)
     task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
     cp "$home/fake-proposals/${action#proposal:}.json" "$home/tasks/$task/split-proposal-1.1.json"
