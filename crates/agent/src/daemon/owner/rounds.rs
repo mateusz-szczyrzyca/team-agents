@@ -984,3 +984,7 @@ mod fix_pass_findings_tests;
 #[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/removal.rs"]
+mod removal_tests;

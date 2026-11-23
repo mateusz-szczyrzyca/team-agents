@@ -468,6 +468,13 @@ fn pull_route(world: &mut World, method: &str, number: u32, tail: &str, body: &V
     };
     match (method, tail) {
         ("GET", "") => ok(pull_json(world, &pull)),
+        ("PATCH", "") if body.get("state").and_then(Value::as_str) == Some("closed") => {
+            if let Some(found) = world.pulls.iter_mut().find(|found| found.number == number) {
+                found.closed = true;
+            }
+            let updated = world.pulls.iter().find(|found| found.number == number).cloned();
+            ok(updated.map_or(Value::Null, |updated| pull_json(world, &updated)))
+        }
         ("PATCH", "") => {
             if let Some(found) = world.pulls.iter_mut().find(|found| found.number == number) {
                 if let Some(title) = body["title"].as_str() {
