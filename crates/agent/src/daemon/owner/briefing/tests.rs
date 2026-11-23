@@ -474,3 +474,54 @@ fn a_text_that_is_not_a_questions_file_has_no_answers_but_a_parse_error() {
         "{refused:?}"
     );
 }
+
+// ---- which run the daemon cut ---------------------------------------------------------------------------------------
+
+/// A run of `agent` that ended with `end`.
+fn run_line(agent: &str, end: &'static str) -> RunLine {
+    RunLine {
+        started: "2026-11-20 14:41".to_owned(),
+        agent: agent.to_owned(),
+        end,
+    }
+}
+
+#[test]
+fn when_the_daemon_went_down_the_last_run_that_ended_with_no_status_is_the_one_it_cut() {
+    let runs = [run_line("claude-1", "no status"), run_line("claude-1", "no status")];
+
+    assert_eq!(
+        told_ends(&runs, Trouble::DaemonDown),
+        ["no status", "cut by a stop of the daemon"]
+    );
+}
+
+#[test]
+fn a_run_whose_end_was_never_recorded_is_told_as_cut_when_the_daemon_went_down() {
+    let runs = [
+        run_line("claude-1", "no status"),
+        run_line("claude-1", run_end_word(None)),
+    ];
+
+    assert_eq!(
+        told_ends(&runs, Trouble::DaemonDown),
+        ["no status", "cut before its end was recorded"]
+    );
+}
+
+#[test]
+fn for_any_other_reason_a_run_with_no_status_is_the_agents_own() {
+    let runs = [run_line("claude-1", "no status"), run_line("claude-1", "no status")];
+
+    for reason in [Trouble::NoStatus, Trouble::Hang, Trouble::TurnLimit, Trouble::Busy] {
+        assert_eq!(told_ends(&runs, reason), ["no status", "no status"], "{reason:?}");
+    }
+}
+
+#[test]
+fn a_last_run_that_ended_in_another_way_keeps_its_word_when_the_daemon_went_down() {
+    let runs = [run_line("claude-1", "DONE")];
+
+    assert_eq!(told_ends(&runs, Trouble::DaemonDown), ["DONE"]);
+    assert_eq!(told_ends(&[], Trouble::DaemonDown), Vec::<&str>::new());
+}

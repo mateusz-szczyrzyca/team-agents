@@ -550,13 +550,15 @@ impl BriefingFacts {
             Completeness::All => None,
             Completeness::Newest => Some(texts.render(HarnessPrompt::BriefingMessagesLeftOut, &Variables::new())?),
         };
+        let ends = told_ends(&history.runs, self.reason);
         let runs: Vec<BriefingRun<'_>> = history
             .runs
             .iter()
-            .map(|run| BriefingRun {
+            .zip(ends)
+            .map(|(run, end)| BriefingRun {
                 started: &run.started,
                 agent: &run.agent,
-                end: run.end,
+                end,
             })
             .collect();
         let answers: Vec<BriefingAnswer<'_>> = history
@@ -641,6 +643,13 @@ pub(super) fn run_end_word(end: Option<&RunEnd>) -> &'static str {
         Some(RunEnd::TurnLimit) => "turn limit",
         Some(RunEnd::Stopped) => "stopped",
     }
+}
+
+/// How the briefing tells the end of each of `runs`, when the session before went bad with `reason`. The harness records a
+/// run that a signal killed and a run that the daemon's stop or crash cut the same way, with no exit code; the reason of
+/// the new session is what tells them apart: when the daemon went down, the last run is the one it cut.
+fn told_ends(runs: &[RunLine], reason: Trouble) -> Vec<&'static str> {
+    runs.iter().map(|run| run.end).collect()
 }
 
 /// The word the briefing gives a verdict: `ok` for the recommendation, otherwise the human's own answer.
