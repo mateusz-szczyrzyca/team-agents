@@ -470,3 +470,56 @@ async fn a_corrupt_outcome_file_resumes_the_session_it_cannot_judge() {
     );
     assert!(args.contains("--resume"), "the session is resumed: {args}");
 }
+
+// Rule: two agents of one team with different bounds decide alone: the same size, 120 000 tokens, replaces the session of the
+// agent whose bound is 100 000 and resumes the session of the agent whose bound is the default of 150 000.
+#[tokio::test]
+async fn two_agents_of_one_team_with_different_bounds_decide_on_the_same_size_each_by_its_own() {
+    let mut rig = Rig::new(
+        &[
+            bounded("claude-1", "ask-stream:first,work", 100_000),
+            normal("claude-2", "ask-stream:first,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(120_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["claude-1", "claude-2"],
+            super::rig::PARALLEL,
+            MergeMode::Autopilot,
+            None,
+        )
+        .await;
+    for task in &tasks {
+        rig.status_is(task, agent_core::status::TaskStatus::Questions).await;
+    }
+    for task in &tasks {
+        answer_first_question(&rig, task, 1, "ok").await;
+    }
+    let mut outcomes = Vec::new();
+    for task in &tasks {
+        let agent = rig.state().find_task(task).unwrap().member.agent().name().to_owned();
+        let prompt = rig.prompt(task, 2).await;
+        let args = std::fs::read_to_string(rig.worktree(task).join(".fake-args-2")).unwrap();
+        outcomes.push((agent, prompt, args));
+    }
+    rig.stop().await.unwrap();
+
+    for (agent, prompt, args) in outcomes {
+        if agent == "claude-1" {
+            assert!(prompt.contains("grown to 120000 tokens"), "{agent}: {prompt}");
+            assert!(!args.contains("--resume"), "{agent} was resumed: {args}");
+        } else {
+            assert!(args.contains("--resume"), "{agent} was not resumed: {args}");
+            assert!(!prompt.contains(BRIEFING), "{agent}: {prompt}");
+        }
+    }
+}
