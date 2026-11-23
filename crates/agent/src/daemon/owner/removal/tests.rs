@@ -401,3 +401,36 @@ async fn a_commit_only_a_detached_worktree_holds_is_fetched_back_from_the_bundle
     );
     assert_eq!(git(other.path(), &["rev-parse", "back"]).trim(), head);
 }
+
+#[tokio::test]
+async fn a_bundle_that_cannot_be_written_leaves_the_team_and_its_files_intact() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    let (unmerged, _) = make_team_files(&daemon, dir.path(), &state, 1);
+    // A file where the directory of the bundles must be makes the bundle impossible to write.
+    std::fs::write(daemon.home.root().join("removed"), "not a directory\n").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let failure = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap_err();
+
+    assert_eq!(failure.kind, FailureKind::Internal);
+    assert!(daemon.state().team(&team_id(0)).is_some());
+    assert!(daemon.home.worktree_dir(&repo(), &task(1)).join("work.txt").is_file());
+    assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
+    assert!(
+        !git(dir.path(), &["branch", "--list", unmerged.as_str()])
+            .trim()
+            .is_empty()
+    );
+}
