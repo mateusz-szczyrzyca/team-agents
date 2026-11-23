@@ -536,15 +536,27 @@ impl Rig {
         std::fs::read_to_string(prompt).unwrap()
     }
 
-    /// The prompt the task's `n`-th run was given, once it has been.
+    /// The prompt the task's `n`-th run was given, once the stand-in has written it. It writes the prompt before its
+    /// log line, so waiting for the prompt file itself is the state the caller reads: a run that is stopped between
+    /// the two would otherwise make the log count wait forever even though the prompt it needs is already there. The
+    /// failure names what the worktree shows.
     pub(super) async fn prompt(&self, task: &TaskId, n: u32) -> String {
-        let log = self.worktree(task).join(".fake-log");
-        let wanted = usize::try_from(n).unwrap();
-        self.wait_for(&format!("run {n} of {task} to be logged"), || {
-            std::fs::read_to_string(&log).is_ok_and(|text| text.lines().count() >= wanted)
-        })
-        .await;
-        std::fs::read_to_string(self.worktree(task).join(format!(".fake-prompt-{n}"))).unwrap()
+        let file = self.worktree(task).join(format!(".fake-prompt-{n}"));
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            if let Ok(text) = std::fs::read_to_string(&file)
+                && !text.trim().is_empty()
+            {
+                return text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for run {n} of {task} to write its prompt\nruns: {}\nlog:\n{}",
+                std::fs::read_to_string(self.worktree(task).join(".fake-runs")).unwrap_or_default(),
+                std::fs::read_to_string(self.worktree(task).join(".fake-log")).unwrap_or_default(),
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// The notifications written so far.
