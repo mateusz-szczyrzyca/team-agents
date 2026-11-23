@@ -355,12 +355,6 @@ impl Owner {
             {
                 return Ok(Err(failure));
             }
-            let checks: Vec<_> = self.aborted_checks.iter().copied().collect();
-            while checks.iter().any(|id| self.aborted_checks.contains(id)) {
-                if let Some(joined) = self.checks.join_next_with_id().await {
-                    self.check_batch_done(joined).await?;
-                }
-            }
             while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
                 if let Some(joined) = self.gate_answers.join_next_with_id().await {
                     self.gate_answer_done(joined)?;
@@ -384,9 +378,14 @@ impl Owner {
                     ),
                 }));
             }
-            return Ok(Ok(running));
         }
-        Ok(Ok(Vec::new()))
+        let checks: Vec<_> = self.aborted_checks.iter().copied().collect();
+        while checks.iter().any(|id| self.aborted_checks.contains(id)) {
+            if let Some(joined) = self.checks.join_next_with_id().await {
+                self.check_batch_done(joined).await?;
+            }
+        }
+        Ok(Ok(running))
     }
 
     /// Reports a completed removal; notification failure cannot undo deleted files and is logged.
