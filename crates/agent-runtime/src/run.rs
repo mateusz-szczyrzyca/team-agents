@@ -513,11 +513,9 @@ impl RunEngine {
             }
         };
         follow.drain().await?;
-        self.record_changes(&job, head_before).await;
+        self.record_process_end(&job, head_before, follow.parser.usage()).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
-        // The usage is read before `finish` consumes the parser; a run that was cancelled records none.
-        let usage = follow.parser.usage();
         let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
         let (stopped_by, exit) = match stopped_by {
             Ended::Cancelled => {
@@ -527,7 +525,6 @@ impl RunEngine {
             }
             Ended::By(stopped_by, exit) => (stopped_by, exit),
         };
-        self.record_usage(&job, usage).await;
         let finish = RunFinish {
             exit: match exit {
                 ExitReport::Exited { code } => ExitStatus::Code(code),
@@ -617,9 +614,15 @@ impl RunEngine {
 
     /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
     /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
-    /// Writes what the run's stream told of its usage to the history. Best-effort: a refused write is logged with its
-    /// cause, and the run goes on as if nothing had been asked of the history.
-    async fn record_usage(&self, job: &RunJob, usage: RunUsage) {
+    /// What a run leaves in the history once its process is gone, also for a run that was cancelled: what it changed,
+    /// and what its stream told of its usage.
+    async fn record_process_end(&self, job: &RunJob, head_before: Option<CommitId>, usage: RunUsage) {
+        self.record_changes(job, head_before).await;
+        self.record_usage(job, usage);
+    }
+
+    /// Writes what the run's stream told of its usage to the history. Best-effort: a refused write is logged with its cause, and the run goes on.
+    fn record_usage(&self, job: &RunJob, usage: RunUsage) {
         if self.history.is_disabled() {
             return;
         }
@@ -627,7 +630,7 @@ impl RunEngine {
             run: job.run.clone(),
             usage,
         }];
-        if let Err(error) = self.history.persist_usage(records).await {
+        if let Err(error) = self.history.persist_usage(records) {
             tracing::warn!(run = %job.run, %error, "the usage of a run was not written to the history");
         }
     }

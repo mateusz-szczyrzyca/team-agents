@@ -120,7 +120,7 @@ fn a_part_the_cli_did_not_tell_is_kept_as_not_told() {
 }
 
 #[tokio::test]
-async fn the_usage_handed_to_the_writer_is_written_before_the_writer_answers() {
+async fn the_usage_handed_to_the_writer_is_written_once_the_writer_closes() {
     use agent_runtime::history::{DEFAULT_QUEUE, History, Setup, TracingReporter};
     use std::sync::Arc;
 
@@ -149,8 +149,8 @@ async fn the_usage_handed_to_the_writer_is_written_before_the_writer_answers() {
             run: run.clone(),
             usage,
         }])
-        .await
         .unwrap();
+    started.writer.close().unwrap();
 
     let raw = rusqlite::Connection::open(&path).unwrap();
     let row: (Option<i64>, Option<i64>, Option<i64>, Option<f64>) = raw
@@ -161,7 +161,6 @@ async fn the_usage_handed_to_the_writer_is_written_before_the_writer_answers() {
         )
         .unwrap();
     assert_eq!(row, (Some(7), Some(9), Some(3), None));
-    started.writer.close().unwrap();
 }
 
 #[test]

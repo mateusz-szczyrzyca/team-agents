@@ -35,12 +35,9 @@ pub enum PersistUsageError {
     /// The database writer is unavailable or stopped.
     #[error("history writer is unavailable")]
     Unavailable,
-    /// The blocking task that hands the records over stopped.
-    #[error(transparent)]
-    Join(#[from] tokio::task::JoinError),
-    /// Writing to the database failed.
-    #[error(transparent)]
-    Write(#[from] WriteError),
+    /// The writer's queue was full: the usage was dropped and reported.
+    #[error("history writer queue is full; the usage was dropped")]
+    Full,
 }
 
 /// What can go wrong when persisting judgements to history.
@@ -375,26 +372,38 @@ impl History {
     /// Hands the usage of runs to the history and awaits confirmation of commit.
     ///
     /// # Errors
-    /// Returns [`PersistUsageError`] if the history writer is unavailable or the write fails.
-    pub async fn persist_usage(&self, records: Vec<super::usage::RunUsageRecord>) -> Result<(), PersistUsageError> {
+    /// Returns [`PersistUsageError`] if the history writer is unavailable or its queue is full.
+    pub fn persist_usage(&self, records: Vec<super::usage::RunUsageRecord>) -> Result<(), PersistUsageError> {
         if records.is_empty() {
             return Ok(());
         }
         let Some(queue) = self.queue.clone() else {
             return Err(PersistUsageError::Unavailable);
         };
-        let (ack, rx) = tokio::sync::oneshot::channel();
-        let outcome = tokio::task::spawn_blocking(move || match queue.send(Job::PersistUsage { records, ack }) {
-            Ok(()) => QueueOutcome::Enqueued,
-            Err(_) => QueueOutcome::Closed,
-        })
-        .await?;
-        if outcome == QueueOutcome::Closed {
-            return Err(PersistUsageError::Unavailable);
+        // Not awaited: the usage is informational, so the run that ends does not wait for its commit. A dropped
+        // answer is the writer's to ignore; the writer logs what it could not write.
+        let (ack, _answer) = tokio::sync::oneshot::channel();
+        // Not blocking: a full queue drops the usage of the runs with a report, as the other records do.
+        match queue.try_send(Job::PersistUsage { records, ack }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Job::PersistUsage { records, .. })) => {
+                self.shared.lose(count(records.len()));
+                self.shared.report(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: the usage of runs is dropped while its queue is full"
+                        .to_owned()
+                });
+                return Err(PersistUsageError::Full);
+            }
+            Err(TrySendError::Disconnected(Job::PersistUsage { records, .. })) => {
+                self.shared.lose(count(records.len()));
+                self.stopped();
+                return Err(PersistUsageError::Unavailable);
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                return Err(PersistUsageError::Unavailable);
+            }
         }
-        rx.await
-            .map_err(|_| PersistUsageError::Unavailable)?
-            .map_err(PersistUsageError::Write)
+        Ok(())
     }
 
     /// A handle that records nothing and loses nothing: `[history] enabled = false`.

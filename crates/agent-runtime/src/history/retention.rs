@@ -120,6 +120,7 @@ fn remove_rows(tx: &rusqlite::Transaction<'_>) -> Result<(), rusqlite::Error> {
         ("changed_files", "run", "expired_runs", "run"),
         ("commits", "run", "expired_runs", "run"),
         ("run_changes", "run", "expired_runs", "run"),
+        ("run_usage", "run", "expired_runs", "run"),
         ("run_rounds", "run", "expired_runs", "run"),
         ("runs", "run", "expired_runs", "run"),
         ("rounds", "round", "expired_rounds", "round"),
