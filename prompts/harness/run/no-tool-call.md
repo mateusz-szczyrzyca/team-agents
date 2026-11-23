@@ -1,7 +1,12 @@
 # YOUR LAST RUN ENDED WITHOUT CALLING A TOOL
 
-Your last run of {{agent}} ended with `STATUS: FAILED` and called no tool step: the CLI did not offer or did not use the tools of the bus.
+Your last run of {{agent}} ended with `STATUS: FAILED` and called no tool step: the CLI did not offer, or you did not use, the tools of the bus.
 This run is a fresh session of the same task; the briefing below says what the session before left.
+
+The tools of the bus are listed for your CLI in its tool catalog, under the MCP server `agentbus`: `read_messages`, the
+messages and the state of the team, the board, reservations, investigations and notebook are tools of that catalog.
+Call them with your tool-calling step, never by running a shell command or the bus CLI. If your CLI offers none of
+them, do not do the work with shell commands in their place: end your turn with `STATUS: FAILED` instead.
 
 Do the work with the tools of the bus and of your CLI — read the messages of the team first, look at the worktree and
 the repository — and end your turn with the `STATUS:` line the context of the task names.
