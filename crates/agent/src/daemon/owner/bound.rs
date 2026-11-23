@@ -37,28 +37,40 @@ pub(super) enum SizeRead {
     Unreadable(String),
 }
 
-/// The size of the context of run `run`, read from its outcome file in `run_dir` first and from the history at
-/// `history` only when there is no outcome file. The stub reports no size.
+/// The size of the context of run `run`: its outcome file's when that tells one, else the history's. A file that cannot be
+/// read does not decide alone: the history's size of the run does, and only when neither source tells is the run unreadable.
 pub(super) async fn size_of_run(run_dir: &Path, history: &Path, run: &RunId) -> SizeRead {
-    match read_outcome(run_dir).await {
-        Ok(Some(outcome)) => return outcome.last_context.map_or(SizeRead::NotTold, SizeRead::Told),
-        Ok(None) => {}
-        Err(error) => return SizeRead::Unreadable(error_chain(&error)),
+    let file = read_outcome(run_dir).await;
+    if let Ok(Some(outcome)) = &file {
+        return outcome.last_context.map_or(SizeRead::NotTold, SizeRead::Told);
     }
-    // A run with no outcome file is one that ended before the file was written: its size is the history's, if any.
+    // A run with no outcome file ended before the file was written, and an unreadable file is judged by the history too.
+    let from_history = size_from_history(history, run).await;
+    match (file, from_history) {
+        (Err(error), Ok(None)) => SizeRead::Unreadable(error_chain(&error)),
+        (Err(error), Err(cause)) => SizeRead::Unreadable(format!("{}; {cause}", error_chain(&error))),
+        (_, Ok(Some(tokens))) => SizeRead::Told(tokens),
+        (_, Ok(None)) => SizeRead::NotTold,
+        (Ok(_), Err(cause)) => SizeRead::Unreadable(cause),
+    }
+}
+
+/// The size of the context of `run` as the history records it: `None` when it has no usage row or there is no history.
+///
+/// # Errors
+/// The cause, as text, when the history cannot be read.
+async fn size_from_history(history: &Path, run: &RunId) -> Result<Option<u64>, String> {
     if !history.exists() {
-        return SizeRead::NotTold;
+        return Ok(None);
     }
     let (path, wanted) = (history.to_path_buf(), run.clone());
     let read =
         tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))).await;
     match read {
-        Err(join) => SizeRead::Unreadable(error_chain(&join)),
-        Ok(Err(ReadError::Empty { .. })) => SizeRead::NotTold,
-        Ok(Err(source)) => SizeRead::Unreadable(error_chain(&source)),
-        Ok(Ok(usage)) => usage
-            .and_then(|usage| usage.last_context)
-            .map_or(SizeRead::NotTold, SizeRead::Told),
+        Err(join) => Err(error_chain(&join)),
+        Ok(Err(ReadError::Empty { .. })) => Ok(None),
+        Ok(Err(source)) => Err(error_chain(&source)),
+        Ok(Ok(usage)) => Ok(usage.and_then(|usage| usage.last_context)),
     }
 }
 
