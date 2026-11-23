@@ -434,3 +434,39 @@ async fn a_bundle_that_cannot_be_written_leaves_the_team_and_its_files_intact() 
             .is_empty()
     );
 }
+
+#[tokio::test]
+async fn a_worktree_git_cannot_remove_is_kept_and_its_bytes_are_not_counted_as_freed() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let locked = daemon.home.worktree_dir(&repo(), &task(2));
+    git(dir.path(), &["worktree", "lock", locked.to_str().unwrap()]);
+    let sized = |path: &Path| agent_runtime::disk::directory_size(path).unwrap();
+    let expected = sized(&daemon.home.worktree_dir(&repo(), &task(1)))
+        + sized(&daemon.home.task_dir(&task(1)))
+        + sized(&daemon.home.task_dir(&task(2)));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(removal.freed_bytes, expected);
+    assert!(locked.join("README.md").is_file());
+    assert!(
+        removal.left_behind.iter().any(|left| left.contains(task(2).as_str())),
+        "{:?}",
+        removal.left_behind
+    );
+    assert!(daemon.state().team(&team_id(0)).is_none());
+}
