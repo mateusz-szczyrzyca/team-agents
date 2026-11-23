@@ -122,3 +122,68 @@ fn recovery_keeps_progress_and_other_teams_across_persistence() {
     );
     assert_eq!(state.teams().len(), 2);
 }
+
+#[test]
+fn recovery_rejects_reused_team_and_task_identities_without_reserving() {
+    use crate::state::fixtures::task;
+    for (proposed, expected) in [
+        (destination(1, 10), InvalidState::DuplicateTeam { team: team_id(1) }),
+        (destination(4, 10), InvalidState::DuplicateTeam { team: team_id(4) }),
+        (
+            destination(2, 1),
+            InvalidState::DuplicateTask {
+                task: task(1),
+                first: team_id(1),
+                second: team_id(2),
+            },
+        ),
+        (
+            destination(2, 30),
+            InvalidState::DuplicateTask {
+                task: task(30),
+                first: team_id(4),
+                second: team_id(2),
+            },
+        ),
+    ] {
+        let mut state = State::new();
+        state.insert_team(team(1)).unwrap();
+        state.insert_team(team_of(4, 30)).unwrap();
+        let before = state.clone();
+        assert_eq!(
+            state.prepare_recovery(&team_id(1), proposed, 1),
+            Err(RecoveryError::Insert { source: expected })
+        );
+        assert_eq!(state, before);
+    }
+}
+
+#[test]
+fn recovery_reservations_protect_identities_after_source_removal() {
+    let mut state = State::new();
+    state.insert_team(team(1)).unwrap();
+    state.insert_team(team_of(4, 30)).unwrap();
+    state.prepare_recovery(&team_id(1), destination(2, 10), 1).unwrap();
+    state.remove_team(&team_id(1)).unwrap();
+    let before = reload(&state);
+    for n in [1, 2] {
+        assert_eq!(
+            state.prepare_recovery(&team_id(4), destination(n, 20), 1),
+            Err(RecoveryError::Insert {
+                source: InvalidState::DuplicateTeam { team: team_id(n) }
+            })
+        );
+        assert_eq!(state, before);
+    }
+    assert_eq!(
+        state.prepare_recovery(&team_id(4), destination(3, 10), 1),
+        Err(RecoveryError::Insert {
+            source: InvalidState::DuplicateTask {
+                task: crate::state::fixtures::task(10),
+                first: team_id(2),
+                second: team_id(3)
+            }
+        })
+    );
+    assert_eq!(state, before);
+}
