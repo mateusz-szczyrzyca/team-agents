@@ -437,17 +437,17 @@ impl MemberSummary {
             held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
             returned: None,
             waits_for: None,
-            failed_reason: failed_reason_of(member.status(), member.renewals()),
+            failed_reason: failed_reason_of(member),
         }
     }
 }
 
-/// Why `member`'s task lies in `status`, when its last trouble is one worth telling on the status line: a failed task
+/// Why `member`'s task lies failed, when its last trouble is one worth telling on the status line: a failed task
 /// already retried once for a no-tool run names that, because it is a configuration problem, not ordinary work. The
 /// status column already says `failed`; the reason says of what.
-fn failed_reason_of(status: TaskStatus, renewals: Option<&Renewals>) -> Option<String> {
-    if status == TaskStatus::Failed
-        && renewals.is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
+fn failed_reason_of(member: &Member) -> Option<String> {
+    if member.status() == TaskStatus::Failed
+        && member.renewals().is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
     {
         Some("two runs ended without calling a tool".to_owned())
     } else {
@@ -672,10 +672,12 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::decide::ladder::Trouble;
     use crate::state::PhaseKind;
     use crate::state::fixtures::{assert_refused, at, inv, member, nz, path, task, team, team_id};
-    use crate::state::fixtures::{drive, round_id};
-    use crate::state::{AnsweredVia, ItemPhase, Question, State};
+    use crate::state::fixtures::{drive, list, normal, repo, round_id, run};
+    use crate::state::{AnsweredVia, Crew, ItemPhase, Question, RunEnd, State};
+    use crate::status::RunOutcome;
 
     /// The sample task and team of these tests, as the text of their IDs.
     const TASK: &str = "task-20261111-153002-k3x9";
@@ -1105,6 +1107,134 @@ mod tests {
                 shared: Vec::new(),
             }
         );
+    }
+
+    // ---- the no-tool reason of a failed task -------------------------------------------------
+
+    /// A member of task 1 whose run 1 reported FAILED without a tool and was started anew once for it: the renewal is
+    /// the durable marker, and run 2, the retry, is going.
+    fn retried_no_tool_member() -> Member {
+        let mut member = member(1, normal("claude-1"));
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(0), None).unwrap();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(1), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.renew(Trouble::NoToolCall, at(2)).unwrap();
+        member.begin_run(run(2), at(3), None).unwrap();
+        member
+    }
+
+    /// A state that holds `member` alone, as the daemon keeps a solo team.
+    fn solo_state_of(member: Member) -> State {
+        let crew = Crew::solo(member).unwrap();
+        let team = Team::new(team_id(0), repo(), at(0), MergeMode::Autopilot, list(), crew);
+        let mut state = State::new();
+        state.insert_team(team).unwrap();
+        state
+    }
+
+    /// The run that used the one retry and then reported FAILED without a tool is named on the status line.
+    #[test]
+    fn the_no_tool_reason_names_the_run_that_used_the_retry() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+
+        assert_eq!(
+            failed_reason_of(&member),
+            Some("two runs ended without calling a tool".to_owned())
+        );
+    }
+
+    /// A retry that called a tool and then failed is a different failure: the no-tool reason is not its reason.
+    #[test]
+    fn a_retry_that_used_a_tool_then_failed_is_not_named_a_no_tool_failure() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(true).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+
+        assert_eq!(failed_reason_of(&member), None);
+    }
+
+    /// A later failure after the retried run succeeded is not the no-tool retry: the label names only the run that used
+    /// the retry.
+    #[test]
+    fn a_failure_after_a_successful_retry_is_not_named_a_no_tool_failure() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Done })
+            .unwrap();
+        member.begin_run(run(3), at(5), None).unwrap();
+        member.note_used_tool(true).unwrap();
+        member
+            .end_run(at(6), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+
+        assert_eq!(failed_reason_of(&member), None);
+    }
+
+    /// A later run that again reported FAILED without a tool — while the durable marker of the old retry survives — is
+    /// not the retry either: the marker alone is not the label.
+    #[test]
+    fn a_later_no_tool_failure_while_the_marker_survives_is_not_named() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Done })
+            .unwrap();
+        member.begin_run(run(3), at(5), None).unwrap();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(6), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+
+        assert_eq!(failed_reason_of(&member), None);
+    }
+
+    /// The reason of the run that used the retry survives a restart of the daemon: the state is written and read back.
+    #[test]
+    fn the_no_tool_reason_survives_a_restart() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(false).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+        let state = solo_state_of(member);
+        let reloaded = State::from_json(&state.to_json().unwrap()).unwrap();
+        let found = reloaded.find_task(&task(1)).unwrap();
+
+        assert_eq!(
+            failed_reason_of(found.member),
+            Some("two runs ended without calling a tool".to_owned())
+        );
+    }
+
+    /// A retry that used a tool stays unnamed after a restart of the daemon.
+    #[test]
+    fn a_tool_using_retry_stays_unnamed_after_a_restart() {
+        let mut member = retried_no_tool_member();
+        member.note_used_tool(true).unwrap();
+        member
+            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .unwrap();
+        member.transition(TaskStatus::Failed).unwrap();
+        let state = solo_state_of(member);
+        let reloaded = State::from_json(&state.to_json().unwrap()).unwrap();
+        let found = reloaded.find_task(&task(1)).unwrap();
+
+        assert_eq!(failed_reason_of(found.member), None);
     }
 }
 
