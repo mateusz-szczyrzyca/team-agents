@@ -165,7 +165,9 @@ async fn a_failed_no_tool_notice_names_the_cli_the_model_and_the_advice() {
         rendered.body()
     );
     assert!(
-        rendered.body().contains("Do not assign this task"),
+        rendered.body().contains(
+            "Do not give claude-1 more work until its claude CLI setup and o3-mini model configuration are checked"
+        ),
         "advises on the assignment: {}",
         rendered.body()
     );
