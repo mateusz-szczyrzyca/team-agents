@@ -3210,3 +3210,42 @@ async fn a_coordinator_switched_to_opencode_retries_its_first_failed_run_without
     assert!(!args.contains("--session"), "the retry starts fresh: {args}");
     assert_eq!(f.notifications(), Vec::<String>::new());
 }
+
+#[tokio::test]
+async fn no_tool_retry_and_final_failure_have_named_logs_with_the_agent_configuration() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config.replace("[agents.claude-1]", "[agents.claude-1]\nmodel = \"example-model\"");
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let logs = Reader::open(&f.home.history_file()).unwrap().daemon_logs().unwrap();
+    let selected: Vec<_> = logs
+        .iter()
+        .filter(|row| matches!(row.event().as_str(), "run_no_tool_retry" | "run_no_tool_failed"))
+        .collect();
+    assert_eq!(selected.len(), 2, "one retry and one final failure: {selected:?}");
+    for (row, (event, level)) in selected.iter().zip([
+        ("run_no_tool_retry", agent_core::log::LogLevel::Info),
+        ("run_no_tool_failed", agent_core::log::LogLevel::Warn),
+    ]) {
+        assert_eq!(row.event().as_str(), event);
+        assert_eq!(row.level(), level);
+        assert_eq!(row.task(), Some(&tasks[1]));
+        for (field, expected) in [("agent", "claude-1"), ("cli", "claude"), ("model", "example-model")] {
+            assert_eq!(
+                row.fields().get(field).and_then(serde_json::Value::as_str),
+                Some(expected),
+                "{row:?}"
+            );
+        }
+    }
+}

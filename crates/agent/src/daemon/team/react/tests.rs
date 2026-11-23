@@ -478,3 +478,21 @@ fn turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed() {
         }
     );
 }
+
+#[test]
+fn a_failed_member_without_last_words_tells_the_coordinator_the_end_reason() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::Hung, None).unwrap();
+    assert!(matches!(notice.notice, BusNotice::MemberFailedItem { message, .. }
+        if message == "The member failed after Hung."));
+}
+
+#[test]
+fn a_failed_member_cannot_hide_its_failure_behind_a_split_request() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::Hung, Some("SPLIT: 1.1")).unwrap();
+    assert!(matches!(notice.notice, BusNotice::MemberFailedItem { message, .. }
+        if message == "SPLIT: 1.1"));
+}
