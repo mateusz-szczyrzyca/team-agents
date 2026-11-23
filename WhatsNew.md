@@ -13,6 +13,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] `agent run` that starts a task for an agent already in another open team says that its task here waits while its run there goes on, or goes to another agent when `[replacement] agents` is non-empty and `busy_after` is above `0`.
 
 ### Bug fixes
+- [agent-core] Pausing or stopping a queued task ends its busy wait; after resuming, it waits a fresh `busy_after` interval before a hand-over.
 - [agent] A passing gate completed while the daemon checks a resolved merge conflict is recognized immediately, instead of unnecessarily asking the human to intervene.
 
 ### Enhancements

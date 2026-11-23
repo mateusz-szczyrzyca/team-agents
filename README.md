@@ -274,7 +274,7 @@ going per CLI. The obligation to deliver each team notice survives a bus failure
 the bus accepts it. Only the agents listed in `[replacement] agents` are candidates: an empty `[replacement] agents` list (or
 `busy_after = 0`) performs no busy hand-over and the task keeps waiting for its own agent. Tasks that are running, waiting
 for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
-handed over.
+handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
 
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).

@@ -698,6 +698,8 @@ impl Member {
     /// [`InvalidTransition`] when the status's table does not allow the change.
     pub fn transition(&mut self, next: TaskStatus) -> Result<(), InvalidTransition<TaskStatus>> {
         self.status = self.status.transition_to(next)?;
+        // Every allowed transition ends the current queued wait; resuming starts a fresh interval.
+        self.waiting_since = None;
         Ok(())
     }
 
