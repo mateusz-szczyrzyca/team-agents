@@ -184,8 +184,15 @@ mod history_process {
         }
 
         fn runs(&self, task: &str) -> u32 {
-            std::fs::read_to_string(self.home.join("worktrees/example").join(task).join(".fake-runs"))
-                .map_or(0, |text| text.trim().parse().unwrap())
+            // The stand-in counts a run with `echo $n > .fake-runs`, which truncates the file before the counter is
+            // in it: an empty file means the count has not been written yet, the same as no file. A counter that is
+            // there but not a number is a real break and still fails the test.
+            let counter = std::fs::read_to_string(self.home.join("worktrees/example").join(task).join(".fake-runs"))
+                .unwrap_or_default();
+            if counter.trim().is_empty() {
+                return 0;
+            }
+            counter.trim().parse().unwrap()
         }
     }
 
