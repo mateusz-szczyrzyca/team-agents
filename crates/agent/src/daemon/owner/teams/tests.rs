@@ -3153,7 +3153,7 @@ async fn a_plan_the_base_branch_tracks_is_left_on_the_branch() {
     assert_eq!(git(&worktree, &["log", "-1", "--format=%s"]), "Edit the tracked plan");
 }
 
-/// An actual configuration switch exercises the OpenCode adapter after a Claude session.
+/// An actual configuration switch exercises the `OpenCode` adapter after a Claude session.
 #[tokio::test]
 async fn a_coordinator_switched_to_opencode_retries_its_first_failed_run_without_tools() {
     let mut f = Fixture::new(&[
