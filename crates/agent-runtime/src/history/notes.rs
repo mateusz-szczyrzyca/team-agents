@@ -282,4 +282,8 @@ impl<S: Store> Store for Noting<S> {
     fn write_judgements(&mut self, records: &[super::judgements::JudgementRecord]) -> Result<(), WriteError> {
         self.inner.write_judgements(records)
     }
+
+    fn write_usage(&mut self, records: &[super::usage::RunUsageRecord]) -> Result<(), WriteError> {
+        self.inner.write_usage(records)
+    }
 }
