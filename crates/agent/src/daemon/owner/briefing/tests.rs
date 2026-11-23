@@ -108,3 +108,55 @@ fn an_accepted_verdict_is_ok_and_an_own_answer_is_its_text() {
     let own = Verdict::from_text("No, drop it.").unwrap().unwrap();
     assert_eq!(verdict_word(&own), "No, drop it.");
 }
+
+/// A question file of the task with one answered question, numbered `number`.
+fn question_file(number: u32, title: &str, verdict: &str) -> String {
+    format!(
+        "# Questions — task-20261120-144101-r7q2\n\n## {number}. {title}\na) Keep it — the format stays\nb) Drop it — simpler\n\n**Recommended:** a) — the format stays (agent)\n\n**Verdict:** {verdict}\n"
+    )
+}
+
+#[tokio::test]
+async fn the_answers_are_read_from_the_question_files_of_the_task_oldest_first() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("questions-2.md"),
+        question_file(2, "Keep the old format?", "No, drop it."),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("questions-1.md"),
+        question_file(1, "Which parser?", "ok"),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("notes.md"), "not a question file").unwrap();
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let answers = read_answers(dir.path(), &task).await.unwrap();
+
+    assert_eq!(
+        answers,
+        vec![
+            AnswerLine {
+                number: "1".to_owned(),
+                title: "Which parser?".to_owned(),
+                verdict: "ok".to_owned(),
+            },
+            AnswerLine {
+                number: "2".to_owned(),
+                title: "Keep the old format?".to_owned(),
+                verdict: "No, drop it.".to_owned(),
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_task_without_a_folder_has_no_answers() {
+    let dir = tempfile::tempdir().unwrap();
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let answers = read_answers(&dir.path().join("missing"), &task).await.unwrap();
+
+    assert_eq!(answers, Vec::new());
+}
