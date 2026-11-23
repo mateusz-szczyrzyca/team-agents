@@ -1751,3 +1751,65 @@ async fn the_status_reads_cli_runs_and_reports_config_read_and_parse_failures() 
         StatusError::ConfigRead { ref path, .. } if *path == home.config_file()
     ));
 }
+
+#[path = "../../../tests/support/story_history.rs"]
+mod story_history;
+
+/// Writes the usage `usage` for the last run of `task` in the history of `home`.
+fn write_usage_of(home: &Home, task: &TaskId, usage: agent_core::cli::RunUsage) {
+    let path = home.history_file();
+    let run = agent_runtime::history::Reader::open(&path)
+        .unwrap()
+        .newest_runs_of_task(task, std::num::NonZeroUsize::MIN)
+        .unwrap()
+        .runs
+        .last()
+        .map(|row| row.start.value.run.clone())
+        .expect("the task has a run");
+    let mut db = agent_runtime::history::HistoryDb::open(&path, agent_core::history::MaxTextBytes::default()).unwrap();
+    agent_runtime::history::Store::write_usage(&mut db, &[agent_runtime::history::RunUsageRecord { run, usage }])
+        .unwrap();
+}
+
+#[test]
+fn the_context_line_of_a_task_is_its_last_runs_usage_or_not_told() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let written = story_history::write_history(&home.history_file());
+    let task = agent_runtime::history::Reader::open(&home.history_file())
+        .unwrap()
+        .runs_of_round(&written.rounds[0])
+        .unwrap()[0]
+        .start
+        .value
+        .task
+        .clone();
+    assert_eq!(context_line(&home, &task), "context: not told\n");
+
+    write_usage_of(
+        &home,
+        &task,
+        agent_core::cli::RunUsage {
+            first_context: Some(1_000),
+            last_context: Some(2_500),
+            tokens_written: Some(400),
+            cost_usd: Some(0.25),
+        },
+    );
+
+    assert_eq!(
+        context_line(&home, &task),
+        "context: first 1000 tokens, last 2500 tokens (last run)\n"
+    );
+}
+
+#[test]
+fn a_history_that_cannot_be_read_is_said_on_the_context_line() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let task: TaskId = "task-20261111-193001-q1w2".parse().unwrap();
+
+    let line = context_line(&home, &task);
+
+    assert!(line.starts_with("context: cannot be read ("), "{line}");
+}

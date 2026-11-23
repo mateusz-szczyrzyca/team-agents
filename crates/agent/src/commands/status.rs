@@ -233,6 +233,12 @@ enum VersionsQuery {
 ///
 /// # Errors
 /// [`StatusError`].
+/// The context line of `task`: what its last run's stream told of its context, or "context: not told". RED stub.
+pub(crate) fn context_line(home: &Home, task: &TaskId) -> String {
+    let _ = (home, task);
+    "context: not told\n".to_owned()
+}
+
 pub(crate) async fn status_shown(
     connection: &mut Connection,
     target: Option<Target>,
