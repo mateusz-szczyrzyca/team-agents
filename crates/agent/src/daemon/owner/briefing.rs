@@ -46,6 +46,14 @@ pub(super) fn context_paragraph(texts: &HarnessPrompts, tokens: u64) -> Result<S
     Ok(texts.render(HarnessPrompt::BriefingContext, &values)?)
 }
 
+/// The paragraph a briefing opens with when its session was replaced on a size that could not be read.
+///
+/// # Errors
+/// [`ComposeError`] when the paragraph cannot be filled.
+pub(super) fn unknown_size_paragraph(texts: &HarnessPrompts) -> Result<String, ComposeError> {
+    Ok(texts.render(HarnessPrompt::BriefingContextUnknown, &Variables::new())?)
+}
+
 /// The last message of the session before, as the briefing gives it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct LastMessage {
@@ -347,15 +355,26 @@ impl Owner {
             .state
             .find_task(task)
             .and_then(|found| found.member.runs().last().map(|run| run.id().clone()));
+        let mut unreadable = None;
         if let Some(run) = last {
             let run_dir = self.parts.store.home().run_dir(task, &run);
             match read_outcome(run_dir.as_path()).await {
                 Ok(Some(outcome)) => return Ok(outcome.final_message.map(LastMessage::whole)),
                 // A run before the outcome file: the history's text is all there is.
                 Ok(None) => {}
-                Err(source) => return Err(BriefingProblem::Outcome(source)),
+                // A file that cannot be read gives way to the history's copy of the message, and fails only without it.
+                Err(source) => unreadable = Some(source),
             }
         }
+        match (self.history_last_message(task).await?, unreadable) {
+            (Some(message), _) => Ok(Some(message)),
+            (None, Some(source)) => Err(BriefingProblem::Outcome(source)),
+            (None, None) => Ok(None),
+        }
+    }
+
+    /// The last message of the task's last run as the history keeps it: cut at the history's limit, with the limit noted.
+    async fn history_last_message(&self, task: &TaskId) -> Result<Option<LastMessage>, BriefingProblem> {
         let path = self.parts.store.home().history_file();
         if !path.exists() {
             return Ok(None);

@@ -231,8 +231,17 @@ fn with_size_paragraph(ctx: &Context<'_>, member: &Member, prompt: String) -> Re
         .renewals()
         .filter(|_| replaced_by_bound(member))
         .and_then(agent_core::state::Renewals::context_tokens);
-    Ok(match pending {
-        Some(tokens) => format!("{}\n\n{prompt}", super::briefing::context_paragraph(ctx.texts, tokens)?),
+    let unknown = member
+        .renewals()
+        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::ContextBound);
+    let paragraph = match pending {
+        Some(tokens) => Some(super::briefing::context_paragraph(ctx.texts, tokens)?),
+        // A renewal that keeps no size was made on a size nobody could read.
+        None if unknown => Some(super::briefing::unknown_size_paragraph(ctx.texts)?),
+        None => None,
+    };
+    Ok(match paragraph {
+        Some(paragraph) => format!("{paragraph}\n\n{prompt}"),
         None => prompt,
     })
 }

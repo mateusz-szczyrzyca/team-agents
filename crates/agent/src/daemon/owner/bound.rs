@@ -103,30 +103,38 @@ impl Owner {
         };
         let run_dir = self.parts.store.home().run_dir(task, &run);
         let history = self.parts.store.home().history_file();
-        let tokens = match size_of_run(run_dir.as_path(), history.as_path(), &run).await {
-            SizeRead::Told(tokens) => tokens,
-            SizeRead::NotTold => return Ok(false),
+        let read = size_of_run(run_dir.as_path(), history.as_path(), &run).await;
+        let at = self.after_last_run(task)?;
+        match read {
+            SizeRead::NotTold => Ok(false),
+            // A size that cannot be read may be above the bound: the session is replaced on a fail-safe basis, and its briefing
+            // says the size is unknown.
             SizeRead::Unreadable(cause) => {
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
                     run = %run,
                     error = %cause,
-                    "the context of the last run cannot be read: its session is resumed"
+                    "the context of the last run cannot be read: its session is replaced, its size unknown"
                 );
-                return Ok(false);
+                let begun = self.parts.state.begin_context_session(task, at)?;
+                log_decision(
+                    "context",
+                    &format!("task={task}, context=unknown, bound={bound}"),
+                    &"NewSession",
+                );
+                Ok(begun)
             }
-        };
-        if !starts_anew(Some(tokens), Some(bound)) {
-            return Ok(false);
+            SizeRead::Told(tokens) if !starts_anew(Some(tokens), Some(bound)) => Ok(false),
+            SizeRead::Told(tokens) => {
+                let begun = self.parts.state.begin_context_session_with_size(task, at, tokens)?;
+                log_decision(
+                    "context",
+                    &format!("task={task}, context={tokens}, bound={bound}"),
+                    &"NewSession",
+                );
+                Ok(begun)
+            }
         }
-        let at = self.after_last_run(task)?;
-        let begun = self.parts.state.begin_context_session_with_size(task, at, tokens)?;
-        log_decision(
-            "context",
-            &format!("task={task}, context={tokens}, bound={bound}"),
-            &"NewSession",
-        );
-        Ok(begun)
     }
 }
