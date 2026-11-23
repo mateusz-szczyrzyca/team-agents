@@ -353,3 +353,51 @@ async fn a_removal_over_the_socket_of_an_unknown_team_is_refused() {
     }
     daemon.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn a_commit_only_a_detached_worktree_holds_is_fetched_back_from_the_bundle_after_the_removal() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    // The reviewer's detached HEAD of task 2: a commit that no branch holds and that only the worktree points at.
+    let detached = daemon.home.worktree_dir(&repo(), &task(2));
+    std::fs::remove_dir_all(&detached).unwrap();
+    git(dir.path(), &["worktree", "prune"]);
+    git(
+        dir.path(),
+        &["worktree", "add", "-q", "--detach", detached.to_str().unwrap(), "main"],
+    );
+    std::fs::write(detached.join("review.txt"), "a local-only commit\n").unwrap();
+    git(&detached, &["add", "review.txt"]);
+    git(&detached, &["commit", "-q", "-m", "local only"]);
+    let head = git(&detached, &["rev-parse", "HEAD"]).trim().to_owned();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(!detached.exists());
+    let bundle = daemon.home.removed_bundle(&team_id(0));
+    let other = tempfile::tempdir().unwrap();
+    git(other.path(), &["init", "-q", "-b", "main"]);
+    git(
+        other.path(),
+        &[
+            "fetch",
+            "-q",
+            bundle.to_str().unwrap(),
+            &format!("refs/agent-removed/{}:refs/heads/back", task(2)),
+        ],
+    );
+    assert_eq!(git(other.path(), &["rev-parse", "back"]).trim(), head);
+}
