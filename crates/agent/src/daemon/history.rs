@@ -1,7 +1,7 @@
 //! The daemon's side of the history: opening it from `[history]` of the configuration, and what the owner records in it.
 //!
-//! The history never stops or delays the work (`docs/history.md`): when the database cannot be opened the daemon says so
-//! once and runs without it, and every record that is handed in after that is counted as lost.
+//! Ordinary history records never delay runs (`docs/history.md`): an unavailable database is reported once, and
+//! later records count as lost. Automatic idle removal requires an acknowledged snapshot before deletion.
 
 use std::sync::Arc;
 

@@ -540,6 +540,24 @@ The `remove` request and `removed` reply add to the socket protocol; older comma
 older daemon refuses the new command. History migration 20 admits the new event while preserving old logs,
 search entries and cursors; it does not change the live state's format.
 
+**Automatic idle removal:** by default, the daemon checks at startup and once per minute and removes a team
+after two hours without a run or new commit. It uses the same bundle, cleanup and notification safeguards as
+`agent remove`, including for document and artwork teams. Running work and checks, human pause/stop, quota or
+rate-limit reset waits, and accepted claims waiting for another team's pull request to merge protect the team.
+An unanswered question does not protect it. This release removes idle teams **without starting replacements**;
+the approved next part adds restart. `[limits] idle_team_restarts = 1` is reserved and has no effect yet.
+
+**Action:** set `[limits] idle_team_minutes = 0` before restarting the daemon if you want the old behavior.
+Old state loads using its recorded run and commit activity; startup does not reset the idle clock. The optional
+`idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
+new field: keep a state backup before upgrading if you need to downgrade. The state schema remains 14 and the
+history schema remains 20.
+
+Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
+rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its
+branches. Fix the cause and use `agent remove`, or resume work to make it eligible again. Disabling history is an
+explicit opt-out from the history requirement; bundles and removal safeguards still apply.
+
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
 
 The short view of a team, as `agent status` and `agent status --running` print it: the team, its rounds, its live tasks

@@ -246,6 +246,15 @@ State
 
 #### `Team`
 
+`idle_watch` is optional in schema 14. When present it holds `last_activity` (a timestamp), `heads` (local branch
+and worktree keys mapped to commit IDs), and nullable `refusal` (the already reported removal failure). Old
+states omit it and still load. Their first scan reconstructs activity from team creation, run starts/ends and
+commit dates; subsequent new or changed tips count at observation time even when the commit has an old date.
+New activity clears the refusal marker. A restart preserves both the idle interval and notification suppression.
+The pre-change fixture is `crates/agent-core/src/state/team/idle/legacy.json`. Older binaries reject the added
+field; keep a pre-upgrade state backup if a downgrade is needed.
+
+
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `team-YYYYMMDD-HHMMSS-xxxx` | generated from the clock and the random source |
