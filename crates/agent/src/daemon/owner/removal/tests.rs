@@ -528,3 +528,33 @@ async fn a_worktree_with_only_untracked_files_is_not_named_as_having_uncommitted
 
     assert!(removal.dirty_worktrees.is_empty(), "{:?}", removal.dirty_worktrees);
 }
+
+#[tokio::test]
+async fn removal_without_surviving_worktrees_refuses_and_preserves_state_and_task_files() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let task_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&task_dir).unwrap();
+    std::fs::write(task_dir.join("run.log"), "keep me").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let failure = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .expect_err("no repository handle must refuse removal");
+    assert_eq!(failure.kind, FailureKind::Refused);
+    for number in [1, 2] {
+        assert!(failure.message.contains(branch_of(&state, number).as_str()));
+    }
+    assert!(failure.message.contains("keep one worktree"));
+    assert_eq!(std::fs::read_to_string(task_dir.join("run.log")).unwrap(), "keep me");
+    assert_eq!(owner.parts.state, state);
+    assert_eq!(daemon.state(), state);
+    assert!(!daemon.home.removed_bundle(&team_id(0)).exists());
+}
