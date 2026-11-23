@@ -198,3 +198,77 @@ async fn a_session_below_the_bound_is_resumed_for_a_fix_pass() {
     let progress = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap();
     assert_eq!(progress.fix_passes().len(), 1, "the fix pass ran once");
 }
+
+/// Answers the first question of questions `number` of `task` with `text`, as `agent answer` does.
+async fn answer_first_question(rig: &Rig, task: &agent_core::ids::TaskId, number: u32, text: &str) {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: std::num::NonZeroU32::MIN,
+        verdict: Verdict::from_text(text).unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: std::num::NonZeroU32::new(number).unwrap(),
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "unexpected reply: {reply:?}");
+}
+
+// Rule: a session above its agent's bound is started anew even when the run that reached it asked the human, and the new
+// session is briefed with the item it still works on: the item title and its expected result are in the briefing.
+#[tokio::test]
+async fn the_new_session_after_an_answer_is_briefed_with_the_item_still_in_progress() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(briefing.contains(BRIEFING), "{briefing}");
+    assert!(briefing.contains("grown to 200000 tokens"), "{briefing}");
+    assert!(
+        briefing.contains("The second item"),
+        "the item title is not in the briefing: {briefing}"
+    );
+    assert!(
+        briefing.contains("Do the second thing in the repository."),
+        "the item's text is not in the briefing: {briefing}"
+    );
+    assert!(
+        briefing.contains("Continue the part?"),
+        "the answer is not in the briefing: {briefing}"
+    );
+    assert!(
+        briefing.contains("I have to ask."),
+        "the last final message is not in the briefing: {briefing}"
+    );
+    assert!(!args.contains("--resume"), "the old session was resumed: {args}");
+}
