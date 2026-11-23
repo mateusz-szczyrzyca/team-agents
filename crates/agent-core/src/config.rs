@@ -2058,4 +2058,33 @@ workers = ["qwen", "qwen"]"#,
         let text = "[limits]\nwake_ups_per_message = -1\n";
         assert_eq!(error_line(text, &failure(text)), Some(2));
     }
+
+    #[test]
+    fn a_team_may_do_nothing_for_two_hours_unless_the_limits_say_otherwise() {
+        assert_eq!(config("").limits().idle_team_minutes(), 120);
+        assert_eq!(config("[limits]\ntail_lines = 5\n").limits().idle_team_minutes(), 120);
+        assert_eq!(
+            config("[limits]\nidle_team_minutes = 45\n")
+                .limits()
+                .idle_team_minutes(),
+            45
+        );
+        assert_eq!(config("[limits]\nidle_team_minutes = 0\n").limits().idle_team_minutes(), 0);
+        let text = "[limits]\nidle_team_minutes = -1\n";
+        assert_eq!(error_line(text, &failure(text)), Some(2));
+    }
+
+    #[test]
+    fn a_task_lists_idle_removal_restarts_its_work_once_unless_the_limits_say_otherwise() {
+        assert_eq!(config("").limits().idle_team_restarts(), 1);
+        assert_eq!(
+            config("[limits]\nidle_team_restarts = 3\n")
+                .limits()
+                .idle_team_restarts(),
+            3
+        );
+        assert_eq!(config("[limits]\nidle_team_restarts = 0\n").limits().idle_team_restarts(), 0);
+        let text = "[limits]\nidle_team_restarts = -2\n";
+        assert_eq!(error_line(text, &failure(text)), Some(2));
+    }
 }
