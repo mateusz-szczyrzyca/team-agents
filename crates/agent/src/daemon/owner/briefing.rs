@@ -614,7 +614,9 @@ pub(super) fn run_end_word(end: Option<&RunEnd>) -> &'static str {
     match end {
         None => "cut before its end was recorded",
         Some(RunEnd::Reported { outcome }) => (*outcome).into(),
-        Some(RunEnd::NoStatus { .. }) => "no status",
+        // A run the daemon's stop or crash cut has no exit code: it ended from outside, not by the agent's omission.
+        Some(RunEnd::NoStatus { exit_code: None }) => "cut by a stop of the daemon",
+        Some(RunEnd::NoStatus { exit_code: Some(_) }) => "no status",
         Some(RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited) => "failed",
         Some(RunEnd::Hung) => "hang",
         Some(RunEnd::TurnLimit) => "turn limit",
