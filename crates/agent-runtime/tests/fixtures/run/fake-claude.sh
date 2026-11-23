@@ -4,7 +4,7 @@
 # by a test, so that no test races an `exec` of a file that is still open for writing.
 #
 #   done                  a short run that ends with STATUS: DONE
-#   done-child            ends like `done`, leaving a child behind (pid in .fake-child)
+#   done-after-ok          run 1 ends like `done`; a later invocation waits for ok.txt to appear before it ends (count in .fake-runs)
 #   fail                  ends with STATUS: FAILED
 #   fail-tool             like `fail`, after streaming one tool call (a tool_use block): a failed run the harness counts as
 #                         one that used a tool, so a task that fails this way is not retried for "no tool call"
@@ -90,6 +90,26 @@ case $scenario in
     sleep 600 &
     whole .fake-child "$!"
     finish_done
+    ;;
+  done-after-ok)
+    # Run 1 ends like `done` at once, so the first mismatch sends the run back once and its test observes it; every
+    # later invocation waits for the test's ok.txt before it ends, so a bounce-back run can never consume the bounce
+    # budget while the file is still absent.
+    runs=1
+    if [[ -f .fake-runs ]]; then runs=$(( $(< .fake-runs) + 1 )); fi
+    whole .fake-runs "$runs"
+    if ((runs == 1)); then
+      finish_done
+    else
+      init
+      for _ in $(seq 1 600); do
+        [[ -f ok.txt ]] && break
+        sleep 0.05
+      done
+      [[ -f ok.txt ]] || { echo "the test never created ok.txt for run $runs" >&2; exit 65; }
+      say "working"
+      result false 'Finished the item.\nSTATUS: DONE'
+    fi
     ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
   fail-tool)

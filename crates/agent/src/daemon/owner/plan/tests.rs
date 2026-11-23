@@ -548,7 +548,7 @@ async fn startup_cached_confirmations_do_not_show_stale_confirmed_for_edited_ste
 #[tokio::test]
 async fn startup_cached_confirmations_preserved_for_deduplicated_plan_runs() {
     let mut daemon = with_bounces(&solo_state(), 2);
-    let dir = daemon.scenario(1, "done");
+    let dir = daemon.scenario(1, "done-after-ok");
     std::fs::create_dir_all(dir.join(".agent")).unwrap();
     let plan = "Finish it.\n\n1. Work\n[x] 1.1 Do it\n    Check: exists ok.txt\n[ ] 1.2 Later\n";
     std::fs::write(dir.join(".agent/plan.md"), plan).unwrap();
