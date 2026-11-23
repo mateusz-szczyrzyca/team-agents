@@ -6,6 +6,10 @@
 //! is good is brought over to the requester's branch, and the requester is told. A daemon that stops between two stages
 //! goes on from the stage the file names, so that the check runs once and a commit is brought over once.
 
+mod again;
+
+pub(super) use self::again::Again;
+
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
@@ -45,6 +49,13 @@ pub(super) struct Checking {
     checked: Checked,
 }
 
+impl Checking {
+    /// The worker whose files must survive until this check has been joined.
+    pub(super) fn task(&self) -> &TaskId {
+        &self.pending.worker_task
+    }
+}
+
 /// What reading a request and the worker's worktree came to.
 enum Gathered {
     /// The bus cannot say now: the request is tried again at the next look.
@@ -64,8 +75,8 @@ fn scope_of(files: &[String]) -> Scope {
     if files.is_empty() { Scope::Facts } else { Scope::Files }
 }
 
-/// The facts of a result for [`decide`]: no other provider is looked for in this version, so a wrong result is returned
-/// to the requester at once.
+/// The facts of a result for [`decide`], as of a first try that has no other worker to go to: the caller sets the try, the
+/// tries and the worker the second try could go to.
 fn facts_of(checked: &Checked, run_seconds: u64, limit_seconds: u64) -> Facts {
     Facts {
         ending: WorkerEnding::Done,
@@ -231,12 +242,20 @@ impl Owner {
             return Ok(());
         };
         let request = request_of_file(&path);
-        // What the bus knows of the request: who is to be told. A bus that cannot say now is asked again at the next look,
-        // before anything is moved.
-        let known = match request {
-            Some(request) => match self.parts.bus.helper_get(request).await {
-                Ok(known) => Some((request, known)),
-                Err(failure) if failure.class() == Some(FailureClass::NotFound) => None,
+        // The requests the file speaks for: the one its name says and, when it holds another, that one too. What the bus knows
+        // of each says who is to be told. A bus that cannot say now is asked again at the next look, before anything is moved.
+        let mut named = Vec::new();
+        named.extend(request);
+        if let PendingError::Mismatch { found, .. } = &error
+            && Some(RequestId::new(*found)) != request
+        {
+            named.push(RequestId::new(*found));
+        }
+        let mut known = Vec::new();
+        for asked in named {
+            match self.parts.bus.helper_get(asked).await {
+                Ok(got) => known.push((asked, got)),
+                Err(failure) if failure.class() == Some(FailureClass::NotFound) => {}
                 Err(failure) => {
                     self.tell_unreadable_once(&error);
                     tracing::warn!(
@@ -247,15 +266,14 @@ impl Owner {
                     );
                     return Ok(());
                 }
-            },
-            None => None,
-        };
+            }
+        }
         let aside = match set_aside(&path).await {
             Ok(aside) => aside,
             Err(failure) => {
                 self.tell_unreadable_once(&error);
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     file = ?path,
                     error = %error_chain(&failure),
                     "the damaged file of a worker's request cannot be set aside: it is left as it is"
@@ -264,7 +282,7 @@ impl Owner {
             }
         };
         tracing::warn!(
-            event = LogEvent::RestartCorrected.as_str(),
+            event = LogEvent::WorkerRequestDamaged.as_str(),
             team = %team,
             task = %worker_task,
             file = ?path,
@@ -273,11 +291,22 @@ impl Owner {
             error = %error_chain(&error),
             "the file of a worker's request cannot be used: it is set aside and the request is settled as a wrong result"
         );
-        let Some((request, known)) = known else {
-            return Ok(());
-        };
-        // A request the bus has answered already is not answered again: the file is only set aside.
-        if !is_running_for(&known, worker_task) {
+        for (asked, got) in known {
+            self.settle_unusable((team, worker_task, worker), (asked, &got), (&path, &aside, &error))
+                .await?;
+        }
+        Ok(())
+    }
+
+    /// Settles the request `asked` of a file that cannot be used as a wrong result, when the bus has it running for the worker:
+    /// one that was answered already is not answered again.
+    async fn settle_unusable(
+        &mut self,
+        (team, worker_task, worker): (&TeamId, &TaskId, &AgentName),
+        (request, known): (RequestId, &DelegationRequest),
+        (path, aside, error): (&Path, &Path, &PendingError),
+    ) -> Result<(), OwnerError> {
+        if !is_running_for(known, worker_task, worker) {
             return Ok(());
         }
         let step = match self.parts.bus.helper_work(request).await {
@@ -294,9 +323,9 @@ impl Owner {
         };
         let pending = returned_for_damage(
             (team, worker_task, worker),
-            (request, &known),
+            (request, known),
             step,
-            damage_reason(&path, &aside, &error),
+            damage_reason(path, aside, error),
         );
         let task_dir = self.parts.store.home().task_dir(worker_task);
         // Kept first, so that an answer the bus cannot take now is tried again at the next look.
@@ -310,7 +339,7 @@ impl Owner {
     fn tell_unreadable_once(&mut self, error: &PendingError) {
         if self.unreadable_requests.insert(error.to_string()) {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 error = %error_chain(error),
                 "the file of a worker's request cannot be read: it is left as it is and the daemon goes on without it"
             );
@@ -334,6 +363,7 @@ impl Owner {
                     Gathered::Later => return Ok(()),
                     Gathered::Gone => {
                         tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
                             request = %pending.request,
                             "the bus has no such request any more: the result of the worker is dropped"
                         );
@@ -356,6 +386,15 @@ impl Owner {
                         checked: checked.clone(),
                         settlement,
                     }
+                }
+                Stage::Settled {
+                    settlement: Settlement::Again { reasons },
+                    ..
+                } => {
+                    if self.give_again(&pending, reasons).await? {
+                        self.drop_pending_once(task_dir, pending.request);
+                    }
+                    return Ok(());
                 }
                 Stage::Settled { checked, settlement } => {
                     if self.answer_requester(&pending, checked, settlement).await? {
@@ -387,7 +426,7 @@ impl Owner {
             Err(PendingError::Write { source, .. }) if source.kind() == std::io::ErrorKind::NotFound => None,
             Err(failure) => {
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     file = ?path,
                     error = %error_chain(&failure),
                     "the file of a worker's request cannot be set aside"
@@ -396,7 +435,7 @@ impl Owner {
             }
         };
         tracing::warn!(
-            event = LogEvent::RestartCorrected.as_str(),
+            event = LogEvent::WorkerRequestDamaged.as_str(),
             team = %pending.team,
             task = %pending.worker_task,
             file = ?path,
@@ -440,17 +479,19 @@ impl Owner {
     /// bus is asked again at the next stage.
     async fn still_the_workers(&self, pending: &Pending) -> bool {
         match self.parts.bus.helper_get(pending.request).await {
-            Ok(known) if is_running_for(&known, &pending.worker_task) => true,
+            Ok(known) if is_running_for(&known, &pending.worker_task, &pending.worker) => true,
             Ok(known) => {
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     request = %pending.request,
                     status = ?known.status,
                     "the bus does not have a request running for the worker whose file holds its result: the file is dropped"
                 );
                 false
             }
-            Err(error) if error.class() == Some(FailureClass::NotFound) => true, // The stage that reads the request drops its file.
+            // At the stage `Ended` the stage that reads the request drops its file; a result already checked is not brought
+            // over for a request the bus forgot.
+            Err(error) if error.class() == Some(FailureClass::NotFound) => matches!(pending.stage, Stage::Ended),
             Err(error) => {
                 tracing::warn!(
                     event = LogEvent::BusDown.as_str(),
@@ -466,12 +507,16 @@ impl Owner {
     /// Removes the file of `request` from `task_dir`, and says once, if it cannot, so that a look does not repeat it.
     fn drop_pending_once(&mut self, task_dir: &Path, request: RequestId) {
         let path = pending_path(task_dir, request);
+        // The try belongs to the file of the worker that is answered, not to the one the request goes from.
+        if !self.again.contains_key(&request) {
+            Self::drop_try(task_dir, request);
+        }
         if let Err(error) = std::fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
             && self.unreadable_requests.insert(format!("remove {}", path.display()))
         {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 path = ?path,
                 error = %error,
                 "the file of a settled request cannot be removed"
@@ -486,7 +531,7 @@ impl Owner {
             && error.kind() != std::io::ErrorKind::NotFound
         {
             tracing::warn!(
-                event = LogEvent::RestartCorrected.as_str(),
+                event = LogEvent::WorkerRequestDamaged.as_str(),
                 path = ?path,
                 error = %error,
                 "the file of a settled request cannot be removed"
@@ -665,22 +710,32 @@ impl Owner {
         Ok(())
     }
 
-    /// Decides what the checked result is worth and, when it is good, brings the worker's commit over.
+    /// Decides what the checked result is worth and, when it is good, brings the worker's commit over; a wrong one goes once
+    /// more to another worker, or, the second time, back to the requester.
     async fn settle_result(&self, pending: &Pending, checked: &Checked) -> Settlement {
         if checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()) {
             return Settlement::Report;
         }
         let limit = self.parts.settings.config.workers().seconds();
-        let facts = facts_of(checked, pending.run_seconds, limit);
+        let mut facts = facts_of(checked, pending.run_seconds, limit);
+        let tried = self.try_of(pending);
+        facts.try_number = tried.number;
+        facts.tries = self.parts.settings.config.workers().tries();
+        facts.elsewhere = self.elsewhere_of(pending);
         match decide(&facts) {
             Verdict::Accept if facts.scope == Scope::Facts => Settlement::Report,
-            Verdict::Accept if !checked.committed => Settlement::Returned {
-                reasons: vec!["the worker committed nothing, so there is nothing to bring over".to_owned()],
-            },
+            Verdict::Accept if !checked.committed => {
+                let nothing = vec!["the worker committed nothing, so there is nothing to bring over".to_owned()];
+                let again = tried.number <= 1
+                    && facts.tries > 1
+                    && matches!(facts.elsewhere, Elsewhere::Free | Elsewhere::SameProvider);
+                self.wrong_settlement(pending, nothing, again)
+            }
             Verdict::Accept => self.bring_over(pending, checked).await,
-            Verdict::GiveToAnother { wrong } | Verdict::Return { wrong } => Settlement::Returned {
-                reasons: reasons_of(checked, &wrong, limit),
-            },
+            Verdict::GiveToAnother { wrong } => {
+                self.wrong_settlement(pending, reasons_of(checked, &wrong, limit), true)
+            }
+            Verdict::Return { wrong } => self.wrong_settlement(pending, reasons_of(checked, &wrong, limit), false),
         }
     }
 
@@ -741,7 +796,7 @@ impl Owner {
             Err(error) => {
                 // The catalog's texts are checked by a test: this is a bug, and the requester is told what it can be told.
                 tracing::warn!(
-                    event = LogEvent::RestartCorrected.as_str(),
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
                     error = %error_chain(&error),
                     "the answer to a request cannot be worded"
                 );
@@ -762,6 +817,7 @@ impl Owner {
             }
         };
         tracing::info!(
+            event = LogEvent::RequestDelegated.as_str(),
             request = %pending.request,
             worker = %pending.worker,
             requester = %pending.requester,
@@ -794,6 +850,7 @@ impl Owner {
                 // What the bus refuses for good would be asked for ever: it is told and let go.
                 Err(error) if !is_transient(&error) => {
                     tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
                         request = %pending.request,
                         error = %error_chain(&error),
                         "the bus refuses the answer to a request for good: it is dropped"
@@ -848,7 +905,7 @@ impl Owner {
                     &files.join(", "),
                 )?,
             ),
-            Settlement::Returned { reasons } => (
+            Settlement::Returned { reasons } | Settlement::Again { reasons } => (
                 DelegationStatus::Failed,
                 crate::daemon::team::worker_step_returned(texts, pending.request, &step, reasons)?,
             ),
@@ -948,9 +1005,13 @@ fn returned_for_damage(
 
 /// Whether the bus has the request `known` still in the hands of the worker whose task is `worker_task`: only such a request
 /// is settled from a file; one that is answered, queued or another worker's is not the file's to settle.
-fn is_running_for(known: &DelegationRequest, worker_task: &TaskId) -> bool {
-    matches!(known.status, DelegationStatus::Running | DelegationStatus::Starting)
-        && known.helper_task.as_ref() == Some(worker_task)
+fn is_running_for(known: &DelegationRequest, worker_task: &TaskId, worker: &AgentName) -> bool {
+    // The bus names the worker at once, when the request is handed out, and the task only with the update that follows: until
+    // that lands the task may still be the earlier worker's. Whatever the bus names must be this worker; it must name one.
+    let hers = (known.helper_task.is_some() || known.worker.is_some())
+        && known.worker.as_ref().is_none_or(|name| name == worker)
+        && known.helper_task.as_ref().is_none_or(|task| task == worker_task);
+    matches!(known.status, DelegationStatus::Running | DelegationStatus::Starting) && hers
 }
 
 /// What a check in the background needs: it runs without the owner.
@@ -1001,7 +1062,7 @@ async fn run_request_check(job: RequestCheck) -> Found {
                     Ok(tail) => tail,
                     Err(error) => {
                         tracing::warn!(
-                            event = LogEvent::RestartCorrected.as_str(),
+                            event = LogEvent::WorkerRequestDamaged.as_str(),
                             path = ?path,
                             error = %error_chain(&error),
                             "the output of a request's check cannot be read: the requester is told without its end"

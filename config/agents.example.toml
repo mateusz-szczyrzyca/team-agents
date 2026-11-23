@@ -86,6 +86,12 @@ asleep_minutes = 5
 # until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.
 
 [limits]
+# Remove teams after this many minutes without a run or new commit; 0 disables removal.
+# Count from the later of last activity and current daemon startup; downtime never counts.
+# Queued work, free-investigator waits, human pause/stop, provider resets and external merges protect teams.
+idle_team_minutes = 120
+# Reserved for automatic replacement in the next part; this release only removes teams.
+idle_team_restarts = 1
 # Per-run turn budget for CLIs that support one (currently Claude Code); must be positive.
 max_turns = 300
 # Consecutive turn-limit continuations in the same session; 0 disables automatic continuation.
@@ -131,10 +137,11 @@ check_refuse = ["agent gate", "make gate"]
 # `seconds`) the request goes once more to a free worker of another CLI (of the same CLI when no other is free), and a
 # second wrong result returns the step to the requester. A request that names no path to write asks for facts only: its result goes to the requester as before,
 # its check is run all the same.
-#   tries     how many tries a request gets, its first try included; 1 never gives it to a second worker (default: 2)
+#   tries     how many tries a request gets, its first try included; 1 never gives it to a second worker; a request gets one
+#             second try at most, so a value above 2 behaves as 2 (default: 2)
 #   seconds   how long a worker's run may last; a run past it is a wrong result; 0 has no limit (default: 0)
-# The daemon applies `seconds` from the version that checks a worker's result; `tries` is applied with the second try of a
-# request, in the next version: until then a wrong result is returned to the requester at once.
+# The daemon applies both keys to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the
+# requester as failed at once, as before (its second try comes with a later version).
 
 [workers]
 tries = 2
@@ -169,6 +176,9 @@ replacements = 1
 mode = "auto"
 agents = []
 rejections = 5
+# A queued task waits this many seconds for its busy agent (one that runs another task at its limit of runs, see
+# [limits] runs_per_agent) before a free agent of `agents`, of the same or a higher place, takes it over. 0 never does.
+busy_after = 300
 
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that

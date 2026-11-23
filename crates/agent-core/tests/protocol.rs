@@ -62,6 +62,7 @@ mod protocol_lines {
                 Command::Say(_) => "say",
                 Command::Gate(_) => "gate",
                 Command::Subscribe(_) => "subscribe",
+                Command::Remove(_) => "remove",
             })
             .collect();
 

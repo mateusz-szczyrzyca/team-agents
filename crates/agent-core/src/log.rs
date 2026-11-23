@@ -137,9 +137,7 @@ pub enum LogEvent {
     QuestionsFileInvalid,
     /// An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`.
     ConfigurationNameMissing,
-    /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it; it also covers a
-    /// worker's request file that cannot be used (damaged, unreadable, a stage that cannot be written) and the answer to
-    /// such a request. A name of its own for those is planned for the part of the worker harness that settles a request twice.
+    /// A start or restart of the daemon found an interrupted run or a host fallback and corrected it.
     RestartCorrected,
     /// A snapshot of a task's worktree cannot be taken; the daemon goes on without it.
     SnapshotFailed,
@@ -159,6 +157,8 @@ pub enum LogEvent {
     HistoryRecordIncomplete,
     /// A team is started or closed.
     TeamChanged,
+    /// A team was removed, with its preserved bundle and released bytes.
+    TeamRemoved,
     /// A round is opened or closed.
     RoundChanged,
     /// An accepted delivery ended because its pull request was closed without merging.
@@ -210,6 +210,10 @@ pub enum LogEvent {
     TaskHandedOver,
     /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
     TaskWaitsForAgent,
+    /// What the harness keeps for a worker's request cannot be used: its file is damaged, unreadable or holds another
+    /// request than its name says, a stage cannot be written, or the file, the output of its check or the wording of its answer
+    /// fails; the request is settled as a wrong result, or its answer falls back, and the daemon goes on.
+    WorkerRequestDamaged,
 }
 
 impl Keyword for LogEvent {
@@ -250,12 +254,14 @@ impl LogEvent {
             | Self::GateDirtyTree
             | Self::QuestionsFileInvalid
             | Self::RestartCorrected
+            | Self::WorkerRequestDamaged
             | Self::SnapshotFailed
             | Self::SnapshotLarge
             | Self::RequestRefused
             | Self::DeliveryClosed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::TeamRemoved
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged

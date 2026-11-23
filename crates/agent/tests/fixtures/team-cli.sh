@@ -38,6 +38,9 @@
 #   commit          commits a file in the worktree, records no gate and ends with STATUS: DONE: the gate that was recorded
 #                   is of an older commit
 #   ask-here        writes questions-1.md in this task's directory, including on a resumed assignment
+#   ask-or-hold     asks like `ask-here` when the prompt says `Asks the human.`, and holds like `hold` for every other run
+#   work-or-hold    holds when the prompt says `Holds the agent`, otherwise does `work`
+#   sleep-or-hold   holds when the prompt says `Holds the agent`, otherwise ends with STATUS: SLEEPING
 #   ask             writes a questions file to the path the prompt names (the first `.../questions-N.md` in it) and ends
 #                   with STATUS: QUESTIONS
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
@@ -111,6 +114,16 @@ cp .fake-runs ".fake-prompt-$n" "$records_dir/"
 
 IFS=, read -r -a actions <<< "$scenario"
 action=${actions[$((n - 1))]:-${actions[${#actions[@]}-1]}}
+# Busy-exclusion scenarios choose existing actions so their behavior stays consistent with the original fixtures.
+if [[ $action == work-or-hold ]]; then
+  if grep -q 'Holds the agent' <<< "$prompt"; then action=hold; else action=work; fi
+fi
+if [[ $action == ask-or-hold ]]; then
+  if grep -q 'Asks the human' <<< "$prompt"; then action=ask-here; else action=hold; fi
+fi
+if [[ $action == sleep-or-hold ]]; then
+  if grep -q 'Holds the agent' <<< "$prompt"; then action=hold; else action=sleep; fi
+fi
 
 init() {
   printf '{"type":"system","subtype":"init","session_id":"%s","model":"fake-model"}\n' "$session"

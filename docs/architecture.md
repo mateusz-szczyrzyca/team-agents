@@ -147,6 +147,13 @@ engine relies on:
   (`claude-code`, `codex`, `antigravity`, `ide`). A server that is not in the request is not configured.
 - The error tail is the CLI's stderr followed by the lines of the stream that report an error: the classifier of run
   outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
+- A queued task that waits `[replacement] busy_after` seconds for its busy agent is handed over through the takeover path
+  (`decide/busy.rs` decides, `owner/takeover.rs` hands over). The moment its wait began is `waiting_since` in the state,
+  so a restart keeps the time waited. The renewal also keeps `busy_notice_owed` for notices to the whole team,
+  including every affected item. The outbox retries transient bus failures and rebuilds pending notices after a
+  daemon restart. Permanent bus refusals and rendering failures are logged and drop the affected notice; the
+  obligation clears when every notice has either been accepted or dropped. A review protects a
+  busy task only when that task's recorded rounds name the item being reviewed, not when another member's item is under review.
 - An agent's runs are limited by `[limits] runs_per_agent` and `runs_per_worker` (default `1`, `0` no limit): a queued
   task whose agent holds its limit over all teams waits, queued, for that run. The decision is
   `decide/slot.rs`; the daemon asks it in `start_queued`, and `agent status` reads the run from the team summaries
@@ -184,7 +191,7 @@ the network. The order of the checks and the rules each follows are in the docum
 | `agent_runtime::run` | `RunEngine::run`: one run of a model CLI, from its files to its classified end; touches no state (`run_held`: the same with a `WatchdogHold`, see "The gate"). The run's environment has `AGENTS_HOME`. `run::compose` makes its prompt: context, role, the rules of the tier, brief, item, checkpoint — or, for a resumed session, what interrupted it |
 | `agent_core::decide::worker_result::{decide, worker_for_second_try}` | `decide`: what the harness does with a worker's result — accept it, give the request once more to a free worker of another CLI (of the same CLI when no other is free), or return the step to the requester with every reason; `worker_for_second_try`: that worker (part 1.1a of the worker harness; the daemon calls it when the result of a run of a worker is checked) |
 | `agent_runtime::git::{Git::changed_in, Git::outside, Git::bring_over}` | a worker's commit against the requester's worktree (part 1.1b of the worker harness; the daemon calls it from part 1.1c): `changed_in` the files a commit changes, a rename as both paths; `outside` those the request's `files` do not name; `bring_over` takes the snapshot of the requester's worktree, settles the merge of the commit into the requester's head from the objects alone (the worktree is not read, so a conflict cannot touch it), and only a merge that applies is written — `read-tree -m -u` writes just the files it changes, then the branch moves to the merge commit. A conflict (also a file where the other side has a directory) returns the worker's commit and the files in conflict and writes nothing; files the requester changed uncommitted, or any file, ignored or not, or directory in the way of a path the merge adds, are returned as `InTheWay` with the worker's commit and nothing is written; a branch that moved since the merge was made is refused (`HeadMoved`), the requester's commit stays, and the files agree with the branch where it is now (read again until they do); a clean tracked file that the merge replaces by a directory, or the other way round (a directory only when it holds nothing untracked or ignored), is the merge's to clear; the trees and the snapshot are read with a 64 MiB output limit; a name that is not UTF-8 is refused. `changed_in` counts the files since the merge base with the requester's head, so a worker's earlier commits and merge commits are seen |
-| `agent_runtime::worker_request`, `agent::daemon::owner::worker_result` | what becomes of the result of a worker whose run ended `STATUS: DONE` (part 1.1c of the worker harness): `worker_request` is the file of the request in the worker's task directory (`Pending`, its `Stage`s `Ended` → `Checked` → `Settled`, written through a temporary file and read back oldest first); `worker_result` is the owner's side: `after_run` keeps the request, and the next look at the team settles it — it reads what the request asks from the bus (`helper_work`), runs the check in the worker's worktree in the background, in a `JoinSet` beside the plan's checks (`plan::check::execute_request_check`; the owner goes on, and the end of the check writes the stage `Checked` and looks at the team again), refuses a worktree that holds a file the request names uncommitted, names the files the worker changed outside the request's `files` (`Git::changed_between` from the commit the worker was at when the request was given to it), asks `decide::worker_result::decide`, brings a good commit over with `Git::bring_over_since` (merge base: the commit the worker was at when the request was given to it) (a commit already on the branch is found again with `Git::brought_over`), records the step `confirmed` in the history, and sends the answer and the notice itself, retrying a transient bus failure at the next look; a file that cannot be read or written, or a request the bus no longer has, is logged or dropped and never fails the owner (`read_pending_each`); a file that cannot be used is set aside (`set_aside`) and its request is settled as a wrong result from what the bus knows of it (`helper_get`), the fault of that request only. In this version a wrong result is returned at once; the second try elsewhere is the next part |
+| `agent_runtime::worker_request`, `agent::daemon::owner::worker_result` | what becomes of the result of a worker whose run ended `STATUS: DONE` (part 1.1c of the worker harness): `worker_request` is the file of the request in the worker's task directory (`Pending`, its `Stage`s `Ended` → `Checked` → `Settled`, written through a temporary file and read back oldest first); `worker_result` is the owner's side: `after_run` keeps the request, and the next look at the team settles it — it reads what the request asks from the bus (`helper_work`), runs the check in the worker's worktree in the background, in a `JoinSet` beside the plan's checks (`plan::check::execute_request_check`; the owner goes on, and the end of the check writes the stage `Checked` and looks at the team again), refuses a worktree that holds a file the request names uncommitted, names the files the worker changed outside the request's `files` (`Git::changed_between` from the commit the worker was at when the request was given to it), asks `decide::worker_result::decide`, brings a good commit over with `Git::bring_over_since` (merge base: the commit the worker was at when the request was given to it) (a commit already on the branch is found again with `Git::brought_over`), records the step `confirmed` in the history, and sends the answer and the notice itself, retrying a transient bus failure at the next look; a file that cannot be read or written, or a request the bus no longer has, is logged or dropped and never fails the owner (`read_pending_each`); a file that cannot be used is set aside (`set_aside`) and its request is settled as a wrong result from what the bus knows of it (`helper_get`), the fault of that request only. A wrong result of a first try is requeued (`Settlement::Again`, `worker_result::again`: `give_again` puts the request back in the bus's queue and remembers it in `Owner::again`; `serve_requests` gives it first, through `second_try_pick` and `worker_for_second_try`, to a free worker of another CLI, writes `worker-try-<n>.json` (`Try`) in that worker's task directory and tells the requester); a second wrong result is returned with the reasons of both tries. A worker with a file of a request not yet answered is busy (`has_pending_except`). A run that ends otherwise than `STATUS: DONE` is still answered at once |
 | `agent_runtime::{settings, harness_prompts, autopilot_prompts, checks_prompts, text_file, clock}` | `agents.toml` and `secrets.toml` read from the home; the second prompt catalog (`HarnessPrompt`, `prompts/harness/run/`: the run prompts and the notifications) and the fourth and fifth (`AutopilotPrompts`, `ChecksPrompts`); a bounded text file; the system clock |
 | `agent::daemon` | `owner` (the state), `owner/plan` (the plan of a task at a run's end and start, the background command checks of done steps and their recovery across restarts, the question about it and its answer, the plan kept out of the delivery), `server` (the socket), `notifier`, `opener`, `settle` (what a run's end does), `recovery` (on start), `team` (the team's life as decisions), `owner/teams` (what carries them out), `questions` (the questions file) and `control` (what a control does to a task), with `owner/answers` and `owner/controls`, and the autopilot: `pr`, `review`, `merge` and `checks` (its decisions) with `owner/rounds` (what carries them out) |
 | `agent_runtime::history`, `agent_core::history`, `agent::daemon::{history, owner/history}` | the history: a database of what happened and what every run did; see "The history" |
@@ -352,6 +359,45 @@ connection; a subscriber that falls 1024 events behind is let go (it subscribes 
 `agent.sock`; `tasks/<task>/activity.jsonl`, `tasks/<task>/runs/<run>/` (the output of a run and the files its CLI is
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<number>.md`;
 `tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `tasks/<reviewer task>/review-pr<N>-pass<K>.md` (the reports of the reviews, below); `worktrees/<repo>/<task>/`; `notifications/`.
+
+### Automatic idle removal
+
+At startup and once per minute, `owner/idle` observes each team's saved runs, local task branches and worktree
+HEADs, including reviewer work. `decide::idle` is a pure timestamp/interval decision with explicit holds: running
+work, queued tasks, human pause/stop, provider reset waits and accepted external delivery claims. Queued
+crew and reviewer tasks remain protected until the scheduler starts them, including after recovery. Open
+rounds awaiting a free investigator are protected through the existing round-obligation projection even
+before a reviewer task exists. Questions do not hold the team.
+`idle_team_minutes = 0` disables the scan. Plain document/art directories need no Git inspection.
+
+The optional persisted `idle_watch` stores the last activity and observed tips. Its first observation uses saved
+activity and commit dates. The owner separately captures its startup time: the pure decision receives the later
+of startup and recorded activity, excluding downtime without rewriting the persisted observation. An old team
+gets a full interval after restart. Later new or changed tips refresh the interval; a future activity timestamp
+never counts as idle. A refused removal is retained in the watch until new work occurs.
+
+Before removal, a required `decision_taken` history entry captures activity, items, round phases, split plans,
+next parts and recovery branches. An enabled history writer must acknowledge the transaction; unavailable history
+prevents deletion. Explicitly disabled history opts out. The existing removal path then bundles unmerged work,
+closes open pull requests, saves state and cleans up, with one removal notification. Refusal preserves the team
+and sends one catalog notice, suppressed across restarts. The refusal marker only deduplicates notifications:
+eligible teams are retried at most once per minute, with a fresh history acknowledgement and the same safeguards.
+The owner keeps the last attempt time in memory per team and prunes entries for removed teams. After restart,
+the normal startup idle interval still applies, and persisted refusals do not prevent retries. The `w6gn` shape (a merged split part followed by an
+unstarted part with no round) is covered by a fake-CLI daemon test.
+
+The daemon still removes teams only. The recovery foundation in `agent-core` has no owner call site:
+`decide::restart` checks a bounded allowance, `Team::recovery_team` projects merged progress into a fresh crew,
+and `State::prepare_recovery` reserves stable identities and an ordinal. A saved intent survives source removal;
+`State::install_recovery` inserts its exact planned team once and records installation in the same state change.
+An installed intent never resurrects a replacement that was subsequently removed. The optional ordered ledger
+rejects forged projections, identity reuse and inconsistent restart lineages when loaded.
+
+These are state operations, not filesystem or bus transactions. Activation must save the reservation before
+removal or external creation, reconcile those effects using the reserved identities, then save installation
+before launching runs. Provider selection, recovery briefings, replacement/exhaustion events and notifications,
+and owner enforcement of `idle_team_restarts` are a separate task. It must test interruptions at each persistence
+and external-operation boundary. See the [recovery state contract](state.md#recovery-foundation).
 
 ### Teams (`agent run` and the team's life)
 

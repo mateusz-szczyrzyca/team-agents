@@ -28,6 +28,36 @@ runs but resumes only sessions after this boundary and counts only those runs fo
 Older states omit the field; they load without migration and acquire a boundary on their next handover. The
 pre-renewal state fixture and handover reload tests exercise both formats.
 
+### Recovery foundation
+
+Version 0.76.0 adds optional top-level `recoveries` to schema 14. It is an ordered list of reservations:
+`source` (the old team snapshot), `replacement` (the exact fresh team), `ordinal` (a positive restart count),
+and `phase` (`pending` or `installed`). Absence means no prior reservations; an empty list is omitted on save.
+The [pre-recovery fixture](../crates/agent-core/src/state/recovery/legacy.json) proves that an older documentation
+team loads with an unused allowance. All existing state migrations remain supported. Older binaries reject a
+nonempty ledger's unknown field; retain a backup before using a caller that writes recovery records. The daemon
+in this release never creates a reservation, so ordinary daemon saves omit the new field.
+
+Preparation fixes the replacement team/task identities and creation time before any external effects. Retrying
+preparation returns the original plan even if the proposed destination or configured budget changes. The ordinal
+starts at one and follows an installed predecessor; it survives removal of either team. A zero allowance,
+a used-up allowance or an overflowing count creates no reservation. Source snapshots and plans remain in the
+ledger so retries cannot reuse old identities or reset the budget. There is no ledger pruning in this release.
+
+The replacement retains its repository, task list, merge policy, completed items, approved splits and merged
+part rounds. Unmerged work returns to pending with no open round. A merged whole item whose old round was still
+open keeps that evidence in a closed historical round. New crew identities keep their selected agents but start
+with fresh sessions; old reviews, questions and runs remain only in the source snapshot. The loader validates
+each replacement against that projection, plus fresh identities and ordered, installed restart predecessors.
+
+Installation requires the source to be absent and the replacement identities to be free. It inserts the exact
+saved team and changes the intent to `installed` together; repeated calls leave current progress untouched.
+Once installed, an intent cannot recreate a replacement even after that replacement is removed. Preparation and
+installation failures leave state unchanged. Callers must persist preparation before cleanup or external setup,
+reconcile those operations after interruption, and persist installation before launching runs. This API performs
+no disk, GitHub, worktree, bus or notification operations. The daemon remains removal-only until a separate
+activation task wires those operations and tests their crash boundaries.
+
 ### Approved split definitions
 
 Schema 13 adds optional per-team `splits`, a list of whole validated plans in approval order. Each plan has
@@ -246,6 +276,17 @@ State
 
 #### `Team`
 
+`idle_watch` is optional in schema 14. When present it holds `last_activity` (a timestamp), `heads` (local branch
+and worktree keys mapped to commit IDs), and nullable `refusal` (the already reported removal failure). Old
+states omit it and still load. Their first scan reconstructs activity from team creation, run starts/ends and
+commit dates; subsequent new or changed tips count at observation time even when the commit has an old date.
+New activity clears the refusal marker. A restart preserves activity and notification suppression, but removal
+counts idle time from the later of recorded activity and current daemon startup. Downtime does not count; the
+startup lower bound stays in memory and is not written as activity.
+The pre-change fixture is `crates/agent-core/src/state/team/idle/legacy.json`. Older binaries reject the added
+field; keep a pre-upgrade state backup if a downgrade is needed.
+
+
 | Field | Type | Meaning |
 |---|---|---|
 | `id` | `team-YYYYMMDD-HHMMSS-xxxx` | generated from the clock and the random source |
@@ -285,7 +326,8 @@ crew, not twice a reviewer, and its task is not the crew's. Reading checks the s
 | `questions` | oldest first; absent = none. Numbered 1, 2, 3, …; only the last may be open; an answer is at or after its question |
 | `plan` | what the task keeps of its plan ([`plan.md`](plan.md#the-daemon-and-the-plan)); **optional**: absent on a member written before 0.35.0, whose runs are never sent back for their plan, and present on every task made since (`plan_judging`: optional boolean on `Member`, `true` on tasks created under step judging and omitted on tasks created between 0.35.0 and `#163`, which are never sent back for a step check mismatch). `sent_back` (times its runs went back for the plan), `granted` (send-backs the human added), `stage` (`"open"`, `{"asked": {"question": N}}` while the human's questions number N about the plan wait, `"released"` once the human said to go on as it is), and, absent when none: `pending` (the reason of a send-back the next run is told: `{"kind": "missing"}`, `{"kind": "unreadable", "line": N, "detail": "…"}`, `{"kind": "unfinished", "steps": ["1.2"]}`, `{"kind": "lost_step", "steps": ["1.3"]}`, `{"kind": "mismatch", "step": "1.1", "title": "…", "check": "…", "reason": "…", "tail": "…"}`, `{"kind": "fault_and_mismatch", "fault": <PlanFault>, "mismatch": <StepMismatch>}`), `refused_gate` (list of `["<step>", "<command>"]` notices waiting to be told once; also kept as an optional `refused_gate` field on `Member` itself when `plan` is absent), and `unread_answers` (the number of the answered questions about the plan the next run is given). The schema's number does not change: an older state loads, every member without a `plan`; 0.34.0 and older refuse a state with the field, and 0.65.0 and older refuse a state with `fault_and_mismatch`, `refused_gate` or `plan_judging` (a member's fields and `PlanReason` variants are strict), so going back needs the state of before the upgrade |
 | `running_check` | the finished run whose command checks or plan settlement are in progress ([`plan.md`](plan.md#judging-done-steps)); **optional**, absent when none is: `{"run": "run-…", "end": <RunEnd>, "pause": <Pause>, "made_progress": true|false, "final_message": "…", "ended_at": <time>}` (`pause`, `final_message` and `ended_at` omitted when absent), kept on the member itself so both current and legacy tasks settle the finished run once across a restart with its original end time and progress without re-running the CLI |
-| `renewals` | how the ladder started the task in a new session ([`[replacement]`](configuration.md#replacement)); **optional**: absent until it did, and on every member of a state written before 0.38.0. `used` (how many new sessions), `at` (when the last one was decided), `reason` (`"no_status"`, `"hang"`, `"turn_limit"` or — since the retry of a run that reported `STATUS: FAILED` without a tool call — `"no_tool_call"`), `after_runs` (how many runs the task had then: the runs after them are the new session's, and no session before them is resumed). A hand-over to another agent, and the question to the human after the last step, mark the same boundary without raising `used`. `asked` (**optional**, absent until then) is the number of the questions the human was asked what becomes of the task after the last step of the ladder; it is asked once. `lead_owed` (**optional**, absent unless owed) is when a member's task stopped with its work given to its lead, until the bus took the notice to the lead: a daemon that restarts with it tells the lead then. A renewal before the task's first run, or counting more runs than the task has, is refused. The schema's number does not change: an older state loads; 0.37.0 and older refuse a state with the field, and 0.38.0 to 0.43.0 one with `asked` or `lead_owed` (the fields of `renewals` are strict), so going back needs the state of before the upgrade |
+| `renewals` | how the ladder started the task in a new session ([`[replacement]`](configuration.md#replacement)); **optional**: absent until it did, and on every member of a state written before 0.38.0. `used` (how many new sessions), `at` (when the last one was decided), `reason` (`"no_status"`, `"hang"`, `"turn_limit"`, `"busy"` or `"no_tool_call"`), `after_runs` (how many runs the task had then: the runs after them are the new session's, and no session before them is resumed). A hand-over to another agent, and the question to the human after the last step, mark the same boundary without raising `used`. `asked` (**optional**, absent until then) is the number of the questions the human was asked what becomes of the task after the last step of the ladder; it is asked once. `lead_owed` (**optional**, absent unless owed) is when a member's task stopped with its work given to its lead, until the bus took the notice to the lead: a daemon that restarts with it tells the lead then. `busy_notice_owed` (**optional**, absent unless owed) marks that a busy hand-over's team notice was not accepted for every affected item: the whole team is sent item, branch, task and both holders through the bus outbox, after recovery and after transient delivery failures. A permanent bus refusal or a rendering failure is logged and drops that notice; the obligation is cleared when all notices have either succeeded or been dropped. `busy_notice_owed` is retained independently of a newer hand-over. A renewal before the task's first run, or counting more runs than the task has, is refused. The one exception is a busy hand-over to another agent before the task's first run: the new holder still needs the briefing, so the boundary is recorded with `after_runs` zero and a new session waits. The schema's number does not change: an older state loads; 0.37.0 and older refuse a state with the field, and 0.38.0 to 0.43.0 one with `asked` or `lead_owed` (the fields of `renewals` are strict), so going back needs the state of before the upgrade |
+| `waiting_since` | **optional**: the moment a queued task began to wait for its agent, which runs another task at its limit (`[limits] runs_per_agent`). Absent when the task does not wait, and from a state written before waits existed; a run of the task, a hand-over, pausing or stopping end it. Resuming starts a fresh wait interval. The schema's number does not change: an older state loads; a version that does not know the field refuses a state that has it |
 | `past_holders` | the agents that held the task before the one that holds it now, oldest first; **optional**: absent until it was handed over, and on every member of a state written before hand-overs existed. Each entry is `{"agent": <participant>, "until": <time>}`: the agent the task was taken from, and when it was given to the next one. The agent that holds it now stays in `agent`. The schema's number does not change: an older state loads; a version that does not know the field refuses a state that has it |
 
 Publication escalation may move a `waiting` or `failed` task directly to `questions`. It creates no run and
@@ -465,6 +507,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
   a `clean` tree is a pass of `head`. The previous record, in the same format, is retained in optional
   `tasks/<task>/gate-previous.json` before replacing the latest record. This lets descriptions disclose a pass
   after a failure at the same commit. An older task directory without it reads as before.
+- **The try of a request** — optional `tasks/<worker task>/worker-try-<n>.json`, `{"number": 2, "earlier": ["why the first result did not serve"]}`, written when a request is given to a worker for the second time and removed when the request is answered; a request without it is on its first try. An unknown field is refused. The settlement `again` of a request's file (`{"settled": "again", "reasons": [...]}`) keeps the first worker's file until the bus has the request with another worker.
 - **The request of a worker whose run has ended** — optional `tasks/<worker task>/worker-request-<n>.json`, written by the
   daemon when a worker's run ends `STATUS: DONE` and replaced, through a temporary file, after each stage of settling its
   result: `{"request": n, "team", "requester", "requester_task", "worker", "worker_task", "summary", "run_seconds", "base",
@@ -473,7 +516,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
   with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons). The daemon removes the
   file when the requester is told. A daemon that starts finds the files of the team's workers and goes on from their
   stages; an unknown field is refused, and a file that is refused, cut short or cannot be read is set aside as
-  `worker-request-<n>.json.damaged` (kept, never read again), logged (`restart_corrected`, with its name) and its request is
+  `worker-request-<n>.json.damaged` (kept, never read again), logged (`worker_request_damaged`, with its name) and its request is
   answered as a wrong result, while the other files are read. `base` is the commit the worker's worktree was at when the request was given to it. A task directory without such files reads as before.
 - **Lead contribution to the PR description** — optional `tasks/<lead>/description.md`, outside the repository,
   read as UTF-8 with a 1 MiB limit. The harness combines it with its own header, measured Size, recorded Gate
@@ -559,6 +602,7 @@ of a task (`answer`, `question_asked`, `question_answered`) to `number`.
 | `answer` | `task`, `number`, `answers` (1–256 × `{question, verdict}`, none for a question twice) | `applied` |
 | `stop`, `pause`, `unpause`, `resume` | `target` | `applied` |
 | `say` | `target`, `text` (not blank, at most 64 KiB, no NUL) | `applied` |
+| `remove` | `team`, `force?` (absent means false) | `removed` (`team`, `stopped`, `tasks`, `bundle?`, `bundled`, `branches`, `closed_pull_requests`, `dirty_worktrees`, `freed_bytes`, `left_behind`) |
 | `gate` | `task` | `gate_recorded` |
 | `subscribe` | `team?` | `subscribed`, then events |
 
@@ -566,6 +610,12 @@ A `target` is `{"team": "team-…"}`, `{"task": "task-…"}` or `{"round": "roun
 `resume`, `say`) take a team or a task and refuse a round with `invalid`. A `verdict` is a string: `ok` (any case) accepts the
 recommendation, any other text is the human's own answer. The daemon checks `answers` against the questions file of the questions
 with that `number` (every question answered, `ok` only where there is a recommendation).
+
+The `remove` command adds no persisted team fields. It saves state without the team's tasks, rounds and wake-up
+budgets before deleting local files. A failed save leaves the in-memory team and local files intact. Reloading the
+saved state cannot recreate a removed team; its history remains in `history.db`. The reply's `dirty_worktrees`
+names tracked changes regardless of cleanup success; `left_behind` reports cleanup failures and the bus records
+not released by this command. `freed_bytes` counts only successfully removed directories.
 
 ### What the daemon serves
 

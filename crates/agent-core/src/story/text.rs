@@ -16,9 +16,10 @@ use crate::history::{
     RoundSubject, RunChanges, RunEndRecord, RunSession, RunStart, RunWhy, SequencedRecord, Step, TeamStart,
 };
 use crate::ids::{AgentName, InvestigatorName, RoundId, RunId, TaskId, TeamId};
+use crate::kinds::Role;
 use crate::local_time::Zone;
 use crate::protocol::{Client, ControlAction, Target};
-use crate::state::{AnsweredVia, CommitId, RunEnd, Timestamp};
+use crate::state::{AnsweredVia, CommitId, PrNumber, RunEnd, Timestamp};
 
 use super::{PREVIEW_LINES, PromptView, Selection, StepView, StoryOptions};
 
@@ -399,6 +400,7 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
             items.push(Item::Event(stored, event));
         }
     }
+    order_review_runs(&mut items, &runs, records);
     for item in items {
         match item {
             Item::Run(at) => {
@@ -407,6 +409,64 @@ fn blocks(page: &mut Page, records: &[&SequencedRecord], options: StoryOptions) 
                 }
             }
             Item::Event(stored, event) => event_block(page, stored, event),
+        }
+    }
+}
+
+/// The review pass whose adjacent runs may share a presentation order.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct ReviewGroup<'a> {
+    /// Team owning the review, since pull request numbers are repository-local.
+    team: &'a TeamId,
+    /// Pull request being reviewed.
+    pr: PrNumber,
+    /// Zero-based pass, as stored in both requests and run starts.
+    pass: u32,
+}
+
+/// A reviewer run's group and task; other entries are ordering boundaries.
+fn review_run<'a>(item: &Item<'a>, runs: &[RunBlock<'a>]) -> Option<(ReviewGroup<'a>, &'a TaskId)> {
+    let Item::Run(index) = item else { return None };
+    let (_, start) = runs.get(*index)?.start?;
+    if start.role != Role::Reviewer {
+        return None;
+    }
+    let RunWhy::Review { pr, pass } = start.why else {
+        return None;
+    };
+    Some((
+        ReviewGroup {
+            team: &start.team,
+            pr,
+            pass,
+        },
+        &start.task,
+    ))
+}
+
+/// Orders only complete, uninterrupted review groups by their first recorded requests.
+/// Missing requests keep the entire group's chronology; a stable sort keeps repeated runs in order.
+fn order_review_runs<'a>(items: &mut [Item<'a>], runs: &[RunBlock<'a>], records: &[&'a SequencedRecord]) {
+    let mut requested = HashMap::new();
+    for (order, stored) in records.iter().enumerate() {
+        if let Record::Event(event) = &stored.record
+            && let HistoryEvent::ReviewAsked { pr, pass, task, .. } = &event.event
+        {
+            let group = ReviewGroup {
+                team: &event.team,
+                pr: *pr,
+                pass: *pass,
+            };
+            requested.entry((group, task)).or_insert(order);
+        }
+    }
+    for group in items.chunk_by_mut(|left, right| match (review_run(left, runs), review_run(right, runs)) {
+        (Some((left, _)), Some((right, _))) => left == right,
+        _ => false,
+    }) {
+        let order = |item: &Item<'a>| review_run(item, runs).and_then(|key| requested.get(&key).copied());
+        if group.iter().all(|item| order(item).is_some()) {
+            group.sort_by_key(order);
         }
     }
 }

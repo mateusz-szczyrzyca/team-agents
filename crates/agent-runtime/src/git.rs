@@ -26,6 +26,8 @@ use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
+mod activity;
+pub use activity::CommitTimeError;
 mod base;
 mod bring_over;
 mod changes;
@@ -180,6 +182,12 @@ impl fmt::Display for Revision {
 /// What git was asked to do, for an error message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub enum GitOperation {
+    /// `git bundle create`.
+    #[strum(serialize = "bundle create")]
+    BundleCreate,
+    /// `git bundle verify`.
+    #[strum(serialize = "bundle verify")]
+    BundleVerify,
     /// `git worktree add`.
     #[strum(serialize = "worktree add")]
     WorktreeAdd,
@@ -747,6 +755,34 @@ impl Git {
         Ok(true)
     }
 
+    /// Lists every local branch of this repository, in the order git prints them.
+    ///
+    /// # Errors
+    /// [`GitError::NotABranch`] when git printed a name that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output; [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn local_branches(&self) -> Result<Vec<BranchName>, GitError> {
+        let operation = GitOperation::ForEachRef;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("for-each-ref"),
+                    arg("--format=%(refname:short)"),
+                    arg("refs/heads/"),
+                ],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        printed
+            .lines()
+            .map(|name| {
+                name.parse()
+                    .map_err(|source| GitError::NotABranch { operation, source })
+            })
+            .collect()
+    }
+
     /// Lists all local branches currently checked out in any worktree of this repository.
     ///
     /// # Errors
@@ -795,6 +831,74 @@ impl Git {
         // reviewed it.
         self.forget(&Revision::Published(branch.clone())).await?;
         self.forget(&Revision::Reviewed(branch.clone())).await
+    }
+
+    /// Writes the commits of `branches` into one bundle file at `file`, so that they can be fetched from it later.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses, for example a branch that does not exist; [`GitError::Run`].
+    pub async fn bundle_create(&self, file: &AbsolutePath, branches: &[BranchName]) -> Result<(), GitError> {
+        let refs: Vec<String> = branches
+            .iter()
+            .map(|branch| format!("refs/heads/{}", branch.as_str()))
+            .collect();
+        self.bundle_refs(file, &refs).await
+    }
+
+    /// Writes the commits that the full reference names in `refs` point at into one bundle file at `file`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses, for example a reference that does not exist; [`GitError::Run`].
+    pub async fn bundle_refs(&self, file: &AbsolutePath, refs: &[String]) -> Result<(), GitError> {
+        let file = file.as_path().as_os_str();
+        let mut args: Vec<&OsStr> = vec![arg("bundle"), arg("create"), file];
+        args.extend(refs.iter().map(|reference| arg(reference)));
+        self.run_ok(GitOperation::BundleCreate, Reach::Local, &args)
+            .await
+            .map(drop)
+    }
+
+    /// Checks that the bundle at `file` is whole and can be fetched from: git verifies its objects and its prerequisites.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git says the bundle is not valid; [`GitError::Run`].
+    pub async fn bundle_verify(&self, file: &AbsolutePath) -> Result<(), GitError> {
+        let file = file.as_path().as_os_str();
+        self.run_ok(
+            GitOperation::BundleVerify,
+            Reach::Local,
+            &[arg("bundle"), arg("verify"), file],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Makes the full reference `name` point at `commit`; the removal keeps a commit that no branch holds this way.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses the name; [`GitError::Run`].
+    pub async fn set_ref(&self, name: &str, commit: &CommitId) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg(name), arg(commit.as_str())],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Removes the full reference `name`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses; [`GitError::Run`].
+    pub async fn delete_ref(&self, name: &str) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg("-d"), arg(name)],
+        )
+        .await
+        .map(drop)
     }
 
     /// Adds a worktree at `path` with `branch` out.

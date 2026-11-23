@@ -133,6 +133,11 @@ else is read. Its parts, in the order of time (records with the same time keep t
    review pass with the reviewers' runs, each verdict and report whole; every fix pass with the findings it sent the team; the
    questions asked and the answers; the notifications; the controls; the end of the round.
 
+Text has one ordering exception: an uninterrupted group of reviewer run blocks for the same team, pull request and
+review pass follows the order of its first recorded review requests. Repeated runs of a reviewer task retain their
+relative order. If any request is missing, the whole group keeps its original order. Events stay in place, each run keeps
+all its timestamps and contents, and `--json` keeps chronological record order.
+
 A team's story is the stories of its rounds, in the order of their records, followed by a `Team events` section when the team
 has records that belong to no single round (such as a coordinator run started while more than one round is open, a team-wide
 control or notification, or `team_ended`). Because `team_ended` is linked to every round of its team, in a team of one or
@@ -226,6 +231,20 @@ tick while a team waits. Instead of writing thousands of identical rows:
   regardless of the order in which concurrent producers enqueue their events.
 - `error`, `info`, and `debug` rows never coalesce (`count` is always `1` and `first_at == at`).
 
+### Automatic idle removal records
+
+Before attempting automatic removal, the daemon writes a required `decision_taken` entry directly to enabled
+history, independently of `[log] level`. Its fields contain `decision = "idle_removal"`, `outcome = "attempt"`,
+`reason`, `last_activity`, `items`, `rounds`, `splits`, `next_parts` and `branches`. The timestamp and team scope
+identify the decision even when no round is open. A refusal records `outcome = "refused"` when history is available;
+the retained state and one notification also name the refusal. An unavailable enabled history prevents deletion.
+Retries occur at most once per minute while the team remains eligible, recording a fresh attempt before removal.
+The persisted refusal suppresses duplicate refusal records and notifications, including after restart.
+
+Successful removal uses the existing `team_removed` event and notification, with the idle reason, bundle path,
+freed bytes and cleanup leftovers. Teams protected by activity or a hold produce no idle decision record. No `team_restarted` event is emitted
+in this removal-only release. Explicitly disabled history omits the required snapshot.
+
 ### Decisions and outside calls (`debug`)
 
 At `level = "debug"`:
@@ -304,7 +323,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `state_save_failed` | `error` | The daemon's state file cannot be saved. |
 | `questions_file_invalid` | `warn` | A questions file is missing or not valid, or cannot be prepared, watched or opened. |
 | `configuration_name_missing` | `error` | An agent, investigator, or repository named in the state or a request is no longer in `agents.toml`. |
-| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it; also a problem with a worker's request: a file that cannot be used (cut short, an unknown field, another request than its name says, unreadable, or a stage that cannot be written), set aside as `<name>.damaged` while its request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the removal of a file, the output of a check or the wording of an answer that fails. A name of its own for these comes with the next part of the worker harness. |
+| `restart_corrected` | `warn` | A start or restart of the daemon found an interrupted run or a host fallback and corrected it. |
 | `snapshot_failed` | `warn` | A snapshot of a task's worktree cannot be taken; the daemon goes on without it. |
 | `snapshot_large` | `warn` | A snapshot of a task's worktree is bigger than `[snapshot] warn_mb`; it is kept, and its size is logged. |
 | `request_refused` | `warn` | A client connection, subscription or request cannot be accepted or is refused; also a `SPLIT:` line of a coordinator that the daemon refuses, with `team`, `task`, `item`, `refused` (how many times in a row), `told` and the `reason`. |
@@ -314,6 +333,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `notification_failed` | `error` | A notification for the human cannot be made, timed, queued or delivered. |
 | `history_record_incomplete` | `warn` | A record of the history cannot be made as it should: it is left out, counted as lost, or made with a fallback (such as a run's reason recorded as a continuation). Plan snapshot recovery also uses this event when retained judgements or plan versions cannot be read, with the task and error cause chain; check output is never logged whole. |
 | `team_changed` | `info` | A team is started or closed, or enters a capability wait (`kind=tier_wait`, `item`, `required_tier`). Each retained wait is logged once, including across restarts. |
+| `team_removed` | `info` | A team was removed. Fields: `team`, `reason`, `bundle` (`none` when absent), `freed_bytes`, `tasks`, `bundled`, and `left_behind` counts. |
 | `round_changed` | `info` | A round is opened or closed. Checked delivery changes carry `change=delivery_accepted` or `delivery_merged` at `info`, and `delivery_refused` or `delivery_poll_failed` as a `warn` record of the same event. Records name `team`, the known `round` and `pr`, and an `error` cause chain for failed checks or observations. |
 | `delivery_closed` | `warn` | An accepted delivery PR was observed closed without merging; the claim ends and the item returns to its member. Fields: `team`, `round`, `pr`. |
 | `item_phase_changed` | `info` | An item's phase changes. |
@@ -323,7 +343,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `daemon_started` | `info` | The daemon has opened its state and its history and serves its socket, with `home`. |
 | `daemon_stop_requested` | `info` | A signal asks the daemon to stop, with `signal` (`SIGTERM` or `SIGINT`). |
 | `daemon_stopped` | `info` | Everything of the daemon but its history has ended, with `outcome`: the last record of a daemon that ended; its absence after a `daemon_started` means the daemon was killed. |
-| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`. |
+| `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`; also the result of a worker is settled (`request`, `worker`, `requester`, `step`, `outcome`, `run_seconds`). |
 | `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
 | `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
 | `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`; `asked_human` also says in `commits` how many findings about commits the question names. Publication uses `publish_failed_lead` when the configured retry limit releases the lead once, and `publish_failed_human` when further failures ask the human in a questions file. |
@@ -337,8 +357,9 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
 | `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
-| `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. |
+| `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. A task that waited `[replacement] busy_after` seconds for its busy agent is handed over with `reason = "busy"`. |
 | `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
+| `worker_request_damaged` | `warn` | What the daemon keeps for a worker's request cannot be used: its file is cut short, has an unknown field, holds another request than its name says or cannot be read, a stage cannot be written, or the removal of the file, the output of its check or the wording of its answer fails. The file is set aside as `<name>.damaged` and the request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the answer falls back; the daemon goes on. |
 
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers

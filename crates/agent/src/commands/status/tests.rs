@@ -1666,3 +1666,88 @@ fn a_queued_task_waiting_for_its_agent_names_the_agent_and_the_team_it_runs_in()
         "{text}"
     );
 }
+
+#[test]
+fn the_runs_per_cli_line_lists_each_configured_cli_when_a_run_is_going_and_omits_it_when_idle() {
+    let config = agent_core::config::Config::from_toml_str(
+        "[agents.claude-1]\ncli = \"claude\"\n[agents.codex-1]\ncli = \"codex\"\n\
+         [investigators.inv-opus]\ncli = \"claude\"\n[investigators.inv-codex]\ncli = \"codex\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .expect("valid config");
+    let mut teams = sample();
+    assert_eq!(cli_runs_line(&config, &teams), None);
+
+    teams[0].members[0].status = TaskStatus::Running;
+    teams[0].members[1].status = TaskStatus::Running;
+    assert_eq!(
+        cli_runs_line(&config, &teams),
+        Some("runs: claude 2, codex 0\n".to_owned())
+    );
+}
+
+#[test]
+fn the_bus_item_handed_over_text_names_the_item_branch_task_and_both_holders() {
+    use agent_core::prompt::{PROMPTS_DIR, TeamPrompt, Variables};
+    let spec = TeamPrompt::ItemHandedOver.spec();
+    let template = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../")
+            .join(PROMPTS_DIR)
+            .join(spec.path()),
+    )
+    .expect("prompt file exists");
+    let values = Variables::new()
+        .with("item", "1.2")
+        .and_then(|v| v.with("from", "claude-1"))
+        .and_then(|v| v.with("to", "codex-1"))
+        .and_then(|v| v.with("task", "task-20261122-140915-d3lh"))
+        .and_then(|v| v.with("branch", "agents/claude-1/task-20261122-140915-d3lh-1.2"))
+        .expect("valid variables");
+
+    let rendered = spec.render(&template, &values).expect("renders");
+
+    assert_eq!(
+        rendered,
+        "Item 1.2 on branch `agents/claude-1/task-20261122-140915-d3lh-1.2` (task task-20261122-140915-d3lh) is held by codex-1 now: claude-1 is busy in another team.\n"
+    );
+}
+
+#[tokio::test]
+async fn the_status_reads_cli_runs_and_reports_config_read_and_parse_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let abs = agent_core::config::AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap();
+    let home = Home::new(&abs);
+    let activity = Activity::new(home.clone(), Zone::Fixed(UtcOffset::UTC));
+    let config = "[agents.claude-1]\ncli = \"claude\"\n[agents.codex-1]\ncli = \"codex\"\n\
+                 [investigators.inv-opus]\ncli = \"claude\"\n[investigators.inv-codex]\ncli = \"codex\"\n\
+                 [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+                 [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n";
+    std::fs::write(home.config_file(), config).unwrap();
+    let mut teams = sample();
+    teams[0].members[0].status = TaskStatus::Running;
+    teams[0].members[1].status = TaskStatus::Running;
+
+    assert_eq!(
+        activity.cli_runs_line(&teams).await.unwrap(),
+        Some("runs: claude 2, codex 0\n".to_owned())
+    );
+
+    std::fs::write(home.config_file(), "[agents.claude-1\n").unwrap();
+    let parsed = activity.cli_runs_line(&teams).await.unwrap_err();
+    assert!(matches!(
+        parsed,
+        StatusError::ConfigParse { ref path, .. } if *path == home.config_file()
+    ));
+
+    std::fs::remove_file(home.config_file()).unwrap();
+    assert_eq!(activity.cli_runs_line(&teams).await.unwrap(), None);
+
+    std::fs::create_dir(home.config_file()).unwrap();
+    let unreadable = activity.cli_runs_line(&teams).await.unwrap_err();
+    assert!(matches!(
+        unreadable,
+        StatusError::ConfigRead { ref path, .. } if *path == home.config_file()
+    ));
+}

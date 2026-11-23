@@ -16,7 +16,7 @@ use agent_runtime::run::WatchdogHold;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
-use super::{Owner, not_found};
+use super::{Owner, OwnerError, not_found};
 use crate::daemon::gate::{GateJob, NotQueued, QUEUE};
 
 /// What the owner finds out about the gate of a task before it queues it.
@@ -49,6 +49,8 @@ impl Owner {
                 },
             );
         };
+        let (service_reply, completed) = oneshot::channel();
+        let gate_task = task.clone();
         let job = GateJob {
             hold: self.holds.get(&task).map(WatchdogHold::hold),
             cancel: self.gate_cancel(&task),
@@ -57,7 +59,7 @@ impl Owner {
             worktree: planned.worktree,
             command: planned.command,
             timeout: planned.timeout,
-            reply,
+            reply: service_reply,
         };
         if let Err(not_queued) = queue.enqueue(job) {
             let (job, failure) = match not_queued {
@@ -78,7 +80,10 @@ impl Owner {
                     },
                 ),
             };
-            answer(job.reply, failure);
+            drop(job);
+            answer(reply, failure);
+        } else {
+            self.track_gate_answer(gate_task, completed, reply);
         }
     }
 
@@ -94,6 +99,7 @@ impl Owner {
             message: "this daemon runs without a gate service: it cannot run a gate".to_owned(),
         })?;
         let (reply, answer) = oneshot::channel();
+        let (service_reply, completed) = oneshot::channel();
         let job = GateJob {
             // The lead waits: no run of it is going that the watchdog could take for hung.
             hold: None,
@@ -103,7 +109,7 @@ impl Owner {
             worktree: planned.worktree,
             command: planned.command,
             timeout: planned.timeout,
-            reply,
+            reply: service_reply,
         };
         queue.enqueue(job).map_err(|not_queued| match not_queued {
             NotQueued::Full(_) => Failure {
@@ -115,7 +121,44 @@ impl Owner {
                 message: "the daemon is shutting down".to_owned(),
             },
         })?;
+        self.track_gate_answer(task.clone(), completed, reply);
         Ok(answer)
+    }
+
+    /// Forwards the result while retaining an owner that removal can join.
+    fn track_gate_answer(
+        &mut self,
+        task: TaskId,
+        completed: oneshot::Receiver<Result<Reply, Failure>>,
+        reply: oneshot::Sender<Result<Reply, Failure>>,
+    ) {
+        let handle = self.gate_answers.spawn(async move {
+            let result = match completed.await {
+                Ok(result) => result,
+                Err(error) => Err(Failure {
+                    kind: FailureKind::Internal,
+                    message: format!("the gate service ended without an answer: {error}"),
+                }),
+            };
+            if reply.send(result).is_err() {
+                // A disconnected client still leaves a completed gate for the owner to join.
+                tracing::debug!(
+                    event = agent_core::log::LogEvent::PeerGone.as_str(),
+                    "the connection of a gate closed before the answer"
+                );
+            }
+        });
+        self.gate_answer_tasks.insert(handle.id(), task);
+    }
+
+    /// Records that the gate service has released a task's files.
+    pub(super) fn gate_answer_done(
+        &mut self,
+        joined: Result<(tokio::task::Id, ()), tokio::task::JoinError>,
+    ) -> Result<(), OwnerError> {
+        let (id, ()) = joined.map_err(OwnerError::GateAnswer)?;
+        self.gate_answer_tasks.remove(&id);
+        Ok(())
     }
 
     /// The team, the worktree and the repository's gate of `task`.

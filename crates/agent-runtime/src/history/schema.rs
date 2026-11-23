@@ -426,4 +426,12 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 18,
         sql: include_str!("018-wait-events.sql"),
     },
+    Migration {
+        version: 19,
+        sql: include_str!("019-worker-request-damaged.sql"),
+    },
+    Migration {
+        version: 20,
+        sql: include_str!("020-team-removed.sql"),
+    },
 ];

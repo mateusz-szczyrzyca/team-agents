@@ -82,6 +82,11 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         shared: Vec<SharedAgent>,
     },
+    /// `remove`: what was taken away with the team, and what stayed with the reason.
+    Removed {
+        /// The removal, in full.
+        removal: Box<Removal>,
+    },
     /// `status`: the teams in short.
     Teams {
         /// One summary for each team asked for.
@@ -165,6 +170,39 @@ pub enum FailureKind {
     Refused,
     /// The daemon failed; the details are in its log.
     Internal,
+}
+
+/// What `remove` took away with a team, and what it could not take away: the answer names each of them.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Removal {
+    /// The team removed.
+    pub team: TeamId,
+    /// The tasks of the team that had a run going and were stopped first (`--force`).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stopped: Vec<TaskId>,
+    /// The tasks removed from daemon state; any files cleanup could not remove are named in `left_behind`.
+    pub tasks: Vec<TaskId>,
+    /// The git bundle of the unmerged branches, absent when every branch was already in the base branch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bundle: Option<AbsolutePath>,
+    /// The branches in the bundle: each has commits the base branch does not have.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bundled: Vec<BranchName>,
+    /// The local branches of the team that were deleted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub branches: Vec<BranchName>,
+    /// The open pull requests of the team that were closed with a comment.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub closed_pull_requests: Vec<crate::state::PrNumber>,
+    /// Worktrees found with uncommitted tracked changes, whether cleanup removes them or leaves them behind.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub dirty_worktrees: Vec<AbsolutePath>,
+    /// The bytes of the worktrees and task directories removed.
+    pub freed_bytes: u64,
+    /// What could not be removed after the team left the state, with the reason: it stays on disk.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub left_behind: Vec<String>,
 }
 
 /// A team in short: for `status` and the dashboard's list.

@@ -104,6 +104,9 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
+    /// When the task began to wait for its agent, which runs another task at its limit; `None` when it does not wait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    waiting_since: Option<Timestamp>,
     /// The last run of the previous holder; omitted for tasks written before holder boundaries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     holder_after_run: Option<RunId>,
@@ -149,6 +152,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before renewals existed has none.
     #[serde(default)]
     renewals: Option<renewal::Renewals>,
+    /// See [`Member`]; a member written before waits existed has none.
+    #[serde(default)]
+    waiting_since: Option<Timestamp>,
     /// See [`Member`]; a member written before hand-overs existed has none.
     #[serde(default)]
     past_holders: Vec<holding::Holding>,
@@ -242,6 +248,11 @@ impl CheckedMut<'_, Member> {
         self.value.owe_lead(trouble, at)
     }
 
+    /// See [`Member::owe_busy_notice`].
+    pub(crate) fn owe_busy_notice(&mut self, owed: bool) {
+        self.value.owe_busy_notice(owed);
+    }
+
     /// See [`Member::lead_told`].
     pub(crate) fn lead_told(&mut self) {
         self.value.lead_told();
@@ -250,6 +261,11 @@ impl CheckedMut<'_, Member> {
     /// See [`Member::held_task`].
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.value.held_task(holder, at);
+    }
+
+    /// See [`Member::start_waiting`].
+    pub(crate) fn start_waiting(&mut self, at: Timestamp) -> Timestamp {
+        self.value.start_waiting(at)
     }
 
     /// See [`Member::attach_session`].
@@ -429,6 +445,17 @@ pub enum MemberError {
 }
 
 impl Member {
+    /// When the task began to wait for its agent; `None` when it does not wait.
+    #[must_use]
+    pub const fn waiting_since(&self) -> Option<Timestamp> {
+        self.waiting_since
+    }
+
+    /// Records that the task waits for its agent from `at`; a wait that began earlier keeps its moment.
+    pub fn start_waiting(&mut self, at: Timestamp) -> Timestamp {
+        *self.waiting_since.get_or_insert(at)
+    }
+
     /// A member whose task is queued and has no runs yet, created by this version: it keeps a plan under step judging.
     #[must_use]
     pub fn new(task: TaskId, agent: Participant) -> Self {
@@ -444,6 +471,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
             holder_after_run: None,
         }
     }
@@ -464,6 +492,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
             holder_after_run: None,
         }
     }
@@ -483,6 +512,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            waiting_since: None,
             holder_after_run: None,
         }
     }
@@ -512,6 +542,12 @@ impl Member {
     #[must_use]
     pub fn owes_lead(&self) -> bool {
         self.renewals.as_ref().is_some_and(renewal::Renewals::lead_owed)
+    }
+
+    /// Whether the team is still owed notice of this task's busy hand-over.
+    #[must_use]
+    pub fn busy_notice_owed(&self) -> bool {
+        self.renewals.as_ref().is_some_and(renewal::Renewals::busy_notice_owed)
     }
 
     /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
@@ -670,6 +706,8 @@ impl Member {
     /// [`InvalidTransition`] when the status's table does not allow the change.
     pub fn transition(&mut self, next: TaskStatus) -> Result<(), InvalidTransition<TaskStatus>> {
         self.status = self.status.transition_to(next)?;
+        // Every allowed transition ends the current queued wait; resuming starts a fresh interval.
+        self.waiting_since = None;
         Ok(())
     }
 
@@ -741,6 +779,13 @@ impl Member {
         }
     }
 
+    /// Keeps or clears the team-message obligation of a busy hand-over.
+    pub(crate) fn owe_busy_notice(&mut self, owed: bool) {
+        if let Some(renewals) = self.renewals.as_mut() {
+            renewals.owe_busy_notice(owed);
+        }
+    }
+
     /// Records the start of a new session, by `start`, after `trouble`, at `at`; `false` for a task with no run.
     fn begin_session(
         &mut self,
@@ -748,16 +793,21 @@ impl Member {
         at: Timestamp,
         start: SessionStart,
     ) -> Result<bool, renewal::RenewalError> {
-        let Some(last) = self.runs.last() else {
-            return Ok(false);
-        };
-        if last.started_at().as_utc() > at.as_utc() {
-            return Err(renewal::RenewalError::NotAfterTheLastRun {
-                at,
-                started_at: last.started_at(),
-            });
-        }
         let after_runs = self.runs.len();
+        match self.runs.last() {
+            Some(last) => {
+                if last.started_at().as_utc() > at.as_utc() {
+                    return Err(renewal::RenewalError::NotAfterTheLastRun {
+                        at,
+                        started_at: last.started_at(),
+                    });
+                }
+            }
+            // A task that never ran has no session to end. A busy agent's hand-over still briefs its new holder on it,
+            // so the boundary is recorded with no run before it; any other task records nothing, as before.
+            None if start == SessionStart::HandOver && trouble == ladder::Trouble::Busy => {}
+            None => return Ok(false),
+        }
         match (&mut self.renewals, start) {
             (Some(renewals), SessionStart::Renewal) => renewals.record(at, trouble, after_runs),
             (Some(renewals), SessionStart::HandOver) => renewals.hand_over(at, trouble, after_runs),
@@ -772,6 +822,7 @@ impl Member {
     /// Gives the task to `holder` at `at`, keeping the agent that held it as one of its past and no longer its own. Only
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
+        self.waiting_since = None;
         self.holder_after_run = self.runs.last().map(|run| run.id().clone());
         self.lead_told();
         let before = std::mem::replace(&mut self.agent, holder);
@@ -808,6 +859,7 @@ impl Member {
         if self.runs.iter().any(|run| run.id() == &id) {
             return Err(RunError::DuplicateRun { run: id });
         }
+        self.waiting_since = None;
         self.runs.push(Run::started_for(id, at, session, rounds)?);
         Ok(())
     }
@@ -1078,6 +1130,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                waiting_since: None,
                 holder_after_run: None,
             };
             member.sync_plan_judging();

@@ -430,6 +430,8 @@ Integrate the guide.
             ("glm-1", "worker", "ask-worker:worker,done:Result: done."),
             ("glm-2", "worker", "sleep,done:Result: done."),
         ]);
+        // The row is about the prompts of the first tries: a wrong result is not given to the other worker here.
+        world.allow_tries(1);
         world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
         world.asks("coordinator", Some(COORDINATOR_PLAN), &[COORDINATOR_REQUEST]);
         world.asks(
@@ -1340,7 +1342,7 @@ Integrate the guide.
             );
         }
         eventually("the damaged file to be logged with its name", || {
-            output_of(&world.agent(&["log", "--json", "--event", "restart_corrected"]))
+            output_of(&world.agent(&["log", "--json", "--event", "worker_request_damaged"]))
                 .contains("worker-request-1.json")
         });
 
@@ -1431,6 +1433,13 @@ Integrate the guide.
     }
 
     impl World {
+        /// Lets a request be given to `tries` workers in all (`[workers] tries`): `1` never gives it to a second worker.
+        fn allow_tries(&self, tries: u32) {
+            let mut config = std::fs::read_to_string(self.home.join("agents.toml")).unwrap();
+            write!(config, "[workers]\ntries = {tries}\n").unwrap();
+            std::fs::write(self.home.join("agents.toml"), config).unwrap();
+        }
+
         /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
         fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
             serde_json::json!({
@@ -1559,6 +1568,7 @@ Integrate the guide.
         .unwrap();
 
         world.start();
+        world.told("claude-1", "Your request H1 to the workers is back with you");
         world.after_a_look(&member, &worker);
 
         assert!(
@@ -1566,14 +1576,216 @@ Integrate the guide.
             "the file is set aside"
         );
         assert!(task_dir.join("worker-request-5.json.damaged").exists(), "and kept");
+        // The request the file holds is answered too, once: the bus had it running for this worker.
         assert_eq!(
             world.count_told("claude-1", "Your request H1 to the workers is back with you"),
-            0
+            1
         );
+        assert_eq!(world.requests()["1"]["status"], "failed");
+    }
+
+    /// The member's request on a team of `workers` (each with its own script), served by the first of them, whose result is
+    /// wrong or right as its script says; the world is started and the first request answered by the bus as given.
+    /// Returns the tasks by name.
+    fn second_try_world(
+        workers: &[(&'static str, &'static str)],
+        tries: Option<u32>,
+    ) -> (World, Vec<(String, String)>) {
+        let mut specs: Vec<AgentSpec> = vec![
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+        ];
+        specs.extend(workers.iter().map(|(name, scenario)| (*name, "worker", *scenario)));
+        let mut world = World::new(&specs);
+        if let Some(tries) = tries {
+            let mut config = std::fs::read_to_string(world.home.join("agents.toml")).unwrap();
+            write!(config, "[workers]\ntries = {tries}\n").unwrap();
+            std::fs::write(world.home.join("agents.toml"), config).unwrap();
+        }
+        world.script("nothing", "true\n");
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let mut names = vec!["claude-1", "inv-opus"];
+        names.extend(workers.iter().map(|(name, _)| *name));
+        let tasks = world.run(&names);
+        world.ended(task(&tasks, workers[0].0), 1);
+        for (name, _) in workers {
+            world.sleeps_on_the_bus(name);
+        }
+        std::fs::write(world.worktree(task(&tasks, "claude-1")).join(".fake-ask"), "").unwrap();
+        (world, tasks)
+    }
+
+    #[test]
+    fn a_wrong_result_is_given_once_to_another_worker_with_the_reason_and_the_commit_of_the_second_is_brought_over() {
+        let (world, tasks) = second_try_world(
+            &[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,script:guide")],
+            None,
+        );
+        let (member, second) = (task(&tasks, "claude-1"), task(&tasks, "glm-2"));
+
+        world.request_is("1", "done");
+
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        let again = world.told("claude-1", "went once more to the worker glm-2");
+        assert!(again.contains("the check `exists docs/guide.md` failed"), "{again}");
+        let prompt = world.file(second, ".fake-prompt-2");
+        assert!(prompt.contains("A REQUEST FROM claude-1"), "{prompt}");
+        assert!(prompt.contains("served this request before you"), "{prompt}");
+        assert!(prompt.contains("glm-1"), "{prompt}");
+        assert!(prompt.contains("the check `exists docs/guide.md` failed"), "{prompt}");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.brought_over(member), 1);
         assert_eq!(
-            world.requests()["1"]["status"],
-            "running",
-            "the request of the content was not settled by it"
+            world.count_told("claude-1", "went once more to the worker glm-2"),
+            1,
+            "the requester is told once"
+        );
+    }
+
+    #[test]
+    fn two_wrong_results_return_the_step_once_with_both_reasons_and_no_third_worker_starts() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script:nothing"),
+                ("glm-2", "sleep,script:nothing"),
+                ("glm-3", "sleep,script:guide"),
+            ],
+            None,
+        );
+
+        world.request_is("1", "failed");
+
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(told.contains("the first result: "), "{told}");
+        assert!(told.contains("the second result: "), "{told}");
+        assert_eq!(world.runs(task(&tasks, "glm-3")), 1, "a third worker did not start");
+        assert_eq!(world.runs(task(&tasks, "glm-2")), 2);
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+    }
+
+    #[test]
+    fn a_request_that_allows_one_try_is_never_given_to_a_second_worker() {
+        let (world, tasks) = second_try_world(
+            &[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,script:guide")],
+            Some(1),
+        );
+
+        world.request_is("1", "failed");
+
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(!told.contains("the second result"), "{told}");
+        assert_eq!(
+            world.runs(task(&tasks, "glm-2")),
+            1,
+            "the second worker was not given it"
+        );
+        assert_eq!(world.count_told("claude-1", "went once more"), 0);
+    }
+
+    /// The stage file of a result that is wrong and goes to another worker, as the daemon writes it before it asks.
+    fn settled_again() -> serde_json::Value {
+        serde_json::json!({"stage": "settled",
+            "checked": {"step": "1.1", "files": ["docs/guide.md"], "head": null, "committed": true, "outside": [],
+                        "found": null},
+            "settlement": {"settled": "again", "reasons": ["the check failed"]}})
+    }
+
+    #[test]
+    fn a_daemon_that_went_down_before_the_second_try_gives_the_request_to_another_worker_once() {
+        let (mut world, member, worker, other) = world_with_two_workers_and_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_again(), MEMBER_REQUEST);
+
+        world.start();
+
+        eventually("the request to be given to the second worker", || {
+            world
+                .requests()
+                .get("1")
+                .is_some_and(|request| request["worker"] == "glm-2")
+        });
+        world.told("claude-1", "went once more to the worker glm-2");
+        eventually("the file of the first try to be removed", || {
+            !pending_file(&world, &worker).exists()
+        });
+        world.after_a_look(&member, &other);
+        assert_eq!(world.count_told("claude-1", "went once more to the worker glm-2"), 1);
+        assert_eq!(world.runs(&other), 2, "the second worker was given the request once");
+    }
+
+    #[test]
+    fn a_request_the_second_worker_holds_is_not_given_again_by_the_file_of_the_first_whose_task_the_bus_still_names() {
+        let (mut world, member, worker, other) = world_with_two_workers_and_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_again(), MEMBER_REQUEST);
+        // The second worker took the request, but the update that records its task has not reached the bus: the bus names
+        // glm-2 and still has the task of the first worker.
+        world.bus_cli(&["helper-set", "--id", "1", "--status", "queued"]);
+        world.bus_cli(&["helper-next", "--worker", "glm-2"]);
+        assert_eq!(world.requests()["1"]["helper_task"], worker.as_str());
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        let sentinel = world.one_more_request(&member, &other);
+
+        world.start();
+        world.settle_as_a_look(sentinel, &member, &other);
+
+        let request = &world.requests()["1"];
+        assert_eq!(
+            request["status"], "starting",
+            "the request was not queued again: {request}"
+        );
+        assert_eq!(request["worker"], "glm-2");
+        assert!(
+            !pending_file(&world, &worker).exists(),
+            "the file of the first result is dropped"
+        );
+        assert_eq!(world.count_told("claude-1", "went once more"), 0);
+        assert_eq!(world.runs(&other), 1, "no worker was started for it");
+    }
+
+    #[test]
+    fn a_second_worker_that_fails_leaves_no_try_file_and_the_requester_is_told() {
+        let (world, tasks) = second_try_world(&[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,fail")], None);
+
+        world.request_is("1", "failed");
+
+        world.told("claude-1", "Your request H1 to the worker glm-2 failed");
+        let dir = world.home.join("tasks").join(task(&tasks, "glm-2"));
+        let tries: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with("worker-try-"))
+            .collect();
+        assert!(tries.is_empty(), "the file of the try stays: {tries:?}");
+    }
+
+    #[test]
+    fn a_file_of_a_request_the_bus_does_not_know_is_not_taken_as_running_at_its_checked_stage() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        world.worker_ended_and_daemon_down(&member, &worker, settled_returned(), MEMBER_REQUEST);
+        let sentinel = world.one_more_request(&member, &worker);
+        let mut pending: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(pending_file(&world, &worker)).unwrap()).unwrap();
+        pending["request"] = serde_json::json!(99);
+        pending["stage"] = serde_json::json!({"stage": "checked", "step": "1.1", "files": ["docs/guide.md"],
+            "head": world.git_output(&worker, &["rev-parse", "HEAD"]), "committed": true, "outside": [],
+            "found": {"outcome": "passed", "line": "exists docs/guide.md", "tail": "", "reason": null,
+                      "duration_ms": 1, "output": null}});
+        let path = world.home.join("tasks").join(&worker).join("worker-request-99.json");
+        std::fs::write(&path, pending.to_string()).unwrap();
+
+        world.start();
+        world.settle_as_a_look(sentinel, &member, &worker);
+        eventually("request 99's pending file to be removed", || !path.exists());
+
+        assert!(!path.exists(), "the file of the unknown request is dropped");
+        assert_eq!(
+            world.brought_over(&member),
+            0,
+            "nothing was brought over for a request the bus forgot"
         );
     }
 

@@ -1,4 +1,4 @@
-PRAGMA user_version = 18;
+PRAGMA user_version = 20;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -342,12 +342,12 @@ CREATE TABLE daemon_logs (
         'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
         'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
         'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
-        'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
+        'history_record_incomplete', 'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-        'task_handed_over', 'task_waits_for_agent'
+        'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged'
     )),
     team TEXT,
     task TEXT,
@@ -367,10 +367,11 @@ CREATE TABLE daemon_logs (
             'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
-            'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed'
+            'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
+            'worker_request_damaged'
         ))
         OR (level = 'info' AND event IN (
-            'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
+            'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',

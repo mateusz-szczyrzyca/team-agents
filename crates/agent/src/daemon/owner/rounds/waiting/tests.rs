@@ -923,3 +923,36 @@ async fn a_local_queued_round_without_github_names_the_busy_agent_and_team_it_wa
         ))
     );
 }
+
+#[tokio::test]
+async fn a_round_waiting_for_free_investigators_keeps_its_team_alive() {
+    let (mut state, team, round) = idle_round(in_progress(), LEAD_DONE);
+    for n in [1, 2, 3, 4] {
+        let (_, mut member) = state.find_task_mut(&task(n)).unwrap();
+        if member.status() == TaskStatus::Queued {
+            member.transition(TaskStatus::Running).unwrap();
+            member.transition(TaskStatus::Waiting).unwrap();
+        }
+    }
+    let daemon = Daemon::new(&state, None);
+    for n in [1, 2, 3, 4] {
+        let path = daemon.home.worktree_dir(&crate::fixtures::repo(), &task(n));
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("draft.txt"), "work").unwrap();
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let lead = owner.lead_of(&team).unwrap();
+    let item = state.team(&team).unwrap().round(&round).unwrap().item().unwrap();
+    assert!(
+        !owner
+            .try_ask(&team, &lead, &crate::fixtures::pr(7), &[item], at(20))
+            .await
+            .unwrap()
+    );
+    assert_eq!(owner.watch.waits.get(&round), Some(&Obligation::FreeInvestigator));
+    daemon.clock.advance(time::Duration::days(1));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert!(daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1)).exists());
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
+}

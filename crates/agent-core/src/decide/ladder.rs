@@ -32,6 +32,8 @@ pub enum Trouble {
     /// The run reported `STATUS: FAILED` without calling any tool step: the CLI did not offer, or the run did not use,
     /// the tools of the bus.
     NoToolCall,
+    /// The task waited too long for its agent, which was busy in another task: a free agent took it over. No run went bad.
+    Busy,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -78,6 +80,8 @@ pub fn next_step(
         // A run that failed without a tool call is retried by its own decision, never by the ladder: a NoToolCall
         // renewal starts the new session already, so no run resumes the one before it.
         Trouble::NoToolCall => false,
+        // A busy agent's wait is not a bad run: the ladder has no rung for it.
+        Trouble::Busy => false,
     };
     if retried {
         return LadderStep::SameSession;

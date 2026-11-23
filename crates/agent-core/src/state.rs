@@ -26,6 +26,12 @@ mod member;
 mod migrate;
 mod plan;
 mod question;
+mod recovery;
+#[cfg(test)]
+mod removal_tests;
+pub use recovery::{
+    Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
+};
 mod renewal;
 #[cfg(test)]
 mod renewal_tests;
@@ -35,6 +41,8 @@ pub mod split;
 mod strict;
 mod team;
 mod values;
+#[cfg(test)]
+mod waiting_tests;
 mod wake_delivery;
 
 pub use base::UnpushedBase;
@@ -60,9 +68,9 @@ pub use round::{ClosedBeforeOpened, Round, RoundEnd, RoundLife};
 pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
     ActivateSplitError, Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError,
-    CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, EndDeliveryError, MergeMode,
-    NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError, TeamMembers,
-    TeamMut,
+    CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, EndDeliveryError, IdleWatch,
+    MergeMode, NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError,
+    TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;
@@ -114,6 +122,8 @@ pub struct State {
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
     /// The queued tasks in the order they entered the queue, oldest first.
     queued: Vec<TaskId>,
+    /// Durable restart reservations, retained after source and replacement removal.
+    recoveries: Vec<Recovery>,
 }
 
 /// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
@@ -129,6 +139,9 @@ struct StateOut<'a> {
     /// See [`State`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     queued: Vec<TaskId>,
+    /// See [`State`].
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    recoveries: &'a [Recovery],
 }
 
 impl Serialize for State {
@@ -143,6 +156,7 @@ impl Serialize for State {
             schema_version: self.schema_version,
             teams: &self.teams,
             wake_deliveries: &self.wake_deliveries,
+            recoveries: &self.recoveries,
             queued,
         }
         .serialize(serializer)
@@ -153,6 +167,7 @@ impl PartialEq for State {
     fn eq(&self, other: &Self) -> bool {
         self.schema_version == other.schema_version
             && self.teams == other.teams
+            && self.recoveries == other.recoveries
             && self.wake_deliveries == other.wake_deliveries
             && self.effective_queued() == other.effective_queued()
     }
@@ -172,6 +187,9 @@ struct StateWire {
     /// Optional in state written before queue-entry order was persisted.
     #[serde(default)]
     queued: Vec<TaskId>,
+    /// Optional in state written before recovery reservations were persisted.
+    #[serde(default, deserialize_with = "recovery::read_ledger")]
+    recoveries: Vec<Recovery>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -240,6 +258,18 @@ pub enum InvalidState {
         team: TeamId,
         /// The item.
         item: ItemId,
+    },
+}
+
+/// Why the start of a task's busy wait could not be recorded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum StartWaitingError {
+    /// The requested task is not in the state.
+    #[error("cannot start waiting: task {task} is not in the state")]
+    NoTask {
+        /// The task whose busy wait was requested.
+        task: TaskId,
     },
 }
 
@@ -326,6 +356,7 @@ impl State {
             teams: Vec::new(),
             wake_deliveries: BTreeMap::new(),
             queued: Vec::new(),
+            recoveries: Vec::new(),
         }
     }
 
@@ -609,6 +640,49 @@ impl State {
         Ok(())
     }
 
+    /// Records that the team of `task` is still owed notice of its busy hand-over.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn owe_busy_notice(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (role, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        match role {
+            Role::Solo | Role::Coordinator | Role::Member => member.owe_busy_notice(true),
+            Role::Worker | Role::Reviewer => {
+                return Err(RenewTaskError::Role {
+                    task: task.clone(),
+                    role,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// Records that the team took the busy hand-over notice of `task` and nothing is owed any more.
+    ///
+    /// # Errors
+    /// [`RenewTaskError::NoTask`] when the task is not in the state.
+    pub fn busy_notice_told(&mut self, task: &TaskId) -> Result<(), RenewTaskError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member.owe_busy_notice(false);
+        Ok(())
+    }
+
+    /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
+    ///
+    /// # Errors
+    /// [`StartWaitingError::NoTask`] when the task is not in the state.
+    pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Result<Timestamp, StartWaitingError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| StartWaitingError::NoTask { task: task.clone() })?;
+        Ok(member.start_waiting(at))
+    }
+
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.
@@ -728,6 +802,17 @@ impl State {
             .find(|team| team.find(task).is_some())
             .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?
             .begin_run(task, run)
+    }
+
+    /// Removes the team `id` and the records the state keeps for its tasks, and returns it; `None` when there is no
+    /// such team, and then nothing changes.
+    pub fn remove_team(&mut self, id: &TeamId) -> Option<Team> {
+        let index = self.teams.iter().position(|team| team.id() == id)?;
+        let team = self.teams.remove(index);
+        let tasks: HashSet<TaskId> = team_members(&team).map(|member| member.task().clone()).collect();
+        self.wake_deliveries.retain(|task, _| !tasks.contains(task));
+        self.queued.retain(|task| !tasks.contains(task));
+        Some(team)
     }
 
     /// Adds a team.
@@ -887,6 +972,7 @@ impl TryFrom<StateWire> for State {
             teams: wire.teams,
             wake_deliveries: wire.wake_deliveries,
             queued: wire.queued,
+            recoveries: wire.recoveries,
         };
         state.sync_queued();
         Ok(state)

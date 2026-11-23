@@ -10,7 +10,7 @@ use crate::decide::replacement::ReplacementMode;
 use crate::ids::{AgentName, InvestigatorName};
 
 /// `[replacement]`: whether a task whose runs go bad is kept going, and how.
-#[derive(Debug, Clone, Default, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Replacement {
     /// How many new sessions of its agent a task is started in after its runs went bad; `0` never starts one.
@@ -23,6 +23,24 @@ pub struct Replacement {
     replacements: replacements::Limit,
     /// How many times the lead may return an item before the agent that holds it is replaced; `0` never replaces it.
     rejections: rejections::Limit,
+    /// Seconds a queued task waits for its busy agent before it is handed over to a free agent; `0` never hands one over.
+    busy_after: u32,
+}
+
+/// Seconds a queued task waits for its busy agent by default: five minutes.
+const DEFAULT_BUSY_AFTER: u32 = 300;
+
+impl Default for Replacement {
+    fn default() -> Self {
+        Self {
+            new_sessions: RenewalLimit::default(),
+            agents: Vec::new(),
+            mode: ReplacementMode::default(),
+            replacements: replacements::Limit::default(),
+            rejections: rejections::Limit::default(),
+            busy_after: DEFAULT_BUSY_AFTER,
+        }
+    }
 }
 
 impl Replacement {
@@ -54,6 +72,12 @@ impl Replacement {
     #[must_use]
     pub const fn rejections(&self) -> rejections::Limit {
         self.rejections
+    }
+
+    /// Seconds a queued task waits for its busy agent before a free agent takes it over; `0` never takes one over.
+    #[must_use]
+    pub const fn busy_after(&self) -> u32 {
+        self.busy_after
     }
 }
 

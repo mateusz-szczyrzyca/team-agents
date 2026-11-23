@@ -33,6 +33,9 @@ pub struct Renewals {
     /// when nothing is owed, and in a state written before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lead_owed: Option<Timestamp>,
+    /// Whether the team is still owed notice of a busy hand-over, including across a restart.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    busy_notice_owed: bool,
 }
 
 impl Renewals {
@@ -76,6 +79,17 @@ impl Renewals {
         self.lead_owed = at;
     }
 
+    /// Whether the team is still owed notice of the busy hand-over.
+    #[must_use]
+    pub const fn busy_notice_owed(&self) -> bool {
+        self.busy_notice_owed
+    }
+
+    /// Keeps or clears the team-message obligation of the busy hand-over.
+    pub(super) const fn owe_busy_notice(&mut self, owed: bool) {
+        self.busy_notice_owed = owed;
+    }
+
     /// Whether a task with `runs` runs has begun no run since it was last started anew.
     pub(super) const fn awaits_run(&self, runs: usize) -> bool {
         runs <= self.after_runs
@@ -90,6 +104,7 @@ impl Renewals {
             after_runs,
             asked: None,
             lead_owed: None,
+            busy_notice_owed: false,
         }
     }
 
@@ -103,6 +118,7 @@ impl Renewals {
             after_runs,
             asked: None,
             lead_owed: None,
+            busy_notice_owed: false,
         }
     }
 
@@ -237,9 +253,13 @@ pub enum RenewTaskError {
 }
 
 /// Checks that the renewal of `renewals` follows a run of `runs`: a task is started anew after a run of it went bad. A
-/// renewal after the last run is the state between the ladder's decision and the run of the new session.
+/// renewal after the last run is the state between the ladder's decision and the run of the new session; a busy hand-over
+/// may also happen before the task's first run (`after_runs == 0`, `used == 0`).
 pub(super) fn check_renewals(renewals: &Renewals, runs: &[Run]) -> Result<(), RenewalError> {
     let at = renewals.at();
+    if renewals.reason == Trouble::Busy && renewals.used == 0 && renewals.after_runs == 0 {
+        return Ok(());
+    }
     match runs.first() {
         Some(first) if first.started_at().as_utc() <= at.as_utc() && renewals.after_runs <= runs.len() => Ok(()),
         Some(_) | None => Err(RenewalError::BeforeEveryRun { at }),

@@ -851,6 +851,10 @@ mod last_step_tests;
 mod agent_slots_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/worker_request_damaged.rs"]
+mod worker_request_damaged_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/history_failures.rs"]
 mod history_failures_tests;
 
@@ -980,3 +984,7 @@ mod fix_pass_findings_tests;
 #[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/removal.rs"]
+mod removal_tests;

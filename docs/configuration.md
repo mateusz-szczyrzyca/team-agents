@@ -125,6 +125,8 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | `limits.turn_limit_resumes` | `3` | maximum consecutive automatic resumes after a turn limit; `0` fails on the first exhaustion |
 | `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |
 | `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
+| `limits.idle_team_minutes` | `120` | minutes without a run or new branch commit before automatic team removal; `0` disables it |
+| `limits.idle_team_restarts` | `1` | reserved replacement budget; unused in this removal-only release |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |
 | `limits.wake_ups_per_message` | `2` | runs a task is woken for one unread message; after that many that end without the message read, the task is not woken for it again, a `bus_down` warning names the task, the message and the count, and the message waits for the task's next run; `0` never wakes a task for a message |
 | `limits.runs_per_agent` | `1` | runs an agent may have going at once over all its teams and solo tasks, for normal agents and investigators; a task queued for an agent at its limit waits, queued, until the run that holds the agent ends (`agent status` says whom it waits for and where); `0` is no limit, as before this key |
@@ -141,6 +143,21 @@ in a new session when [`[replacement] new_sessions`](#replacement) allows it, an
 Every other run ending resets the count (resuming a failed task with `agent resume` continues in the same session without
 resetting the count until a run ends in another way). The count is derived from saved runs and survives daemon restarts.
 Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
+
+Idle teams are checked at startup and once per minute. Activity comes from saved run starts and ends, and local
+branch/worktree commits. The interval starts at the later of recorded activity and current daemon startup:
+time while the daemon was stopped does not count, and old teams get a full interval after restart. Runs and active checks,
+human pause/stop, provider quota/rate-limit reset waits and accepted delivery claims awaiting another team's
+pull-request merge prevent removal. Tasks queued for an agent and rounds awaiting a free investigator also
+prevent removal, including queued provider retries after a daemon restart. An unanswered human question does not. A removed team is **not restarted
+in this release**; automatic replacement follows in a separate part.
+
+Automatic removal uses the safeguards of `agent remove`: unmerged work is bundled before deletion, and the
+notification names the reason, bundle and freed bytes. A refusal keeps the team and notifies once with its reason
+and branches. While the team remains idle, removal is retried once a minute without repeating that notice.
+Repairing the cause allows a later scan to remove the team without new task activity.
+An enabled but unavailable history blocks automatic deletion; `[history] enabled = false` explicitly opts out
+of the history requirement. Set `idle_team_minutes = 0` before upgrading to retain teams indefinitely.
 
 ### `[review]`
 
@@ -177,11 +194,15 @@ A request is given to one worker first. Its result is wrong when the request's c
 than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
 the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
 wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
-facts only: its result goes to the requester as before, and its check, when it has one, is run all the same.
+facts only: its result goes to the requester as before, and its check, when it has one, is run all the same. Both keys
+apply to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the requester as failed at
+once, as before (its second try comes with a later version). The second worker is told who served the request before it and
+why that result did not serve; the requester is told the request went again, and, after a second wrong result, gets the
+reasons of both. A restart of the daemon while the request waits for the second worker does not lose it.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`) |
+| `tries` | `2` | how many tries a request gets, its first try included. `1` never gives it to a second worker; `0` is refused (`WorkersTriesZero`). A request gets one second try at most: a value above `2` behaves as `2` |
 | `seconds` | `0` | how long a worker's run may last, in seconds; a run past it is a wrong result. `0` has no limit |
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.
@@ -225,6 +246,13 @@ and a member are started anew; a worker and a reviewer are not.
 | `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
+| `busy_after` | `300` | seconds a queued task waits for its agent, which runs another task at its `[limits] runs_per_agent` limit, before a free agent of `agents` (of the same or a higher tier) takes it over; `0` never hands a task over for this reason. Only the agents listed in `agents` are candidates: an empty `agents` list means no hand-over for a busy agent, and the task waits on. The moment the wait began is kept in the state, so a restart of the daemon keeps the time waited |
+
+A busy hand-over uses only the candidates listed in `agents`, the tier rules and the `replacements` count as above: the agent taken must be of the same or a higher
+place than the one it replaces, not in the task's team, not in a run, not with a queued task of its own and not paused for a
+quota. With an empty `agents` list, or when no agent of `agents` fits, no busy hand-over takes place and the task keeps waiting for its own agent. Of the agents that fit, the one whose CLI runs the fewest runs now is taken, and among equals the first of `agents`.
+The task keeps its worktree and branch, its new holder's first run is briefed with the reason `busy`, the bus tells the team who holds the item now, and the first holder
+is not woken for it. Only a queued task waiting for its busy agent counts: a task that is running, a task that waits for an answer of the human or for a review, a coordinator's task while one of its members runs, a reviewer's task, and a worker's task are never handed over this way.
 
 The same `mode` and ordered `agents` list apply when the next part of a split needs a new holder because
 its previous member stopped, failed or handed over the task. `auto` tries qualified configured replacements,

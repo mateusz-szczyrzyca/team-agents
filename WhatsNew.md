@@ -5,6 +5,70 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.76.0 — 23.11.2026 — PR #222
+
+### Enhancements
+- [agent-core] Add the internal foundation for restarting removed teams: saved replacement identities, bounded restart accounting and preserved merged items and split parts. Repeating a saved replacement leaves its current work intact. The daemon still removes idle teams without starting replacements; automatic restart will be activated separately.
+
+## 0.75.0 — 23.11.2026 — PR #221
+
+### New features
+- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements; automatic replacement follows in the next part. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running or queued work, rounds waiting for a free investigator, human pause or stop, provider reset waits and another team's pull-request merge protect a team; a sleeping team waiting for review verdicts or an open human question alone does not.
+- [agent] [agent-runtime] Before automatic removal, history records the last activity, items, split parts, round states and branches. Removal keeps the command's bundle safeguards and notification. A refusal keeps the team and names its branches in one notification; the daemon retries once a minute while the team remains idle, without repeating the refusal notice.
+
+### Enhancements
+- [agent] [agent-core] Idle observations survive a daemon restart. Removal counts from the later of recorded activity and current daemon startup, so downtime never counts and an old team gets a full configured idle interval after restart. Keep a state backup before upgrading if you need to return to an older daemon, which does not recognize the new observation field.
+
+### Configuration
+- [agent-core] new: `[limits] idle_team_minutes` (default `120`) — minutes without work while the current daemon is running before automatic removal; downtime does not count and `0` disables it.
+- [agent-core] new: `[limits] idle_team_restarts` (default `1`) — reserved for the next part's replacement limit; it has no effect in this release.
+
+## 0.74.0 — 23.11.2026 — PR #220
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent remove <team> [--force]` removes a team's local work and takes it out of status. Before deletion, unmerged branches and detached commits are saved in `AGENTS_HOME/removed/<team>.bundle`, and open pull requests are closed with a reason; history, notifications and GitHub branches stay. `--force` first ends active work. The output names tracked uncommitted changes, the bundle, freed bytes and anything left behind, and a notification records the removal.
+- [agent] Bus wake-ups are neither read nor cleaned, and reservations remain until released or expired; removal reports the available wake-budget records and known reservations. A team without a surviving worktree is refused with recovery instructions.
+
+### Enhancements
+- [agent] Removal also cleans up document and artwork directories when the team has no Git worktrees, including their sizes in the freed-byte total.
+- [agent-runtime] **Action:** On the first start, the daemon migrates `history.db` to schema 20 to record team removals, preserving existing history. Older daemons refuse this newer schema; keep a backup before upgrading if you need to return to an older daemon.
+
+## 0.73.0 — 23.11.2026 — PR #217 (continues #190)
+
+### New features
+- [agent] [agent-core] A queued task that waits longer than `[replacement] busy_after` (default `300` seconds; `0` never hands it over) for an agent running in another team is handed over to a free agent from `[replacement] agents` of the same or higher tier outside its team, choosing the one whose CLI has the fewest runs going at that moment; an empty `[replacement] agents` list performs no hand-over for a busy agent and the task keeps waiting for its own agent. The new holder starts from a briefing in the same worktree and on the same branch, the team is told on the bus, and the log records `task_handed_over` with `reason = "busy"`. Only a review on one of the waiting task's own recorded rounds prevents a busy hand-over; another member's review does not.
+- [agent] `agent status` shows how many runs each configured CLI has going when at least one run is active, for example `runs: claude 1, codex 2, gemini 0`. It reads the configuration asynchronously and reports a file it cannot read or parse instead of dropping the error.
+- [agent] `agent run` that starts a task for an agent already in another open team says that its task here waits while its run there goes on, or goes to another agent when `[replacement] agents` is non-empty and `busy_after` is above `0`.
+
+### Bug fixes
+- [agent-core] Pausing or stopping a queued task ends its busy wait; after resuming, it waits a fresh `busy_after` interval before a hand-over.
+- [agent] A passing gate completed while the daemon checks a resolved merge conflict is recognized immediately, instead of unnecessarily asking the human to intervene.
+
+### Enhancements
+- [agent-core] The text story shows adjacent reviewer runs of the same team, pull request and pass in review-request order, keeping parallel reviews consistent; missing requests preserve the original order, and JSON stays chronological.
+- [agent] [agent-core] The time a queued task has waited for its busy agent is kept in `state.json` (`waiting_since`) and survives a restart of the daemon; when the task is handed over before its first run, the first holder is not woken for it when its other run finishes.
+- [agent] [agent-core] A busy hand-over's obligation to tell the whole team who holds each item is persisted as `busy_notice_owed`, rebuilt after restart and retried after transient bus failures. Permanent bus refusals and rendering failures are logged and drop the affected notice; the obligation clears once all notices are accepted or dropped. The coordinator and peers receive the item, branch, task and both holders instead of only the replaced member being addressed.
+
+### Configuration
+- [agent-core] **Action:** new: `[replacement] busy_after` (default `300`) — seconds a queued task waits for its busy agent before a free agent of `[replacement] agents` of the same or higher tier outside the team takes it over; `0` never hands a task over for this reason, and an empty `[replacement] agents` list performs no hand-over for a busy agent either.
+
+## 0.72.0 — 22.11.2026 — PR #189
+
+### New features
+- [agent] [agent-core] [agent-runtime] A wrong result of a worker is tried once elsewhere: the request goes to a free worker of another CLI (of the same CLI when no other is free), whose prompt says who served it before and why that result did not serve, and the requester is told it went again. A second wrong result returns the step to the requester with the reasons of both results, and no third worker starts. `[workers] tries = 1` never gives a request to a second worker.
+- [agent] [agent-runtime] A daemon that stops while a request waits for its second worker goes on from the file of the first result; the try is kept in `tasks/<worker task>/worker-try-<n>.json`.
+
+### Bug fixes
+- [agent] A file of a request that holds another request than its name says now answers the request it holds too, once.
+- [agent] A request running for a worker whose task the bus has not recorded yet is the worker's by its name; a result already checked is not brought over for a request the bus has forgotten.
+- [agent] A worker is no longer held busy for ever by the file of a request that was answered and cannot be removed.
+
+### Enhancements
+- [agent] [agent-core] [agent-runtime] The damage of a worker's request file is logged as `worker_request_damaged` (history migration 19, a warning) with the file's name; the log calls of the result of a worker that had no event now carry one (`bus_down`, `request_delegated`, `worker_request_damaged`).
+
+### Configuration
+- [agent-core] changed: `[workers] tries` (default `2`) is applied now to the result of a run that ended `STATUS: DONE`: a wrong first result goes to a second worker. `1` never gives a request to a second worker; a value above `2` behaves as `2` (a request gets one second try at most). A run that ends otherwise than DONE is still answered as failed at once.
+
 ## 0.71.0 — 22.11.2026 — PR #188
 
 ### Bug fixes

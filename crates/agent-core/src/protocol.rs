@@ -21,13 +21,14 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
-    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Reply, Response, Returned, ReviewPass,
-    RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, TeamSummary, Versions, mark_runs_elsewhere,
+    Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Removal, Reply, Response, Returned,
+    ReviewPass, RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, TeamSummary, Versions,
+    mark_runs_elsewhere,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
-    ControlRequest, GateRequest, MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES, Request, RequestId, RunRequest, SayError,
-    SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
+    ControlRequest, GateRequest, MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES, RemoveRequest, Request, RequestId,
+    RunRequest, SayError, SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
 };
 
 /// The legacy protocol version, retained for strict clients predating split execution.

@@ -3,7 +3,9 @@
 //! A story is a pure function of the records it is given ([`render`]); `--json` of `agent log` prints the same records,
 //! each once ([`json_lines`]). Both choose them with [`selected`], so the text and the JSON cannot disagree about what
 //! belongs to a round. Records come in the order they were written in ([`SequencedRecord::sequence`]) and are told in the
-//! order of their time, a tie going to the one written first.
+//! order of their time, a tie going to the one written first. Text alone orders uninterrupted groups of reviewer runs
+//! for the same team, pull request and pass by their first recorded review requests. Missing requests leave the entire
+//! group in its original order. Events retain their positions, and every run retains its timestamps and contents.
 
 mod json;
 mod text;
@@ -91,7 +93,7 @@ pub fn render_in(records: &[SequencedRecord], selection: &Selection, options: St
     text::render(&chosen, selection, options, zone)
 }
 
-/// The records of `selection`, each as one line of JSON, in the order of the story.
+/// The records of `selection`, each as one line of JSON, in chronological order without the text-only review ordering.
 #[must_use]
 pub fn json_lines(records: &[SequencedRecord], selection: &Selection) -> Vec<String> {
     selected(records, selection)

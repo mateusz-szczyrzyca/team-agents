@@ -22,7 +22,7 @@ use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::{
-    AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Recipient, RequestId, Woken,
+    AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Outgoing, Recipient, RequestId, Woken,
 };
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
@@ -71,11 +71,21 @@ pub(super) struct Served {
 }
 
 /// The workers of a team and which of them cannot take a request now.
-struct Workers {
+pub(super) struct Workers {
     /// The workers with their tasks, in the configured order.
-    in_order: Vec<(AgentName, TaskId)>,
+    pub(super) in_order: Vec<(AgentName, TaskId)>,
     /// The workers that are at work or cannot work.
-    busy: Vec<AgentName>,
+    pub(super) busy: Vec<AgentName>,
+}
+
+/// What taking a request from the bus for a worker came to.
+enum Taken {
+    /// The worker was given a request.
+    Served,
+    /// A request of another team was taken and is put back; the worker is still free.
+    Held,
+    /// There is no request, or the bus cannot say now.
+    Nothing,
 }
 
 /// What one look at a team changed in the state.
@@ -419,6 +429,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
         self.brief_leads().await;
+        self.queue_busy_handover_notices().await?;
         self.flush_outbox().await?;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
@@ -482,7 +493,24 @@ impl Owner {
     /// Does what is waiting for the bus, oldest first; stops at the first thing the bus does not take.
     pub(super) async fn flush_outbox(&mut self) -> Result<(), OwnerError> {
         while let Some(next) = self.outbox.front().cloned() {
-            match self.carry_out(&next).await? {
+            let carried = match self.carry_out(&next).await {
+                Ok(done) => done,
+                Err(error) if matches!(&next.job, BusJob::BusyHandOver { .. }) => {
+                    if let BusJob::BusyHandOver { task, item } = &next.job {
+                        tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
+                            team = %next.team,
+                            task = %task,
+                            item = %item,
+                            error = %error_chain(&error),
+                            "a busy hand-over notice can no longer be rendered and is settled"
+                        );
+                    }
+                    Ok(())
+                }
+                Err(error) => return Err(error),
+            };
+            match carried {
                 Ok(()) => {
                     self.outbox.pop_front();
                     // The lead was told of a member's work: nothing is owed to it any more.
@@ -495,6 +523,16 @@ impl Owner {
                         self.parts.state.lead_told(&work.task)?;
                         self.save().await?;
                     }
+                    if let BusJob::BusyHandOver { task, .. } = &next.job {
+                        let more = self
+                            .outbox
+                            .iter()
+                            .any(|other| matches!(&other.job, BusJob::BusyHandOver { task: same, .. } if same == task));
+                        if !more {
+                            self.parts.state.busy_notice_told(task)?;
+                            self.save().await?;
+                        }
+                    }
                 }
                 // What the bus refuses for good would block everything behind it for ever: it is dropped, once told.
                 Err(error) if !is_transient(&error) => {
@@ -506,6 +544,16 @@ impl Owner {
                         "the bus refuses a request for good: it is dropped"
                     );
                     self.outbox.pop_front();
+                    if let BusJob::BusyHandOver { task, .. } = &next.job {
+                        let more = self
+                            .outbox
+                            .iter()
+                            .any(|other| matches!(&other.job, BusJob::BusyHandOver { task: same, .. } if same == task));
+                        if !more {
+                            self.parts.state.busy_notice_told(task)?;
+                            self.save().await?;
+                        }
+                    }
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -533,6 +581,12 @@ impl Owner {
                     team: outbound.team.clone(),
                 };
                 bus.send(&from, &to, &message).await.map(drop)
+            }
+            BusJob::BusyHandOver { task, item } => {
+                let text = self.busy_handover_text(task, *item)?;
+                let from: AgentName = BUS_SENDER.parse()?;
+                let to = Recipient::Team(outbound.team.clone());
+                bus.send(&from, &to, &Outgoing::Chat { text }).await.map(drop)
             }
             BusJob::Answer { request, update } => bus.helper_set(*request, update).await,
             BusJob::Finish => bus.team_done(&outbound.team).await,
@@ -954,63 +1008,87 @@ impl Owner {
         };
         let names: Vec<AgentName> = workers.iter().map(|(name, _)| name.clone()).collect();
         let mut held = Vec::new();
-        while let Some(worker) = first_free_worker(&names, &busy).cloned() {
-            let request = match self.parts.bus.helper_next(&worker).await {
-                Ok(Some(request)) => request,
-                Ok(None) => break,
-                Err(error) => {
-                    tracing::warn!(
-                        event = LogEvent::BusDown.as_str(),
-                        team = %team_id,
-                        %worker,
-                        error = %error_chain(&error),
-                        "the queue of requests for workers cannot be read: it is tried again at the next look"
-                    );
-                    break;
-                }
-            };
-            let Some((_, task)) = workers.iter().find(|(name, _)| *name == worker).cloned() else {
-                break;
-            };
-            if !self.is_member(team_id, &request.from_task) {
-                held.push(request.id);
-                continue;
+        // A request given back for a second try goes to a worker of another provider when one is free.
+        while let Some(worker) = self.second_try_pick(team_id, &workers, &busy) {
+            match self.take_request(team_id, (&worker, &workers), &mut held, look).await? {
+                Taken::Served => busy.push(worker),
+                Taken::Held => {}
+                Taken::Nothing => break,
             }
-            log_decision(
-                "first_free_worker",
-                &json!({"workers": &names, "busy": &busy}),
-                &json!({"worker": &worker, "request_id": request.id}),
-            );
-            // The commit the worker's worktree is at: the files the worker changes are those since.
-            let base = self.worker_head(team_id, &task, &worker).await;
-            let started = Timestamp::now(&self.parts.clock)?;
-            self.release(&task, Why::Delegated(Box::new(request.clone())), look)?;
-            self.serving.insert(
-                task.clone(),
-                Served {
-                    request: request.id,
-                    requester: request.from.clone(),
-                    requester_task: request.from_task.clone(),
-                    worker: worker.clone(),
-                    started,
-                    base,
-                },
-            );
-            self.tell_bus(
-                team_id,
-                request_update(request.id, DelegationStatus::Running, Some(task)),
-            );
-            tracing::info!(
-                event = LogEvent::RequestDelegated.as_str(),
-                team = %team_id,
-                request = %request.id,
-                %worker,
-                "a request is given to a worker"
-            );
-            busy.push(worker);
+        }
+        while let Some(worker) = first_free_worker(&names, &busy).cloned() {
+            match self.take_request(team_id, (&worker, &workers), &mut held, look).await? {
+                Taken::Served => busy.push(worker),
+                Taken::Held => {}
+                Taken::Nothing => break,
+            }
         }
         self.put_back(team_id, held).await;
         Ok(())
+    }
+
+    /// Takes the oldest queued request for `worker` from the bus and starts the worker's run on it.
+    async fn take_request(
+        &mut self,
+        team_id: &TeamId,
+        (worker, workers): (&AgentName, &[(AgentName, TaskId)]),
+        held: &mut Vec<RequestId>,
+        look: &mut Look,
+    ) -> Result<Taken, OwnerError> {
+        let request = match self.parts.bus.helper_next(worker).await {
+            Ok(Some(request)) => request,
+            Ok(None) => return Ok(Taken::Nothing),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %team_id,
+                    %worker,
+                    error = %error_chain(&error),
+                    "the queue of requests for workers cannot be read: it is tried again at the next look"
+                );
+                return Ok(Taken::Nothing);
+            }
+        };
+        let Some((_, task)) = workers.iter().find(|(name, _)| name == worker).cloned() else {
+            return Ok(Taken::Nothing);
+        };
+        if !self.is_member(team_id, &request.from_task) {
+            held.push(request.id);
+            return Ok(Taken::Held);
+        }
+        log_decision(
+            "first_free_worker",
+            &json!({"workers": workers.iter().map(|(name, _)| name).collect::<Vec<_>>()}),
+            &json!({"worker": worker, "request_id": request.id}),
+        );
+        // The commit the worker's worktree is at: the files the worker changes are those since.
+        let base = self.worker_head(team_id, &task, worker).await;
+        let started = Timestamp::now(&self.parts.clock)?;
+        let given = self.given_again(team_id, &request, worker, &task);
+        self.release(&task, Why::Delegated(Box::new(given)), look)?;
+        self.serving.insert(
+            task.clone(),
+            Served {
+                request: request.id,
+                requester: request.from.clone(),
+                requester_task: request.from_task.clone(),
+                worker: worker.clone(),
+                started,
+                base,
+            },
+        );
+        self.tell_bus(
+            team_id,
+            request_update(request.id, DelegationStatus::Running, Some(task)),
+        );
+        tracing::info!(
+            event = LogEvent::RequestDelegated.as_str(),
+            team = %team_id,
+            request = %request.id,
+            %worker,
+            "a request is given to a worker"
+        );
+        Ok(Taken::Served)
     }
 
     /// Puts the requests of other teams that the look at `team_id` took from the bus back in the queue at once, so that
@@ -1037,7 +1115,7 @@ impl Owner {
 
     /// The workers of `team` in the configured order with their tasks, and those that cannot take a request now;
     /// `None` for a team that is not there or has no workers to ask.
-    fn workers_of(&self, team_id: &TeamId) -> Result<Option<Workers>, OwnerError> {
+    pub(super) fn workers_of(&self, team_id: &TeamId) -> Result<Option<Workers>, OwnerError> {
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(None);
         };
@@ -1056,7 +1134,10 @@ impl Owner {
             // A worker whose result is not settled yet is busy: its worktree is what the check reads and the commit comes from.
             if member.status() != TaskStatus::Waiting
                 || self.serving.contains_key(member.task())
-                || agent_runtime::worker_request::has_pending(&self.parts.store.home().task_dir(member.task()))
+                || agent_runtime::worker_request::has_pending_except(
+                    &self.parts.store.home().task_dir(member.task()),
+                    &self.answered_requests,
+                )
             {
                 busy.push(name.clone());
             }
@@ -1169,11 +1250,13 @@ impl Owner {
                         if let Err(error) = self.keep_worker_result(&located.team, &served, task, summary.clone()) {
                             // Without its file the result cannot be settled: the requester gets the worker's report, as
                             // before, rather than nothing.
-                            tracing::error!(
+                            tracing::warn!(
+                                event = LogEvent::WorkerRequestDamaged.as_str(),
                                 request = %served.request,
                                 error = %error_chain(&error),
                                 "the result of a worker cannot be kept: the requester is given the worker's report unchecked"
                             );
+                            Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                             for job in answer_jobs(&self.parts.team_texts, &served, RequestOutcome::Done { summary })? {
                                 self.outbox.push_back(Outbound {
                                     team: located.team.clone(),
@@ -1183,6 +1266,8 @@ impl Owner {
                         }
                     }
                     outcome @ RequestOutcome::Failed { .. } => {
+                        // The request is answered here, not from a file: the try that came with it goes with it.
+                        Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                         for job in answer_jobs(&self.parts.team_texts, &served, outcome)? {
                             self.outbox.push_back(Outbound {
                                 team: located.team.clone(),

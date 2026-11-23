@@ -228,6 +228,7 @@ agent status [--running] [--task] the teams the daemon knows, their rounds and a
 agent answer <task> [-f <file>]   answers the questions of a task; it goes on with the answers
 agent say <task|team> <text>      says something to a task or a team, through the bus
 agent stop | pause | unpause | resume <task|team>
+agent remove <team> [--force]     takes a team out: its unmerged branches are bundled, its pull requests closed, its files deleted
 agent gate                        runs the repository's gate for a task and records its result
 agent log ...                     reads the history: rounds, teams, tasks, prompts, steps
 agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong
@@ -265,6 +266,17 @@ An agent has one run at a time, over all its teams and solo tasks (`[limits] run
 of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is queued already runs another task, the
 queued task waits — it is not failed — and `agent status` says `queued, waits for claude-1, running in team-…`. It starts
 when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued.
+
+A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
+a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
+at that moment: the same worktree and branch, briefed with the reason `busy`, the bus tells the whole team who holds each item now,
+and `agent status` shows `for claude-1` next to the agent that holds it now and a `runs: <cli> <count>, …` line for the runs
+going per CLI. Team notice obligations survive daemon restarts and transient bus failures, which are retried.
+A notice that the bus permanently refuses, or that cannot be rendered, is logged and dropped; the obligation clears
+when every notice has either been accepted or dropped. Only the agents listed in `[replacement] agents` are candidates: an empty `[replacement] agents` list (or
+`busy_after = 0`) performs no busy hand-over and the task keeps waiting for its own agent. Tasks that are running, waiting
+for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
+handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
 
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
@@ -434,6 +446,7 @@ The daemon records teams, rounds, runs and their steps and changes in `history.d
 pull requests, review and fix passes, questions, answers, controls and notifications. See
 [`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in
 `agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
+On its first start, version 0.74.0 migrates `history.db` to schema 20 to record team removals, preserving existing records. An older daemon refuses schema 20 as an unsupported newer database; keep a backup before upgrading if you need to return to an older daemon.
 Known values from `secrets.toml` are replaced with `[REDACTED]` before history persistence, including echoed CLI output;
 secret-bearing structured identities cause counted omissions. Raw CLI output files are separate from this protection; Rust tasks no longer write `activity.jsonl`.
 Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
@@ -456,7 +469,9 @@ it also keeps `build_directory_removed` from then on, which such a file refused 
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
-as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
+as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
+review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
+are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. Schema version `6` adds the search index and durable follow cursor after the daemon-log schema; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 
@@ -486,6 +501,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
+| `agent remove <team> [--force]` | removes a team after bundling its unmerged work; `--force` first ends its active runs and checks. See the removal details below. |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number |
 | `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
@@ -493,6 +509,62 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
+
+`agent remove <team>` removes only that team's state, local branches, worktrees and task directories.
+It refuses an unknown team or a team with active runs, gates or worker checks. With `--force`, it ends and joins
+that work before deleting files. Previously halted checks are joined even without `--force`; pending disk cleanup
+finishes before the freed bytes are measured. Plain document or artwork directories are removed without Git inspection,
+including teams whose worktrees are all plain directories. Their freed bytes are included in the result.
+
+Before deletion, unmerged local branches and worktree HEAD commits go into `AGENTS_HOME/removed/<team>.bundle`.
+The command verifies the bundle and reports its path; restore a branch with
+`git fetch /path/to/removed/<team>.bundle refs/heads/<branch>:refs/heads/recovered-work`.
+Detached HEADs are available as `refs/agent-removed/<task>` in that bundle. A failure to create or verify the
+bundle prevents deletion. Every worktree with uncommitted tracked changes is named in the output; the bundle
+keeps commits, so save those changes separately before removal if you need them. Untracked files alone do not
+produce that warning. Open pull requests are closed with an explanatory comment; their remote branches stay.
+
+The team disappears from `agent status`, including after a daemon restart. History and existing notifications
+stay. One new notification and a `team_removed` log event report the team, reason, bundle and bytes freed.
+The byte count covers successfully deleted directories; cleanup failures are listed as left behind with their
+causes. Removal saves the new state before deleting local files; a failed state save preserves those files and
+the live team, although a pull request already closed stays closed.
+
+**Current limitations:** removal requires a surviving worktree to locate a Git repository. If none remains,
+it refuses without deleting state or files and names the known local branches: keep one worktree, or bundle and
+delete the branches by hand. The team record gains no repository-path field in this release.
+The command marks the team done on the bus, but **the bus itself is neither read for wake-ups nor cleaned**.
+The output reports known reservations with their paths and each removed task's persisted wake-up budget
+(task, message number, count and state-file path). Bus unread messages and reservations remain; reservations
+last until expiry or manual release. Releasing these bus records is a separate follow-up.
+
+The `remove` request and `removed` reply add to the socket protocol; older commands keep their forms and an
+older daemon refuses the new command. History migration 20 admits the new event while preserving old logs,
+search entries and cursors; it does not change the live state's format.
+
+**Automatic idle removal:** by default, the daemon checks at startup and once per minute and removes a team
+after two hours without a run or new commit. It uses the same bundle, cleanup and notification safeguards as
+`agent remove`, including for document and artwork teams. Running work and checks, human pause/stop, quota or
+rate-limit reset waits, and accepted claims waiting for another team's pull request to merge protect the team.
+Work queued for an agent, including provider retries and rounds awaiting a free investigator, also protects the team.
+An unanswered question does not protect it. This release removes idle teams **without starting replacements**;
+`[limits] idle_team_restarts = 1` is reserved and has no effect yet. Version 0.76.0 supplies the internal
+recovery foundation: saved replacement identities, restart accounting and preserved merged progress. The daemon
+does not call it yet; automatic replacement will be activated by a separate task. See the
+[recovery state contract](docs/state.md#recovery-foundation).
+
+**Action:** set `[limits] idle_team_minutes = 0` before restarting the daemon if you want the old behavior.
+Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
+and the current daemon startup, so downtime never counts and an old team gets a full interval after restart. The optional
+`idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
+new field: keep a state backup before upgrading if you need to downgrade. The state schema remains 14 and the
+history schema remains 20.
+
+Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
+rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its
+branches. While the team remains idle, the daemon retries once a minute without repeating that notice. Each
+retry requires the history acknowledgement and removal safeguards again. Disabling history is an explicit
+opt-out from the history requirement; bundles and removal safeguards still apply.
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
 
@@ -954,13 +1026,21 @@ worker's name. Each stage is written to `tasks/<worker task>/worker-request-<n>.
 daemon that stops in between goes on from the stage the file names: the check runs once and a commit is brought over once.
 A request the bus no longer has has its file removed. **A file that cannot be used is the fault of its request only.** A
 `worker-request-<n>.json` that is cut short, has a field this version does not know, holds another request than its name says, cannot be read, or a stage that cannot
-be written: the daemon logs a `restart_corrected` warning that names the file (and where it is kept), moves the file aside
+be written: the daemon logs a `worker_request_damaged` warning that names the file (and where it is kept), moves the file aside
 as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — also after a restart of the daemon), settles
 the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
 cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
 log line to learn what happened to the worker's work: nothing was brought over.
-A second try with a worker of another CLI, and the lines of `agent status` and of the pull request's description for the
-returned steps, come with the next version.
+**A wrong result is tried once elsewhere.** When the result of a run that ended `STATUS: DONE` is wrong (the check failed or
+ran past its limit, a file outside `files` was changed, nothing was committed, the run lasted past `[workers] seconds`) and
+`[workers] tries` is above 1, the request goes once more to a free worker of another CLI (of the same CLI when no other is
+free): its prompt says who served the request before and why that result did not serve, and the requester is told that the
+request went again. A second wrong result returns the step to the requester with the reasons of both results, and no third
+worker starts; `tries = 1` never gives a request to a second worker. What the first worker committed is not brought over. The
+try is kept in `tasks/<worker task>/worker-try-<n>.json`, and a daemon that stops while the request waits for the second
+worker goes on from the file of the first result. A worker whose result is not settled is busy; a request the daemon has
+answered does not keep it busy, even when its file cannot be removed. A run that ends otherwise than `STATUS: DONE`, the
+lines of `agent status` for the tries and the pull request's description of the returned steps come with the next version.
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
