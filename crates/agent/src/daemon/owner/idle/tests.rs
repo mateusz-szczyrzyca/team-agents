@@ -108,3 +108,125 @@ async fn refusal_retains_team_and_notifies_once_across_restart() {
     assert_eq!(owner.parts.state.teams().len(), 1);
     assert_eq!(daemon.notifications(), notices);
 }
+
+/// Executes Git only in a disposable fixture, with deterministic commit dates.
+fn git(path: &std::path::Path, seconds: u32, args: &[&str]) {
+    let result = std::process::Command::new("git")
+        .current_dir(path)
+        .env("GIT_AUTHOR_DATE", at(seconds).to_string())
+        .env("GIT_COMMITTER_DATE", at(seconds).to_string())
+        .args(["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(result.status.success(), "{}", String::from_utf8(result.stderr).unwrap());
+}
+
+#[tokio::test]
+async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
+    let daemon = Daemon::new(&pair_state(), None);
+    files(&daemon);
+    let path = daemon.home.worktree_dir(&repo(), &task(1));
+    git(&path, 7000, &["init", "-q", "-b", "main"]);
+    git(&path, 7000, &["add", "."]);
+    git(&path, 7000, &["commit", "-qm", "Recent work"]);
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert_eq!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .unwrap()
+            .idle_watch()
+            .unwrap()
+            .last_activity,
+        at(7000)
+    );
+    // A new branch containing an old-dated commit still counts when first observed.
+    let branch = format!("agents/old/{}", task(2));
+    git(&path, 0, &["checkout", "-qb", &branch]);
+    git(&path, 0, &["commit", "--allow-empty", "-qm", "Imported work"]);
+    git(&path, 0, &["checkout", "-q", "main"]);
+    daemon.clock.advance(time::Duration::seconds(7000));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert_eq!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .unwrap()
+            .idle_watch()
+            .unwrap()
+            .last_activity,
+        at(14200)
+    );
+    drop(owner);
+    drop(sinks);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7199));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    daemon.clock.advance(time::Duration::seconds(1));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 0);
+    assert!(!path.exists());
+}
+
+#[tokio::test]
+async fn damaged_git_metadata_refuses_removal_and_reports_once() {
+    let daemon = Daemon::new(&pair_state(), None);
+    files(&daemon);
+    let path = daemon.home.worktree_dir(&repo(), &task(1));
+    std::fs::write(path.join(".git"), "gitdir: /does-not-exist-fixture\n").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert!(path.exists());
+    assert_eq!(daemon.notifications().len(), 1);
+    assert!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .unwrap()
+            .idle_watch()
+            .unwrap()
+            .heads
+            .is_empty()
+    );
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(daemon.notifications().len(), 1);
+}
+
+#[tokio::test]
+async fn persisted_quota_hold_is_honored_until_its_recorded_reset() {
+    let mut state = pair_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(crate::fixtures::run(1), at(0), None).unwrap();
+        member
+            .end_run(
+                at(1),
+                agent_core::state::RunEnd::QuotaExhausted {
+                    resets_at: Some(at(8000)),
+                },
+            )
+            .unwrap();
+        member.transition(TaskStatus::Waiting).unwrap();
+    }
+    let daemon = Daemon::new(&state, None);
+    files(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(8059));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    daemon.clock.advance(time::Duration::seconds(1));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 0);
+}
