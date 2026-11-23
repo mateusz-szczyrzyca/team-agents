@@ -1222,7 +1222,10 @@ fn a_growing_session_is_told_in_the_debug_summary_the_log_and_the_status_with_it
     // The log: one usage line per run, in order.
     let (code, log, err) = agent(&environment(home.root()), &["log", "--team", team.as_str()]);
     assert_eq!(code, ExitCode::from(0), "{err}");
-    let lines: Vec<&str> = log.lines().filter(|line| line.starts_with("usage: ")).collect();
+    let lines: Vec<&str> = log
+        .lines()
+        .filter_map(|line| line.find("usage: context first").map(|at| &line[at..]))
+        .collect();
     assert_eq!(
         lines,
         [
