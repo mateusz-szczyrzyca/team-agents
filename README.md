@@ -572,7 +572,7 @@ and the current daemon startup, so downtime never counts and an old team gets a 
 `idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
 new field: keep a state backup before upgrading if you need to downgrade. State schema 15 migrates schema 14 while preserving its tasks, runs and renewals. It adds optional tool-use evidence
 and the durable no-tool retry reason. Older daemons cannot read the new fields: back up state before upgrading if you
-need to downgrade. History schema remains 20. Socket protocol 8 adds the failure reason; older negotiated replies retain
+need to downgrade. History schema 21 preserves existing records while admitting the named no-tool retry and failure events. Socket protocol 8 adds the failure reason; older negotiated replies retain
 all runs but omit the new tool-use and no-tool renewal metadata.
 
 Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
