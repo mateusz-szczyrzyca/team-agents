@@ -154,7 +154,8 @@ in this release**; automatic replacement follows in a separate part.
 
 Automatic removal uses the safeguards of `agent remove`: unmerged work is bundled before deletion, and the
 notification names the reason, bundle and freed bytes. A refusal keeps the team and notifies once with its reason
-and branches. It is retried automatically only after new work; otherwise fix the cause and use `agent remove`.
+and branches. While the team remains idle, removal is retried once a minute without repeating that notice.
+Repairing the cause allows a later scan to remove the team without new task activity.
 An enabled but unavailable history blocks automatic deletion; `[history] enabled = false` explicitly opts out
 of the history requirement. Set `idle_team_minutes = 0` before upgrading to retain teams indefinitely.
 

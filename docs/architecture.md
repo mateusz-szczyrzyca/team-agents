@@ -379,7 +379,10 @@ Before removal, a required `decision_taken` history entry captures activity, ite
 next parts and recovery branches. An enabled history writer must acknowledge the transaction; unavailable history
 prevents deletion. Explicitly disabled history opts out. The existing removal path then bundles unmerged work,
 closes open pull requests, saves state and cleans up, with one removal notification. Refusal preserves the team
-and sends one catalog notice, suppressed across restarts. The `w6gn` shape (a merged split part followed by an
+and sends one catalog notice, suppressed across restarts. The refusal marker only deduplicates notifications:
+eligible teams are retried at most once per minute, with a fresh history acknowledgement and the same safeguards.
+The owner keeps the last attempt time in memory per team and prunes entries for removed teams. After restart,
+the normal startup idle interval still applies, and persisted refusals do not prevent retries. The `w6gn` shape (a merged split part followed by an
 unstarted part with no round) is covered by a fake-CLI daemon test.
 
 This part removes teams only. Automatic replacement, provider selection, resumed progress and enforcement of the

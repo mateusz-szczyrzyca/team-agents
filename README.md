@@ -557,8 +557,9 @@ history schema remains 20.
 
 Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
 rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its
-branches. Fix the cause and use `agent remove`, or resume work to make it eligible again. Disabling history is an
-explicit opt-out from the history requirement; bundles and removal safeguards still apply.
+branches. While the team remains idle, the daemon retries once a minute without repeating that notice. Each
+retry requires the history acknowledgement and removal safeguards again. Disabling history is an explicit
+opt-out from the history requirement; bundles and removal safeguards still apply.
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
 
