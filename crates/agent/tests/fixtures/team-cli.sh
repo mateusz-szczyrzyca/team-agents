@@ -48,6 +48,7 @@
 #                   whatever the run is to have done
 #   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
 #                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
+#   sleep-stream:NAME  like `stream:NAME`, and ends with STATUS: SLEEPING
 #   ask-stream:NAME  like `ask-here` after the stream of `stream:NAME`: asks in questions-1.md, ends with STATUS: QUESTIONS
 #   leave-stream:NAME  like `stream:NAME`, and leaves the file `draft.txt` uncommitted in the worktree (hidden from the
 #                   fake's own files) and ends with STATUS: DONE, so that a briefing of the next session can name the file
@@ -747,6 +748,11 @@ case $action in
     printf '# Questions — fake\n\n## 1. Continue the part?\na) continue — finish the document\nb) stop — leave it open\n\n**Recommended:** a) — finish the independent part (fake)\n\n**Verdict:**\n' > "$file"
     cat "$home/fake-scripts/${action#ask-stream:}.jsonl"
     result 'I have to ask.\nSTATUS: QUESTIONS'
+    ;;
+  sleep-stream:*)
+    # Like `stream:NAME`, and ends sleeping: the task waits for a message, its round closed, with nothing left in the worktree.
+    cat "$home/fake-scripts/${action#sleep-stream:}.jsonl"
+    result 'Streamed and sleeping.\nSTATUS: SLEEPING'
     ;;
   leave-stream:*)
     hide_own_files
