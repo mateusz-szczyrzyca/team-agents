@@ -12,6 +12,8 @@ mod tests;
 /// (`None` when the bound is off). A context equal to the bound is still resumed: only a context above it is too big.
 #[must_use]
 pub const fn starts_anew(last_context: Option<u64>, bound: Option<u64>) -> bool {
-    let _ = (last_context, bound);
-    false
+    match (last_context, bound) {
+        (Some(last), Some(bound)) => last > bound,
+        (None, _) | (_, None) => false,
+    }
 }
