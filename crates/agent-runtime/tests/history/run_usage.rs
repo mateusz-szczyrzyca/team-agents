@@ -256,3 +256,38 @@ fn a_run_of_a_populated_version_21_history_survives_the_upgrade_and_reads_as_not
     assert_eq!(read, None);
     assert!(many.is_empty());
 }
+
+#[test]
+fn the_reader_gives_back_the_usage_of_more_runs_than_one_query_may_hold() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("../fixtures/history-before-run-usage-v21-with-run.sql"))
+        .unwrap();
+    drop(HistoryDb::open(&path, roomy()).unwrap());
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let mut runs = Vec::new();
+    for number in 0..1_200_u64 {
+        let id = format!("run-20261120-100100-{number:04}");
+        raw.execute(
+            "INSERT INTO runs (run, team, task, at, agent, tier, cli, model, role, why, prompt, worktree, branch, session, cut) \
+             SELECT ?1, team, task, at, agent, tier, cli, model, role, why, prompt, worktree, branch, session, cut \
+             FROM runs WHERE run = 'run-20261120-100100-lg01'",
+            [&id],
+        )
+        .unwrap();
+        raw.execute(
+            "INSERT INTO run_usage (run, first_context, last_context, tokens_written, cost_usd) VALUES (?1, ?2, NULL, NULL, NULL)",
+            rusqlite::params![&id, i64::try_from(number).unwrap()],
+        )
+        .unwrap();
+        runs.push(id.parse::<agent_core::ids::RunId>().unwrap());
+    }
+
+    let read = Reader::open(&path).unwrap().run_usages(&runs).unwrap();
+
+    assert_eq!(read.len(), 1_200);
+    let last = runs.last().unwrap();
+    assert_eq!(read[last].first_context, Some(1_199));
+}
