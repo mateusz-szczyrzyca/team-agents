@@ -856,4 +856,6 @@ async fn a_run_resumed_after_a_replacement_with_a_known_size_says_nothing_of_it(
         "the run after the replacement is resumed: {args}"
     );
     assert!(!fourth.contains("grown to"), "{fourth}");
+    assert!(!fourth.contains("its size could not be read"), "{fourth}");
+    assert!(!fourth.contains("replaces it as a precaution"), "{fourth}");
 }
