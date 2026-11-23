@@ -687,7 +687,9 @@ fn a_page_tells_the_usage_of_a_run_after_its_end_row() {
     let page = poll(&mut feed, &path);
 
     let lines: Vec<&str> = page.lines().collect();
-    assert_eq!(lines.len(), 2, "{page}");
+    // The row of the end, the usage of the run, and what the round waits for, which a run's end always brings.
+    assert_eq!(lines.len(), 3, "{page}");
     assert!(lines[0].starts_with("2026-11-21T12:50:03Z info run_ended"), "{page}");
     assert_eq!(lines[1], usage_text(1, 100, 200), "{page}");
+    assert!(lines[2].starts_with("round "), "{page}");
 }
