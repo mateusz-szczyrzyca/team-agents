@@ -28,6 +28,7 @@ use agent_runtime::run::compose::{
     Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, ComposeError,
     PlanHeadings, briefing_variables_with,
 };
+use agent_runtime::run::outcome::read_outcome;
 use agent_runtime::snapshot::{SnapshotError, take_snapshot};
 use agent_runtime::text_file::read_text_file;
 
@@ -136,6 +137,9 @@ pub(super) enum BriefingProblem {
     /// The clock gives no valid time for the snapshot.
     #[error("cannot read the time of the snapshot")]
     Clock(#[from] InvalidTimestamp),
+    /// The outcome of the task's last run cannot be read, so its last message cannot be given whole.
+    #[error("cannot read the outcome of the task's last run")]
+    Outcome(#[source] agent_runtime::run::outcome::OutcomeError),
     /// The rounds the next run of the task works for cannot be told.
     #[error("cannot tell the rounds the next run of the task works for")]
     Rounds(#[source] OwnerError),
@@ -302,6 +306,21 @@ impl Owner {
     /// # Errors
     /// [`BriefingProblem`] when the history cannot be read.
     pub(super) async fn last_final_message(&self, task: &TaskId) -> Result<Option<String>, BriefingProblem> {
+        // The run's own outcome file holds the message whole; the history cuts a text at its limit.
+        let last = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.runs().last().map(|run| run.id().clone()));
+        if let Some(run) = last {
+            let run_dir = self.parts.store.home().run_dir(task, &run);
+            match read_outcome(run_dir.as_path()).await {
+                Ok(Some(outcome)) => return Ok(outcome.final_message),
+                // A run before the outcome file: the history's text is all there is.
+                Ok(None) => {}
+                Err(source) => return Err(BriefingProblem::Outcome(source)),
+            }
+        }
         let path = self.parts.store.home().history_file();
         if !path.exists() {
             return Ok(None);
