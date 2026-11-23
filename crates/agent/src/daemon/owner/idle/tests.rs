@@ -241,3 +241,50 @@ async fn persisted_quota_hold_is_honored_until_its_recorded_reset() {
     owner.check_idle_teams().await.unwrap();
     assert_eq!(owner.parts.state.teams().len(), 0);
 }
+
+#[tokio::test]
+async fn accepted_external_delivery_preserves_an_idle_team() {
+    use agent_core::ids::RoundId;
+    use agent_core::state::ItemPhase;
+    let mut state = crate::fixtures::solo_state();
+    let id = team_id(0);
+    let round = RoundId::derive(&id, 1);
+    let item = "1.1".parse().unwrap();
+    {
+        let mut team = state.team_mut(&id).unwrap();
+        team.open_round(round.clone(), Some(item), at(1)).unwrap();
+        team.advance_item(
+            item,
+            ItemPhase::InProgress {
+                assignee: "claude-1".parse().unwrap(),
+                branch: "agents/claude-1/task".parse().unwrap(),
+            },
+        )
+        .unwrap();
+        team.activate_split(
+            agent_core::state::split::SplitPlan::new(
+                item,
+                ["First", "Second"]
+                    .into_iter()
+                    .map(|title| agent_core::state::split::PartDefinition {
+                        title: title.into(),
+                        delivers: "A useful document".into(),
+                        checks: "Read it".into(),
+                        depends_on: Vec::new(),
+                    })
+                    .collect(),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        team.deliver_round_with_pr(&round, crate::fixtures::pr(99)).unwrap();
+    }
+    let daemon = Daemon::new(&state, None);
+    files(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert!(daemon.home.worktree_dir(&repo(), &task(1)).exists());
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
+}
