@@ -638,3 +638,71 @@ async fn removal_reports_persisted_wake_budgets_and_bus_cleanup_limit() {
             .any(|line| line.contains("bus itself was neither read for wake-ups nor cleaned"))
     );
 }
+
+#[tokio::test]
+async fn removal_refuses_a_gate_that_outlives_its_agent_run_without_force() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let (queue, mut waiting) = crate::daemon::gate::GateQueue::new();
+    owner = owner.with_gate(queue);
+    let (reply, _answer) = tokio::sync::oneshot::channel();
+    owner.gate_request(agent_core::protocol::GateRequest { task: task(1) }, reply);
+    let job = waiting.recv().await.unwrap();
+
+    let result = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert!(matches!(
+        result,
+        Err(agent_core::protocol::Failure {
+            kind: FailureKind::Conflict,
+            ..
+        })
+    ));
+    assert!(!job.cancel.is_cancelled());
+    assert_eq!(owner.parts.state, state);
+    assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
+}
+
+#[tokio::test]
+async fn forced_removal_waits_for_the_gate_to_finish_before_deleting_files() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let (queue, mut waiting) = crate::daemon::gate::GateQueue::new();
+    owner = owner.with_gate(queue);
+    let (reply, answer) = tokio::sync::oneshot::channel();
+    owner.gate_request(agent_core::protocol::GateRequest { task: task(1) }, reply);
+    let job = waiting.recv().await.unwrap();
+    let mut removal = Box::pin(owner.remove_request(
+        &Client::Cli,
+        RemoveRequest {
+            team: team_id(0),
+            force: true,
+        },
+    ));
+    tokio::select! {
+        result = &mut removal => panic!("removal completed before cancelling and joining the gate: {result:?}"),
+        () = job.cancel.cancelled() => {},
+    }
+    assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
+    assert!(daemon.home.worktree_dir(&repo(), &task(1)).join("work.txt").is_file());
+    job.reply.send(Ok(Reply::Applied { tasks: vec![task(1)] })).unwrap();
+    let removed = removal.await.unwrap().unwrap();
+    assert_eq!(answer.await.unwrap().unwrap(), Reply::Applied { tasks: vec![task(1)] });
+    assert_eq!(removed.stopped, vec![task(1)]);
+    assert!(!daemon.home.task_dir(&task(1)).exists());
+}
