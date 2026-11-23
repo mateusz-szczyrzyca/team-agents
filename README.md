@@ -307,8 +307,10 @@ you need to return to an older daemon.
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row. After that the session itself is taken to have gone
 bad, and the task is started once in a new session of the same agent with a briefing built from facts — its prompt, the
-commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its
-team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
+commits of its branch, the files it left uncommitted (kept in a snapshot first), who worked on the task and how each of
+the newest ten runs ended, its plan of steps grouped as the harness judged them (confirmed, declared, mismatch, not done;
+a step edited since it was judged, or never judged, is declared), the newest ten answers you gave to its questions and
+the messages of its team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
 strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
 not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
