@@ -19,7 +19,13 @@ impl Owner {
         let mut heads = BTreeMap::new();
         let tasks = tasks_of(team);
         let mut branches = branches_of(team)?;
-        for (_, member) in team.crew().roster() {
+        for member in team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers())
+        {
             let path = self.parts.store.home().worktree_dir(team.repo(), member.task());
             if !exists(&path.join(".git")).await? {
                 continue;
