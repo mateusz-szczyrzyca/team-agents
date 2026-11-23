@@ -280,10 +280,12 @@ a solo agent, a coordinator or a member is started once in a new session of the 
 member, with its reason) is saved with the decision, so a restart before the new run keeps it; the run after it resumes
 no session. When that run starts, the daemon takes a snapshot of the worktree (recorded in the history) and the prompt is
 the briefing (`harness/run/briefing.md`): why the task is started anew, its whole prompt, the commits of its branch since
-the base, the uncommitted files, its plan of steps and the unread messages of its team (read from the last 4 MiB of
+the base, the uncommitted files, the runs of the task before it (agent and end, the newest 10), its plan of steps grouped
+as confirmed, declared, mismatch and not done (the judgements in the history), the human's answers to its questions
+(the newest 10 of the question files) and the unread messages of its team (read from the last 4 MiB of
 the bus's log and its cursors in at most 64 MiB of its state, `agentbus/unread.rs`; when only the newest are shown the
 briefing says so). Every word of it is in the catalog: the values are facts (the reason as the state records it, the
-plan's marks). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
+plan's marks, the end of each run). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
 reviewer are not started anew; when the new session goes bad too, the task fails as before.
 
 **The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,

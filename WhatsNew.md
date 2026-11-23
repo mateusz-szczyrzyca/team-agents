@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.77.0 — 23.11.2026 — PR pending
+
+### Enhancements
+- [agent] [agent-core] A task started in a new session is briefed with more of what its earlier runs left: who worked on it and how each run ended (`DONE`, `QUESTIONS`, `no status`, `hang`, `turn limit`, `stopped`, `failed`, or cut before its end was recorded), the newest ten runs.
+- [agent] [agent-core] The steps of the plan in that briefing are grouped as confirmed (the check passed), declared (no check ran, or a reviewer decides), mismatch (the check failed) and not done, so the new session checks the declared steps and repairs the mismatched ones first.
+- [agent] [agent-core] The briefing lists the human's answers to the questions of the task with their verdicts, the newest ten, and says when older runs or answers are left out.
+- [agent] [agent-core] The briefing tells the new session to find the real state first (the commits, the uncommitted files, the gate) before it goes on.
+
 ## 0.76.0 — 23.11.2026 — PR #222
 
 ### Enhancements
