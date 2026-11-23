@@ -1,6 +1,7 @@
 //! The values of the briefing's variables for the runs, the steps as the harness judged them, and the answers of the
 //! human, one table of cases per part.
 
+use agent_core::plan::judge::JudgementState;
 use agent_core::prompt::Variables;
 
 use super::*;
@@ -22,6 +23,14 @@ fn facts(steps: Option<&'static [BriefingStep<'static>]>) -> Briefing<'static> {
         snapshot: "refs/agents/snapshots/round-1/task-20261120-144101-r7q2/1",
     }
 }
+
+/// The headings of the groups of steps, as the catalog words them.
+const HEADINGS: PlanHeadings<'static> = PlanHeadings {
+    confirmed: "Confirmed (the check passed):",
+    declared: "Declared (the agent says so; no check ran, or it waits for a reviewer):",
+    mismatch: "Mismatch (the agent says so and the check failed):",
+    not_done: "Not done:",
+};
 
 /// The value of the variable `name` in `values`, or `<missing>` when it has none.
 fn value(values: &Variables, name: &str) -> String {
@@ -120,9 +129,10 @@ fn steps_are_grouped_as_confirmed_declared_mismatch_then_not_done() {
             state: "[-]",
         },
     ];
-    let judgements = [("1.1", "confirmed"), ("1.2", "mismatch")];
+    let judgements = [("1.1", JudgementState::Confirmed), ("1.2", JudgementState::Mismatch)];
     let notes = BriefingNotes {
         judgements: &judgements,
+        headings: HEADINGS,
         ..BriefingNotes::default()
     };
 
@@ -143,8 +153,13 @@ fn a_plan_with_only_done_steps_has_no_empty_group_and_no_not_done_part() {
         state: "[x]",
     }];
 
+    let notes = BriefingNotes {
+        headings: HEADINGS,
+        ..BriefingNotes::default()
+    };
+
     assert_eq!(
-        value(&variables(Some(&STEPS), &BriefingNotes::default()), "plan"),
+        value(&variables(Some(&STEPS), &notes), "plan"),
         "Declared (the agent says so; no check ran, or it waits for a reviewer):\n- 1.1 Read the code"
     );
 }
@@ -203,5 +218,25 @@ fn the_note_on_answers_left_out_is_passed_through() {
     assert_eq!(
         value(&variables(None, &notes), "answers_left_out"),
         "Older answers are left out of this list."
+    );
+}
+
+#[test]
+fn a_step_the_harness_judged_declared_is_listed_as_declared() {
+    static STEPS: [BriefingStep<'static>; 1] = [BriefingStep {
+        id: "1.1",
+        title: "Ask the reviewer",
+        state: "[x]",
+    }];
+    let judgements = [("1.1", JudgementState::Declared)];
+    let notes = BriefingNotes {
+        judgements: &judgements,
+        headings: HEADINGS,
+        ..BriefingNotes::default()
+    };
+
+    assert_eq!(
+        value(&variables(Some(&STEPS), &notes), "plan"),
+        "Declared (the agent says so; no check ran, or it waits for a reviewer):\n- 1.1 Ask the reviewer"
     );
 }
