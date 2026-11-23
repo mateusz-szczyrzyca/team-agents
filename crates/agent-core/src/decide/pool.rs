@@ -53,14 +53,27 @@ pub fn next_pool_worker<'a>(
     requires: &Requires<'_>,
     last_served: LastServed<'_>,
 ) -> Option<(&'a AgentName, &'a str)> {
-    // Stub: the RED commit's answer is placeholder — no worker serves yet. The helpers are exercised so lint stays clean.
-    let order = provider_order(workers);
-    let met = requires.capabilities.is_empty()
-        && match workers.first() {
-            Some(worker) => meets(worker, requires),
-            None => false,
-        };
-    drop((order, met, last_served));
+    let providers = provider_order(workers);
+    if providers.is_empty() {
+        return None;
+    }
+    let start = match last_served.0 {
+        Some(provider) => providers
+            .iter()
+            .position(|existing| *existing == provider)
+            .map_or(0, |index| index + 1),
+        None => 0,
+    };
+    for offset in 0..providers.len() {
+        let pick = (start + offset) % providers.len();
+        let &provider = providers.get(pick)?;
+        if let Some(worker) = workers
+            .iter()
+            .find(|worker| !worker.busy && worker.provider == provider && meets(worker, requires))
+        {
+            return Some((worker.name, worker.provider));
+        }
+    }
     None
 }
 
@@ -68,7 +81,12 @@ pub fn next_pool_worker<'a>(
 /// `/`; for any other worker or a bare model without a `/`, the `cli` itself.
 #[must_use]
 pub fn provider_of(cli: CliKind, model: Option<&str>) -> &str {
-    let _ = model;
+    if cli == CliKind::Opencode
+        && let Some(model) = model
+        && let Some((provider, _)) = model.split_once('/')
+    {
+        return provider;
+    }
     cli.as_str()
 }
 

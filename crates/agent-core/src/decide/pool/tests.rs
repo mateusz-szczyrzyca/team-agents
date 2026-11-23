@@ -64,9 +64,9 @@ fn a_request_is_served_by_a_worker_of_the_provider_whose_turn_it_is_next() {
     let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("deepinfra"))).unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "openrouter");
-    // After an openrouter request: deepinfra again, its second free worker.
+    // After an openrouter request: deepinfra again — its first free worker in the pool order serves.
     let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("openrouter"))).unwrap();
-    assert_eq!(worker, name_of(&workers, 2));
+    assert_eq!(worker, name_of(&workers, 0));
     assert_eq!(provider, "deepinfra");
 }
 
@@ -99,8 +99,8 @@ fn a_request_that_requires_a_capability_is_served_by_a_worker_that_declares_it()
         ("w-node", "deepinfra", false, &["node"]),
         ("w-node-2", "openrouter", false, &["node"]),
     ]);
-    // Turn is deepinfra: the only free worker that declares `node` serves.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&["node"]), LastServed(None)).unwrap();
+    // Turn is deepinfra (openrouter served last): the only free worker that declares `node` and is of that turn serves.
+    let (worker, provider) = next_pool_worker(&workers, &requires(&["node"]), LastServed(Some("openrouter"))).unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "deepinfra");
 }
