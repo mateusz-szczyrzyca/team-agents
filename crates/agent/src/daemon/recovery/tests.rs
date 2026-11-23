@@ -1,5 +1,7 @@
 use agent_core::config::Limits;
+use agent_core::decide::ladder::Trouble;
 use agent_core::decide::outcome::{ClassifyError, RESET_MARGIN};
+use agent_core::ids::RoundId;
 use agent_core::state::{RunEnd, RunState, SessionId, State, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 
@@ -316,4 +318,119 @@ fn a_restart_counts_the_hangs_of_the_new_session_only() {
     let recovery = recover(&mut state, at(100), &limits()).unwrap();
 
     assert_eq!(recovery.hangs, [(task(2), 1)]);
+}
+
+// ---- the session a cut run goes on in ------------------------------------------------------------------------------
+
+/// The open round the cut runs of these tests worked for.
+fn round() -> RoundId {
+    "round-20261123-111025-aaaa".parse().unwrap()
+}
+
+/// What a restart does after task `n`, whose run was cut and whose task is queued, under `setting`.
+fn after_cut_of(state: &State, n: u32, setting: RestartSession, round: Option<&RoundId>) -> AfterCut {
+    let found = state.find_task(&task(n)).unwrap();
+    after_cut(setting, found.role, found.member, round)
+}
+
+/// A state in which task `n` ran once, with `session`, and the run was cut by a restart.
+fn cut(n: u32, session: Option<&str>) -> State {
+    let mut state = team_state();
+    start(&mut state, n, session);
+    end(&mut state, n, RunEnd::NoStatus { exit_code: None }, TaskStatus::Queued);
+    state
+}
+
+#[test]
+fn a_cut_run_of_a_working_role_goes_on_in_a_new_session_whatever_its_session() {
+    for (n, session) in [(1, Some("ses-1")), (2, Some("ses-1")), (2, None)] {
+        let state = cut(n, session);
+
+        assert_eq!(
+            after_cut_of(&state, n, RestartSession::New, Some(&round())),
+            AfterCut::NewSession,
+            "task {n} with session {session:?}"
+        );
+    }
+}
+
+#[test]
+fn the_key_can_keep_the_session_a_run_was_cut_in() {
+    let state = cut(2, Some("ses-1"));
+
+    assert_eq!(
+        after_cut_of(&state, 2, RestartSession::Same, Some(&round())),
+        AfterCut::SameSession
+    );
+}
+
+#[test]
+fn a_cut_run_of_a_worker_or_a_reviewer_is_resumed_as_before() {
+    for n in [3, 4] {
+        let state = cut(n, Some("ses-1"));
+
+        assert_eq!(
+            after_cut_of(&state, n, RestartSession::New, Some(&round())),
+            AfterCut::SameSession,
+            "task {n}"
+        );
+    }
+}
+
+#[test]
+fn a_run_that_worked_for_no_open_round_is_resumed_as_before() {
+    let state = cut(2, Some("ses-1"));
+
+    assert_eq!(
+        after_cut_of(&state, 2, RestartSession::New, None),
+        AfterCut::SameSession
+    );
+}
+
+#[test]
+fn a_run_that_was_not_cut_by_the_daemon_is_not_started_anew() {
+    for end_of_run in [
+        RunEnd::Hung,
+        RunEnd::TurnLimit,
+        RunEnd::NoStatus { exit_code: Some(1) },
+        RunEnd::Stopped,
+    ] {
+        let mut state = team_state();
+        start(&mut state, 2, Some("ses-1"));
+        end(&mut state, 2, end_of_run.clone(), TaskStatus::Queued);
+
+        assert_eq!(
+            after_cut_of(&state, 2, RestartSession::New, Some(&round())),
+            AfterCut::SameSession,
+            "{end_of_run:?}"
+        );
+    }
+}
+
+#[test]
+fn a_task_that_is_not_queued_is_left_to_its_own_status() {
+    for status in [TaskStatus::Failed, TaskStatus::Stopped, TaskStatus::Paused] {
+        let mut state = team_state();
+        start(&mut state, 2, Some("ses-1"));
+        end(&mut state, 2, RunEnd::NoStatus { exit_code: None }, status);
+
+        assert_eq!(
+            after_cut_of(&state, 2, RestartSession::New, Some(&round())),
+            AfterCut::SameSession,
+            "{status:?}"
+        );
+    }
+}
+
+#[test]
+fn a_task_that_already_awaits_a_new_session_is_not_started_anew_twice() {
+    let mut state = cut(2, Some("ses-1"));
+    state
+        .begin_holder_session(&task(2), Trouble::DaemonDown, at(30))
+        .unwrap();
+
+    assert_eq!(
+        after_cut_of(&state, 2, RestartSession::New, Some(&round())),
+        AfterCut::SameSession
+    );
 }

@@ -1,10 +1,10 @@
 //! Recovery on start: what a restart left half done in the state.
 
-use agent_core::config::Limits;
+use agent_core::config::{Limits, RestartSession};
 use agent_core::decide::outcome::{
     AfterNoStatus, ClassifyError, NO_STATUS_RETRIES, after_no_status, consecutive_no_status,
 };
-use agent_core::ids::TaskId;
+use agent_core::ids::{RoundId, TaskId};
 use agent_core::kinds::Role;
 use agent_core::state::{Member, Run, RunEnd, RunError, RunState, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
@@ -130,6 +130,22 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
         state.place_waiting_after_interrupted(&waiting);
     }
     Ok(recovery)
+}
+
+/// What a restart of the daemon does with the session of a run it cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AfterCut {
+    /// The task goes on in a new session of its agent, whose first prompt is the briefing of what the cut run left.
+    NewSession,
+    /// The task goes on in the session the run was cut in, as the harness did before briefings.
+    SameSession,
+}
+
+/// What a restart of the daemon does with the session of the last run of `member`, a task of `role`, when `round` is the
+/// open round that run worked for (`None` when it worked for none) and `setting` is `[restart] session`.
+pub(super) fn after_cut(setting: RestartSession, role: Role, member: &Member, round: Option<&RoundId>) -> AfterCut {
+    let _ = (setting, role, member, round);
+    AfterCut::SameSession
 }
 
 /// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.
