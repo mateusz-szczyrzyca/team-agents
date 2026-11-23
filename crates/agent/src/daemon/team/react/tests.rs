@@ -195,19 +195,26 @@ fn every_failed_member_path_tells_the_coordinator_who_and_what() {
                 .unwrap_or_else(|| panic!("failed member not told for {end:?}"));
             assert_eq!(notice.to, agent("inv-opus"));
             match notice.notice {
-                BusNotice::MemberFailed { member, message } => {
+                BusNotice::MemberRunFailed {
+                    member,
+                    message,
+                    end: actual_end,
+                } => {
                     assert!(!has_item);
                     assert_eq!(member, agent("claude-1"));
+                    assert_eq!(actual_end, end);
                     assert_eq!(message, "The run could not continue.");
                 }
-                BusNotice::MemberFailedItem {
+                BusNotice::MemberRunFailedItem {
                     member,
+                    end: actual_end,
                     message,
                     item,
                     branch,
                 } => {
                     assert!(has_item);
                     assert_eq!(member, agent("claude-1"));
+                    assert_eq!(actual_end, end);
                     assert_eq!(message, "The run could not continue.");
                     assert_eq!(item, "1.1".parse().unwrap());
                     assert_eq!(branch, "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap());
@@ -484,8 +491,10 @@ fn a_failed_member_without_last_words_tells_the_coordinator_the_end_reason() {
     let mut team = working();
     ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
     let notice = told(&team, 2, &RunEnd::Hung, None).unwrap();
-    assert!(matches!(notice.notice, BusNotice::MemberFailedItem { message, .. }
-        if message == "The member failed after Hung."));
+    assert!(
+        matches!(notice.notice, BusNotice::MemberRunFailedItem { message, end, .. }
+        if end == RunEnd::Hung && message == "The member failed after Hung.")
+    );
 }
 
 #[test]
@@ -493,8 +502,10 @@ fn a_failed_member_cannot_hide_its_failure_behind_a_split_request() {
     let mut team = working();
     ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
     let notice = told(&team, 2, &RunEnd::Hung, Some("SPLIT: 1.1")).unwrap();
-    assert!(matches!(notice.notice, BusNotice::MemberFailedItem { message, .. }
-        if message == "SPLIT: 1.1"));
+    assert!(
+        matches!(notice.notice, BusNotice::MemberRunFailedItem { message, end, .. }
+        if end == RunEnd::Hung && message == "SPLIT: 1.1")
+    );
 }
 
 #[tokio::test]
