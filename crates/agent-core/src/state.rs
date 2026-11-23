@@ -188,7 +188,7 @@ struct StateWire {
     #[serde(default)]
     queued: Vec<TaskId>,
     /// Optional in state written before recovery reservations were persisted.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "recovery::read_ledger")]
     recoveries: Vec<Recovery>,
 }
 

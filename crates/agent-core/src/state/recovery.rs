@@ -27,9 +27,11 @@ pub enum RecoveryPhase {
     Installed,
 }
 
+mod wire;
+pub(super) use wire::read_ledger;
+
 /// A saved source snapshot and its immutable replacement plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Recovery {
     /// Original work and context, retained after removal.
     source: Team,
