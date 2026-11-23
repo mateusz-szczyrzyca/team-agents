@@ -3,7 +3,7 @@
 //! uncommitted, its plan of steps and the messages of its team that no run of it read.
 
 use std::collections::HashMap;
-use std::num::NonZeroU32;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::path::Path;
 use std::str::FromStr;
 
@@ -43,7 +43,7 @@ const PROMPT_VARIABLE: &str = "prompt";
 const MEGABYTE: u64 = 1024 * 1024;
 
 /// How many of the newest runs of the task the briefing lists; the older ones are left out and noted.
-const RUNS_SHOWN: usize = 10;
+const RUNS_SHOWN: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
 /// How many of the newest answers of the human the briefing lists; the older ones are left out and noted.
 const ANSWERS_SHOWN: usize = 10;
@@ -267,7 +267,7 @@ impl Owner {
     /// # Errors
     /// [`BriefingProblem`] when the history or a question file cannot be read.
     async fn gather_history(&self, task: &TaskId, plan: Option<&Plan>) -> Result<BriefingHistory, BriefingProblem> {
-        let (runs, runs_left_out) = newest_shown(self.read_runs(task).await?, RUNS_SHOWN);
+        let (runs, runs_left_out) = self.read_runs(task, RUNS_SHOWN).await?;
         let judged = self
             .latest_judgements(task)
             .await
@@ -290,34 +290,37 @@ impl Owner {
         })
     }
 
-    /// The runs of `task` in the history, oldest first, as the briefing shows them; none when no daemon has written the
-    /// history yet.
+    /// The newest `shown` runs of `task` in the history, oldest first, as the briefing shows them, and whether older ones are
+    /// left out; none when no daemon has written the history yet. Only the newest rows are read.
     ///
     /// # Errors
     /// [`BriefingProblem::Runs`] or [`BriefingProblem::RunsJoin`] when the history cannot be read.
-    async fn read_runs(&self, task: &TaskId) -> Result<Vec<RunLine>, BriefingProblem> {
+    async fn read_runs(&self, task: &TaskId, shown: NonZeroUsize) -> Result<(Vec<RunLine>, bool), BriefingProblem> {
         let path = self.parts.store.home().history_file();
         if !path.exists() {
-            return Ok(Vec::new());
+            return Ok((Vec::new(), false));
         }
         let task_id = task.clone();
-        let read =
-            tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.runs_of_task(&task_id)))
-                .await
-                .map_err(BriefingProblem::RunsJoin)?;
-        let rows = match read {
-            Ok(rows) => rows,
-            Err(ReadError::Empty { .. }) => return Ok(Vec::new()),
+        let read = tokio::task::spawn_blocking(move || {
+            Reader::open(&path).and_then(|reader| reader.newest_runs_of_task(&task_id, shown))
+        })
+        .await
+        .map_err(BriefingProblem::RunsJoin)?;
+        let newest = match read {
+            Ok(newest) => newest,
+            Err(ReadError::Empty { .. }) => return Ok((Vec::new(), false)),
             Err(source) => return Err(BriefingProblem::Runs(Box::new(source))),
         };
-        Ok(rows
+        let lines = newest
+            .runs
             .iter()
             .map(|row| RunLine {
                 started: self.parts.zone.stamp_minute(row.start.value.at),
                 agent: row.start.value.agent.name.clone(),
                 end: run_end_word(row.end.as_ref().map(|end| &end.value.end)),
             })
-            .collect())
+            .collect();
+        Ok((lines, newest.left_out))
     }
 
     /// Tells the leads of the member tasks whose work the state owes them, and which are not being told already, that the
