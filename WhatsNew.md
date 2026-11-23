@@ -12,7 +12,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-runtime] Before automatic removal, history records the last activity, items, split parts, round states and branches. Removal keeps the command's bundle safeguards and notification. A refusal keeps the team and names its branches in one notification; new work permits another attempt.
 
 ### Enhancements
-- [agent] [agent-core] Idle observations survive a daemon restart. Removal counts from the later of recorded activity and current daemon startup, so downtime never counts and an old team gets a full two hours after restart. Keep a state backup before upgrading if you need to return to an older daemon, which does not recognize the new observation field.
+- [agent] [agent-core] Idle observations survive a daemon restart. Removal counts from the later of recorded activity and current daemon startup, so downtime never counts and an old team gets a full configured idle interval after restart. Keep a state backup before upgrading if you need to return to an older daemon, which does not recognize the new observation field.
 
 ### Configuration
 - [agent-core] new: `[limits] idle_team_minutes` (default `120`) — minutes without work while the current daemon is running before automatic removal; downtime does not count and `0` disables it.
