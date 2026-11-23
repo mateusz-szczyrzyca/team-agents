@@ -131,7 +131,7 @@ impl State {
     /// The caller must persist this state before removing the source or creating resources.
     /// Repeating a reservation returns its original destination, irrespective of a new proposal.
     /// # Errors
-    /// Returns [`RecoveryError`] when the source is unknown or reconstruction is invalid.
+    /// Returns [`RecoveryError`] for an unknown or inconsistent source, invalid reconstruction or reused identities.
     pub fn prepare_recovery(
         &mut self,
         source: &TeamId,
@@ -144,11 +144,20 @@ impl State {
         let source = self
             .team(source)
             .ok_or_else(|| RecoveryError::Unknown { team: source.clone() })?;
-        let used = self
+        let predecessor = self
             .recoveries
             .iter()
-            .find(|record| record.replacement.id() == source.id())
-            .map_or(RestartCount(0), |record| RestartCount(record.ordinal.get()));
+            .find(|record| record.replacement.id() == source.id());
+        if predecessor.is_some_and(|record| {
+            record.phase != RecoveryPhase::Installed
+                || record.replacement.repo() != source.repo()
+                || record.replacement.task_list() != source.task_list()
+        }) {
+            return Err(RecoveryError::InvalidPredecessor {
+                team: source.id().clone(),
+            });
+        }
+        let used = predecessor.map_or(RestartCount(0), |record| RestartCount(record.ordinal.get()));
         let restart::Decision::Restart(ordinal) = restart::decide(used, limit) else {
             return Ok(RecoveryPreparation::Exhausted);
         };
