@@ -297,7 +297,9 @@ A run ending without a `STATUS:` line resumes automatically in the same session 
 bad, and the task is started once in a new session of the same agent with a briefing built from facts — its prompt, the
 commits of its branch, the files it left uncommitted (kept in a snapshot first), its plan of steps and the messages of its
 team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
-strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is given — with
+strike for a hung run and after the last turn-limit resume. A run that is the first of a session and ends `STATUS:
+FAILED` without calling any tool is retried once in a new session with a note telling it the bus tools are listed in
+its CLI's tool catalog under the MCP server `agentbus`; a second such end fails and notifies. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
 not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
 none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
