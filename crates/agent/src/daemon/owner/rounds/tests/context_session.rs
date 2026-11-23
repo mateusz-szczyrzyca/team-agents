@@ -157,7 +157,7 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
     let member = state.find_task(&tasks[0]).unwrap().member;
     assert_eq!(
-        member.renewals().map(|renewals| renewals.reason()),
+        member.renewals().map(agent_core::state::Renewals::reason),
         Some(Trouble::ContextBound)
     );
 }
