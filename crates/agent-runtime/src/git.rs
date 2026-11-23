@@ -26,6 +26,8 @@ use tracing::Instrument;
 
 use crate::process::{CaptureError, CaptureLimits, Captured, ExitReport, Stream, capture, capture_until};
 
+mod activity;
+pub use activity::CommitTimeError;
 mod base;
 mod bring_over;
 mod changes;
