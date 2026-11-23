@@ -930,6 +930,7 @@ fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
         LogEvent::GithubStepWaiting,
         LogEvent::GithubStepResumed,
         LogEvent::TaskHandedOver,
+        LogEvent::TeamRemoved,
     ] {
         daemon.clock.advance(time::Duration::seconds(1));
         match variant.level() {
@@ -1439,6 +1440,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::last_step_tests::record_task_handed_over(&mut observed).await;
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
+    super::removal_tests::record_team_removed(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
