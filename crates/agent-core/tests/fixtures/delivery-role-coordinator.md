@@ -82,3 +82,5 @@ pull request's merge; a merged claim completes the item. If the harness observes
 claim ends permanently, the member resumes the same item in a fresh round and you receive the reason on the bus.
 Integrate the resumed work and publish its own pull request normally. Reopening that pull request later does not
 restore an ended claim.
+
+Before you end a turn, keep in `.agent/plan.md` and in the notebook (`notebook_append`) what the next session of this task will need: what is integrated and checked, the decisions and why, and what is left.
