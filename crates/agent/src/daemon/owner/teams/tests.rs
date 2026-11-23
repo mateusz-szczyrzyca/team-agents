@@ -20,6 +20,7 @@ use agent_runtime::agentbus::{
     AgentBus, Delegation, DelegationRequest, DelegationStatus, MemberState, Outgoing, Recipient, RequestId,
 };
 use agent_runtime::clock::SharedClock;
+use agent_runtime::disk::{FakeFreeSpace, GIBIBYTE, SharedFreeSpace};
 use agent_runtime::history::Reader;
 use agent_runtime::run::RunTimings;
 use agent_runtime::store::Home;
@@ -27,7 +28,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientError, Connection};
-use crate::daemon::{DaemonError, DaemonSetup, Timings, run};
+use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in};
 use crate::testing::ManualClock;
 
 /// The longest any wait of these tests lasts.
@@ -226,6 +227,7 @@ struct Fixture {
     home: Home,
     repo: PathBuf,
     clock: ManualClock,
+    free_space: FakeFreeSpace,
     shutdown: CancellationToken,
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
 }
@@ -262,6 +264,8 @@ impl Fixture {
             home,
             repo,
             clock: ManualClock::new(Timestamp::now(&agent_runtime::clock::SystemClock).unwrap()),
+            // 200 GiB: the disk never limits a run unless a test drops it.
+            free_space: FakeFreeSpace::new(200 * GIBIBYTE),
             shutdown: CancellationToken::new(),
             daemon: None,
         }
@@ -279,6 +283,15 @@ impl Fixture {
         }
     }
 
+    /// The surroundings of this daemon: the environment of the process, with the fixture's fake measure of the free
+    /// space of the home's disk.
+    fn surroundings(&self) -> Surroundings {
+        Surroundings {
+            free_space: SharedFreeSpace::new(self.free_space.clone()),
+            ..Surroundings::from_process()
+        }
+    }
+
     /// Starts the daemon and waits until its socket is there. Another test of this binary may be starting a process:
     /// a child holds the open file description of the lock of a daemon that has just stopped from its fork to its
     /// exec, so a daemon that finds the home locked is started again for a few milliseconds more.
@@ -287,7 +300,7 @@ impl Fixture {
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
+            let daemon = tokio::spawn(run_in(self.setup(), self.surroundings(), self.shutdown.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -972,6 +985,151 @@ async fn a_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_s
         "nobody is told the coordinator's run failed: {}",
         f.messages()
     );
+}
+
+#[tokio::test]
+async fn a_member_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,work"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of the member reported FAILED without calling a tool: it is retried once. The second run (a new
+    // session, briefed) is told the reason and does the work.
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    let prompt = f.prompt(&tasks[1], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    assert!(
+        prompt.contains("did not offer or did not use the tools of the bus"),
+        "{prompt}"
+    );
+    assert!(
+        !f.messages().contains("member_failed"),
+        "nobody is told the member's first run failed: {}",
+        f.messages()
+    );
+}
+
+#[tokio::test]
+async fn a_member_that_fails_again_without_a_tool_is_failed_after_its_given_retry() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The two runs report FAILED without calling a tool: the first is the task's one retry, the second proves the
+    // retry is bounded to a single run, so the member is failed and the coordinator is told and woken.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    // The coordinator is told and runs again: it takes over the item of the failed member.
+    f.prompt(&tasks[0], 2).await;
+    let mut shown = Vec::new();
+    crate::commands::status::status(&mut f.connect().await, None, &mut shown)
+        .await
+        .unwrap();
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "the single retry ran the second failing run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+    let shown = String::from_utf8(shown).unwrap();
+    assert!(shown.contains("failed"), "{shown}");
+    assert!(shown.contains("claude-1"), "{shown}");
+}
+
+#[tokio::test]
+async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail-first-tool:the member failed"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of this home that streams the marker tool call failed with it used: the run is not retried for
+    // "no tool call", the member is failed, and the coordinator is told and runs again.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "a run that used a tool is not retried: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+#[tokio::test]
+async fn the_retry_of_a_failed_run_without_a_tool_does_not_repeat_after_a_restart_of_the_daemon() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowfail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run (slowfail) is running when the free space drops below what a new run needs: it fails without a
+    // tool, is retried once, and the retried run stays queued on the disk gate, a deterministic point to stop.
+    f.status_is(&tasks[1], TaskStatus::Running).await;
+    f.free_space.set(10 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "the retried run waits for the disk: {}",
+        f.messages()
+    );
+    f.stop().await.unwrap();
+
+    // After a restart the retry is still a single one: the task is still queued for its second run, held by the gate.
+    f.start().await;
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "the retry is not repeated after a restart: {}",
+        f.messages()
+    );
+
+    // With the space back the second run (fail) fails without a tool, and the task is not retried again.
+    f.free_space.set(200 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one failing run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
 }
 
 #[tokio::test]
