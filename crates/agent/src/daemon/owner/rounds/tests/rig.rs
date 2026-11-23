@@ -30,6 +30,12 @@ use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in, run
 /// The longest any wait of these tests lasts.
 pub(super) const PATIENCE: Duration = Duration::from_secs(60);
 
+/// The bound of `state_where`, three times `PATIENCE`: it waits for a state the whole team reaches through several
+/// agent runs, GitHub pulls and round transitions, so under a loaded gate it can legitimately take longer than the
+/// rest of the rig (see the review note on the split-execution round-open waits). The timeout it reports names the
+/// state it waited for.
+pub(super) const STATE_PATIENCE: Duration = Duration::from_secs(180);
+
 /// Two features that do not wait for each other would start both items at once; this chain starts the second item when
 /// the first is merged.
 pub(super) const CHAIN: &str = "\
@@ -447,7 +453,7 @@ impl Rig {
 
     /// Waits until the saved state satisfies `ready`.
     pub(super) async fn state_where(&self, what: &str, ready: impl Fn(&State) -> bool) -> State {
-        let deadline = Instant::now() + PATIENCE;
+        let deadline = Instant::now() + STATE_PATIENCE;
         loop {
             if let Ok(text) = std::fs::read_to_string(self.home.state_file())
                 && let Ok(state) = State::from_json(&text)
