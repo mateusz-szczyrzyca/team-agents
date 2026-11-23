@@ -650,7 +650,13 @@ impl RunEngine {
             usage,
         }];
         if let Err(error) = self.history.persist_usage(records) {
-            tracing::warn!(run = %job.run, %error, "the usage of a run was not written to the history");
+            tracing::warn!(
+                event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %job.task,
+                run = %job.run,
+                error = %error_chain(&error),
+                "the usage of a run was not written to the history"
+            );
         }
     }
 
