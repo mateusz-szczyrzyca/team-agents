@@ -86,6 +86,11 @@ asleep_minutes = 5
 # until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.
 
 [limits]
+# Remove teams after this many minutes without a run or new commit; 0 disables removal.
+# Human pause/stop, provider reset waits and external-team merge waits protect the team.
+idle_team_minutes = 120
+# Reserved for automatic replacement in the next part; this release only removes teams.
+idle_team_restarts = 1
 # Per-run turn budget for CLIs that support one (currently Claude Code); must be positive.
 max_turns = 300
 # Consecutive turn-limit continuations in the same session; 0 disables automatic continuation.
