@@ -18,7 +18,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::history::HistoryLayer;
 use agent_runtime::run::RunTimings;
-use agent_runtime::store::Home;
+use agent_runtime::store::{Home, StateStore, StoreError};
 use time::UtcDateTime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -35,6 +35,26 @@ pub(super) const PATIENCE: Duration = Duration::from_secs(60);
 /// rest of the rig (see the review note on the split-execution round-open waits). The timeout it reports names the
 /// state it waited for.
 pub(super) const STATE_PATIENCE: Duration = Duration::from_secs(180);
+
+/// The store of `rig`, open; a lock that another store has just released can still be held a few milliseconds by a
+/// child that inherited its open file description between fork and exec, so retry a `HomeLocked`.
+pub(super) async fn open_store(rig: &Rig) -> Arc<StateStore> {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        match StateStore::open(rig.home.clone()).await {
+            Ok(store) => return Arc::new(store),
+            Err(StoreError::HomeLocked { path }) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for the lock of the home to free: {}",
+                    path.display(),
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot open the home store: {error}"),
+        }
+    }
+}
 
 /// Two features that do not wait for each other would start both items at once; this chain starts the second item when
 /// the first is merged.
