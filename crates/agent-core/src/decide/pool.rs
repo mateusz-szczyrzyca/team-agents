@@ -4,15 +4,16 @@
 //! The workers of `[tiers] workers` are one pool of the installation: a request of any team, or of a solo task whose role
 //! may delegate, is served by a free worker of the pool that meets its `requires`, with the providers taking turns across
 //! all requests. This module is the pure decision: it reads the workers' names, providers and declared capabilities, the
-//! ones that are busy, the request's required capabilities and the provider of the last request the pool served, and
-//! returns the worker to serve and its provider — never starting it.
+//! busy facts of each worker (at work now, its runs against the `[limits] runs_per_worker` cap, and an unsettled finished
+//! run), the request's required capabilities and the provider of the last request the pool served, and returns the worker
+//! to serve and its provider — never starting it.
 //!
 //! A worker's provider is what hosts its model: for a model that carries one — `cli = "opencode"` and a model with a `/`
 //! — the part of the model before the first `/` (so `openrouter/@preset/qwen` is provider `openrouter`); a model without a
 //! `/` keeps the `cli` (`opencode`); for any other worker the `cli` is the provider (`claude`, `codex`, `agy`).
 //!
 //! The providers take turns in the order they first appear in `[tiers] workers`: the decision starts at the provider
-//! after the one that served the last request (remembered by the daemon, as [`last_served`]), wrapping around, and picks
+//! after the one that served the last request (remembered by the daemon, as [`LastServed`]), wrapping around, and picks
 //! the first free worker of the first provider in that rotation that has a free worker meeting the request. A provider
 //! with nothing free is skipped, so a request never waits for one.
 
@@ -70,17 +71,27 @@ pub fn next_pool_worker<'a>(
             .map_or(0, |index| index + 1),
         None => 0,
     };
-    for offset in 0..providers.len() {
-        let pick = (start + offset) % providers.len();
-        let &provider = providers.get(pick)?;
+    for &provider in providers
+        .iter()
+        .chain(providers.iter())
+        .skip(start)
+        .take(providers.len())
+    {
         if let Some(worker) = workers
             .iter()
-            .find(|worker| !worker.busy && worker.provider == provider && meets(worker, requires))
+            .find(|worker| available(worker) && worker.provider == provider && meets(worker, requires))
         {
             return Some((worker.name, worker.provider));
         }
     }
     None
+}
+
+/// Whether a worker can take a request: not at work, no unsettled finished run, and under its `[limits] runs_per_worker`
+/// cap (`runs_limit` 0 is no cap).
+#[must_use]
+fn available(worker: &PoolWorker<'_>) -> bool {
+    !worker.busy && !worker.unsettled && (worker.runs_limit == 0 || worker.runs < worker.runs_limit)
 }
 
 /// The provider of a worker: for `cli = "opencode"` with a model that carries one, the part of the model before the first
