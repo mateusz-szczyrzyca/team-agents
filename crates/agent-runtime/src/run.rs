@@ -623,7 +623,8 @@ impl RunEngine {
 
     /// Writes what the run's stream told of its usage to the history. Best-effort: a refused write is logged with its cause, and the run goes on.
     fn record_usage(&self, job: &RunJob, usage: RunUsage) {
-        if self.history.is_disabled() {
+        // A stream that told nothing of the usage writes no row: a run without a row is "not told" all the same.
+        if self.history.is_disabled() || usage == RunUsage::default() {
             return;
         }
         let records = vec![RunUsageRecord {
