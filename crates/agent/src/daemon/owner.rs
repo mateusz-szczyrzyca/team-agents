@@ -1686,10 +1686,14 @@ impl Owner {
             if let Err(source) = self.parts.state.renew_task(task, Trouble::NoToolCall, at) {
                 return Err(source.into());
             }
-            log_decision(
-                "retry",
-                &format!("task={task}, reason=no_tool_call"),
-                "queued in a new session",
+            let context = self.notice_context(task, at, None)?;
+            tracing::info!(
+                event = LogEvent::RunNoToolRetry.as_str(),
+                task = %task,
+                agent = context.agent,
+                cli = %context.cli.map_or_else(|| "unknown".to_owned(), |cli| cli.to_string()),
+                model = context.model.unwrap_or("default"),
+                "first failed run without a tool call queued in a new session",
             );
             Ok((TaskStatus::Queued, None))
         } else if already_retried
@@ -1708,6 +1712,15 @@ impl Owner {
             let Notice::Failed { message } = notice else {
                 return Ok((TaskStatus::Failed, Some(notice)));
             };
+            let context = self.notice_context(task, at, None)?;
+            tracing::warn!(
+                event = LogEvent::RunNoToolFailed.as_str(),
+                task = %task,
+                agent = context.agent,
+                cli = %context.cli.map_or_else(|| "unknown".to_owned(), |cli| cli.to_string()),
+                model = context.model.unwrap_or("default"),
+                "two runs failed without a tool call; check this agent's CLI and model configuration",
+            );
             Ok((TaskStatus::Failed, Some(Notice::FailedNoTool { message })))
         } else {
             Ok((TaskStatus::Failed, Some(notice)))

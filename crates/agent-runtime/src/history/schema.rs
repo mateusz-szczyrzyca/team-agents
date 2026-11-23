@@ -434,4 +434,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 20,
         sql: include_str!("020-team-removed.sql"),
     },
+    Migration {
+        version: 21,
+        sql: include_str!("021-no-tool-events.sql"),
+    },
 ];

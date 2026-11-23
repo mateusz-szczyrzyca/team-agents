@@ -315,6 +315,10 @@ strike for a hung run and after the last turn-limit resume. A run that is the fi
 FAILED` without calling any tool is retried once in a new session with a note telling it the bus tools are listed in
 its CLI's tool catalog under the MCP server `agentbus`. This applies to every role, including coordinators and reviewers.
 A second such failure names the agent, CLI and model in the human notice and shows the reason in `agent status`.
+The named log events `run_no_tool_retry` (`info`) and `run_no_tool_failed` (`warn`) record both transitions with the
+task, agent, CLI and model, so they can be monitored independently. History schema 21 admits these events through a
+forward migration that preserves old logs, round links, search text and the log cursor; back up the history before
+upgrading if you need to return to an older daemon.
 Every failed team member also wakes its coordinator with the member, item and last words, whether or not it used tools.
 The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
