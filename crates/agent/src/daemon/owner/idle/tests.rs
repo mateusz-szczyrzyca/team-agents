@@ -386,3 +386,41 @@ async fn reviewer_worktree_commits_keep_the_team_alive() {
 
 #[path = "integration_tests.rs"]
 mod integration;
+
+#[tokio::test]
+async fn provider_retry_queued_after_reset_survives_idle_scan_and_restart() {
+    for end in [
+        agent_core::state::RunEnd::QuotaExhausted {
+            resets_at: Some(at(8000)),
+        },
+        agent_core::state::RunEnd::RateLimited,
+    ] {
+        let mut state = pair_state();
+        {
+            let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+            member.transition(TaskStatus::Running).unwrap();
+            member.begin_run(crate::fixtures::run(1), at(0), None).unwrap();
+            member.end_run(at(1), end).unwrap();
+            member.transition(TaskStatus::Paused).unwrap();
+        }
+        let daemon = Daemon::new(&state, None);
+        files(&daemon);
+        let (mut owner, sinks) = daemon.bare_owner().await;
+        owner.wakes.insert(task(1), at(8060));
+        daemon.clock.advance(time::Duration::seconds(14400));
+        owner.wake_due().await.unwrap();
+        assert_eq!(
+            owner.parts.state.find_task(&task(1)).unwrap().member.status(),
+            TaskStatus::Queued
+        );
+        owner.check_idle_teams().await.unwrap();
+        assert_eq!(owner.parts.state.teams().len(), 1);
+        drop(owner);
+        drop(sinks);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        owner.check_idle_teams().await.unwrap();
+        assert_eq!(owner.parts.state.teams().len(), 1);
+        assert!(daemon.home.worktree_dir(&repo(), &task(1)).exists());
+        assert_eq!(daemon.notifications(), Vec::<String>::new());
+    }
+}
