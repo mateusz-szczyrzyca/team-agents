@@ -367,9 +367,27 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
     }
 }
 
+/// Returns a short one-line rendering of `/proc/<pid>/stat` content for diagnostics.
+fn elide_stat(stat: &str) -> String {
+    let mut text = String::new();
+    for (index, ch) in stat.chars().enumerate() {
+        if index >= 160 {
+            text.push('…');
+            break;
+        }
+        text.push(if ch == '\n' { ' ' } else { ch });
+    }
+    text
+}
+
 /// Reads the process group ID (field 5) and kernel start time (field 22, in clock ticks since boot) of `pid` from
-/// `<proc_root>/<pid>/stat`. Returns `Ok(None)` when the process does not exist.
-fn process_stat_group_and_ticks_in(proc_root: &Path, pid: u32) -> io::Result<Option<(u32, u64)>> {
+/// `<proc_root>/<pid>/stat`. Returns `Ok(None)` when the process does not exist, and a group ID of `None` when the
+/// stat names a group that is not a plain non-negative integer.
+///
+/// The kernel prints `-1` as field 5 of a task that is exiting and whose signal-handling structure is gone. Recovery
+/// must treat such an entry as carrying no group information (a `-1` can never match a recorded group ID) instead of
+/// failing, while the start time, which the kernel always prints as an unsigned value, is still returned.
+fn process_stat_group_and_ticks_in(proc_root: &Path, pid: u32) -> io::Result<Option<(Option<u32>, u64)>> {
     let stat_path = proc_root.join(pid.to_string()).join("stat");
     let stat = match std::fs::read_to_string(&stat_path) {
         Ok(stat) => stat,
@@ -380,35 +398,44 @@ fn process_stat_group_and_ticks_in(proc_root: &Path, pid: u32) -> io::Result<Opt
     let Some((_, after_comm)) = stat.rsplit_once(')') else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("malformed {}", stat_path.display()),
+            format!(
+                "malformed {} (no task name): {}",
+                stat_path.display(),
+                elide_stat(&stat)
+            ),
         ));
     };
     let mut fields = after_comm.split_whitespace();
     let Some(pgrp_field) = fields.nth(2) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("missing pgrp in {}", stat_path.display()),
+            format!("{} has no group ID field: {}", stat_path.display(), elide_stat(&stat)),
         ));
     };
-    let pgrp = pgrp_field
-        .parse::<u32>()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let pgrp = pgrp_field.parse::<u32>().ok();
     let Some(ticks_field) = fields.nth(16) else {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("missing starttime in {}", stat_path.display()),
+            format!("{} has no start time field: {}", stat_path.display(), elide_stat(&stat)),
         ));
     };
-    let ticks = ticks_field
-        .parse::<u64>()
-        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    let ticks = ticks_field.parse::<u64>().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!(
+                "{} start time {ticks_field:?} is not a count of clock ticks ({error}): {}",
+                stat_path.display(),
+                elide_stat(&stat)
+            ),
+        )
+    })?;
     Ok(Some((pgrp, ticks)))
 }
 
 /// Reads the kernel start time (field 22 of `/proc/<pid>/stat`, in clock ticks since boot) of process `pid`.
 /// Returns `Ok(None)` when the process does not exist.
 fn process_start_ticks(pid: u32) -> io::Result<Option<u64>> {
-    Ok(process_stat_group_and_ticks_in(Path::new("/proc"), pid)?.map(|(_, ticks)| ticks))
+    Ok(process_stat_group_and_ticks_in(Path::new("/proc"), pid)?.map(|(_group, ticks)| ticks))
 }
 
 /// Whether any live process in `proc_root` (`/proc`) belongs to process group `group` and started at or after
@@ -435,9 +462,11 @@ fn process_group_has_member_since_in(proc_root: &Path, group: u32, recorded_tick
             continue;
         };
         // `process_stat_group_and_ticks_in` maps `NotFound` and `ESRCH` (a process that exited during the scan) to
-        // `Ok(None)`; any other I/O or parse failure is propagated so recovery never removes the record blindly.
+        // `Ok(None)`, and a stat whose group ID is not a non-negative integer (the kernel prints `-1` for a task
+        // losing its signal-handling structure while it exits) to a `None` group that can never match the recorded
+        // one. Any other I/O failure is propagated so recovery never removes the record blindly.
         if let Some((pgrp, ticks)) = process_stat_group_and_ticks_in(proc_root, pid)?
-            && pgrp == group
+            && pgrp.is_some_and(|pgrp| pgrp == group)
             && ticks >= recorded_ticks
         {
             return Ok(true);
