@@ -794,14 +794,44 @@ async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_re
         .1
         .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
         .unwrap();
-    // A fallen run without a tool call was already retried once: the durable "already retried" flag is that renewal.
+    // run 1 reported FAILED without a tool: the task was started anew once, its one retry.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
     owner
         .parts
         .state
         .renew_task(
             &task(1),
             agent_core::decide::ladder::Trouble::NoToolCall,
-            crate::fixtures::at(1),
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // The retried run 2 began and reported FAILED without a tool: it is the immediate run of the renewal, the one this
+    // settle ends.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
         )
         .unwrap();
     let notice = Notice::Failed {
@@ -815,7 +845,7 @@ async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_re
                 outcome: agent_core::status::RunOutcome::Failed,
             },
             false,
-            crate::fixtures::at(3),
+            crate::fixtures::at(4),
             notice,
         )
         .unwrap();
@@ -938,14 +968,44 @@ async fn a_notice_that_is_not_failed_is_told_as_itself_when_the_no_tool_retry_wa
         .1
         .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
         .unwrap();
-    // A fallen run without a tool call was already retried once: the durable "already retried" flag is that renewal.
+    // run 1 reported FAILED without a tool: the task was started anew once, its one retry.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
     owner
         .parts
         .state
         .renew_task(
             &task(1),
             agent_core::decide::ladder::Trouble::NoToolCall,
-            crate::fixtures::at(1),
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // The retried run 2 began and reported FAILED without a tool: it is the immediate run of the renewal, the one this
+    // settle ends.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
         )
         .unwrap();
     let notice = Notice::NoStatus { exit: Some(1) };
@@ -957,7 +1017,7 @@ async fn a_notice_that_is_not_failed_is_told_as_itself_when_the_no_tool_retry_wa
                 outcome: agent_core::status::RunOutcome::Failed,
             },
             false,
-            crate::fixtures::at(3),
+            crate::fixtures::at(4),
             notice,
         )
         .unwrap();
