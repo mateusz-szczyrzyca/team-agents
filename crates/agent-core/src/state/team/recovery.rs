@@ -1,6 +1,6 @@
 //! Rebuilds a team's work for a fresh crew while retaining only completed rounds.
 
-use super::{Crew, ItemPhase, RoundEnd, Team, TeamError, check_team};
+use super::{Crew, ItemPhase, Member, RoundEnd, Shape, Team, TeamError, check_team};
 use crate::ids::TeamId;
 use crate::state::Timestamp;
 
@@ -19,7 +19,7 @@ impl Team {
             created_at,
             self.merge,
             self.task_list.clone(),
-            crew,
+            fresh_crew(crew),
         );
         for (target, source) in fresh.items.iter_mut().zip(&self.items) {
             if matches!(source.phase(), ItemPhase::Done { .. }) {
@@ -36,6 +36,27 @@ impl Team {
         check_team(&fresh)?;
         Ok(fresh)
     }
+}
+
+/// Retains identities and participants but discards sessions and task-local state.
+fn fresh_crew(mut crew: Crew) -> Crew {
+    let reset = |member: &mut Member| {
+        *member = Member::new(member.task().clone(), member.agent().clone());
+    };
+    match &mut crew.shape {
+        Shape::Solo { member } => reset(member),
+        Shape::Team {
+            coordinator,
+            members,
+            workers,
+        } => {
+            reset(coordinator);
+            for member in members.iter_mut().chain(workers) {
+                reset(member);
+            }
+        }
+    }
+    crew
 }
 
 #[cfg(test)]
