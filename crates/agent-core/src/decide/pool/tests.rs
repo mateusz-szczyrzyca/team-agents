@@ -296,7 +296,8 @@ fn two_teams_share_one_global_turn() {
 #[test]
 fn a_busy_first_worker_does_not_skip_its_provider_and_a_free_sibling_serves() {
     // Each case: (pool rows, last served, expected worker index, expected provider).
-    let cases: &[(&[(&str, &str, bool)], Option<&str>, usize, &str)] = &[
+    type Case<'a> = (&'a [(&'a str, &'a str, bool)], Option<&'a str>, usize, &'a str);
+    let cases: &[Case<'_>] = &[
         // The first worker of the turn provider is busy; its free sibling of the same provider serves.
         (
             &[("w-or-a", "openrouter", true), ("w-or-b", "openrouter", false)],
@@ -348,12 +349,13 @@ fn a_busy_first_worker_does_not_skip_its_provider_and_a_free_sibling_serves() {
 #[test]
 fn a_free_provider_that_cannot_meet_the_requires_is_skipped_for_one_that_can() {
     // Each case: (pool rows, required capabilities, last served, expected worker index and provider, or none).
-    let cases: &[(
-        &[(&str, &str, bool, &[&str])],
-        &[&str],
-        Option<&str>,
-        Option<(usize, &str)>,
-    )] = &[
+    type Case<'a> = (
+        &'a [(&'a str, &'a str, bool, &'a [&'a str])],
+        &'a [&'a str],
+        Option<&'a str>,
+        Option<(usize, &'a str)>,
+    );
+    let cases: &[Case<'_>] = &[
         // Openrouter is free but cannot `node`; the deepinfra worker that declares it serves.
         (
             &[
@@ -410,7 +412,8 @@ fn a_free_provider_that_cannot_meet_the_requires_is_skipped_for_one_that_can() {
 #[test]
 fn an_unknown_last_provider_starts_the_rotation_at_the_first_provider() {
     // Each case: (pool rows, last served, expected worker index, expected provider).
-    let cases: &[(&[(&str, &str, bool)], Option<&str>, usize, &str)] = &[
+    type Case<'a> = (&'a [(&'a str, &'a str, bool)], Option<&'a str>, usize, &'a str);
+    let cases: &[Case<'_>] = &[
         // An unknown last provider: the first provider of the pool serves.
         (
             &[("w-di", "deepinfra", false), ("w-or", "openrouter", false)],
@@ -465,7 +468,12 @@ fn an_unknown_last_provider_starts_the_rotation_at_the_first_provider() {
 #[test]
 fn non_ascii_capabilities_are_matched_exactly_and_byte_for_byte() {
     // Each case: (pool rows, required capabilities, expected worker index, or none).
-    let cases: &[(&[(&str, &str, bool, &[&str])], &[&str], Option<usize>)] = &[
+    type Case<'a> = (
+        &'a [(&'a str, &'a str, bool, &'a [&'a str])],
+        &'a [&'a str],
+        Option<usize>,
+    );
+    let cases: &[Case<'_>] = &[
         // The identical non-ASCII capability serves.
         (&[("w-ja", "openrouter", false, &["日本語"])], &["日本語"], Some(0)),
         // A shorter string is not the capability, though it is its prefix.
