@@ -51,8 +51,8 @@ use agent_core::protocol::{
     TeamSummary, mark_runs_elsewhere,
 };
 use agent_core::state::{
-    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Participant, Question, QuestionError, RunEnd,
-    RunError, SessionId, State, StateOpenRoundError, Team, Timestamp,
+    BeginRunError, CloseRoundError, InvalidTimestamp, NewRun, Participant, Question, QuestionError, RunEnd, RunError,
+    SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::AgentBus;
@@ -1624,8 +1624,7 @@ impl Owner {
             }
             None => (false, false),
         };
-        if after_failed_without_tool(end, used_tool, first_of_session, already_retried)
-            == AfterFailedWithoutTool::Retry
+        if after_failed_without_tool(end, used_tool, first_of_session, already_retried) == AfterFailedWithoutTool::Retry
         {
             if let Err(source) = self.parts.state.renew_task(task, Trouble::NoToolCall, at) {
                 return ready(Err(source.into()));

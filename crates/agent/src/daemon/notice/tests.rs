@@ -159,7 +159,11 @@ async fn a_failed_no_tool_notice_names_the_cli_the_model_and_the_advice() {
         rendered.body()
     );
     assert!(rendered.body().contains("claude"), "names the CLI: {}", rendered.body());
-    assert!(rendered.body().contains("o3-mini"), "names the model: {}", rendered.body());
+    assert!(
+        rendered.body().contains("o3-mini"),
+        "names the model: {}",
+        rendered.body()
+    );
     assert!(
         rendered.body().contains("Do not assign this task"),
         "advises on the assignment: {}",

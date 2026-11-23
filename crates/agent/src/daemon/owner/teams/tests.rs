@@ -532,7 +532,11 @@ impl RestartFixture {
         let socket = self.fixture.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run_in(self.fixture.setup(), self.surroundings(), self.fixture.shutdown.clone()));
+            let daemon = tokio::spawn(run_in(
+                self.fixture.setup(),
+                self.surroundings(),
+                self.fixture.shutdown.clone(),
+            ));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -1281,7 +1285,9 @@ async fn a_double_no_tool_failure_tells_the_coordinators_next_run_the_member_the
     );
     assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
     assert!(
-        text.contains("What it said:\n\nI could not do it.\n\nThe harness publishes an item only while its assignee task waits."),
+        text.contains(
+            "What it said:\n\nI could not do it.\n\nThe harness publishes an item only while its assignee task waits."
+        ),
         "{text}"
     );
     assert!(
@@ -1305,7 +1311,8 @@ async fn a_double_no_tool_failure_tells_the_coordinators_next_run_the_member_the
 /// A run that used a tool when it failed is not retried; the member fails and the coordinator's next run reads the same
 /// notice, with the member, the item and the last words.
 #[tokio::test]
-async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words() {
+async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words()
+ {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
@@ -1337,7 +1344,10 @@ async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run
     );
     assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
     assert!(text.contains("What it said:\n\nI could not do it.\n\n"), "{text}");
-    assert!(text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"), "{text}");
+    assert!(
+        text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"),
+        "{text}"
+    );
 }
 
 /// A member that failed without an item is told with all three choices, the give-away one included, and no item detail.

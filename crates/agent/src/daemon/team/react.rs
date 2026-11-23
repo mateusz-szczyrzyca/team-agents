@@ -34,14 +34,14 @@ pub(in crate::daemon) enum BusNotice {
     MemberFailed {
         /// The member.
         member: AgentName,
-        /// The end of its final message.
+        /// The end of its final message, without its closing `STATUS:` line.
         message: String,
     },
     /// A member reported `FAILED` while working on an item.
     MemberFailedItem {
         /// The member.
         member: AgentName,
-        /// The end of its final message.
+        /// The end of its final message, without its closing `STATUS:` line.
         message: String,
         /// The item it worked on.
         item: ItemId,
@@ -205,13 +205,13 @@ pub(in crate::daemon) fn notice_for(
         } => match worked_on(team, member) {
             Some((item, branch)) => BusNotice::MemberFailedItem {
                 member: who,
-                message: end_of(message.unwrap_or_default()),
+                message: report(&end_of(message.unwrap_or_default())),
                 item,
                 branch,
             },
             None => BusNotice::MemberFailed {
                 member: who,
-                message: end_of(message.unwrap_or_default()),
+                message: report(&end_of(message.unwrap_or_default())),
             },
         },
         RunEnd::NoStatus { .. } if member.status() == TaskStatus::Failed => match worked_on(team, member) {
