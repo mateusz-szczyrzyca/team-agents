@@ -719,6 +719,16 @@ async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, B
     Ok(answers)
 }
 
+/// The answers the human gave in one questions file, in the file's order: each answered question's number, title and verdict;
+/// a question with no verdict yet has no answer.
+///
+/// # Errors
+/// [`agent_core::questions::ParseError`] when the text is not a questions file.
+fn answers_in(text: &str) -> Result<Vec<AnswerLine>, agent_core::questions::ParseError> {
+    QuestionsFile::parse(text)?;
+    Ok(Vec::new())
+}
+
 /// The number of a question file named `questions-<number>.md`; `None` for any other name.
 fn question_file_number(name: &str) -> Option<NonZeroU32> {
     name.strip_prefix("questions-")?.strip_suffix(".md")?.parse().ok()

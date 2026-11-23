@@ -433,3 +433,44 @@ async fn the_briefing_of_a_lead_tells_the_runs_the_judged_steps_and_the_answers_
         assert!(text.contains(part), "{part:?} is missing:\n{text}");
     }
 }
+
+// ---- the answers of one questions file -----------------------------------------------------------------------------
+
+#[test]
+fn only_the_answered_questions_of_a_file_are_answers_in_the_order_of_the_file() {
+    let text = format!(
+        "{}\n{}\n{}",
+        question_file(1, "Which parser?", "ok"),
+        // A second question of the same file, as the harness writes them: its verdict is still empty.
+        "## 2. Keep the old format?\na) Keep it — the format stays\nb) Drop it — simpler\n\n**Recommended:** a) — the format stays (agent)\n\n**Verdict:**\n",
+        "## 3. Which name?\na) Old — as before\nb) New — shorter\n\n**Recommended:** b) — shorter (agent)\n\n**Verdict:** Use the old name, with a prefix.\n",
+    );
+
+    let answers = answers_in(&text).unwrap();
+
+    assert_eq!(
+        answers,
+        vec![
+            AnswerLine {
+                number: "1".to_owned(),
+                title: "Which parser?".to_owned(),
+                verdict: "ok".to_owned(),
+            },
+            AnswerLine {
+                number: "3".to_owned(),
+                title: "Which name?".to_owned(),
+                verdict: "Use the old name, with a prefix.".to_owned(),
+            },
+        ]
+    );
+}
+
+#[test]
+fn a_text_that_is_not_a_questions_file_has_no_answers_but_a_parse_error() {
+    let refused = answers_in("Not a questions file at all.").unwrap_err();
+
+    assert!(
+        matches!(refused, agent_core::questions::ParseError::NoQuestions),
+        "{refused:?}"
+    );
+}
