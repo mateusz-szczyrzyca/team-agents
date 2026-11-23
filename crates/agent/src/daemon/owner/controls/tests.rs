@@ -770,7 +770,7 @@ async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_re
 
     assert_eq!(status, TaskStatus::Failed);
     assert!(
-        matches!(told.as_ref(), Some(Notice::FailedNoTool)),
+        matches!(told.as_ref(), Some(Notice::FailedNoTool { .. })),
         "the human is told the no-tool reason, not a generic failure: {told:?}"
     );
 }

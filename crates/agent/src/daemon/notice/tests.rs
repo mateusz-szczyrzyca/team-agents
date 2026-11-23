@@ -145,7 +145,11 @@ async fn a_failed_no_tool_notice_names_the_cli_the_model_and_the_advice() {
         words: crate::daemon::notice::sample::words(),
     };
     let texts = texts().await;
-    let rendered = Notice::FailedNoTool.render(&texts, &context).unwrap();
+    let rendered = Notice::FailedNoTool {
+        message: "I could not do it.".to_owned(),
+    }
+    .render(&texts, &context)
+    .unwrap();
 
     assert_eq!(rendered.title(), "❌ team-agents");
     assert!(rendered.body().contains("Status: ❌ failed"), "{}", rendered.body());
@@ -159,6 +163,11 @@ async fn a_failed_no_tool_notice_names_the_cli_the_model_and_the_advice() {
     assert!(
         rendered.body().contains("Do not assign this task"),
         "advises on the assignment: {}",
+        rendered.body()
+    );
+    assert!(
+        rendered.body().contains("I could not do it."),
+        "keeps what the run said last: {}",
         rendered.body()
     );
 }

@@ -275,7 +275,7 @@ impl HarnessPrompt {
             Self::NoticeFailedNoTool => PromptSpec::new(
                 "harness/run/notice-failed-no-tool.md",
                 Audience::Human,
-                &["agent", "task", "cli", "model"],
+                &["agent", "task", "cli", "model", "message"],
             ),
             Self::NoticeNoStatus => PromptSpec::new(
                 "harness/run/notice-no-status.md",

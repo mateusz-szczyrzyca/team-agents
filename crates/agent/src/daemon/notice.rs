@@ -256,7 +256,10 @@ pub(super) enum Notice {
         message: String,
     },
     /// The agent reported `STATUS: FAILED` twice without calling a tool step, after its one retry of the first.
-    FailedNoTool,
+    FailedNoTool {
+        /// The end of the last run's final message, what the agent said instead of calling a tool.
+        message: String,
+    },
     /// The run ended without a status line.
     NoStatus {
         /// The exit code; `None` when a signal ended the process.
@@ -352,14 +355,17 @@ impl Notice {
                 common.with("message", message)?,
                 NoticeKind::Failed,
             ),
-            Self::FailedNoTool => {
+            Self::FailedNoTool { message } => {
                 let cli = context
                     .cli
                     .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
                 let model = context.model.unwrap_or("configured");
                 (
                     HarnessPrompt::NoticeFailedNoTool,
-                    common.with("cli", cli)?.with("model", model)?,
+                    common
+                        .with("message", message)?
+                        .with("cli", cli)?
+                        .with("model", model)?,
                     NoticeKind::FailedNoTool,
                 )
             }

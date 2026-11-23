@@ -1646,8 +1646,12 @@ impl Owner {
             && !used_tool
         {
             // A second run that reported FAILED without calling a tool has used the one retry: the human is told the
-            // named reason — the CLI or the model did not offer or use the tools — not a generic failure.
-            ready(Ok((TaskStatus::Failed, Some(Notice::FailedNoTool))))
+            // named reason — the CLI or the model did not offer or use the tools — beside what the run said last.
+            let message = match notice {
+                Notice::Failed { message } => message,
+                _ => String::new(),
+            };
+            ready(Ok((TaskStatus::Failed, Some(Notice::FailedNoTool { message }))))
         } else {
             ready(Ok((TaskStatus::Failed, Some(notice))))
         }
