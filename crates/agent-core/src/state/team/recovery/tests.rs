@@ -77,3 +77,21 @@ fn recovery_keeps_merged_split_parts_without_a_round_for_the_next_part() {
         fresh
     );
 }
+
+#[test]
+fn recovery_starts_fresh_sessions_for_solo_and_team_crews() {
+    use crate::state::fixtures::{member, normal, run, task};
+    for mut crew in [
+        Crew::solo(member(10, normal("writer"))).unwrap(),
+        team_of(2, 10).crew().clone(),
+    ] {
+        let expected = crew.clone();
+        crew.find_mut(&task(10))
+            .unwrap()
+            .1
+            .begin_run(run(1), at(10), None)
+            .unwrap();
+        let fresh = team(1).recovery_team(team_id(2), at(100), crew).unwrap();
+        assert_eq!(fresh.crew(), &expected);
+    }
+}
