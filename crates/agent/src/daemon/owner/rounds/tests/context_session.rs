@@ -526,3 +526,54 @@ async fn two_agents_of_one_team_with_different_bounds_decide_on_the_same_size_ea
         }
     }
 }
+
+// Rule: a last message read from the history because its run wrote no outcome file says so when the history cut it: the
+// briefing names the limit at which it was cut, so that the new session knows the message is not whole.
+#[tokio::test]
+async fn a_legacy_run_s_last_message_cut_by_the_history_is_said_to_be_cut() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        format!("{config}\n[history]\nmax_text_bytes = 16\n"),
+    )
+    .unwrap();
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    std::fs::write(
+        scripts.join("second.final.txt"),
+        "The whole message of the session before, longer than sixteen bytes: END-OF-MESSAGE\n",
+    )
+    .unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let last = rig
+        .state()
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .id()
+        .clone();
+    std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(briefing.contains("cut at the history limit of 16 bytes"), "{briefing}");
+}
