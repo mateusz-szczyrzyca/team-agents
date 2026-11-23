@@ -16,7 +16,7 @@ use std::time::Duration;
 
 use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, OutputError, OutputParser, RunMode, RunOutput, RunRequest, RunSpec,
-    StreamOutcome,
+    RunUsage, StreamOutcome,
 };
 use agent_core::config::Limits;
 use agent_core::kinds::CliKind;
@@ -24,8 +24,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    Progress, json_file, mcp_file, path_text, path_under, read_event, refused, serena_excludes, servers, text_event,
-    tool_activity,
+    CallUsage, Progress, UsageTally, json_file, mcp_file, path_text, path_under, read_event, refused, serena_excludes,
+    servers, text_event, tool_activity,
 };
 
 /// The longest a command of the agent's Bash tool may run, by default and at most: a gate runs in the foreground.
@@ -45,6 +45,10 @@ const SUCCESS_SUBTYPE: &str = "success";
 
 /// The subtype of a `result` that used up the run's `--max-turns`.
 const MAX_TURNS_SUBTYPE: &str = "error_max_turns";
+
+/// The start of the key of a model call whose message the stream gives no ID: such a call is counted once, under its
+/// own number.
+const ANONYMOUS_CALL: &str = "anonymous-call-";
 
 /// The adapter of Claude Code.
 #[derive(Debug, Clone, Copy)]
@@ -148,6 +152,8 @@ impl CliAdapter for ClaudeAdapter {
     fn parser(&self) -> Box<dyn OutputParser> {
         Box::new(ClaudeParser {
             progress: Progress::new(),
+            usage: UsageTally::default(),
+            total_cost_usd: None,
         })
     }
 }
@@ -204,6 +210,46 @@ struct Message {
     /// Its content: blocks, or for the prompt of the user turn a bare text.
     #[serde(default)]
     content: Value,
+    /// The API message's ID: the content blocks of one model call share it.
+    id: Option<String>,
+    /// What the model call used; absent on the prompt of the user turn.
+    usage: Option<ClaudeUsage>,
+}
+
+/// The usage of one model call as the API reports it. Each part is optional: a part that is absent is not told.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct ClaudeUsage {
+    /// Tokens of the input that was not read from or written to the cache.
+    #[serde(rename = "input_tokens")]
+    input: Option<u64>,
+    /// Tokens of the input read from the cache.
+    #[serde(rename = "cache_read_input_tokens")]
+    cache_read: Option<u64>,
+    /// Tokens of the input written to the cache.
+    #[serde(rename = "cache_creation_input_tokens")]
+    cache_creation: Option<u64>,
+    /// Tokens the model wrote.
+    #[serde(rename = "output_tokens")]
+    output: Option<u64>,
+}
+
+impl ClaudeUsage {
+    /// The context of the call: its input with what came from the cache and what went into it. None unless all three
+    /// parts are told, since a missing one would make the size a guess.
+    fn context(self) -> Option<u64> {
+        self.input?
+            .checked_add(self.cache_read?)?
+            .checked_add(self.cache_creation?)
+    }
+
+    /// The call as the tally keeps it: no cost, which the result of the run reports as a total.
+    fn call(self) -> CallUsage {
+        CallUsage {
+            context: self.context(),
+            written: self.output,
+            cost: None,
+        }
+    }
 }
 
 /// A block of a message.
@@ -254,6 +300,10 @@ struct Finish {
     session_id: Option<String>,
     /// How many turns the run took.
     num_turns: Option<u64>,
+    /// The cost of the whole run in US dollars, as the CLI reports it.
+    total_cost_usd: Option<f64>,
+    /// What the whole run used; only its output tokens are read.
+    usage: Option<ClaudeUsage>,
 }
 
 impl Finish {
@@ -308,6 +358,10 @@ fn answer_text(content: &Value) -> String {
 struct ClaudeParser {
     /// What the stream has shown.
     progress: Progress,
+    /// The model calls of the run, each counted once.
+    usage: UsageTally,
+    /// The cost of the run the result line reports; none until it comes.
+    total_cost_usd: Option<f64>,
 }
 
 impl ClaudeParser {
@@ -347,7 +401,20 @@ impl OutputParser for ClaudeParser {
                 let model = model.unwrap_or_default();
                 Ok(vec![ActivityEvent::Info(format!("session started, model {model}"))])
             }
-            Event::Assistant(Turn { message }) | Event::User(Turn { message }) => Ok(blocks(line, message.content)?
+            Event::Assistant(Turn { message }) => {
+                // A model call that tells no usage is kept as a call that tells nothing, so that the call before it is
+                // not told as the last one. A message without an ID is its own call.
+                let id = message
+                    .id
+                    .unwrap_or_else(|| format!("{ANONYMOUS_CALL}{}", self.usage.calls()));
+                self.usage
+                    .record(id, message.usage.map_or_else(CallUsage::default, ClaudeUsage::call));
+                Ok(blocks(line, message.content)?
+                    .into_iter()
+                    .filter_map(Self::block)
+                    .collect())
+            }
+            Event::User(Turn { message }) => Ok(blocks(line, message.content)?
                 .into_iter()
                 .filter_map(Self::block)
                 .collect()),
@@ -370,9 +437,20 @@ impl OutputParser for ClaudeParser {
                 }
                 events.push(ActivityEvent::Info(finish.summary()));
                 self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
+                // The result's usage is the total of the run, never a context: only its output tokens and its cost are
+                // taken from it.
+                self.usage.report_written(finish.usage.and_then(|usage| usage.output));
+                self.total_cost_usd = finish.total_cost_usd;
                 Ok(events)
             }
             Event::System(_) | Event::Other => Ok(Vec::new()),
+        }
+    }
+
+    fn usage(&self) -> RunUsage {
+        RunUsage {
+            cost_usd: self.total_cost_usd,
+            ..self.usage.usage()
         }
     }
 

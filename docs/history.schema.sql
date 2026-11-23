@@ -1,4 +1,4 @@
-PRAGMA user_version = 21;
+PRAGMA user_version = 22;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -413,3 +413,10 @@ CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
 
+CREATE TABLE run_usage (
+    run TEXT NOT NULL PRIMARY KEY REFERENCES runs (run),
+    first_context INTEGER CHECK (first_context IS NULL OR first_context >= 0),
+    last_context INTEGER CHECK (last_context IS NULL OR last_context >= 0),
+    tokens_written INTEGER CHECK (tokens_written IS NULL OR tokens_written >= 0),
+    cost_usd REAL CHECK (cost_usd IS NULL OR (cost_usd >= 0 AND cost_usd < 1e18))
+) STRICT, WITHOUT ROWID;

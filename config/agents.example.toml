@@ -11,6 +11,7 @@ language = "English"
 #   cli   claude | codex | gemini (Antigravity, the `agy` command) | opencode (any API provider)
 #   model optional; without it the CLI runs its default model
 #   args  optional extra arguments for the CLI, an array: every element is one argument, nothing is split
+#   max_context  optional bound in tokens of this agent's session; without it the [session] bound applies, 0 switches it off
 
 [agents.claude-1]
 cli = "claude"
@@ -264,6 +265,15 @@ warn_mb = 200
 
 [restart]
 session = "new"
+
+# --- Session -------------------------------------------------------------------------------------------------------
+# The context of a session grows with every run that resumes it. `agent debug` names a session above its bound. The
+# default bound was taken from the measurements of 22.11.2026 (sessions that grew to 438 000 and 580 000 tokens), not from
+# any model's documentation.
+#   max_context   the bound in tokens of a session's context for an agent without its own max_context; 0 switches it off (default: 150000)
+
+[session]
+max_context = 150000
 
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then

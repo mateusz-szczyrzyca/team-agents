@@ -28,6 +28,8 @@
 #   commit-frozen-test    rewrites tests/a.rs, tries to commit it with `git commit`, writes git's exit status to
 #                         .fake-commit-code and what git said to .fake-commit-err, ends like `done`
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
+#   context-from-file     reads the size N in `.fake-context`, reports one model call whose input is N tokens (usage with
+#                         its ID, and a cost of 0.5 dollars in the result), ends like `done`
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -196,6 +198,12 @@ case $scenario in
       say "working"
       sleep 0.2
     done
+    ;;
+  context-from-file)
+    context=$(< .fake-context)
+    init
+    printf '{"type":"assistant","message":{"id":"msg-%s","role":"assistant","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":%s,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":100}},"session_id":"%s"}\n' "$context" "$context" "$session"
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"Finished the item.\\nSTATUS: DONE","session_id":"%s","total_cost_usd":0.5}\n' "$session"
     ;;
   env-incremental)
     printf '%s\n' "${CARGO_INCREMENTAL:-unset}" > .fake-incremental

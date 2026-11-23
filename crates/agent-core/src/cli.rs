@@ -363,6 +363,20 @@ pub struct RunOutput {
     pub error_tail: ErrorTail,
 }
 
+/// What a run's stream tells of the size of its context and of what it cost. Each part is `None` where the CLI does
+/// not tell it: a size is never estimated, so a missing number reads as "not told" and never as zero.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct RunUsage {
+    /// Tokens of the context of the run's first model call; none when the stream does not show one.
+    pub first_context: Option<u64>,
+    /// Tokens of the context of the run's last model call; none when the stream does not show one.
+    pub last_context: Option<u64>,
+    /// Output tokens the model wrote over the run, summed over its model calls without counting one call twice.
+    pub tokens_written: Option<u64>,
+    /// The cost in US dollars the CLI reported, summed over its steps; none when the CLI does not report one.
+    pub cost_usd: Option<f64>,
+}
+
 /// Reads the output of one run. Made by [`CliAdapter::parser`], one per run: it may keep what it has seen.
 pub trait OutputParser: Send {
     /// The latest session observed in the stream, available before the run ends.
@@ -376,6 +390,12 @@ pub trait OutputParser: Send {
     /// # Errors
     /// [`OutputError`] for a line that is not what the CLI writes; the parser stays usable.
     fn push_line(&mut self, line: &str) -> Result<Vec<ActivityEvent>, OutputError>;
+
+    /// What the stream has shown of the run's size and cost so far; read it before [`OutputParser::finish`] consumes
+    /// the parser. Parsers that read no usage return the default, which tells nothing.
+    fn usage(&self) -> RunUsage {
+        RunUsage::default()
+    }
 
     /// Ends the run: the final message, the session ID and the error tail, from what the stream showed and the
     /// CLI's stderr. `tail_lines` is how many lines of the error output the tail keeps.

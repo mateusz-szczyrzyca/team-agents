@@ -200,6 +200,9 @@ pub enum ValueProblem {
     /// A keyword of a fixed list.
     #[error("not a known keyword")]
     Keyword(#[from] UnknownKeyword),
+    /// A count of tokens or of bytes, which is never negative.
+    #[error("not a count")]
+    Count(std::num::TryFromIntError),
     /// A path, a session, a model or another checked text.
     #[error("not a valid text")]
     Text(#[from] InvalidValue),

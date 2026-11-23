@@ -14,13 +14,15 @@ use std::num::NonZeroU32;
 
 use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, McpServerKind, OutputError, OutputParser, RunMode, RunOutput, RunRequest,
-    RunSpec, StreamOutcome,
+    RunSpec, RunUsage, StreamOutcome,
 };
 use agent_core::kinds::CliKind;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Progress, Server, path_text, read_event, serena_excludes, servers, text_event, tool_activity};
+use super::{
+    CallUsage, Progress, Server, UsageTally, path_text, read_event, serena_excludes, servers, text_event, tool_activity,
+};
 
 /// How long agentbus may take to answer a call, in seconds: its `wait_for_message` waits for other agents.
 const BUS_TOOL_TIMEOUT_SECS: u32 = 900;
@@ -115,6 +117,8 @@ impl CliAdapter for CodexAdapter {
         Box::new(CodexParser {
             progress: Progress::new(),
             last_message: None,
+            usage: UsageTally::default(),
+            turns: 0,
         })
     }
 }
@@ -143,7 +147,10 @@ enum Event {
     },
     /// The turn ended well.
     #[serde(rename = "turn.completed")]
-    TurnCompleted,
+    TurnCompleted {
+        /// The usage of the turn; absent when the stream does not show it.
+        usage: Option<TurnUsage>,
+    },
     /// The turn failed.
     #[serde(rename = "turn.failed")]
     TurnFailed {
@@ -222,11 +229,23 @@ struct Change {
     path: String,
 }
 
+/// The usage of a turn as Codex reports it.
+#[derive(Debug, Deserialize)]
+struct TurnUsage {
+    /// Tokens the model wrote in the turn.
+    output_tokens: Option<u64>,
+}
+
 /// The parser of one Codex run.
 #[derive(Debug)]
 struct CodexParser {
     /// What the stream has shown.
     progress: Progress,
+    /// The turns of the run that report their usage, in the order of the stream. Codex's input counts are not a
+    /// context size: they are summed over the turn's calls, so the context of a turn is not told.
+    usage: UsageTally,
+    /// How many turns have completed; a turn is counted under its number.
+    turns: u64,
     /// The latest message of the agent; it is the final message once the turn completes.
     last_message: Option<String>,
 }
@@ -305,7 +324,17 @@ impl OutputParser for CodexParser {
             }
             Event::ItemStarted { item } => Self::started(item),
             Event::ItemCompleted { item } => self.completed(item),
-            Event::TurnCompleted => {
+            Event::TurnCompleted { usage } => {
+                let written = usage.and_then(|usage| usage.output_tokens);
+                self.usage.record(
+                    format!("turn {}", self.turns),
+                    CallUsage {
+                        context: None,
+                        written,
+                        cost: None,
+                    },
+                );
+                self.turns += 1;
                 self.progress.stream = StreamOutcome::Succeeded;
                 self.progress.final_message = self.last_message.take().filter(|text| !text.trim().is_empty());
                 Vec::new()
@@ -317,6 +346,10 @@ impl OutputParser for CodexParser {
             Event::Error { message } => self.failure(message),
             Event::Other => Vec::new(),
         })
+    }
+
+    fn usage(&self) -> RunUsage {
+        self.usage.usage()
     }
 
     fn finish(self: Box<Self>, stderr: &str, tail_lines: NonZeroU32) -> RunOutput {

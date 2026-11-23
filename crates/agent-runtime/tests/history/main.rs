@@ -79,6 +79,7 @@ mod worker_request_damaged;
 mod writer_plans;
 
 #[cfg(test)]
+mod run_usage;
 mod team_removal;
 
 #[cfg(test)]

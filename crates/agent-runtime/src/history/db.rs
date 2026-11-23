@@ -60,6 +60,14 @@ pub trait Store: Send + 'static {
     fn write_judgements(&mut self, _records: &[JudgementRecord]) -> Result<(), WriteError> {
         Ok(())
     }
+
+    /// Writes the usage of runs as one unit: all of them or none.
+    ///
+    /// # Errors
+    /// [`WriteError`] when they cannot be written; none of them is.
+    fn write_usage(&mut self, _records: &[super::usage::RunUsageRecord]) -> Result<(), WriteError> {
+        Ok(())
+    }
 }
 
 /// The history database, open for writing.
@@ -216,6 +224,17 @@ impl Store for HistoryDb {
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|source| WriteError::Transaction { source })?;
         super::judgements::insert(&transaction, records)?;
+        transaction
+            .commit()
+            .map_err(|source| WriteError::Transaction { source })
+    }
+
+    fn write_usage(&mut self, records: &[super::usage::RunUsageRecord]) -> Result<(), WriteError> {
+        let transaction = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|source| WriteError::Transaction { source })?;
+        super::usage::insert(&transaction, records)?;
         transaction
             .commit()
             .map_err(|source| WriteError::Transaction { source })

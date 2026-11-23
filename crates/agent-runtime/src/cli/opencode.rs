@@ -18,7 +18,7 @@ use std::num::NonZeroU32;
 
 use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, OutputError, OutputParser, RunMode, RunOutput, RunRequest, RunSpec,
-    StreamOutcome,
+    RunUsage, StreamOutcome,
 };
 use agent_core::config::{EnvName, ModelName};
 use agent_core::kinds::CliKind;
@@ -26,7 +26,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::{
-    Progress, Server, clip, json_file, path_under, read_event, serena_excludes, servers, text_event, tool_activity,
+    CallUsage, Progress, Server, UsageTally, clip, json_file, path_under, read_event, serena_excludes, servers,
+    text_event, tool_activity,
 };
 
 /// How long a shell command of the agent may run, in milliseconds.
@@ -241,6 +242,7 @@ impl CliAdapter for OpencodeAdapter {
         Box::new(OpencodeParser {
             ends_on_text: false,
             progress: Progress::new(),
+            usage: UsageTally::default(),
         })
     }
 }
@@ -333,6 +335,48 @@ enum ToolStatus {
 struct FinishPart {
     /// Why the step ended.
     reason: Option<FinishReason>,
+    /// The step's ID; the usage of a step is told under it.
+    id: Option<String>,
+    /// The tokens the step used; absent when the stream does not show them.
+    tokens: Option<StepTokens>,
+    /// The step's cost in US dollars, as the CLI reports it.
+    cost: Option<f64>,
+}
+
+/// The tokens of one step as opencode reports them. Each part is optional: a part that is absent is not told.
+#[derive(Debug, Deserialize)]
+struct StepTokens {
+    /// Tokens of the input that was not read from the cache.
+    input: Option<u64>,
+    /// Tokens the model wrote.
+    output: Option<u64>,
+    /// The cache of the step: what was read from it and what was written into it.
+    cache: Option<StepCache>,
+}
+
+/// The cache part of a step's tokens.
+#[derive(Debug, Deserialize)]
+struct StepCache {
+    /// Tokens read from the cache.
+    read: Option<u64>,
+    /// Tokens written into the cache.
+    write: Option<u64>,
+}
+
+impl FinishPart {
+    /// The step as the tally keeps it: its context is the input with what the cache read and wrote; none unless all
+    /// of those are told.
+    fn call(&self) -> CallUsage {
+        let context = self.tokens.as_ref().and_then(|tokens| {
+            let cache = tokens.cache.as_ref()?;
+            tokens.input?.checked_add(cache.read?)?.checked_add(cache.write?)
+        });
+        CallUsage {
+            context,
+            written: self.tokens.as_ref().and_then(|tokens| tokens.output),
+            cost: self.cost,
+        }
+    }
 }
 
 /// Why a step ended.
@@ -367,6 +411,8 @@ fn error_message(error: &Value) -> String {
 struct OpencodeParser {
     /// What the stream has shown.
     progress: Progress,
+    /// The steps of the run that report their usage, each counted once.
+    usage: UsageTally,
     /// Whether the latest step of the stream is a text of the agent: no tool call, finished step or new step has
     /// followed it.
     ends_on_text: bool,
@@ -419,6 +465,10 @@ impl OutputParser for OpencodeParser {
                 Vec::new()
             }
             Event::StepFinish { part } => {
+                // A step without an ID has no name to count it under: its usage is not told.
+                if let Some(id) = part.id.clone() {
+                    self.usage.record(id, part.call());
+                }
                 self.ends_on_text = false;
                 match part.reason {
                     Some(FinishReason::Stop) => self.progress.stream = StreamOutcome::Succeeded,
@@ -442,6 +492,7 @@ impl OutputParser for OpencodeParser {
         let Self {
             mut progress,
             ends_on_text,
+            ..
         } = *self;
         // The recorded runs of a finished agent end on its text: opencode prints a `step_finish` with the reason
         // `stop` only sometimes.
@@ -449,5 +500,9 @@ impl OutputParser for OpencodeParser {
             progress.stream = StreamOutcome::Succeeded;
         }
         progress.finish(stderr, tail_lines)
+    }
+
+    fn usage(&self) -> RunUsage {
+        self.usage.usage()
     }
 }

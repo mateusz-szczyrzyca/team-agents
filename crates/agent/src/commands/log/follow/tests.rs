@@ -589,3 +589,153 @@ fn a_filter_by_level_or_event_has_no_steps_to_show() {
     assert!(!by_level.contains("command"), "{by_level}");
     assert_eq!(by_event.lines().count(), 2, "{by_event}");
 }
+
+/// The usage line the feed tells for run `number` whose context grew from `first` to `last`.
+fn usage_text(number: u32, first: u64, last: u64) -> String {
+    format!(
+        "run {} usage: context first {first}, last {last}; output 10; cost not told USD",
+        run(number)
+    )
+}
+
+/// Writes the usage of run `number`.
+fn write_usage(db: &mut HistoryDb, number: u32, first: u64, last: u64) {
+    db.write_usage(&[agent_runtime::history::RunUsageRecord {
+        run: run(number),
+        usage: agent_core::cli::RunUsage {
+            first_context: Some(first),
+            last_context: Some(last),
+            tokens_written: Some(10),
+            cost_usd: None,
+        },
+    }])
+    .expect("the usage is written");
+}
+
+/// A history of two runs of the task numbered one, each with a step and its end row, and the usage of both.
+fn two_runs_with_usage(path: &Path) -> HistoryDb {
+    let mut db = database(path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "cargo build"),
+        Record::Run(Box::new(start(2, "claude-1", 1, 5))),
+        step(2, 1, 6, "cargo test"),
+    ])
+    .expect("the runs are written");
+    db.write_logs(&[row(LogEvent::RunEnded, 1, 1, 3), row(LogEvent::RunEnded, 2, 1, 7)])
+        .expect("the rows are written");
+    write_usage(&mut db, 1, 100, 200);
+    write_usage(&mut db, 2, 300, 400);
+    db
+}
+
+#[test]
+fn the_usage_of_each_run_of_a_task_is_told_after_the_end_of_that_run_and_before_the_next_run() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_runs_with_usage(&path);
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} is in the text: {text}"))
+    };
+    let first_ended = at("2026-11-21T12:50:03Z info run_ended");
+    let first_usage = at(&usage_text(1, 100, 200));
+    let second_started = at(&format!(" run {} started by claude-1", run(2)));
+    let second_ended = at("2026-11-21T12:50:07Z info run_ended");
+    let second_usage = at(&usage_text(2, 300, 400));
+    assert!(first_ended < first_usage, "{text}");
+    assert!(first_usage < second_started, "{text}");
+    assert!(second_ended < second_usage, "{text}");
+    assert_eq!(text.matches("usage: context first").count(), 2, "{text}");
+}
+
+#[test]
+fn the_usage_of_a_run_whose_end_row_is_not_in_the_text_is_told_after_the_text() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "cargo build"),
+    ])
+    .expect("the run is written");
+    write_usage(&mut db, 1, 100, 200);
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    assert!(text.ends_with(&format!("{}\n", usage_text(1, 100, 200))), "{text}");
+}
+
+#[test]
+fn a_page_tells_the_usage_of_a_run_after_its_end_row() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "cargo build"),
+    ])
+    .expect("the run is written");
+    let (mut feed, _text) = open(&path, of_task(1), 100);
+    db.write_logs(&[row(LogEvent::RunEnded, 1, 1, 3)])
+        .expect("the row is written");
+    write_usage(&mut db, 1, 100, 200);
+
+    let page = poll(&mut feed, &path);
+
+    let lines: Vec<&str> = page.lines().collect();
+    // The row of the end, the usage of the run, and what the round waits for, which a run's end always brings.
+    assert_eq!(lines.len(), 3, "{page}");
+    assert!(lines[0].starts_with("2026-11-21T12:50:03Z info run_ended"), "{page}");
+    assert_eq!(lines[1], usage_text(1, 100, 200), "{page}");
+    assert!(lines[2].starts_with("round "), "{page}");
+}
+
+#[test]
+fn a_run_without_usage_is_told_as_not_told_at_its_end_when_another_run_of_the_task_has_usage() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_runs_with_usage(&path);
+    rusqlite::Connection::open(&path)
+        .expect("the history opens")
+        .execute("DELETE FROM run_usage WHERE run = ?1", [run(2).as_str()])
+        .expect("the usage row of the second run is deleted");
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} is in the text: {text}"))
+    };
+    let second_ended = at("2026-11-21T12:50:07Z info run_ended");
+    let not_told = at(&format!(
+        "run {} usage: context first not told, last not told; output not told; cost not told USD",
+        run(2)
+    ));
+    assert!(second_ended < not_told, "{text}");
+    assert!(
+        at(&usage_text(1, 100, 200)) < at(" run run-20261121-132909-0002 started by claude-1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_history_with_no_usage_at_all_tells_no_usage_line_at_a_run_end() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "cargo build"),
+    ])
+    .expect("the run is written");
+    db.write_logs(&[row(LogEvent::RunEnded, 1, 1, 3)])
+        .expect("the row is written");
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    assert!(!text.contains("usage:"), "{text}");
+}

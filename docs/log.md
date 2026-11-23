@@ -101,7 +101,7 @@ view selects its full scoped projection. `--json` makes their structured output 
 | `changes` | recorded commits, changed paths and uncommitted changes |
 | `reviews` | review requests and submitted reports |
 | `log` | scoped daemon log rows |
-| `usage` | an explicit notice that tokens are not recorded yet (`11.1`) |
+| `usage` | one row for each run that has usage (`run`, `task`, `agent`, `first_context`, `last_context`, `tokens_written`, `cost_usd`; `null` for a part its CLI did not tell); the notice that tokens are not recorded yet (`11.1`) when no run has any |
 
 `--stats` prints a JSON object with `bytes` (logical database pages times page size), `tables` (the count of every
 ordinary, virtual and shadow table), and `oldest` (the oldest record timestamp, or `null` for empty history).

@@ -9,11 +9,13 @@ mod tests;
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use agent_core::cli::RunUsage;
 use agent_core::history::RunStart;
 use agent_core::ids::{AgentName, RoundId, RunId, TeamId};
 use agent_core::local_time::Zone;
 use agent_core::log::render::{record_line_in, steps::step_line_in};
 use agent_core::log::{LogEntry, LogEvent};
+use agent_core::story::usage_line;
 
 use super::steps::TimedStep;
 
@@ -60,6 +62,8 @@ pub(crate) struct Timeline<'a> {
     pub(crate) teams: Vec<Team>,
     /// What each round waits for, told after the row of a run of it that ended.
     pub(crate) waits: BTreeMap<RoundId, String>,
+    /// The usage of the runs that have a row, told after the row of the run's end.
+    pub(crate) usage: BTreeMap<RunId, RunUsage>,
     /// The zone the times of the text are written in.
     zone: Zone,
 }
@@ -79,6 +83,7 @@ impl<'a> Timeline<'a> {
             followed,
             teams: Vec::new(),
             waits: BTreeMap::new(),
+            usage: BTreeMap::new(),
             zone,
         }
     }
@@ -94,6 +99,19 @@ impl<'a> Timeline<'a> {
         let mut told = BTreeSet::new();
         self.render(&self.shown(limit), &mut told);
         told
+    }
+
+    /// The runs whose end row the newest `limit` lines of the text show.
+    pub(crate) fn newest_ended_runs(&self, limit: u32) -> BTreeSet<RunId> {
+        self.shown(limit)
+            .into_iter()
+            .filter_map(|kind| match kind {
+                Kind::Row(row) => self.rows.get(row).copied(),
+                Kind::Step(_) => None,
+            })
+            .filter(|row| row.event() == LogEvent::RunEnded)
+            .filter_map(|row| row.run().cloned())
+            .collect()
     }
 
     /// Every row and step of the text, oldest first, as one page of a follow: a run in `told` is not told again, and
@@ -160,6 +178,14 @@ impl<'a> Timeline<'a> {
             .and_then(|team| team.run_of(row.run()));
         let mut line = format!("{}\n", record_line_in(row, run, &self.zone));
         if row.event() == LogEvent::RunEnded {
+            // Once the history keeps usage for any run of the text, a run without a row is told as not told; a history
+            // with none at all tells no usage line, as before usage was kept.
+            if let Some(run) = row.run()
+                && !self.usage.is_empty()
+            {
+                line.push_str(&usage_line(run, self.usage.get(run)));
+                line.push('\n');
+            }
             for round in row.rounds() {
                 if let Some(wait) = self.waits.get(round) {
                     line.push_str(wait);

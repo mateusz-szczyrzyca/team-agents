@@ -627,4 +627,138 @@ mod run_history {
         assert_ne!(notes[1].2, "");
         assert_eq!(notes[1].3, std::slice::from_ref(&round));
     }
+
+    /// Starts and runs `scenario` as run `run` of the session, as the owner does for each run of a task.
+    async fn run_of_session(rig: &Rig, run: &RunId, mode: RunMode, why: RunWhy, scenario: &str) -> RunEnd {
+        rig.history.record(Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: rig.team.clone(),
+            task: rig.task.clone(),
+            at: now(),
+            agent: AgentIdentity {
+                name: "claude-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Claude,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: Vec::new(),
+            why,
+            prompt: "Do the item.".to_owned(),
+            worktree: abs(rig.worktree.path()),
+            branch: BranchName::from_str("main").unwrap(),
+            session: None,
+        })));
+        std::fs::write(rig.worktree.path().join(".fake-scenario"), scenario).unwrap();
+        let job = RunJob {
+            task: rig.task.clone(),
+            run: run.clone(),
+            cli: CliKind::Claude,
+            model: None,
+            extra_args: CliArgs::try_from(Vec::<String>::new()).unwrap(),
+            mode,
+            prompt: "Do the item.".to_owned(),
+            working_dir: abs(rig.worktree.path()),
+            identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
+            mcp_servers: BTreeMap::<McpServerKind, agent_core::config::CommandLine>::new(),
+        };
+        let verdict = rig.engine.run(job, &CancellationToken::new()).await.unwrap();
+        let RunVerdict::Finished(finished) = verdict else {
+            panic!("{verdict:?}")
+        };
+        finished.classified.end
+    }
+
+    // Rule: three runs of one session record the context of each run as its CLI told it, growing with the session,
+    // with the cost the CLI reported; each run's usage is read back from the history on its own.
+    #[tokio::test]
+    async fn three_runs_of_one_session_record_the_growing_context_of_each_run() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        let session = SessionId::from_str(SESSION).unwrap();
+        let runs = [
+            RunId::from_str("run-20261112-100001-r1r1").unwrap(),
+            RunId::from_str("run-20261112-100002-r2r2").unwrap(),
+            RunId::from_str("run-20261112-100003-r3r3").unwrap(),
+        ];
+        let contexts = [42_000_u64, 200_000, 438_000];
+        for (index, (run, context)) in runs.iter().zip(contexts).enumerate() {
+            std::fs::write(rig.worktree.path().join(".fake-context"), context.to_string()).unwrap();
+            let (mode, why) = if index == 0 {
+                (
+                    RunMode::New {
+                        session_id: session.clone(),
+                    },
+                    RunWhy::FirstRun,
+                )
+            } else {
+                (
+                    RunMode::Resume {
+                        session_id: session.clone(),
+                    },
+                    RunWhy::WakeUp,
+                )
+            };
+            let end = run_of_session(&rig, run, mode, why, "context-from-file").await;
+            assert_eq!(end, done());
+        }
+        let reader = rig.reader();
+        for (run, context) in runs.iter().zip(contexts) {
+            assert_eq!(
+                reader.run_usage(run).unwrap(),
+                Some(agent_core::cli::RunUsage {
+                    first_context: Some(context),
+                    last_context: Some(context),
+                    tokens_written: Some(100),
+                    cost_usd: Some(0.5),
+                })
+            );
+        }
+    }
+
+    /// The bytes a subscriber writes, kept for a test to read.
+    #[derive(Clone, Default)]
+    struct Kept(Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl std::io::Write for Kept {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    // Rule: a usage the history refuses is logged as a warning with its cause, and the run ends as it would have.
+    #[tokio::test]
+    async fn a_usage_the_history_refuses_is_logged_as_a_warning_with_its_cause_and_the_run_ends() {
+        let mut rig = rig(Tree::Repository, Kind::Database).await;
+        // The writer stops before the run: the usage of the run has no writer to go to.
+        rig.started.take().unwrap().writer.close().unwrap();
+        let kept = Kept::default();
+        let logs = kept.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || logs.clone())
+            .with_ansi(false)
+            .finish();
+        let run = RunId::from_str("run-20261112-100004-r4r4").unwrap();
+        std::fs::write(rig.worktree.path().join(".fake-context"), "42000").unwrap();
+        let mode = RunMode::New {
+            session_id: SessionId::from_str(SESSION).unwrap(),
+        };
+        let end = tracing::instrument::WithSubscriber::with_subscriber(
+            run_of_session(&rig, &run, mode, RunWhy::FirstRun, "context-from-file"),
+            tracing::Dispatch::new(subscriber),
+        )
+        .await;
+        assert_eq!(end, done());
+        let text = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
+        assert!(
+            text.contains("WARN") && text.contains("the usage of a run was not written to the history"),
+            "{text}"
+        );
+        assert!(text.contains("history_record_incomplete"), "{text}");
+        assert!(text.contains("history writer is unavailable"), "{text}");
+    }
 }

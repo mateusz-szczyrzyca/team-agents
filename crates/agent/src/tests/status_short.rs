@@ -406,6 +406,12 @@ async fn target_pages_for_team_task_and_round_print_what_they_printed() {
         .await
         .unwrap();
         let expected = String::from_utf8(active_out).unwrap();
+        // Answer to questions-4 (b): a task page also says the context of its last run, "context: not told" when the
+        // run has no usage; the expected page says it too.
+        let expected = match &target {
+            Target::Task(task) => format!("{expected}{}", crate::commands::status::context_line(&home, task)),
+            _ => expected,
+        };
 
         assert_eq!(text, expected, "target page for {target:?}");
     }

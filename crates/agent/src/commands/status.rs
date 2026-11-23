@@ -5,6 +5,9 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+use std::num::NonZeroUsize;
+
+use agent_core::cli::RunUsage;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{RoundId, TaskId};
 use agent_core::local_time::Zone;
@@ -16,6 +19,7 @@ use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::disk::GIBIBYTE;
+use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::activity::last_activity;
 use agent_runtime::settings::{Settings, SettingsError};
@@ -228,6 +232,40 @@ enum VersionsQuery {
     Omit,
 }
 
+/// The context line of `task`: what its last run's stream told of its context, read from the history of `home`;
+/// "context: not told" when the last run has no usage, and a line that says the history cannot be read when it cannot
+/// be (the rest of the status is shown all the same).
+pub(crate) fn context_line(home: &Home, task: &TaskId) -> String {
+    match last_usage(home, task) {
+        Ok(Some(usage)) => format!(
+            "context: first {} tokens, last {} tokens (last run)\n",
+            told_part(usage.first_context),
+            told_part(usage.last_context),
+        ),
+        Ok(None) => "context: not told\n".to_owned(),
+        Err(error) => format!("context: cannot be read ({})\n", error_chain(&error)),
+    }
+}
+
+/// The usage of the last run of `task` as its row of the history says; `None` when the task has no run or the run has
+/// no usage row.
+///
+/// # Errors
+/// [`ReadError`] when the history cannot be read.
+fn last_usage(home: &Home, task: &TaskId) -> Result<Option<RunUsage>, ReadError> {
+    let reader = Reader::open(&home.history_file())?;
+    let newest = reader.newest_runs_of_task(task, NonZeroUsize::MIN)?;
+    let Some(last) = newest.runs.last() else {
+        return Ok(None);
+    };
+    reader.run_usage(&last.start.value.run)
+}
+
+/// A count of tokens as the status shows it, or "not told" when the CLI did not tell it.
+fn told_part(value: Option<u64>) -> String {
+    value.map_or_else(|| "not told".to_owned(), |value| value.to_string())
+}
+
 /// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
 /// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
 ///
@@ -249,13 +287,28 @@ pub(crate) async fn status_shown(
     } else {
         VersionsQuery::Omit
     };
+    let task = match &target {
+        Some(Target::Task(task)) => Some(task.clone()),
+        _ => None,
+    };
     let shown = listing_text(connection, target, activity, detail, query).await?;
     let prefix = if is_list {
         versions::block(&of_this_build(), shown.daemon.as_ref())
     } else {
         String::new()
     };
-    write_shown(out, &prefix, &shown, activity)
+    write_shown(out, &prefix, &shown, activity)?;
+    if let Some(task) = task {
+        // SQLite is read off the async runtime: the history may be busy for as long as its timeout.
+        let home = activity.home.clone();
+        let line = match tokio::task::spawn_blocking(move || context_line(&home, &task)).await {
+            Ok(line) => line,
+            // The line is the only part of the status that waits for the history: it says why it is missing.
+            Err(error) => format!("context: cannot be read ({})\n", error_chain(&error)),
+        };
+        out.write_all(line.as_bytes()).map_err(StatusError::Output)?;
+    }
+    Ok(())
 }
 
 /// Asks the daemon for every team and writes to `out` those that have a round that goes on, with those rounds only:

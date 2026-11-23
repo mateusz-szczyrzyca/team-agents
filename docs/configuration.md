@@ -57,6 +57,8 @@ Top-level key and tables:
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
 | `[restart]` | table | `session = "new"` | the session a run that a restart of the daemon cut goes on in |
+| `[session]` | table | `max_context = 150000` | the bound in tokens of a session's context, for an agent without its own `max_context`; `0` switches it off; `agent debug` names a session above it |
+| `agents.NAME.max_context` | optional tokens | the `[session]` bound | this agent's own bound on its session (and of `[investigators.NAME]`); `0` switches it off |
 | `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[publish]` | table | `tries = 3` | what happens when a branch cannot be published to GitHub |
 | `[web]` | table | loopback, nobody let in | the dashboard |

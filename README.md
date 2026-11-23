@@ -174,6 +174,18 @@ hooks, and the hooks path of an outer run (a `cargo test` started by an agent) i
   `agent log` shows what a round, a team or a task did, with every prompt and step. Its text shows times in the zone of
 this machine with its offset, as `date` does; `agent log --utc` shows them in UTC, as the files hold them, and `--json` is
 always UTC. A `--since` or `--until` without a zone is read in the zone of this machine.
+  Once the history keeps usage, the story of a round or a team tells each run's usage at its own end, in one line that
+  names the run: `run <id> usage: context first N, last M; output K; cost C USD`. The context is what the CLI's stream
+  told: the input of the run's first and last model call with what came from its cache. A part the CLI did not tell
+  reads `not told`, and so does a whole run without a row. `agent log --task <task>` and `--run <run>` tell the same
+  line right after the `run_ended` row of each run (after the text, for a run whose end row is not in it), and `--show usage --json` gives a row of numbers (`null` for a part not told) for each run that
+  has usage. A history written before usage was kept prints no usage line, and `--json` stories carry none.
+- **Context of a session.** Each run records the context size, the output tokens and the cost its CLI reports
+  (Claude Code, opencode and Antigravity tell the context of each model call; Codex tells output tokens only, so its
+  context is `not told`). `agent status <task>` ends with the context of the task's last run, or `context: not told`.
+  `agent debug --team <team>` puts the context of each run into its summary and names every run whose last context is
+  above its agent's bound: `[session] max_context` (default 150000 tokens; `0` switches it off), or the agent's own
+  `max_context`. The bound is only reported; no session is stopped or started differently by it yet.
 - Logs and the files of a task can contain secrets printed by commands: restrict who can read them.
 - `agent stop <team>` stops a team; stopping the daemon (`systemctl --user stop agent-daemon`) ends every run at
   once, and nothing starts until it runs again.
@@ -224,14 +236,14 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 ```
 agent daemon                      runs the daemon: the owner of the state and of every model run
 agent run ...                     starts a task or a team on the repository the current directory is in
-agent status [--running] [--task] the teams the daemon knows, their rounds and a count of their tasks; --task adds the tasks
+agent status [--running] [--task] the teams the daemon knows, their rounds and a count of their tasks; --task adds the tasks; a task ends with its context
 agent answer <task> [-f <file>]   answers the questions of a task; it goes on with the answers
 agent say <task|team> <text>      says something to a task or a team, through the bus
 agent stop | pause | unpause | resume <task|team>
 agent remove <team> [--force]     takes a team out: its unmerged branches are bundled, its pull requests closed, its files deleted
 agent gate                        runs the repository's gate for a task and records its result
 agent log ...                     reads the history: rounds, teams, tasks, prompts, steps
-agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong
+agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong and the context of each run, with the sessions above their bound
 ```
 
 `agent <command> --help` has the options of each. The next section describes what the daemon does with a team, in

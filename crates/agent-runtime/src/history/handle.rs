@@ -29,6 +29,17 @@ use super::error::{CloseError, StartError, WriteError, WriteKind};
 use super::redact::Redactor;
 use crate::process::error_chain;
 
+/// What can go wrong when persisting the usage of runs to history.
+#[derive(Debug, thiserror::Error)]
+pub enum PersistUsageError {
+    /// The database writer is unavailable or stopped.
+    #[error("history writer is unavailable")]
+    Unavailable,
+    /// The writer's queue was full: the usage was dropped and reported.
+    #[error("history writer queue is full; the usage was dropped")]
+    Full,
+}
+
 /// What can go wrong when persisting judgements to history.
 #[derive(Debug, thiserror::Error)]
 pub enum PersistJudgementsError {
@@ -165,6 +176,13 @@ enum Job {
     },
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
+    /// The usage of runs to write. The caller does not wait for the answer: the writer reports a refused write itself.
+    PersistUsage {
+        /// The usage records to write.
+        records: Vec<super::usage::RunUsageRecord>,
+        /// Channel for the write outcome; its receiver is dropped at once by the caller of the engine.
+        ack: tokio::sync::oneshot::Sender<Result<(), WriteError>>,
+    },
     /// Judgements of a task's plan steps to write, with awaited confirmation.
     PersistJudgements {
         /// The judgement records to write.
@@ -349,6 +367,44 @@ impl History {
             return Err(PersistJudgementsError::Unavailable);
         }
         rx.await?.map_err(PersistJudgementsError::Write)
+    }
+
+    /// Hands the usage of runs to the history's writer without waiting for the commit: the usage is informational, so
+    /// a write the database refuses is reported by the writer, not to the caller.
+    ///
+    /// # Errors
+    /// Returns [`PersistUsageError`] if the history writer is unavailable or its queue is full.
+    pub fn persist_usage(&self, records: Vec<super::usage::RunUsageRecord>) -> Result<(), PersistUsageError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let Some(queue) = self.queue.clone() else {
+            return Err(PersistUsageError::Unavailable);
+        };
+        // Not awaited: the usage is informational, so the run that ends does not wait for its commit. A dropped
+        // answer is the writer's to ignore; the writer logs what it could not write.
+        let (ack, _answer) = tokio::sync::oneshot::channel();
+        // Not blocking: a full queue drops the usage of the runs with a report, as the other records do.
+        match queue.try_send(Job::PersistUsage { records, ack }) {
+            Ok(()) => {}
+            Err(TrySendError::Full(Job::PersistUsage { records, .. })) => {
+                self.shared.lose(count(records.len()));
+                self.shared.report(Cause::QueueFull, || {
+                    "the writer of the history is slower than the work: the usage of runs is dropped while its queue is full"
+                        .to_owned()
+                });
+                return Err(PersistUsageError::Full);
+            }
+            Err(TrySendError::Disconnected(Job::PersistUsage { records, .. })) => {
+                self.shared.lose(count(records.len()));
+                self.stopped();
+                return Err(PersistUsageError::Unavailable);
+            }
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                return Err(PersistUsageError::Unavailable);
+            }
+        }
+        Ok(())
     }
 
     /// A handle that records nothing and loses nothing: `[history] enabled = false`.
@@ -689,6 +745,7 @@ impl History {
                 let lost = match job {
                     Job::Plans(plans) => count(plans.len()),
                     Job::PersistJudgements { records, .. } => count(records.len()),
+                    Job::PersistUsage { records, .. } => count(records.len()),
                     Job::Record(_)
                     | Job::Flush(_)
                     | Job::Retain(_)
@@ -785,6 +842,19 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     write_plans(&mut store, shared, &plans);
                     continue;
                 }
+                Job::PersistUsage { records, ack } => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
+                    let res = store.write_usage(&records);
+                    if let Err(error) = &res {
+                        shared.lose(count(records.len()));
+                        shared.report(Cause::Write(error.kind()), || error_chain(error));
+                    }
+                    if ack.send(res).is_err() {
+                        tracing::debug!("caller dropped persistence receiver");
+                    }
+                    continue;
+                }
                 Job::PersistJudgements { records, ack } => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -842,6 +912,10 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
             Job::Plans(plans) => shared.lose(count(plans.len())),
             Job::PersistJudgements { records, ack } => {
+                shared.lose(count(records.len()));
+                drop(ack);
+            }
+            Job::PersistUsage { records, ack } => {
                 shared.lose(count(records.len()));
                 drop(ack);
             }

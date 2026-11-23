@@ -1,0 +1,36 @@
+//! `[session]`: the size of a session's context above which the harness no longer resumes it, and an agent's own
+//! bound.
+
+use serde::Deserialize;
+
+/// The bound a session's context has when `[session]` says nothing, in tokens. It is taken from the measurements of
+/// 22.11.2026 (sessions that grew to 438 000 and 580 000 tokens, and runs that ended `STATUS: FAILED` above 360 000
+/// tokens), not from any model's documentation.
+pub const DEFAULT_MAX_CONTEXT: u64 = 150_000;
+
+/// `[session]`: the bound on a session's context for an agent that has none of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Session {
+    /// The bound in tokens of a session's context; `0` switches the bound off.
+    pub max_context: u64,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Self {
+            max_context: DEFAULT_MAX_CONTEXT,
+        }
+    }
+}
+
+/// The bound in tokens of an agent's session: its own `max_context` when it has one, else the section's. `None` when
+/// the bound is `0`, which switches it off.
+#[must_use]
+pub fn context_bound(agent: Option<u64>, section: u64) -> Option<u64> {
+    let bound = agent.unwrap_or(section);
+    (bound != 0).then_some(bound)
+}
+
+#[cfg(test)]
+mod tests;

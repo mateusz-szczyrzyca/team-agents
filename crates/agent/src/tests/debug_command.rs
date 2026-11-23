@@ -1001,3 +1001,300 @@ fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
     // 8. All-artifacts secret scan: NO file in bundle_path contains secret_val
     assert_no_secret_in_directory(&bundle_path, secret_val);
 }
+
+/// A team whose one run of `codex-1` has the usage `usage`, in a history with the bound `max_context` for `codex-1`.
+fn team_with_usage(max_context: u64, usage: agent_core::cli::RunUsage) -> (tempfile::TempDir, Home, TeamId) {
+    use agent_runtime::history::Store;
+
+    let (dir, home, _state, team, _lead, member, _round) = setup_test_home();
+    std::fs::write(
+        home.config_file(),
+        format!(
+            "[agents.codex-1]\ncli = \"codex\"\n\n[tiers]\nnormal = [\"codex-1\"]\nworkers = []\n\n[session]\nmax_context = {max_context}\n"
+        ),
+    )
+    .unwrap();
+    let at = "2026-11-18T06:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261118-060000-a1b2".parse().unwrap();
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default())
+            .unwrap();
+    database
+        .write(&[
+            agent_core::history::Record::Team(Box::new(agent_core::history::TeamStart {
+                team: team.clone(),
+                at,
+                repo: "example".to_owned(),
+                base_branch: "main".parse().unwrap(),
+                merge: agent_core::state::MergeMode::NoMerge,
+                task_list: "Live task list.".to_owned(),
+                plan: Vec::new(),
+            })),
+            agent_core::history::Record::Run(Box::new(agent_core::history::RunStart {
+                run: run.clone(),
+                team: team.clone(),
+                task: member,
+                at,
+                agent: agent_core::history::AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: agent_core::kinds::Tier::Normal,
+                    cli: agent_core::kinds::CliKind::Codex,
+                    model: None,
+                },
+                role: agent_core::kinds::Role::Member,
+                rounds: vec![],
+                why: agent_core::history::RunWhy::FirstRun,
+                prompt: "Growing session".to_owned(),
+                worktree: agent_core::config::AbsolutePath::try_from("/tmp/worktree".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: None,
+            })),
+            agent_core::history::Record::RunEnd(Box::new(agent_core::history::RunEndRecord {
+                run: run.clone(),
+                at,
+                end: agent_core::state::RunEnd::Stopped,
+                final_message: None,
+            })),
+        ])
+        .unwrap();
+    database
+        .write_usage(&[agent_runtime::history::RunUsageRecord { run, usage }])
+        .unwrap();
+    drop(database);
+    (dir, home, team)
+}
+
+#[test]
+fn debug_names_a_session_above_its_bound_and_keeps_the_series_of_its_runs() {
+    let usage = agent_core::cli::RunUsage {
+        first_context: Some(800),
+        last_context: Some(1_500),
+        tokens_written: Some(300),
+        cost_usd: Some(0.5),
+    };
+    let (_dir, home, team) = team_with_usage(1_000, usage);
+
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, _out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let summary = std::fs::read_to_string(
+        parent
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("SUMMARY.md"),
+    )
+    .unwrap();
+
+    assert!(summary.contains("Context of the runs by task:"), "{summary}");
+    assert!(
+        summary.contains("run run-20261118-060000-a1b2 (agent codex-1): context first 800 tokens, last 1500 tokens; output 300 tokens; cost 0.500000 USD"),
+        "{summary}"
+    );
+    assert!(
+        summary
+            .contains("run run-20261118-060000-a1b2 (session not known) is above its bound: last context 1500 tokens > 1000 tokens (agent codex-1)"),
+        "{summary}"
+    );
+}
+
+/// Three runs of one session of `codex-1`, whose contexts grow as the measurements of 22.11.2026 did (from 42 000 to
+/// 438 000 tokens), in a team with the bound `max_context` for `codex-1`.
+fn team_with_growing_session(max_context: u64) -> (tempfile::TempDir, Home, TeamId, TaskId) {
+    use agent_runtime::history::Store;
+
+    let (dir, home, _state, team, _lead, member, _round) = setup_test_home();
+    std::fs::write(
+        home.config_file(),
+        format!(
+            "[agents.codex-1]\ncli = \"codex\"\n\n[tiers]\nnormal = [\"codex-1\"]\nworkers = []\n\n[session]\nmax_context = {max_context}\n"
+        ),
+    )
+    .unwrap();
+    let session: agent_core::state::SessionId = "2fff8ec8-76a8-483a-9e7a-57201308420e".parse().unwrap();
+    let mut records = vec![agent_core::history::Record::Team(Box::new(
+        agent_core::history::TeamStart {
+            team: team.clone(),
+            at: "2026-11-18T06:00:00Z".parse().unwrap(),
+            repo: "example".to_owned(),
+            base_branch: "main".parse().unwrap(),
+            merge: agent_core::state::MergeMode::NoMerge,
+            task_list: "Growing task list.".to_owned(),
+            plan: Vec::new(),
+        },
+    ))];
+    let mut usages = Vec::new();
+    for (number, context) in [(1_u32, 42_000_u64), (2, 200_000), (3, 438_000)] {
+        let at: agent_core::state::Timestamp = format!("2026-11-18T06:00:0{number}Z").parse().unwrap();
+        let run: agent_core::ids::RunId = format!("run-20261118-06000{number}-a1b2").parse().unwrap();
+        records.push(agent_core::history::Record::Run(Box::new(
+            agent_core::history::RunStart {
+                run: run.clone(),
+                team: team.clone(),
+                task: member.clone(),
+                at,
+                agent: agent_core::history::AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: agent_core::kinds::Tier::Normal,
+                    cli: agent_core::kinds::CliKind::Codex,
+                    model: None,
+                },
+                role: agent_core::kinds::Role::Member,
+                rounds: vec![],
+                why: agent_core::history::RunWhy::FirstRun,
+                prompt: "Growing session".to_owned(),
+                worktree: agent_core::config::AbsolutePath::try_from("/tmp/worktree".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: Some(session.clone()),
+            },
+        )));
+        records.push(agent_core::history::Record::RunEnd(Box::new(
+            agent_core::history::RunEndRecord {
+                run: run.clone(),
+                at,
+                end: agent_core::state::RunEnd::Stopped,
+                final_message: None,
+            },
+        )));
+        usages.push(agent_runtime::history::RunUsageRecord {
+            run,
+            usage: agent_core::cli::RunUsage {
+                first_context: Some(42_000),
+                last_context: Some(context),
+                tokens_written: Some(u64::from(number) * 100),
+                cost_usd: None,
+            },
+        });
+    }
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default())
+            .unwrap();
+    database.write(&records).unwrap();
+    database.write_usage(&usages).unwrap();
+    drop(database);
+    (dir, home, team, member)
+}
+
+#[test]
+fn a_growing_session_is_told_in_the_debug_summary_the_log_and_the_status_with_its_bound() {
+    let (_dir, home, team, task) = team_with_growing_session(150_000);
+
+    // The debug summary: the series of the three runs, and the two runs above the bound, naming their session.
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, _out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let summary = std::fs::read_to_string(
+        parent
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("SUMMARY.md"),
+    )
+    .unwrap();
+    for told in [
+        "context first 42000 tokens, last 42000 tokens",
+        "context first 42000 tokens, last 200000 tokens",
+        "context first 42000 tokens, last 438000 tokens",
+        "run run-20261118-060002-a1b2 (session 2fff8ec8-76a8-483a-9e7a-57201308420e) is above its bound: last context 200000 tokens > 150000 tokens (agent codex-1)",
+        "run run-20261118-060003-a1b2 (session 2fff8ec8-76a8-483a-9e7a-57201308420e) is above its bound: last context 438000 tokens > 150000 tokens (agent codex-1)",
+    ] {
+        assert!(summary.contains(told), "{told:?} is not in\n{summary}");
+    }
+    assert!(
+        !summary.contains("run-20261118-060001-a1b2 (session"),
+        "the first run is under the bound\n{summary}"
+    );
+
+    // The log: one usage line per run, in order.
+    let (code, log, err) = agent(&environment(home.root()), &["log", "--team", team.as_str()]);
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let lines: Vec<String> = log
+        .lines()
+        .filter_map(|line| {
+            line.split_once("usage: context first")
+                .map(|(_, rest)| format!("usage: context first{rest}"))
+        })
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            "usage: context first 42000, last 42000; output 100; cost not told USD",
+            "usage: context first 42000, last 200000; output 200; cost not told USD",
+            "usage: context first 42000, last 438000; output 300; cost not told USD",
+        ],
+        "{log}"
+    );
+
+    // The status of the task: its last run's context.
+    assert_eq!(
+        crate::commands::status::context_line(&home, &task),
+        "context: first 42000 tokens, last 438000 tokens (last run)\n"
+    );
+}
+
+#[test]
+fn debug_names_the_session_the_stream_reported_when_the_run_started_without_one() {
+    use agent_runtime::history::Store;
+
+    let usage = agent_core::cli::RunUsage {
+        first_context: Some(800),
+        last_context: Some(1_500),
+        tokens_written: None,
+        cost_usd: None,
+    };
+    let (_dir, home, team) = team_with_usage(1_000, usage);
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default())
+            .unwrap();
+    database
+        .write(&[agent_core::history::Record::Session(Box::new(
+            agent_core::history::RunSession {
+                run: "run-20261118-060000-a1b2".parse().unwrap(),
+                number: std::num::NonZeroU32::MIN,
+                at: "2026-11-18T06:00:01Z".parse().unwrap(),
+                session: "session-observed-in-stream".parse().unwrap(),
+            },
+        ))])
+        .unwrap();
+    drop(database);
+
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, _out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let summary = std::fs::read_to_string(
+        parent
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("SUMMARY.md"),
+    )
+    .unwrap();
+
+    assert!(
+        summary.contains(
+            "run run-20261118-060000-a1b2 (session session-observed-in-stream) is above its bound: last context 1500 tokens > 1000 tokens (agent codex-1)"
+        ),
+        "{summary}"
+    );
+}

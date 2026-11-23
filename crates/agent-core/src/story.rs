@@ -10,8 +10,11 @@
 mod json;
 mod text;
 
+use std::collections::BTreeMap;
+
+use crate::cli::RunUsage;
 use crate::history::{Record, SequencedRecord};
-use crate::ids::{RoundId, TeamId};
+use crate::ids::{RoundId, RunId, TeamId};
 use crate::local_time::Zone;
 
 /// How many lines of a prompt a story prints unless it is asked for the whole prompt.
@@ -86,11 +89,42 @@ pub fn render(records: &[SequencedRecord], selection: &Selection, options: Story
 /// The story of `selection` as [`render`] writes it, with every time in `zone`: what a person reads.
 #[must_use]
 pub fn render_in(records: &[SequencedRecord], selection: &Selection, options: StoryOptions, zone: Zone) -> String {
+    render_with_usage(records, selection, options, zone, &BTreeMap::new())
+}
+
+/// The story as [`render_in`] writes it, with the usage of each run told at its end. `usage` has the runs of the
+/// history that have a row; when it is empty, as for a history written before usage was kept, no usage line is told,
+/// and when it is not, a run without a row is told as not told.
+#[must_use]
+pub fn render_with_usage(
+    records: &[SequencedRecord],
+    selection: &Selection,
+    options: StoryOptions,
+    zone: Zone,
+    usage: &BTreeMap<RunId, RunUsage>,
+) -> String {
     let chosen = selected(records, selection);
     if chosen.is_empty() {
         return String::new();
     }
-    text::render(&chosen, selection, options, zone)
+    text::render(&chosen, selection, options, zone, usage)
+}
+
+/// The line that tells the usage of `run`: each part its CLI told, "not told" for a part it did not tell and for all
+/// of them when the run has no row.
+#[must_use]
+pub fn usage_line(run: &RunId, usage: Option<&RunUsage>) -> String {
+    let usage = usage.copied().unwrap_or_default();
+    let tokens = |value: Option<u64>| value.map_or_else(|| "not told".to_owned(), |tokens| tokens.to_string());
+    format!(
+        "run {run} usage: context first {}, last {}; output {}; cost {} USD",
+        tokens(usage.first_context),
+        tokens(usage.last_context),
+        tokens(usage.tokens_written),
+        usage
+            .cost_usd
+            .map_or_else(|| "not told".to_owned(), |cost| format!("{cost:.6}")),
+    )
 }
 
 /// The records of `selection`, each as one line of JSON, in chronological order without the text-only review ordering.

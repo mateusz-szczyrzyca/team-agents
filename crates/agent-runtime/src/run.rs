@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 use agent_core::cli::{
-    ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, RunOutput, SessionId,
+    ActivityEvent, BuildRunError, McpServerKind, OutputError, OutputParser, RunMode, RunOutput, RunUsage, SessionId,
 };
 use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValue, ModelName, Secrets, Watchdog};
 use agent_core::decide::outcome::{
@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use crate::clock::SharedClock;
 use crate::git::{CommitIdentity, GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
-use crate::history::{CaptureKind, History, log_decision};
+use crate::history::{CaptureKind, History, RunUsageRecord, log_decision};
 use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
@@ -482,7 +482,7 @@ impl RunEngine {
         };
         let stopped_by = self.supervise(&job, process, &mut follow, cancel, hold).await?;
         follow.drain().await?;
-        self.record_changes(&job, head_before).await;
+        self.record_process_end(&job, head_before, follow.parser.usage()).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
         let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
@@ -628,6 +628,34 @@ impl RunEngine {
             env_names: process.env.keys().cloned().collect(),
             prompt_in_file: launch.prompt_in_file,
         })));
+    }
+
+    /// What a run leaves in the history once its process is gone, also for a run that was cancelled: what it changed,
+    /// and what its stream told of its usage.
+    async fn record_process_end(&self, job: &RunJob, head_before: Option<CommitId>, usage: RunUsage) {
+        self.record_changes(job, head_before).await;
+        self.record_usage(job, usage);
+    }
+
+    /// Writes what the run's stream told of its usage to the history. Best-effort: a refused write is logged with its cause, and the run goes on.
+    fn record_usage(&self, job: &RunJob, usage: RunUsage) {
+        // A stream that told nothing of the usage writes no row: a run without a row is "not told" all the same.
+        if self.history.is_disabled() || usage == RunUsage::default() {
+            return;
+        }
+        let records = vec![RunUsageRecord {
+            run: job.run.clone(),
+            usage,
+        }];
+        if let Err(error) = self.history.persist_usage(records) {
+            tracing::warn!(
+                event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %job.task,
+                run = %job.run,
+                error = %error_chain(&error),
+                "the usage of a run was not written to the history"
+            );
+        }
     }
 
     /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit

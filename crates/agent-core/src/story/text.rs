@@ -5,9 +5,9 @@
 //! marker lines, never wrapped, indented or cut; a line of a story that summarizes a text (a step, the preview of a prompt)
 //! is the only place text is shortened, and the line says so.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
-use crate::cli::ActivityEvent;
+use crate::cli::{ActivityEvent, RunUsage};
 use crate::decide::checks::{Change, FileChange, Lines};
 use crate::decide::opinion::MAX_OPINION_ATTEMPTS;
 use crate::decide::round::AskReason;
@@ -21,7 +21,7 @@ use crate::local_time::Zone;
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, PrNumber, RunEnd, Timestamp};
 
-use super::{PREVIEW_LINES, PromptView, Selection, StepView, StoryOptions};
+use super::{PREVIEW_LINES, PromptView, Selection, StepView, StoryOptions, usage_line};
 
 /// How many characters of a step's text its line shows.
 const STEP_SUMMARY_CHARS: usize = 160;
@@ -36,6 +36,8 @@ struct Page {
     text: String,
     /// The zone the times of the page are written in; the RFC 3339 form of the files by default.
     zone: Zone,
+    /// The usage of the runs that have a row; empty when the history keeps none, which tells no usage line.
+    usage: BTreeMap<RunId, RunUsage>,
 }
 
 impl Page {
@@ -71,9 +73,16 @@ impl Page {
 }
 
 /// The story of `chosen`, which are the records of `selection` in the order of their time.
-pub(super) fn render(chosen: &[&SequencedRecord], selection: &Selection, options: StoryOptions, zone: Zone) -> String {
+pub(super) fn render(
+    chosen: &[&SequencedRecord],
+    selection: &Selection,
+    options: StoryOptions,
+    zone: Zone,
+    usage: &BTreeMap<RunId, RunUsage>,
+) -> String {
     let mut page = Page {
         zone,
+        usage: usage.clone(),
         ..Page::default()
     };
     let team = chosen.first().map(|record| record.team.clone());
@@ -561,6 +570,10 @@ fn run_rest(page: &mut Page, block: &RunBlock<'_>, start: Option<&RunStart>, opt
             page.raw(4, "final message", message);
         }
         page.cut_note(4, stored);
+        if !page.usage.is_empty() {
+            let line = usage_line(&end.run, page.usage.get(&end.run));
+            page.line(4, &line);
+        }
     }
     match (block.changes, block.changes_lost, block.end) {
         (Some(changes), _, _) => changed(page, changes),

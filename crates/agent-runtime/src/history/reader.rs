@@ -587,6 +587,27 @@ impl Reader {
         super::judgements::read(&snapshot, task)
     }
 
+    /// The usage of `run` as its stream told it; `None` when no usage was written for it, which is "not told".
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn run_usage(&self, run: &RunId) -> Result<Option<agent_core::cli::RunUsage>, ReadError> {
+        let snapshot = self.snapshot("run_usage")?;
+        super::usage::read(&snapshot, run)
+    }
+
+    /// The usage of each of `runs` that has a row, in one read; a run without a row is not in the result.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn run_usages(
+        &self,
+        runs: &[RunId],
+    ) -> Result<std::collections::BTreeMap<RunId, agent_core::cli::RunUsage>, ReadError> {
+        let snapshot = self.snapshot("run_usage")?;
+        super::usage::read_many(&snapshot, runs)
+    }
+
     /// The latest judgement for each step of `task`.
     ///
     /// # Errors

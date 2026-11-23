@@ -11,7 +11,9 @@ mod replacement;
 #[cfg(test)]
 mod replacement_tests;
 mod restart;
+mod session;
 pub use restart::{Restart, RestartSession};
+pub use session::{DEFAULT_MAX_CONTEXT, Session, context_bound};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -193,6 +195,9 @@ pub struct AgentConfig {
     /// Extra arguments for the CLI, each one argument.
     #[serde(default)]
     pub args: CliArgs,
+    /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
+    #[serde(default)]
+    pub max_context: Option<u64>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -207,6 +212,9 @@ pub struct InvestigatorConfig {
     /// Extra arguments for the CLI, each one argument.
     #[serde(default)]
     pub args: CliArgs,
+    /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
+    #[serde(default)]
+    pub max_context: Option<u64>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.
@@ -889,6 +897,8 @@ pub struct Config {
     snapshot: Snapshot,
     /// What a restart of the daemon does with the runs it cut.
     restart: Restart,
+    /// The bound on a session's context for an agent without its own.
+    session: Session,
     /// The publication tries and notifications.
     publish: Publish,
     /// The merges refused for a conflict.
@@ -969,6 +979,9 @@ struct RawConfig {
     /// See [`Config::restart`].
     #[serde(default)]
     restart: Restart,
+    /// See [`Config::session`].
+    #[serde(default)]
+    session: Session,
     /// See [`Config::publish`].
     #[serde(default)]
     publish: Publish,
@@ -1036,6 +1049,7 @@ impl RawConfig {
             disk,
             snapshot,
             restart,
+            session,
             publish,
             merge,
             review,
@@ -1080,6 +1094,7 @@ impl RawConfig {
             disk,
             snapshot,
             restart,
+            session,
             publish,
             merge,
             review,
@@ -1287,6 +1302,12 @@ impl Config {
     #[must_use]
     pub const fn restart(&self) -> &Restart {
         &self.restart
+    }
+
+    /// The bound on a session's context for an agent that has none of its own: `[session]`.
+    #[must_use]
+    pub const fn session(&self) -> &Session {
+        &self.session
     }
 
     /// The publication tries and notifications.
