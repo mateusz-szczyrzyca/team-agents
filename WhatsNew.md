@@ -5,12 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.81.0 — 23.11.2026 — PR #pending
+## 0.81.0 — 23.11.2026 — PR #228
 
 ### New features
 - [agent] [agent-core] A session whose context grew above its agent's bound is no longer resumed: the task's next run starts a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before.
 
 ### Enhancements
+- [agent] [agent-core] The briefing of a new session ends with the agent's own last final message, whole.
+- [agent-core] The role texts tell every agent, in one sentence, to keep what the next session will need in `.agent/plan.md` and in the notebook.
 - [agent] [agent-core] **Action:** a session above its agent's bound starts anew after this version; a session with a context the CLI tells and below the bound is resumed as before. The new session is not counted against `[replacement] new_sessions`.
 
 ### Configuration
