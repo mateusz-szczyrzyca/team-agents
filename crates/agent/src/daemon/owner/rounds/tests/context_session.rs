@@ -429,9 +429,8 @@ async fn a_session_above_the_bound_is_replaced_with_the_history_disabled() {
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
 
-// Rule: a corrupt outcome file of the run above the bound does not decide the size alone: the history's size replaces an
-// oversized session; but the new session's briefing needs the last message from that file, so the start fails and names the
-// file, rather than starting the session unbriefed.
+// Rule: a corrupt outcome file of the run above the bound does not decide alone: the history's size replaces an oversized
+// session, and the history's copy of the last message briefs it.
 #[tokio::test]
 async fn a_corrupt_outcome_file_is_judged_by_the_history_size_and_replaces_the_session() {
     let mut rig = Rig::new(
@@ -465,18 +464,12 @@ async fn a_corrupt_outcome_file_is_judged_by_the_history_size_and_replaces_the_s
     );
     std::fs::write(run_dir.join("outcome.json"), "not an outcome").unwrap();
     answer_first_question(&rig, &tasks[0], 1, "ok").await;
-    let notice = rig
-        .notification_with("cannot read the outcome of the task's last run")
-        .await;
-    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Failed).await;
-    let started_third = rig.worktree(&tasks[0]).join(".fake-prompt-3").exists();
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
     rig.stop().await.unwrap();
 
-    assert!(
-        !started_third,
-        "a session replaced with no readable last message was started unbriefed"
-    );
-    assert!(notice.contains("outcome.json"), "{notice}");
+    assert!(prompt.contains("grown to 200000 tokens"), "{prompt}");
+    assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
 
 // Rule: two agents of one team with different bounds decide alone: the same size, 120 000 tokens, replaces the session of the
