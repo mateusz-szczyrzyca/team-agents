@@ -565,6 +565,12 @@ A `target` is `{"team": "team-…"}`, `{"task": "task-…"}` or `{"round": "roun
 recommendation, any other text is the human's own answer. The daemon checks `answers` against the questions file of the questions
 with that `number` (every question answered, `ok` only where there is a recommendation).
 
+The `remove` command adds no persisted team fields. It saves state without the team's tasks, rounds and wake-up
+budgets before deleting local files. A failed save leaves the in-memory team and local files intact. Reloading the
+saved state cannot recreate a removed team; its history remains in `history.db`. The reply's `dirty_worktrees`
+names tracked changes regardless of cleanup success; `left_behind` reports cleanup failures and the bus records
+not released by this command. `freed_bytes` counts only successfully removed directories.
+
 ### What the daemon serves
 
 Since item 6.1 the daemon serves `status`, `show` and `subscribe`; since item 7.1 also `run`: it forms the team, makes its

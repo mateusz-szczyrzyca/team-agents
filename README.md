@@ -498,7 +498,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
-| `agent remove <team> [--force]` | takes a team out of the daemon, with what is only its own. Refused while a run of the team goes, unless `--force`, which ends its runs first. Before anything is deleted, the unmerged branches of the team (commits the base branch does not have) go into one git bundle, `removed/<team>.bundle` under `AGENTS_HOME`, which `git fetch` reads, together with the commit that each worktree's HEAD holds when no branch holds it (kept as `refs/agent-removed/<task>`); the bundle is checked with `git bundle verify` before anything is deleted, and a bundle that cannot be written leaves the team and its files as they were; the open pull requests of its branches are closed with a comment, and the branches stay on GitHub. Then the team leaves `agent status`, and its worktrees, task directories and local branches are deleted. The output names the bundle, the branches, the pull requests closed, the bytes freed, every worktree with tracked uncommitted changes, named as having them (untracked files alone are not named), and what stayed, with the reason: a worktree that git refuses to remove is named in the left-behind lines. The bytes counted are those actually removed. The history, the notifications and the GitHub branches stay. The reservations of the team on the bus are not released (the harness cannot release them; `team_done` only marks the team finished): the output names the reservations still there, which stay until they expire or are released by hand. Wake-ups of the bus are not read or removed by this command. This is a backward-compatible addition to the control protocol: an older client is not affected, and an older daemon refuses the new request. |
+| `agent remove <team> [--force]` | removes a team after bundling its unmerged work; `--force` first ends its active runs and checks. See the removal details below. |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number |
 | `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
@@ -506,6 +506,36 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
+
+`agent remove <team>` removes only that team's state, local branches, worktrees and task directories.
+It refuses an unknown team or a team with active runs, gates or worker checks. With `--force`, it ends and joins
+that work before deleting files; pending disk cleanup finishes before the freed bytes are measured.
+
+Before deletion, unmerged local branches and worktree HEAD commits go into `AGENTS_HOME/removed/<team>.bundle`.
+The command verifies the bundle and reports its path; restore a branch with
+`git fetch /path/to/removed/<team>.bundle refs/heads/<branch>:refs/heads/recovered-work`.
+Detached HEADs are available as `refs/agent-removed/<task>` in that bundle. A failure to create or verify the
+bundle prevents deletion. Every worktree with uncommitted tracked changes is named in the output; the bundle
+keeps commits, so save those changes separately before removal if you need them. Untracked files alone do not
+produce that warning. Open pull requests are closed with an explanatory comment; their remote branches stay.
+
+The team disappears from `agent status`, including after a daemon restart. History and existing notifications
+stay. One new notification and a `team_removed` log event report the team, reason, bundle and bytes freed.
+The byte count covers successfully deleted directories; cleanup failures are listed as left behind with their
+causes. Removal saves the new state before deleting local files; a failed state save preserves those files and
+the live team, although a pull request already closed stays closed.
+
+**Current limitations:** removal requires a surviving worktree to locate a Git repository. If none remains,
+it refuses without deleting state or files and names the known local branches: keep one worktree, or bundle and
+delete the branches by hand. The team record gains no repository-path field in this release.
+The command marks the team done on the bus, but **the bus itself is neither read for wake-ups nor cleaned**.
+The output reports known reservations with their paths and each removed task's persisted wake-up budget
+(task, message number, count and state-file path). Bus unread messages and reservations remain; reservations
+last until expiry or manual release. Releasing these bus records is a separate follow-up.
+
+The `remove` request and `removed` reply add to the socket protocol; older commands keep their forms and an
+older daemon refuses the new command. History migration 20 admits the new event while preserving old logs,
+search entries and cursors; it does not change the live state's format.
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
 
