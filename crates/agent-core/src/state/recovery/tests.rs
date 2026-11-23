@@ -225,3 +225,55 @@ fn loading_refuses_forged_recovery_plans_and_restart_lineages() {
         state
     );
 }
+
+#[test]
+fn legacy_state_without_recovery_records_starts_with_an_unused_budget() {
+    // The stopped documentation team is copied from the pre-recovery schema-11 fixture.
+    let mut state = State::from_json(include_str!("legacy.json")).unwrap();
+    let old = state.teams().first().unwrap().clone();
+    assert_eq!(state.recovery(old.id()), None);
+    assert!(!state.to_json().unwrap().contains("\"recoveries\""));
+    assert_eq!(
+        state.prepare_recovery(old.id(), destination(2, 10), 1),
+        Ok(RecoveryPreparation::Reserved(team_id(2)))
+    );
+    let state = reload(&state);
+    let plan = state.recovery(old.id()).unwrap();
+    assert_eq!(plan.ordinal().get(), 1);
+    assert_eq!(plan.source(), &old);
+    assert_eq!(plan.replacement().repo(), old.repo());
+    assert_eq!(plan.replacement().task_list(), old.task_list());
+    assert_eq!(plan.replacement().rounds(), []);
+}
+
+#[test]
+fn recovery_unknown_sources_and_installation_conflicts_leave_state_unchanged() {
+    let mut state = State::new();
+    assert_eq!(
+        state.prepare_recovery(&team_id(1), destination(2, 10), 1),
+        Err(RecoveryError::Unknown { team: team_id(1) })
+    );
+    assert_eq!(
+        state.install_recovery(&team_id(1)),
+        Err(RecoveryError::Unknown { team: team_id(1) })
+    );
+    assert_eq!(state, State::new());
+    state.insert_team(team(1)).unwrap();
+    state.prepare_recovery(&team_id(1), destination(2, 10), 1).unwrap();
+    state.remove_team(&team_id(1)).unwrap();
+    state.insert_team(team_of(4, 10)).unwrap();
+    let before = state.clone();
+    assert_eq!(
+        state.install_recovery(&team_id(1)),
+        Err(RecoveryError::Insert {
+            source: InvalidState::DuplicateTask {
+                task: crate::state::fixtures::task(10),
+                first: team_id(4),
+                second: team_id(2),
+            }
+        })
+    );
+    assert_eq!(state, before);
+    state.remove_team(&team_id(4)).unwrap();
+    assert_eq!(state.install_recovery(&team_id(1)), Ok(RecoveryInstallation::Installed));
+}
