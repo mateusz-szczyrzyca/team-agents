@@ -1613,12 +1613,13 @@ is "not told". A result line that reports the run's output total (Claude Code, A
 place of the sum of the calls, and a Claude message that tells no usage is a call that tells nothing, so the call before
 it is not told as the last one. The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
 `max_context`). A session above its agent's bound is not resumed. `owner::bound::renew_for_context` reads the size of the task's last run
-through `size_of_run`: first the run's own outcome file (`outcome.json` in its directory, written by the engine when the process
-is gone, with the context of the last model call and the final message whole), and only for a run without that file the
-history's `Reader::run_usage`. `agent_core::decide::context::starts_anew` decides, and `State::begin_context_session_with_size`
+through `size_of_run`: the run's own outcome file (`outcome.json` in its directory, written by the engine when the process
+is gone, with the context of the last model call and the final message whole) when it tells a size; otherwise the history's
+`Reader::run_usage`. A corrupt outcome file does not decide alone: the history's size of the run does, and only when neither source
+tells is the run unreadable (logged, the session resumed). `agent_core::decide::context::starts_anew` decides, and `State::begin_context_session_with_size`
 begins the session anew with the trouble `context_bound`, keeps the size in the renewal (`context_tokens`), and counts no
 renewal. The briefing of the new session is `briefing-context.md`, the briefing of the checkpoint (built from the task's
 newest round, so a task whose round closed is briefed too), and `briefing-last-message.md` with the last message whole, read
-from the outcome file of the last run. An unreadable outcome or history resumes the session and is logged; a last message
-that cannot be read fails the start.
+from the outcome file of the last run, or from the history when the run has none: then, when the history cut it at
+`max_text_bytes`, a catalog note (`briefing-message-cut.md`) names the limit. A last message that cannot be read fails the start.
 
