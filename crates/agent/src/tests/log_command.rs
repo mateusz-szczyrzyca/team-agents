@@ -12,7 +12,7 @@ use rusqlite::Connection;
 use super::*;
 
 #[path = "../../tests/support/story_history.rs"]
-mod story_history;
+pub(crate) mod story_history;
 
 use story_history::{PROMPT, Written, write_history, write_old_history};
 

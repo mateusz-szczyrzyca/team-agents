@@ -1752,8 +1752,7 @@ async fn the_status_reads_cli_runs_and_reports_config_read_and_parse_failures() 
     ));
 }
 
-#[path = "../../../tests/support/story_history.rs"]
-mod story_history;
+use crate::log_command_tests::story_history;
 
 /// Writes the usage `usage` for the last run of `task` in the history of `home`.
 fn write_usage_of(home: &Home, task: &TaskId, usage: agent_core::cli::RunUsage) {
