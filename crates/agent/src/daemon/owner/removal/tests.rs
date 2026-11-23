@@ -152,16 +152,8 @@ async fn removing_a_team_bundles_its_unmerged_branch_and_takes_its_files_away() 
         assert!(!daemon.home.worktree_dir(&repo(), &task(number)).exists());
         assert!(!daemon.home.task_dir(&task(number)).exists());
     }
-    assert!(
-        git(dir.path(), &["branch", "--list", unmerged.as_str()])
-            .trim()
-            .is_empty()
-    );
-    assert!(
-        git(dir.path(), &["branch", "--list", merged.as_str()])
-            .trim()
-            .is_empty()
-    );
+    assert_eq!(git(dir.path(), &["branch", "--list", unmerged.as_str()]).trim(), "");
+    assert_eq!(git(dir.path(), &["branch", "--list", merged.as_str()]).trim(), "");
     assert!(daemon.state().team(&team_id(0)).is_none());
 }
 
@@ -210,11 +202,7 @@ async fn the_other_team_keeps_its_worktrees_branches_and_files() {
 
     assert!(daemon.home.worktree_dir(&repo(), &task(3)).join("work.txt").is_file());
     assert!(daemon.home.task_dir(&task(3)).join("run.log").is_file());
-    assert!(
-        !git(dir.path(), &["branch", "--list", kept_branch.as_str()])
-            .trim()
-            .is_empty()
-    );
+    assert_ne!(git(dir.path(), &["branch", "--list", kept_branch.as_str()]).trim(), "");
     assert!(daemon.state().team(&team_id(1)).is_some());
     assert!(daemon.state().team(&team_id(0)).is_none());
 }
@@ -292,11 +280,7 @@ async fn a_branch_of_the_team_that_the_state_no_longer_names_is_bundled_and_dele
     let bundle = daemon.home.removed_bundle(&team_id(0));
     let heads = git(dir.path(), &["bundle", "list-heads", bundle.to_str().unwrap()]);
     assert!(heads.contains(&format!("{tip} refs/heads/{historical}")), "{heads}");
-    assert!(
-        git(dir.path(), &["branch", "--list", historical.as_str()])
-            .trim()
-            .is_empty()
-    );
+    assert_eq!(git(dir.path(), &["branch", "--list", historical.as_str()]).trim(), "");
 }
 
 /// A daemon whose two tasks, a coordinator and a member of team 0, run CLIs that never end by themselves.

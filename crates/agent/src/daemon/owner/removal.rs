@@ -8,7 +8,7 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use agent_core::config::AbsolutePath;
+use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Reply, Target};
 use agent_core::state::{ItemPhase, Team};
@@ -44,6 +44,16 @@ struct Plan {
     bytes: u64,
     /// What the measuring found that the reply must name, such as a worktree that is not a git checkout.
     notes: Vec<String>,
+}
+
+/// What the removal measures on disk: the worktrees and the task directories that exist, and their bytes.
+struct Measure {
+    /// The team's tasks that have a worktree on disk, with the directory of each.
+    worktrees: Vec<(TaskId, AbsolutePath)>,
+    /// The task directories of the team that exist, with their tasks.
+    task_dirs: Vec<(TaskId, PathBuf)>,
+    /// The bytes of the worktrees and of the task directories.
+    bytes: u64,
 }
 
 /// A failure of a removal step, with the cause in words for the human.
@@ -88,6 +98,31 @@ fn tasks_of(team: &Team) -> Vec<TaskId> {
         .map(|(_, member)| member.task().clone())
         .chain(team.reviewers().iter().map(|member| member.task().clone()))
         .collect()
+}
+
+/// Every local branch the team works on or worked on, as the state names them.
+fn branches_of(team: &Team) -> Result<BTreeSet<BranchName>, Failure> {
+    let mut branches = BTreeSet::new();
+    for (_, member) in team.crew().roster() {
+        let branch = work_branch(team, member).map_err(|error| internal("cannot name a branch of the team", &error))?;
+        branches.insert(branch);
+    }
+    for progress in team.items() {
+        match progress.phase() {
+            ItemPhase::InProgress { branch, .. } => {
+                branches.insert(branch.clone());
+            }
+            ItemPhase::Fixing { branch, pr, .. } => {
+                branches.insert(branch.clone());
+                branches.insert(pr.branch.clone());
+            }
+            ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => {
+                branches.insert(pr.branch.clone());
+            }
+            ItemPhase::Pending | ItemPhase::Done { .. } => {}
+        }
+    }
+    Ok(branches)
 }
 
 /// The checkout that git runs in for a worktree of a repository: the directory above the common git directory, which
@@ -234,45 +269,12 @@ impl Owner {
             message: format!("team {team_id} has no crew to take its identity from"),
         })?;
         let agent = AgentName::from_str(first.agent().name()).map_err(|error| internal("an agent name", &error))?;
-        let home = self.parts.store.home();
-        let mut worktrees = Vec::new();
-        let mut task_dirs = Vec::new();
-        let mut bytes: u64 = 0;
-        for task in tasks_of(team) {
-            let dir = home.worktree_dir(&repo, &task);
-            if exists(&dir)? {
-                let size = directory_size(&dir).map_err(|error| internal("cannot measure a worktree", &error))?;
-                bytes = bytes.saturating_add(size);
-                worktrees.push((task.clone(), absolute(&dir)?));
-            }
-            let dir = home.task_dir(&task);
-            if exists(&dir)? {
-                let size = directory_size(&dir).map_err(|error| internal("cannot measure a task directory", &error))?;
-                bytes = bytes.saturating_add(size);
-                task_dirs.push((task, dir));
-            }
-        }
-        let mut branches = BTreeSet::new();
-        for (_, member) in team.crew().roster() {
-            let branch =
-                work_branch(team, member).map_err(|error| internal("cannot name a branch of the team", &error))?;
-            branches.insert(branch);
-        }
-        for progress in team.items() {
-            match progress.phase() {
-                ItemPhase::InProgress { branch, .. } => {
-                    branches.insert(branch.clone());
-                }
-                ItemPhase::Fixing { branch, pr, .. } => {
-                    branches.insert(branch.clone());
-                    branches.insert(pr.branch.clone());
-                }
-                ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => {
-                    branches.insert(pr.branch.clone());
-                }
-                ItemPhase::Pending | ItemPhase::Done { .. } => {}
-            }
-        }
+        let Measure {
+            worktrees,
+            task_dirs,
+            bytes,
+        } = self.measure(team, &repo)?;
+        let mut branches = branches_of(team)?;
         let mut existing = Vec::new();
         let mut bundled = Vec::new();
         let mut dirty = Vec::new();
@@ -345,6 +347,33 @@ impl Owner {
             dirty,
             bytes,
             notes,
+        })
+    }
+
+    /// The worktrees of `team` that exist, its task directories that exist, and the bytes of both.
+    fn measure(&self, team: &Team, repo: &RepoName) -> Result<Measure, Failure> {
+        let home = self.parts.store.home();
+        let mut worktrees = Vec::new();
+        let mut task_dirs = Vec::new();
+        let mut bytes: u64 = 0;
+        for task in tasks_of(team) {
+            let dir = home.worktree_dir(repo, &task);
+            if exists(&dir)? {
+                let size = directory_size(&dir).map_err(|error| internal("cannot measure a worktree", &error))?;
+                bytes = bytes.saturating_add(size);
+                worktrees.push((task.clone(), absolute(&dir)?));
+            }
+            let dir = home.task_dir(&task);
+            if exists(&dir)? {
+                let size = directory_size(&dir).map_err(|error| internal("cannot measure a task directory", &error))?;
+                bytes = bytes.saturating_add(size);
+                task_dirs.push((task, dir));
+            }
+        }
+        Ok(Measure {
+            worktrees,
+            task_dirs,
+            bytes,
         })
     }
 

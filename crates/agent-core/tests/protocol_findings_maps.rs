@@ -13,7 +13,7 @@ mod protocol_findings_maps {
     use agent_core::ids::{ItemId, RoundId, TeamId};
     use agent_core::kinds::Role;
     use agent_core::protocol::{
-        ControlAction, Event, EventKind, Frame, Outcome, Reply, RequestId, Response, RoundDetail, TeamSummary,
+        ControlAction, Event, EventKind, Frame, Outcome, Removal, Reply, RequestId, Response, RoundDetail, TeamSummary,
     };
     use agent_core::state::{
         Findings, GateOutcome, GateRecord, GateResult, GateTree, ItemPhase, Member, Participant, PrNumber,
@@ -147,6 +147,20 @@ mod protocol_findings_maps {
                 },
             },
             Reply::Subscribed { teams: vec![summary] },
+            Reply::Removed {
+                removal: Box::new(Removal {
+                    team: "team-20261111-153001-t5m8".parse().unwrap(),
+                    stopped: vec![task(1)],
+                    tasks: vec![task(1), task(2)],
+                    bundle: None,
+                    bundled: vec![],
+                    branches: vec![],
+                    closed_pull_requests: vec![],
+                    dirty_worktrees: vec![],
+                    freed_bytes: 0,
+                    left_behind: vec![],
+                }),
+            },
         ]
     }
 
@@ -247,7 +261,8 @@ mod protocol_findings_maps {
                 | Reply::Applied { .. }
                 | Reply::Gate { .. }
                 | Reply::GateRecorded { .. }
-                | Reply::Subscribed { .. } => {}
+                | Reply::Subscribed { .. }
+                | Reply::Removed { .. } => {}
             }
 
             let response = Response::ok(RequestId(u64::try_from(index).unwrap() + 1), reply);
