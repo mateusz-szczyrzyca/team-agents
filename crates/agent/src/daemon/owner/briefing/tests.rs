@@ -336,3 +336,100 @@ async fn a_folder_that_cannot_be_listed_names_the_task_and_the_folder() {
     assert_eq!(named, task);
     assert_eq!(path, not_a_folder);
 }
+
+// ---- the whole briefing, with what the history gave ---------------------------------------------------------------
+
+/// A draft whose history has two runs, two answers and a judgement of each kind, with the notes that older runs and
+/// answers are left out.
+fn draft_with_history() -> BriefingDraft {
+    let mut facts = facts(Completeness::All);
+    facts.plan = Some(vec![
+        ("1.1".to_owned(), "Read the code".to_owned(), "[x]"),
+        ("1.2".to_owned(), "Run the check".to_owned(), "[x]"),
+        ("1.3".to_owned(), "Write the notes".to_owned(), "[x]"),
+        ("1.4".to_owned(), "Write the test".to_owned(), "[ ]"),
+    ]);
+    BriefingDraft {
+        facts,
+        history: BriefingHistory {
+            runs: vec![
+                RunLine {
+                    started: "2026-11-20 14:41".to_owned(),
+                    agent: "claude-1".to_owned(),
+                    end: "no status",
+                },
+                RunLine {
+                    started: "2026-11-20 15:02".to_owned(),
+                    agent: "claude-2".to_owned(),
+                    end: "cut by a stop of the daemon",
+                },
+            ],
+            runs_left_out: true,
+            answers: vec![
+                AnswerLine {
+                    number: "1".to_owned(),
+                    title: "Which parser?".to_owned(),
+                    verdict: "ok".to_owned(),
+                },
+                AnswerLine {
+                    number: "2".to_owned(),
+                    title: "Keep the old format?".to_owned(),
+                    verdict: "No, drop it.".to_owned(),
+                },
+            ],
+            answers_left_out: true,
+            judgements: vec![
+                ("1.1".to_owned(), JudgementState::Confirmed),
+                ("1.2".to_owned(), JudgementState::Mismatch),
+            ],
+        },
+    }
+}
+
+/// The texts of the catalog.
+async fn texts() -> HarnessPrompts {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    HarnessPrompts::load(&dir, &Language::default()).await.unwrap()
+}
+
+/// The lines that tell the briefing's parts, in the order the briefing gives them.
+const WHAT_THE_HISTORY_GAVE: [&str; 10] = [
+    "Older runs of the task are left out of this list",
+    "- 2026-11-20 14:41 claude-1: no status",
+    "- 2026-11-20 15:02 claude-2: cut by a stop of the daemon",
+    "Confirmed (the check passed):\n- 1.1 Read the code",
+    "Declared (the agent says so; no check ran, or it waits for a reviewer):\n- 1.3 Write the notes",
+    "Mismatch (the agent says so and the check failed):\n- 1.2 Run the check",
+    "Not done:\n- [ ] 1.4 Write the test",
+    "Older answers of the human are left out of this list",
+    "- Question 1, Which parser?: ok",
+    "- Question 2, Keep the old format?: No, drop it.",
+];
+
+#[tokio::test]
+async fn the_briefing_tells_the_runs_the_judged_steps_and_the_answers_the_history_gave_in_their_order() {
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let text = draft_with_history()
+        .render(&texts().await, &task, "Fix the parser.")
+        .unwrap();
+
+    let mut at = 0;
+    for part in WHAT_THE_HISTORY_GAVE {
+        let found = text[at..]
+            .find(part)
+            .unwrap_or_else(|| panic!("{part:?} is missing or out of order:\n{text}"));
+        at += found + part.len();
+    }
+}
+
+#[tokio::test]
+async fn the_briefing_of_a_lead_tells_the_runs_the_judged_steps_and_the_answers_too() {
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let text = draft_with_history().render_for_lead(&texts().await, &task).unwrap();
+
+    for part in WHAT_THE_HISTORY_GAVE {
+        assert!(text.contains(part), "{part:?} is missing:\n{text}");
+    }
+}
