@@ -770,6 +770,18 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             line_of(status, &first).contains("running") && line_of(status, &second).contains("running")
         });
 
+        // Running status precedes the fake CLI's counter write; both initial invocations must be recorded.
+        let initial_prompts =
+            [&first, &second].map(|task| world.home.join("worktrees/example").join(task).join(".fake-prompt-1"));
+        let deadline = Instant::now() + PATIENCE;
+        while !initial_prompts.iter().all(|path| path.exists()) {
+            assert!(
+                Instant::now() < deadline,
+                "both fake CLIs must record their initial invocation"
+            );
+            std::thread::yield_now();
+        }
+
         let config_path = world.home.join("agents.toml");
         let without_zero = std::fs::read_to_string(&config_path)
             .unwrap()
