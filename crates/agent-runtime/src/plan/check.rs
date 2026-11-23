@@ -367,11 +367,14 @@ async fn wait_child_outcome(mut process: RunningProcess, check_seconds: u64) -> 
     }
 }
 
+/// Maximum number of raw stat characters retained in recovery diagnostics.
+const STAT_DIAGNOSTIC_CHARACTERS: usize = 160;
+
 /// Returns a short one-line rendering of `/proc/<pid>/stat` content for diagnostics.
 fn elide_stat(stat: &str) -> String {
     let mut text = String::new();
     for (index, ch) in stat.chars().enumerate() {
-        if index >= 160 {
+        if index >= STAT_DIAGNOSTIC_CHARACTERS {
             text.push('…');
             break;
         }
@@ -382,10 +385,10 @@ fn elide_stat(stat: &str) -> String {
 
 /// One field of a read `/proc/<pid>/stat` could not be parsed as the recovery read needs it.
 #[derive(Debug, thiserror::Error)]
-#[error("{}: {field} must be {expected}, got {value:?}: {stat}", path)]
+#[error("{}: {field} must be {expected}, got {value:?}: {stat}", path.display())]
 struct StatFieldError {
     /// The stat file that was read.
-    path: String,
+    path: PathBuf,
     /// What the field must be.
     field: &'static str,
     /// The value the field must hold.
@@ -412,7 +415,7 @@ fn stat_field_error(
     io::Error::new(
         io::ErrorKind::InvalidData,
         StatFieldError {
-            path: stat_path.display().to_string(),
+            path: stat_path.to_owned(),
             field,
             expected,
             value: value.to_owned(),
