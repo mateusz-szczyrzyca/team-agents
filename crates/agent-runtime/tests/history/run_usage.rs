@@ -6,13 +6,13 @@ use agent_runtime::history::{HistoryDb, Reader, RunUsageRecord, Store};
 
 use super::support::{complete, database, roomy};
 
-/// Upgrades a copy of the version 20 fixture and returns its connection, which keeps the file open.
+/// Upgrades a copy of the version 21 fixture and returns its connection, which keeps the file open.
 fn upgraded() -> (tempfile::TempDir, rusqlite::Connection) {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.db");
     rusqlite::Connection::open(&path)
         .unwrap()
-        .execute_batch(include_str!("../fixtures/history-before-run-usage.sql"))
+        .execute_batch(include_str!("../fixtures/history-before-run-usage-v21.sql"))
         .unwrap();
     drop(HistoryDb::open(&path, roomy()).unwrap());
     let connection = rusqlite::Connection::open(&path).unwrap();
@@ -20,14 +20,14 @@ fn upgraded() -> (tempfile::TempDir, rusqlite::Connection) {
 }
 
 #[test]
-fn a_version_20_history_is_upgraded_to_version_21() {
+fn a_version_21_history_is_upgraded_to_version_22() {
     let (_dir, connection) = upgraded();
 
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
 
-    assert_eq!(version, 21);
+    assert_eq!(version, 22);
 }
 
 #[test]
