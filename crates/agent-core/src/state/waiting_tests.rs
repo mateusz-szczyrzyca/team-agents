@@ -32,23 +32,28 @@ fn the_moment_a_wait_began_is_kept_until_the_wait_ends() {
     let mut state = old_state();
     let first = at("2026-11-21T10:00:00Z");
 
-    assert_eq!(state.start_waiting(&task(), first), Some(first));
-    assert_eq!(state.start_waiting(&task(), at("2026-11-21T10:05:00Z")), Some(first));
+    assert_eq!(state.start_waiting(&task(), first), Ok(first));
+    assert_eq!(state.start_waiting(&task(), at("2026-11-21T10:05:00Z")), Ok(first));
     assert_eq!(state.find_task(&task()).unwrap().member.waiting_since(), Some(first));
 }
 
 #[test]
-fn a_wait_of_no_task_is_refused_with_none() {
+fn a_wait_of_no_task_is_refused_with_no_task_error() {
     let mut state = old_state();
     let other = "task-20261120-144101-zzzz".parse().unwrap();
 
-    assert_eq!(state.start_waiting(&other, at("2026-11-21T10:00:00Z")), None);
+    assert_eq!(
+        state.start_waiting(&other, at("2026-11-21T10:00:00Z")),
+        Err(StartWaitingError::NoTask { task: other })
+    );
 }
 
 #[test]
 fn a_run_ends_the_wait() {
     let mut state = old_state();
-    state.start_waiting(&task(), at("2026-11-21T10:00:00Z"));
+    state
+        .start_waiting(&task(), at("2026-11-21T10:00:00Z"))
+        .expect("the task is there");
     let (_, mut member) = state.find_task_mut(&task()).expect("the task");
 
     member
@@ -65,7 +70,9 @@ fn a_run_ends_the_wait() {
 #[test]
 fn a_hand_over_ends_the_wait_for_the_agent_that_takes_the_task() {
     let mut state = old_state();
-    state.start_waiting(&task(), at("2026-11-21T10:00:00Z"));
+    state
+        .start_waiting(&task(), at("2026-11-21T10:00:00Z"))
+        .expect("the task is there");
     let holder: AgentName = "claude-2".parse().expect("an agent name");
 
     state
@@ -78,7 +85,9 @@ fn a_hand_over_ends_the_wait_for_the_agent_that_takes_the_task() {
 #[test]
 fn a_wait_is_written_and_read_back() {
     let mut state = old_state();
-    state.start_waiting(&task(), at("2026-11-21T10:00:00Z"));
+    state
+        .start_waiting(&task(), at("2026-11-21T10:00:00Z"))
+        .expect("the task is there");
 
     let text = state.to_json().expect("the state is written");
     let read = State::from_json(&text).expect("the state is read back");
