@@ -53,6 +53,10 @@ pub enum HarnessPrompt {
     LeadBriefing,
     /// The note of a briefing whose list of unread messages leaves older ones out.
     BriefingMessagesLeftOut,
+    /// The note that older runs of the task are left out of the briefing's list of runs.
+    BriefingRunsLeftOut,
+    /// The note that older answers of the human are left out of the briefing's list of answers.
+    BriefingAnswersLeftOut,
     /// Tell the human that consecutive turn-limit resumes are exhausted.
     NoticeTurnLimitExhausted,
     /// Tell the human that a turn-limited run had no session to resume.
@@ -143,6 +147,8 @@ impl HarnessPrompt {
         Self::Briefing,
         Self::LeadBriefing,
         Self::BriefingMessagesLeftOut,
+        Self::BriefingRunsLeftOut,
+        Self::BriefingAnswersLeftOut,
         Self::NoticeTurnLimitExhausted,
         Self::NoticeTurnLimitNoSession,
         Self::PromptFile,
@@ -236,6 +242,10 @@ impl HarnessPrompt {
             Self::LeadBriefing => lead_briefing_spec(),
             Self::BriefingMessagesLeftOut => {
                 PromptSpec::new("harness/run/briefing-messages-left-out.md", Audience::Model, &[])
+            }
+            Self::BriefingRunsLeftOut => PromptSpec::new("harness/run/briefing-runs-left-out.md", Audience::Model, &[]),
+            Self::BriefingAnswersLeftOut => {
+                PromptSpec::new("harness/run/briefing-answers-left-out.md", Audience::Model, &[])
             }
             Self::NoticeTurnLimitExhausted => PromptSpec::new(
                 "harness/run/notice-turn-limit-exhausted.md",
