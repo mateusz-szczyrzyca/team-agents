@@ -35,7 +35,7 @@ fn opencode_reads_the_tokens_and_the_cost_of_its_step() -> TestResult {
 }
 
 #[test]
-fn claude_reads_each_model_call_once_and_never_the_total_of_the_result() -> TestResult {
+fn claude_reads_each_model_call_once_and_never_the_total_of_the_result() {
     // The stream repeats a call's usage on every content block of its message; the result's usage is the total.
     let stdout = [
         r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"thinking","thinking":""}],"usage":{"input_tokens":3,"cache_creation_input_tokens":50,"cache_read_input_tokens":100,"output_tokens":20}},"session_id":"s-1"}"#,
@@ -56,7 +56,6 @@ fn claude_reads_each_model_call_once_and_never_the_total_of_the_result() -> Test
             cost_usd: Some(0.5),
         }
     );
-    Ok(())
 }
 
 #[test]
