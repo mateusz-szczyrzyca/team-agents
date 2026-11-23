@@ -4,6 +4,9 @@
 //! The decision is a pure function of what a look at a team found: the moments of its last activity, its running runs,
 //! its pauses and the waits that are not its own work. `idle_team_minutes = 0` turns it off.
 
+#[cfg(test)]
+mod tests;
+
 use std::time::Duration;
 
 use crate::state::Timestamp;
