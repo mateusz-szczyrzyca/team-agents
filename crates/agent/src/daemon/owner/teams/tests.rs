@@ -28,7 +28,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientError, Connection};
-use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in};
+use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run, run_in};
 use crate::testing::ManualClock;
 
 /// The longest any wait of these tests lasts.
@@ -227,7 +227,6 @@ struct Fixture {
     home: Home,
     repo: PathBuf,
     clock: ManualClock,
-    free_space: FakeFreeSpace,
     shutdown: CancellationToken,
     daemon: Option<JoinHandle<Result<(), DaemonError>>>,
 }
@@ -264,8 +263,6 @@ impl Fixture {
             home,
             repo,
             clock: ManualClock::new(Timestamp::now(&agent_runtime::clock::SystemClock).unwrap()),
-            // 200 GiB: the disk never limits a run unless a test drops it.
-            free_space: FakeFreeSpace::new(200 * GIBIBYTE),
             shutdown: CancellationToken::new(),
             daemon: None,
         }
@@ -283,15 +280,6 @@ impl Fixture {
         }
     }
 
-    /// The surroundings of this daemon: the environment of the process, with the fixture's fake measure of the free
-    /// space of the home's disk.
-    fn surroundings(&self) -> Surroundings {
-        Surroundings {
-            free_space: SharedFreeSpace::new(self.free_space.clone()),
-            ..Surroundings::from_process()
-        }
-    }
-
     /// Starts the daemon and waits until its socket is there. Another test of this binary may be starting a process:
     /// a child holds the open file description of the lock of a daemon that has just stopped from its fork to its
     /// exec, so a daemon that finds the home locked is started again for a few milliseconds more.
@@ -300,7 +288,7 @@ impl Fixture {
         let socket = self.home.socket_file();
         let deadline = Instant::now() + PATIENCE;
         'attempts: loop {
-            let daemon = tokio::spawn(run_in(self.setup(), self.surroundings(), self.shutdown.clone()));
+            let daemon = tokio::spawn(run(self.setup(), self.shutdown.clone()));
             while !socket.exists() {
                 if daemon.is_finished() {
                     match daemon.await.unwrap() {
@@ -508,6 +496,89 @@ impl Fixture {
             .lines()
             .map(str::to_owned)
             .collect()
+    }
+}
+
+/// A fixture for the restart test: the shared fixture, but the daemon runs on a fake measure of the free space of the
+/// home's disk that the test controls, so a retried run can be held on the disk gate while the daemon is stopped and
+/// started again.
+struct RestartFixture {
+    /// The shared fixture.
+    fixture: Fixture,
+    /// The fake measure of the free space of the home's disk.
+    free_space: FakeFreeSpace,
+}
+
+impl RestartFixture {
+    /// A fixture with these agents, on a free space of 200 GiB.
+    fn new(agents: &[Agent]) -> Self {
+        Self {
+            fixture: Fixture::new(agents),
+            free_space: FakeFreeSpace::new(200 * GIBIBYTE),
+        }
+    }
+
+    /// The surroundings of the daemon: those of the process, with this fixture's measure of the free space.
+    fn surroundings(&self) -> Surroundings {
+        Surroundings {
+            free_space: SharedFreeSpace::new(self.free_space.clone()),
+            ..Surroundings::from_process()
+        }
+    }
+
+    /// Starts the daemon and waits until its socket is there, as [`Fixture::start`], on this fixture's free space.
+    async fn start(&mut self) {
+        self.fixture.shutdown = CancellationToken::new();
+        let socket = self.fixture.home.socket_file();
+        let deadline = Instant::now() + PATIENCE;
+        'attempts: loop {
+            let daemon = tokio::spawn(run_in(self.fixture.setup(), self.surroundings(), self.fixture.shutdown.clone()));
+            while !socket.exists() {
+                if daemon.is_finished() {
+                    match daemon.await.unwrap() {
+                        Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue 'attempts;
+                        }
+                        ended => panic!("the daemon ended at its start: {ended:?}"),
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for the socket");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.fixture.daemon = Some(daemon);
+            return;
+        }
+    }
+
+    /// Stops the daemon and returns how it ended.
+    async fn stop(&mut self) -> Result<(), DaemonError> {
+        self.fixture.stop().await
+    }
+
+    /// Starts the team of `agents` with the item list `list`, as [`Fixture::start_team`].
+    async fn start_team(&self, agents: &[&str], list: &str) -> (TeamId, Vec<TaskId>) {
+        self.fixture.start_team(agents, list).await
+    }
+
+    /// Waits until `task` has `status`, as [`Fixture::status_is`].
+    async fn status_is(&self, task: &TaskId, status: TaskStatus) -> State {
+        self.fixture.status_is(task, status).await
+    }
+
+    /// The prompt of the `n`-th run of `task`, as [`Fixture::prompt`].
+    async fn prompt(&self, task: &TaskId, n: u32) -> String {
+        self.fixture.prompt(task, n).await
+    }
+
+    /// How many runs `task` had, as [`Fixture::runs`].
+    fn runs(&self, task: &TaskId) -> u32 {
+        self.fixture.runs(task)
+    }
+
+    /// What the bus holds as messages, as [`Fixture::messages`].
+    fn messages(&self) -> String {
+        self.fixture.messages()
     }
 }
 
@@ -1084,7 +1155,7 @@ async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
 
 #[tokio::test]
 async fn the_retry_of_a_failed_run_without_a_tool_does_not_repeat_after_a_restart_of_the_daemon() {
-    let mut f = Fixture::new(&[
+    let mut f = RestartFixture::new(&[
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
