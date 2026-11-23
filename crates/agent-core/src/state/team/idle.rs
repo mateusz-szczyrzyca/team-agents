@@ -22,13 +22,23 @@ impl IdleWatch {
     pub fn observe(
         previous: Option<&Self>,
         recorded: Timestamp,
-        _now: Timestamp,
+        now: Timestamp,
         heads: BTreeMap<String, CommitId>,
     ) -> Self {
+        let mut last_activity = recorded;
+        if let Some(previous) = previous {
+            last_activity = last_activity.max(previous.last_activity);
+            if heads.iter().any(|(name, head)| previous.heads.get(name) != Some(head)) {
+                last_activity = last_activity.max(now);
+            }
+        }
+        let refusal = previous
+            .filter(|p| last_activity == p.last_activity)
+            .and_then(|p| p.refusal.clone());
         Self {
-            last_activity: recorded,
+            last_activity,
             heads,
-            refusal: previous.and_then(|p| p.refusal.clone()),
+            refusal,
         }
     }
 }
@@ -39,7 +49,9 @@ impl Team {
         self.idle_watch.as_ref()
     }
     /// Keeps idle observations with the team across daemon restarts.
-    pub fn record_idle_watch(&mut self, _watch: IdleWatch) {}
+    pub fn record_idle_watch(&mut self, watch: IdleWatch) {
+        self.idle_watch = Some(watch);
+    }
 }
 impl CheckedMut<'_, Team> {
     /// See [`Team::record_idle_watch`].
