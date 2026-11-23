@@ -1,7 +1,8 @@
 use super::*;
 use crate::ids::AgentName;
 
-/// A pool of workers built from `(name, provider, busy)` rows, the capabilities all empty.
+/// A pool of workers built from `(name, provider, busy)` rows, the capabilities all empty and every other busy fact at
+/// its free default (`runs` 0, `runs_limit` 0 = no cap, `unsettled` false).
 fn pool(rows: &[(&str, &str, bool)]) -> Vec<PoolWorker<'static>> {
     rows.iter()
         .map(|(name, provider, busy)| PoolWorker {
@@ -9,11 +10,14 @@ fn pool(rows: &[(&str, &str, bool)]) -> Vec<PoolWorker<'static>> {
             provider: Box::leak(provider.to_string().into_boxed_str()),
             capabilities: &[],
             busy: *busy,
+            runs: 0,
+            runs_limit: 0,
+            unsettled: false,
         })
         .collect()
 }
 
-/// A pool of workers built from `(name, provider, busy, capabilities)` rows.
+/// A pool of workers built from `(name, provider, busy, capabilities)` rows, the other busy facts at their free default.
 fn pool_caps(rows: &[(&str, &str, bool, &[&str])]) -> Vec<PoolWorker<'static>> {
     rows.iter()
         .map(|(name, provider, busy, capabilities)| PoolWorker {
@@ -27,6 +31,24 @@ fn pool_caps(rows: &[(&str, &str, bool, &[&str])]) -> Vec<PoolWorker<'static>> {
                     .into_boxed_slice(),
             ),
             busy: *busy,
+            runs: 0,
+            runs_limit: 0,
+            unsettled: false,
+        })
+        .collect()
+}
+
+/// A pool of workers built from `(name, provider, busy, runs, runs_limit, unsettled)` rows, the capabilities all empty.
+fn pool_full(rows: &[(&str, &str, bool, u32, u32, bool)]) -> Vec<PoolWorker<'static>> {
+    rows.iter()
+        .map(|(name, provider, busy, runs, runs_limit, unsettled)| PoolWorker {
+            name: Box::leak(name.to_string().parse::<AgentName>().unwrap().into()),
+            provider: Box::leak(provider.to_string().into_boxed_str()),
+            capabilities: &[],
+            busy: *busy,
+            runs: *runs,
+            runs_limit: *runs_limit,
+            unsettled: *unsettled,
         })
         .collect()
 }
@@ -178,4 +200,92 @@ fn a_cli_other_than_opencode_is_the_provider() {
         assert_eq!(provider_of(cli, Some("openrouter/@preset/qwen")), cli.as_str());
     }
     assert_eq!(provider_of(CliKind::Claude, None), "claude");
+}
+
+// Rule: with a single provider, the rotation wraps back to that same provider after it serves.
+#[test]
+fn a_single_provider_serves_every_turn() {
+    let workers = pool(&[("w-a", "deepinfra", false), ("w-b", "deepinfra", false)]);
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(provider, "deepinfra");
+    assert_eq!(worker, name_of(&workers, 0));
+    // After a deepinfra serve, the only provider is still deepinfra.
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("deepinfra"))).unwrap();
+    assert_eq!(provider, "deepinfra");
+    assert_eq!(worker, name_of(&workers, 0));
+}
+
+// Rule: a worker at its `runs_limit` (the global `[limits] runs_per_worker`) is ineligible and is skipped.
+#[test]
+fn a_worker_at_its_runs_limit_is_skipped() {
+    let workers = pool_full(&[
+        ("w-di", "deepinfra", false, 1, 1, false),
+        ("w-or", "openrouter", false, 0, 1, false),
+    ]);
+    // Deepinfra is first but at its limit of 1 run: openrouter serves.
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(worker, name_of(&workers, 1));
+    assert_eq!(provider, "openrouter");
+}
+
+// Rule: a global `runs_per_worker` counts across teams, so a worker that is at its limit anywhere is skipped everywhere.
+#[test]
+fn a_global_runs_per_worker_counts_across_teams() {
+    // The worker's runs are counted installation-wide: one run already going, cap of 1, so it cannot take a second.
+    let workers = pool_full(&[
+        ("w-di", "deepinfra", false, 1, 1, false),
+        ("w-or", "openrouter", false, 0, 2, false),
+    ]);
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(provider, "openrouter");
+    assert_eq!(worker, name_of(&workers, 1));
+}
+
+// Rule: a worker below its `runs_limit` is eligible.
+#[test]
+fn a_worker_below_its_runs_limit_is_eligible() {
+    let workers = pool_full(&[("w-di", "deepinfra", false, 0, 2, false)]);
+    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(worker, name_of(&workers, 0));
+}
+
+// Rule: `runs_limit` 0 is no limit, so runs never make the worker ineligible.
+#[test]
+fn a_zero_runs_limit_never_makes_a_worker_ineligible() {
+    let workers = pool_full(&[("w-di", "deepinfra", false, 100, 0, false)]);
+    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(worker, name_of(&workers, 0));
+}
+
+// Rule: a worker with an unsettled finished run is ineligible and is skipped.
+#[test]
+fn a_worker_with_an_unsettled_result_is_skipped() {
+    let workers = pool_full(&[
+        ("w-di", "deepinfra", false, 0, 0, true),
+        ("w-or", "openrouter", false, 0, 0, false),
+    ]);
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    assert_eq!(worker, name_of(&workers, 1));
+    assert_eq!(provider, "openrouter");
+}
+
+// Rule: the turn is shared across teams — the same `LastServed` advances both teams' next pick together, because the
+// providers take turns once per served request, not per team.
+#[test]
+fn two_teams_share_one_global_turn() {
+    let workers = pool(&[("w-di-a", "deepinfra", false), ("w-or", "openrouter", false)]);
+    let mut last_served = LastServed(None);
+    // Both teams start the turn at the first provider, deepinfra.
+    for team in ["team-one", "team-two"] {
+        let (worker, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+        assert_eq!(provider, "deepinfra", "team {team} starts at the first provider");
+        assert_eq!(worker, name_of(&workers, 0));
+    }
+    // The two teams share the turn: the pair of requests alternates providers globally through one rotation.
+    last_served = LastServed(Some("deepinfra"));
+    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+    assert_eq!(provider, "openrouter");
+    last_served = LastServed(Some("openrouter"));
+    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+    assert_eq!(provider, "deepinfra");
 }

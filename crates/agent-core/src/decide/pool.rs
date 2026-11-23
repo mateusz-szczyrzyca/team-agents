@@ -28,8 +28,14 @@ pub struct PoolWorker<'a> {
     pub provider: &'a str,
     /// The capabilities it declares; a worker that declares none meets only a request that requires none.
     pub capabilities: &'a [String],
-    /// Whether it is at work or otherwise cannot take a request now.
+    /// Whether it is at work now and cannot take a request.
     pub busy: bool,
+    /// How many runs the worker has going installation-wide, over all teams and solo tasks.
+    pub runs: u32,
+    /// The `[limits] runs_per_worker` cap that applies (the same for every worker of the pool); `0` is no limit.
+    pub runs_limit: u32,
+    /// Whether the worker has a finished run whose result is not settled yet; such a worker cannot take a request.
+    pub unsettled: bool,
 }
 
 /// What a request asks of a worker: the capabilities it must have, in the request's order.
