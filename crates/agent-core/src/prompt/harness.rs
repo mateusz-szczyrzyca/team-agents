@@ -57,6 +57,14 @@ pub enum HarnessPrompt {
     BriefingRunsLeftOut,
     /// The note that older answers of the human are left out of the briefing's list of answers.
     BriefingAnswersLeftOut,
+    /// The heading of the briefing's steps whose check passed.
+    BriefingPlanConfirmed,
+    /// The heading of the briefing's steps the agent declared done with no check that passed or failed.
+    BriefingPlanDeclared,
+    /// The heading of the briefing's steps the agent declared done and whose check failed.
+    BriefingPlanMismatch,
+    /// The heading of the briefing's steps that are not done.
+    BriefingPlanNotDone,
     /// Tell the human that consecutive turn-limit resumes are exhausted.
     NoticeTurnLimitExhausted,
     /// Tell the human that a turn-limited run had no session to resume.
@@ -149,6 +157,10 @@ impl HarnessPrompt {
         Self::BriefingMessagesLeftOut,
         Self::BriefingRunsLeftOut,
         Self::BriefingAnswersLeftOut,
+        Self::BriefingPlanConfirmed,
+        Self::BriefingPlanDeclared,
+        Self::BriefingPlanMismatch,
+        Self::BriefingPlanNotDone,
         Self::NoticeTurnLimitExhausted,
         Self::NoticeTurnLimitNoSession,
         Self::PromptFile,
@@ -247,6 +259,16 @@ impl HarnessPrompt {
             Self::BriefingAnswersLeftOut => {
                 PromptSpec::new("harness/run/briefing-answers-left-out.md", Audience::Model, &[])
             }
+            Self::BriefingPlanConfirmed => {
+                PromptSpec::new("harness/run/briefing-plan-confirmed.md", Audience::Model, &[])
+            }
+            Self::BriefingPlanDeclared => {
+                PromptSpec::new("harness/run/briefing-plan-declared.md", Audience::Model, &[])
+            }
+            Self::BriefingPlanMismatch => {
+                PromptSpec::new("harness/run/briefing-plan-mismatch.md", Audience::Model, &[])
+            }
+            Self::BriefingPlanNotDone => PromptSpec::new("harness/run/briefing-plan-not-done.md", Audience::Model, &[]),
             Self::NoticeTurnLimitExhausted => PromptSpec::new(
                 "harness/run/notice-turn-limit-exhausted.md",
                 Audience::Human,

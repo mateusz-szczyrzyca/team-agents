@@ -20,7 +20,7 @@ use crate::prompts::{PromptLoader, RenderPromptError};
 mod briefing;
 
 pub use briefing::{
-    Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep,
+    Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, PlanHeadings,
     briefing_variables, briefing_variables_with,
 };
 

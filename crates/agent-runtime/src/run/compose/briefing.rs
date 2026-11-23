@@ -38,9 +38,25 @@ pub struct BriefingNotes<'a> {
     pub answers: &'a [BriefingAnswer<'a>],
     /// The note that older answers are left out of [`BriefingNotes::answers`], when they are.
     pub answers_left_out: Option<&'a str>,
-    /// The judgement the harness gave each step that is marked done, by step ID: `confirmed`, `declared` or `mismatch`.
-    /// A done step with no entry is shown as declared.
-    pub judgements: &'a [(&'a str, &'a str)],
+    /// The judgement the harness gave each step that is marked done and has not changed since, by step ID. A done step
+    /// with no entry is shown as declared.
+    pub judgements: &'a [(&'a str, JudgementState)],
+    /// The headings of the groups the plan's steps are listed in.
+    pub headings: PlanHeadings<'a>,
+}
+
+/// The headings of the four groups of the plan's steps, as the catalog words them. Its default has no words: a briefing
+/// is built with the catalog's.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PlanHeadings<'a> {
+    /// The heading of the steps whose check passed.
+    pub confirmed: &'a str,
+    /// The heading of the steps the agent declared done, with no check that passed or failed.
+    pub declared: &'a str,
+    /// The heading of the steps the agent declared done and whose check failed.
+    pub mismatch: &'a str,
+    /// The heading of the steps that are not done.
+    pub not_done: &'a str,
 }
 
 /// A commit of the task's branch since its base.
@@ -122,7 +138,7 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
             .map(|commit| format!("- {} {}", commit.id, commit.subject)),
     );
     let uncommitted = lines(facts.uncommitted.iter().map(|path| format!("- {path}")));
-    let plan = plan_text(facts.plan.unwrap_or_default(), notes.judgements);
+    let plan = plan_text(facts.plan.unwrap_or_default(), notes.judgements, &notes.headings);
     let runs = lines(
         notes
             .runs
@@ -165,9 +181,9 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
 }
 
 /// The steps of the plan, grouped as the briefing shows them: the steps marked done by how the harness judged them
-/// (`confirmed`, `mismatch`, or `declared` for any other judgement or none), then the steps not done, each group under
-/// its heading. A group with no step is left out.
-fn plan_text(steps: &[BriefingStep<'_>], judgements: &[(&str, &str)]) -> String {
+/// (`confirmed`, `mismatch`, or `declared` for a judgement that says so or none), then the steps not done, each group
+/// under its heading. A group with no step is left out.
+fn plan_text(steps: &[BriefingStep<'_>], judgements: &[(&str, JudgementState)], headings: &PlanHeadings<'_>) -> String {
     let (mut confirmed, mut declared, mut mismatch, mut not_done) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
     for step in steps {
         if step.state != DONE_MARK {
@@ -175,54 +191,36 @@ fn plan_text(steps: &[BriefingStep<'_>], judgements: &[(&str, &str)]) -> String 
             continue;
         }
         let line = format!("- {} {}", step.id, step.title);
-        let judgement = judgements.iter().find(|(id, _)| *id == step.id).map(|(_, word)| *word);
-        if judgement == Some(CONFIRMED_WORD) {
-            confirmed.push(line);
-        } else if judgement == Some(MISMATCH_WORD) {
-            mismatch.push(line);
-        } else {
-            declared.push(line);
+        let judgement = judgements
+            .iter()
+            .find(|(id, _)| *id == step.id)
+            .map(|(_, state)| *state);
+        match judgement {
+            Some(JudgementState::Confirmed) => confirmed.push(line),
+            Some(JudgementState::Mismatch) => mismatch.push(line),
+            Some(JudgementState::Declared) | None => declared.push(line),
         }
     }
-    let groups = [
-        (CONFIRMED_HEADING, confirmed),
-        (DECLARED_HEADING, declared),
-        (MISMATCH_HEADING, mismatch),
-        (NOT_DONE_HEADING, not_done),
-    ];
-    groups
-        .into_iter()
-        .filter(|(_, lines)| !lines.is_empty())
-        .map(|(heading, lines)| {
-            std::iter::once(heading.to_owned())
-                .chain(lines)
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
+    [
+        (headings.confirmed, confirmed),
+        (headings.declared, declared),
+        (headings.mismatch, mismatch),
+        (headings.not_done, not_done),
+    ]
+    .into_iter()
+    .filter(|(_, lines)| !lines.is_empty())
+    .map(|(heading, lines)| {
+        std::iter::once(heading.trim_end().to_owned())
+            .chain(lines)
+            .collect::<Vec<_>>()
+            .join("\n")
+    })
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 /// The mark of a step done, in the plan's own syntax.
 const DONE_MARK: &str = "[x]";
-
-/// The word of a judgement that the check passed, as [`JudgementState::as_str`] gives it.
-const CONFIRMED_WORD: &str = JudgementState::Confirmed.as_str();
-
-/// The word of a judgement that the check failed, as [`JudgementState::as_str`] gives it.
-const MISMATCH_WORD: &str = JudgementState::Mismatch.as_str();
-
-/// The heading of the steps whose check passed.
-const CONFIRMED_HEADING: &str = "Confirmed (the check passed):";
-
-/// The heading of the steps the agent declared done, with no check that passed or failed.
-const DECLARED_HEADING: &str = "Declared (the agent says so; no check ran, or it waits for a reviewer):";
-
-/// The heading of the steps the agent declared done and whose check failed.
-const MISMATCH_HEADING: &str = "Mismatch (the agent says so and the check failed):";
-
-/// The heading of the steps that are not done: to do, in hand or given up.
-const NOT_DONE_HEADING: &str = "Not done:";
 
 /// `lines`, one under the other.
 fn lines(lines: impl Iterator<Item = String>) -> String {

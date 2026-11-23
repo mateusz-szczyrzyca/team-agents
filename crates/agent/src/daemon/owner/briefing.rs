@@ -11,6 +11,7 @@ use agent_core::decide::ladder::Trouble;
 use agent_core::history::{CommitRecord, Record};
 use agent_core::ids::{AgentName, BranchName, InvalidName, RoundId, TaskId};
 use agent_core::log::LogEvent;
+use agent_core::plan::judge::JudgementState;
 use agent_core::plan::{PLAN_FILE, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::questions::MAX_QUESTIONS_BYTES;
@@ -24,7 +25,7 @@ use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{
     Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, ComposeError,
-    briefing_variables_with,
+    PlanHeadings, briefing_variables_with,
 };
 use agent_runtime::snapshot::{SnapshotError, take_snapshot};
 use agent_runtime::text_file::read_text_file;
@@ -253,11 +254,11 @@ impl Owner {
             .latest_judgements(task)
             .await
             .map_err(BriefingProblem::Judgements)?;
-        let mut judgements: Vec<(String, &'static str)> = judged
+        let mut judgements: Vec<(String, JudgementState)> = judged
             .iter()
-            .map(|(step, record)| (step.to_string(), record.state.as_str()))
+            .map(|(step, record)| (step.to_string(), record.state))
             .collect();
-        judgements.sort();
+        judgements.sort_by(|a, b| a.0.cmp(&b.0));
         let folder = self.parts.store.home().task_dir(task);
         let (answers, answers_left_out) = newest_shown(read_answers(&folder, task).await?, ANSWERS_SHOWN);
         Ok(BriefingHistory {
@@ -397,7 +398,7 @@ pub(super) struct BriefingHistory {
     /// Whether older answers are left out of [`BriefingHistory::answers`].
     answers_left_out: bool,
     /// The judgement the harness gave each step that is marked done, by step ID, sorted by ID.
-    judgements: Vec<(String, &'static str)>,
+    judgements: Vec<(String, JudgementState)>,
 }
 
 /// One run of the task as the briefing shows it.
@@ -544,11 +545,15 @@ impl BriefingFacts {
                 verdict: &answer.verdict,
             })
             .collect();
-        let judgements: Vec<(&str, &str)> = history
+        let judgements: Vec<(&str, JudgementState)> = history
             .judgements
             .iter()
-            .map(|(step, word)| (step.as_str(), *word))
+            .map(|(step, state)| (step.as_str(), *state))
             .collect();
+        let confirmed = texts.render(HarnessPrompt::BriefingPlanConfirmed, &Variables::new())?;
+        let declared = texts.render(HarnessPrompt::BriefingPlanDeclared, &Variables::new())?;
+        let mismatch = texts.render(HarnessPrompt::BriefingPlanMismatch, &Variables::new())?;
+        let not_done = texts.render(HarnessPrompt::BriefingPlanNotDone, &Variables::new())?;
         let runs_left_out = left_out_note(texts, history.runs_left_out, HarnessPrompt::BriefingRunsLeftOut)?;
         let answers_left_out = left_out_note(texts, history.answers_left_out, HarnessPrompt::BriefingAnswersLeftOut)?;
         let facts = Briefing {
@@ -570,6 +575,12 @@ impl BriefingFacts {
             answers: &answers,
             answers_left_out: answers_left_out.as_deref(),
             judgements: &judgements,
+            headings: PlanHeadings {
+                confirmed: &confirmed,
+                declared: &declared,
+                mismatch: &mismatch,
+                not_done: &not_done,
+            },
         };
         Ok(briefing_variables_with(&facts, &notes)?)
     }
