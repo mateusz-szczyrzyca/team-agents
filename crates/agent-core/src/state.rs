@@ -122,6 +122,8 @@ pub struct State {
     wake_deliveries: BTreeMap<TaskId, WakeDelivery>,
     /// The queued tasks in the order they entered the queue, oldest first.
     queued: Vec<TaskId>,
+    /// Durable restart reservations, retained after source and replacement removal.
+    recoveries: Vec<Recovery>,
 }
 
 /// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
@@ -137,6 +139,9 @@ struct StateOut<'a> {
     /// See [`State`].
     #[serde(skip_serializing_if = "Vec::is_empty")]
     queued: Vec<TaskId>,
+    /// See [`State`].
+    #[serde(skip_serializing_if = "<[_]>::is_empty")]
+    recoveries: &'a [Recovery],
 }
 
 impl Serialize for State {
@@ -151,6 +156,7 @@ impl Serialize for State {
             schema_version: self.schema_version,
             teams: &self.teams,
             wake_deliveries: &self.wake_deliveries,
+            recoveries: &self.recoveries,
             queued,
         }
         .serialize(serializer)
@@ -161,6 +167,7 @@ impl PartialEq for State {
     fn eq(&self, other: &Self) -> bool {
         self.schema_version == other.schema_version
             && self.teams == other.teams
+            && self.recoveries == other.recoveries
             && self.wake_deliveries == other.wake_deliveries
             && self.effective_queued() == other.effective_queued()
     }
@@ -180,6 +187,9 @@ struct StateWire {
     /// Optional in state written before queue-entry order was persisted.
     #[serde(default)]
     queued: Vec<TaskId>,
+    /// Optional in state written before recovery reservations were persisted.
+    #[serde(default)]
+    recoveries: Vec<Recovery>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -346,6 +356,7 @@ impl State {
             teams: Vec::new(),
             wake_deliveries: BTreeMap::new(),
             queued: Vec::new(),
+            recoveries: Vec::new(),
         }
     }
 
@@ -956,6 +967,7 @@ impl TryFrom<StateWire> for State {
             teams: wire.teams,
             wake_deliveries: wire.wake_deliveries,
             queued: wire.queued,
+            recoveries: wire.recoveries,
         };
         state.sync_queued();
         Ok(state)

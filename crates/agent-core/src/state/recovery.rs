@@ -1,6 +1,7 @@
 //! Durable recovery intents and repeatable installation into the state; no external effects.
 
 use super::{Crew, InvalidState, State, Team, TeamError, Timestamp};
+use crate::decide::restart::{self, RestartCount};
 use crate::ids::TeamId;
 use serde::{Deserialize, Serialize};
 use std::num::NonZeroU32;
@@ -27,7 +28,8 @@ pub enum RecoveryPhase {
 }
 
 /// A saved source snapshot and its immutable replacement plan.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct Recovery {
     /// Original work and context, retained after removal.
     source: Team,
@@ -112,8 +114,8 @@ pub enum RecoveryError {
 impl State {
     /// Saved intent for a source team, including after its removal.
     #[must_use]
-    pub fn recovery(&self, _source: &TeamId) -> Option<&Recovery> {
-        None
+    pub fn recovery(&self, source: &TeamId) -> Option<&Recovery> {
+        self.recoveries.iter().find(|record| record.source.id() == source)
     }
 
     /// Reserves stable replacement identities and a restart ordinal without external effects.
@@ -125,10 +127,34 @@ impl State {
     pub fn prepare_recovery(
         &mut self,
         source: &TeamId,
-        _destination: RecoveryDestination,
-        _limit: u32,
+        destination: RecoveryDestination,
+        limit: u32,
     ) -> Result<RecoveryPreparation, RecoveryError> {
-        Err(RecoveryError::Unknown { team: source.clone() })
+        if let Some(record) = self.recovery(source) {
+            return Ok(RecoveryPreparation::Reserved(record.replacement.id().clone()));
+        }
+        let source = self
+            .team(source)
+            .ok_or_else(|| RecoveryError::Unknown { team: source.clone() })?;
+        let used = self
+            .recoveries
+            .iter()
+            .find(|record| record.replacement.id() == source.id())
+            .map_or(RestartCount(0), |record| RestartCount(record.ordinal.get()));
+        let restart::Decision::Restart(ordinal) = restart::decide(used, limit) else {
+            return Ok(RecoveryPreparation::Exhausted);
+        };
+        let replacement = source
+            .recovery_team(destination.id, destination.created_at, destination.crew)
+            .map_err(|source| RecoveryError::Team { source })?;
+        let id = replacement.id().clone();
+        self.recoveries.push(Recovery {
+            source: source.clone(),
+            replacement,
+            ordinal,
+            phase: RecoveryPhase::Pending,
+        });
+        Ok(RecoveryPreparation::Reserved(id))
     }
 
     /// Installs a saved replacement after the caller has reconciled external cleanup and setup.
@@ -137,7 +163,24 @@ impl State {
     /// # Errors
     /// Returns [`RecoveryError`] for an unknown intent, a still-present source or an identity conflict.
     pub fn install_recovery(&mut self, source: &TeamId) -> Result<RecoveryInstallation, RecoveryError> {
-        Err(RecoveryError::Unknown { team: source.clone() })
+        let record = self
+            .recovery(source)
+            .ok_or_else(|| RecoveryError::Unknown { team: source.clone() })?;
+        if record.phase == RecoveryPhase::Installed {
+            return Ok(RecoveryInstallation::AlreadyInstalled);
+        }
+        if self.team(source).is_some() {
+            return Err(RecoveryError::SourcePresent { team: source.clone() });
+        }
+        let replacement = record.replacement.clone();
+        self.insert_team(replacement)
+            .map_err(|source| RecoveryError::Insert { source })?;
+        for record in &mut self.recoveries {
+            if record.source.id() == source {
+                record.phase = RecoveryPhase::Installed;
+            }
+        }
+        Ok(RecoveryInstallation::Installed)
     }
 }
 
