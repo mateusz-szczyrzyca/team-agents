@@ -1568,6 +1568,7 @@ Integrate the guide.
         .unwrap();
 
         world.start();
+        world.told("claude-1", "Your request H1 to the workers is back with you");
         world.after_a_look(&member, &worker);
 
         assert!(

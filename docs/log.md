@@ -231,6 +231,20 @@ tick while a team waits. Instead of writing thousands of identical rows:
   regardless of the order in which concurrent producers enqueue their events.
 - `error`, `info`, and `debug` rows never coalesce (`count` is always `1` and `first_at == at`).
 
+### Automatic idle removal records
+
+Before attempting automatic removal, the daemon writes a required `decision_taken` entry directly to enabled
+history, independently of `[log] level`. Its fields contain `decision = "idle_removal"`, `outcome = "attempt"`,
+`reason`, `last_activity`, `items`, `rounds`, `splits`, `next_parts` and `branches`. The timestamp and team scope
+identify the decision even when no round is open. A refusal records `outcome = "refused"` when history is available;
+the retained state and one notification also name the refusal. An unavailable enabled history prevents deletion.
+Retries occur at most once per minute while the team remains eligible, recording a fresh attempt before removal.
+The persisted refusal suppresses duplicate refusal records and notifications, including after restart.
+
+Successful removal uses the existing `team_removed` event and notification, with the idle reason, bundle path,
+freed bytes and cleanup leftovers. Teams protected by activity or a hold produce no idle decision record. No `team_restarted` event is emitted
+in this removal-only release. Explicitly disabled history omits the required snapshot.
+
 ### Decisions and outside calls (`debug`)
 
 At `level = "debug"`:

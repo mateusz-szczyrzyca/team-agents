@@ -125,6 +125,8 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | `limits.turn_limit_resumes` | `3` | maximum consecutive automatic resumes after a turn limit; `0` fails on the first exhaustion |
 | `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |
 | `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
+| `limits.idle_team_minutes` | `120` | minutes without a run or new branch commit before automatic team removal; `0` disables it |
+| `limits.idle_team_restarts` | `1` | reserved replacement budget; unused in this removal-only release |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |
 | `limits.wake_ups_per_message` | `2` | runs a task is woken for one unread message; after that many that end without the message read, the task is not woken for it again, a `bus_down` warning names the task, the message and the count, and the message waits for the task's next run; `0` never wakes a task for a message |
 | `limits.runs_per_agent` | `1` | runs an agent may have going at once over all its teams and solo tasks, for normal agents and investigators; a task queued for an agent at its limit waits, queued, until the run that holds the agent ends (`agent status` says whom it waits for and where); `0` is no limit, as before this key |
@@ -141,6 +143,21 @@ in a new session when [`[replacement] new_sessions`](#replacement) allows it, an
 Every other run ending resets the count (resuming a failed task with `agent resume` continues in the same session without
 resetting the count until a run ends in another way). The count is derived from saved runs and survives daemon restarts.
 Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
+
+Idle teams are checked at startup and once per minute. Activity comes from saved run starts and ends, and local
+branch/worktree commits. The interval starts at the later of recorded activity and current daemon startup:
+time while the daemon was stopped does not count, and old teams get a full interval after restart. Runs and active checks,
+human pause/stop, provider quota/rate-limit reset waits and accepted delivery claims awaiting another team's
+pull-request merge prevent removal. Tasks queued for an agent and rounds awaiting a free investigator also
+prevent removal, including queued provider retries after a daemon restart. An unanswered human question does not. A removed team is **not restarted
+in this release**; automatic replacement follows in a separate part.
+
+Automatic removal uses the safeguards of `agent remove`: unmerged work is bundled before deletion, and the
+notification names the reason, bundle and freed bytes. A refusal keeps the team and notifies once with its reason
+and branches. While the team remains idle, removal is retried once a minute without repeating that notice.
+Repairing the cause allows a later scan to remove the team without new task activity.
+An enabled but unavailable history blocks automatic deletion; `[history] enabled = false` explicitly opts out
+of the history requirement. Set `idle_team_minutes = 0` before upgrading to retain teams indefinitely.
 
 ### `[review]`
 

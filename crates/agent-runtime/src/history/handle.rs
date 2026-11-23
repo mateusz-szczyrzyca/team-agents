@@ -4,6 +4,9 @@
 //! kept — the queue is full, the database cannot be written or opened — it is counted as lost, and the cause is reported
 //! once. One thread writes, a record or a batch of the queue per transaction.
 
+mod persist;
+pub use persist::PersistLogError;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::future::Future;
@@ -153,6 +156,13 @@ enum Job {
     Record(Record),
     /// A daemon log entry to write.
     Log(LogRecord),
+    /// A required log transaction with acknowledgement before destructive work.
+    PersistLog {
+        /// Entry to redact and persist.
+        record: LogRecord,
+        /// Receives the database outcome.
+        ack: tokio::sync::oneshot::Sender<Result<(), PersistLogError>>,
+    },
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
     /// Judgements of a task's plan steps to write, with awaited confirmation.
@@ -679,7 +689,12 @@ impl History {
                 let lost = match job {
                     Job::Plans(plans) => count(plans.len()),
                     Job::PersistJudgements { records, .. } => count(records.len()),
-                    Job::Record(_) | Job::Flush(_) | Job::Retain(_) | Job::Log(_) | Job::Close => 1,
+                    Job::Record(_)
+                    | Job::Flush(_)
+                    | Job::Retain(_)
+                    | Job::Log(_)
+                    | Job::PersistLog { .. }
+                    | Job::Close => 1,
                 };
                 self.shared.lose(lost);
             }
@@ -751,6 +766,19 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                         });
                     }
                 }
+                Job::PersistLog { mut record, ack } => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
+                    let result = if locked(&shared.redactor).log_record(&mut record) {
+                        store.write_logs(&[record]).map_err(PersistLogError::Write)
+                    } else {
+                        Err(PersistLogError::SecretIdentity)
+                    };
+                    // Cancellation leaves no caller to receive the committed outcome.
+                    if ack.send(result).is_err() {
+                        tracing::debug!("caller dropped required log persistence receiver");
+                    }
+                }
                 Job::Plans(plans) => {
                     // A plan is kept for a task whose run the history has: the records handed in before it go first.
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
@@ -817,6 +845,7 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
                 shared.lose(count(records.len()));
                 drop(ack);
             }
+            Job::PersistLog { ack, .. } => drop(ack),
             Job::Log(_) | Job::Close => {}
         }
     }

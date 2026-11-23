@@ -16,6 +16,8 @@ use crate::kinds::{Keyword, Role, Tier, UnknownKeyword};
 use crate::task_list::{AllowLines, ItemMark, ShortDescLines, TaskList, TaskListError};
 
 mod activities;
+mod idle;
+pub use idle::IdleWatch;
 mod delivery;
 pub use delivery::{CompleteDeliveryError, DeliverRoundError, EndDeliveryError};
 mod legacy;
@@ -439,6 +441,9 @@ pub struct Team {
     /// Explicit permission and evidence for an unpublished base at team creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unpushed_base: Option<super::UnpushedBase>,
+    /// Last observed work and refusal, absent before idle removal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    idle_watch: Option<IdleWatch>,
     /// Whole approved splits; absent in older state files.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     splits: Vec<super::split::SplitPlan>,
@@ -486,6 +491,9 @@ struct TeamWire {
     /// Older teams carry no permission to start from unpublished commits.
     #[serde(default)]
     unpushed_base: Option<super::UnpushedBase>,
+    /// Older states reconstruct activity from runs and Git.
+    #[serde(default)]
+    idle_watch: Option<IdleWatch>,
     /// Older teams have no approved splits.
     #[serde(default)]
     splits: Vec<super::split::SplitPlan>,
@@ -633,6 +641,7 @@ impl Team {
             reviewers: Vec::new(),
             activities: Vec::new(),
             unpushed_base: None,
+            idle_watch: None,
             splits: Vec::new(),
             split_proposals: std::collections::BTreeMap::new(),
             tier_waits: std::collections::BTreeMap::new(),

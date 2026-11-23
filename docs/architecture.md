@@ -359,6 +359,35 @@ connection; a subscriber that falls 1024 events behind is let go (it subscribes 
 configured with, `prompt.md` for a prompt too long for a command line) and `tasks/<task>/questions-<number>.md`;
 `tasks/<task>/gate-<n>.log` and `tasks/<task>/gate.json` (below); `tasks/<reviewer task>/review-pr<N>-pass<K>.md` (the reports of the reviews, below); `worktrees/<repo>/<task>/`; `notifications/`.
 
+### Automatic idle removal
+
+At startup and once per minute, `owner/idle` observes each team's saved runs, local task branches and worktree
+HEADs, including reviewer work. `decide::idle` is a pure timestamp/interval decision with explicit holds: running
+work, queued tasks, human pause/stop, provider reset waits and accepted external delivery claims. Queued
+crew and reviewer tasks remain protected until the scheduler starts them, including after recovery. Open
+rounds awaiting a free investigator are protected through the existing round-obligation projection even
+before a reviewer task exists. Questions do not hold the team.
+`idle_team_minutes = 0` disables the scan. Plain document/art directories need no Git inspection.
+
+The optional persisted `idle_watch` stores the last activity and observed tips. Its first observation uses saved
+activity and commit dates. The owner separately captures its startup time: the pure decision receives the later
+of startup and recorded activity, excluding downtime without rewriting the persisted observation. An old team
+gets a full interval after restart. Later new or changed tips refresh the interval; a future activity timestamp
+never counts as idle. A refused removal is retained in the watch until new work occurs.
+
+Before removal, a required `decision_taken` history entry captures activity, items, round phases, split plans,
+next parts and recovery branches. An enabled history writer must acknowledge the transaction; unavailable history
+prevents deletion. Explicitly disabled history opts out. The existing removal path then bundles unmerged work,
+closes open pull requests, saves state and cleans up, with one removal notification. Refusal preserves the team
+and sends one catalog notice, suppressed across restarts. The refusal marker only deduplicates notifications:
+eligible teams are retried at most once per minute, with a fresh history acknowledgement and the same safeguards.
+The owner keeps the last attempt time in memory per team and prunes entries for removed teams. After restart,
+the normal startup idle interval still applies, and persisted refusals do not prevent retries. The `w6gn` shape (a merged split part followed by an
+unstarted part with no round) is covered by a fake-CLI daemon test.
+
+This part removes teams only. Automatic replacement, provider selection, resumed progress and enforcement of the
+reserved `idle_team_restarts` budget belong to the dependent restart part.
+
 ### Teams (`agent run` and the team's life)
 
 `agent run <agents...> "tasks" | -f file [--coordinator NAME] [--no-merge] [--allow-unpushed-base]` names the repository by the `origin` of the
