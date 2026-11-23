@@ -31,8 +31,15 @@ pub enum Decision {
 /// Compares the supplied clock with the last run or branch activity.
 /// A zero limit disables removal; future activity never counts as idle.
 #[must_use]
-pub fn decide(_now: Timestamp, _last: Timestamp, _limit: Duration, _hold: Hold) -> Decision {
-    Decision::Keep
+pub fn decide(now: Timestamp, last: Timestamp, limit: Duration, hold: Hold) -> Decision {
+    if limit.is_zero() || hold != Hold::None || now < last {
+        return Decision::Keep;
+    }
+    if (now.as_utc() - last.as_utc()).unsigned_abs() >= limit {
+        Decision::Remove
+    } else {
+        Decision::Keep
+    }
 }
 
 #[cfg(test)]
