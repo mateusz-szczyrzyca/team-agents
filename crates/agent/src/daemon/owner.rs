@@ -781,7 +781,7 @@ impl Owner {
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
-        self.begin_sessions_after_cut(&recovery.interrupted).await?;
+        self.begin_sessions_after_cut(&recovery.interrupted)?;
         self.load_plan_snapshots().await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;

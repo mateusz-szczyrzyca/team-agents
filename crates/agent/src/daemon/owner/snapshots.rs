@@ -101,7 +101,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the state refuses the new session.
-    pub(super) async fn begin_sessions_after_cut(&mut self, interrupted: &[TaskId]) -> Result<(), OwnerError> {
+    pub(super) fn begin_sessions_after_cut(&mut self, interrupted: &[TaskId]) -> Result<(), OwnerError> {
         let setting: RestartSession = self.parts.settings.config.restart().session;
         for target in self.cut_tasks(interrupted) {
             let Some(found) = self.parts.state.find_task(&target.task) else {
