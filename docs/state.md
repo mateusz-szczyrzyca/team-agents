@@ -99,7 +99,7 @@ The state is one JSON document, written indented with a newline at the end, the 
 
 ```json
 {
-  "schema_version": 14,
+  "schema_version": 15,
   "teams": [ { "id": "team-20261111-193000-a1b2", "...": "..." } ]
 }
 ```
@@ -215,8 +215,8 @@ Older daemons cannot read a state saved with schema 12.
   as one that was built through the API. There is one way to read a value, the `Deserialize` trait: the field-by-field
   reading that serde derives lives on a private mirror type (`remote`), so no public `T::deserialize` skips the checks.
 - **Versioned.** `State::from_json` reads `schema_version` **first**. A state of another version is refused with
-  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 14,
-  migrates versions 1 through 13 as it reads them (see "Version 1" below); any other version is
+  `StateError::UnsupportedSchema { found }` — never as "malformed", whatever else it holds. This build writes version 15,
+  migrates versions 1 through 14 as it reads them (see "Version 1" below); any other version is
   refused. Version 2 is read as it is: its items have no `findings`, so a round that was open when the daemon was
   updated ends by the rules it started with (verdicts only), and the numbered findings hold for pull requests opened
   after the update. A change that old files do not satisfy raises the version and comes with a migration, a fixture of the old
@@ -296,7 +296,7 @@ pairs; `grouped_publish_state.rs` loads the former flat publication question ide
 store one optional identity with task, number, timestamp and branch; old complete identities retain their task
 and number, while incomplete timestamp-only markers supply no fabricated identity.
 
-A `Run` is `{id, started_at, session?, rounds?, state}`; `rounds` are the rounds it works for (below), oldest first, absent =
+A `Run` is `{id, started_at, session?, rounds?, used_tool?, state}`; `rounds` are the rounds it works for (below), oldest first, absent =
 none; its state is `running` or `ended` with a time and **how**:
 
 | `end.kind` | Fields | Meaning |
@@ -310,6 +310,11 @@ none; its state is `running` or `ended` with a time and **how**:
 | `stopped` | | the human stopped it |
 
 The `session` is the model CLI's session ID, which a later run resumes (the latest run that has one).
+
+`used_tool` records whether the run called a tool step before it reported `STATUS: FAILED` (absent = false); the no-tool
+retry is only the retry of a run that ended without one. Schema 15 adds it; a schema-14 state loads through `from_v14`
+with every run read as having called no tool step, and the pre-change fixture is
+[state-before-no-tool-call.json](../crates/agent-core/tests/fixtures/state-before-no-tool-call.json).
 
 A `Question` is `{number, file, asked_at, state}`: the questions file `questions-<number>.md` of the task, and
 `open` or `answered` with the time and the channel (`command` = `agent answer`, `saved_file` = the file was saved with

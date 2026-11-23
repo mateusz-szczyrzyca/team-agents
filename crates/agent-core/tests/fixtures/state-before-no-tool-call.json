@@ -1,0 +1,97 @@
+{
+  "schema_version": 14,
+  "teams": [
+    {
+      "id": "team-20261121-120000-a1b2",
+      "repo": "team-agents",
+      "created_at": "2026-11-21T12:00:00Z",
+      "merge": "autopilot",
+      "task_list": "Build the thing.\n\n1. First feature\n[ ] 1.1 The item\n    Do it.\n    Expected result:\n    - it works\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261121-120001-r7q2",
+          "item": "1.1",
+          "opened_at": "2026-11-21T12:00:01Z",
+          "state": {
+            "status": "open"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "solo",
+        "member": {
+          "task": "task-20261120-144101-r7q2",
+          "agent": {
+            "tier": "normal",
+            "name": "codex-1"
+          },
+          "status": "failed",
+          "runs": [
+            {
+              "id": "run-20261121-120001-r7q2",
+              "started_at": "2026-11-21T12:00:05Z",
+              "session": "5f3c9a3e-86f3-4b0e-9d2c-0a8f1c7d5b21",
+              "rounds": [
+                "round-20261121-120001-r7q2"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-21T12:02:00Z",
+                "end": {
+                  "kind": "hung"
+                }
+              }
+            },
+            {
+              "id": "run-20261121-120101-r7q2",
+              "started_at": "2026-11-21T12:03:05Z",
+              "rounds": [
+                "round-20261121-120001-r7q2"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-21T12:04:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "FAILED"
+                }
+              }
+            },
+            {
+              "id": "run-20261121-120201-r7q2",
+              "started_at": "2026-11-21T12:05:05Z",
+              "rounds": [
+                "round-20261121-120001-r7q2"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-21T12:06:00Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "FAILED"
+                }
+              }
+            }
+          ],
+          "renewals": {
+            "used": 1,
+            "at": "2026-11-21T12:02:30Z",
+            "after_runs": 1,
+            "reason": "hang"
+          },
+          "questions": []
+        }
+      },
+      "reviewers": [],
+      "activities": []
+    }
+  ]
+}

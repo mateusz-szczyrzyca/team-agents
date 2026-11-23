@@ -14,7 +14,7 @@ fn schema_thirteen_migrates_without_delivery_and_writes_fourteen() {
             .all(|round| round.delivered_by().is_none())
     );
     let mut written: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
-    assert_eq!(written["schema_version"], 14);
+    assert_eq!(written["schema_version"], 15);
     written["schema_version"] = serde_json::json!(13);
     assert_eq!(written, serde_json::from_str::<serde_json::Value>(old).unwrap());
     assert_eq!(State::from_json(&state.to_json().unwrap()).unwrap(), state);
@@ -30,6 +30,7 @@ fn schema_fourteen_from_0_34_reads_an_open_delivery_claim_unchanged() {
     assert_eq!(waiting[0].delivery_closed_at(), None);
     assert_eq!(
         serde_json::from_str::<serde_json::Value>(&state.to_json().unwrap()).unwrap(),
-        serde_json::from_str::<serde_json::Value>(old).unwrap()
+        serde_json::from_str::<serde_json::Value>(&old.replace("\"schema_version\": 14", "\"schema_version\": 15"))
+            .unwrap()
     );
 }

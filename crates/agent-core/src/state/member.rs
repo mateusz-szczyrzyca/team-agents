@@ -260,6 +260,14 @@ impl CheckedMut<'_, Member> {
         self.value.attach_session(session)
     }
 
+    /// See [`Member::note_used_tool`].
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going.
+    pub fn note_used_tool(&mut self, used_tool: bool) -> Result<(), RunError> {
+        self.value.note_used_tool(used_tool)
+    }
+
     /// See [`Member::end_run`].
     ///
     /// # Errors
@@ -810,6 +818,15 @@ impl Member {
     /// [`RunError::NotRunning`] when no run is going.
     pub fn attach_session(&mut self, session: SessionId) -> Result<(), RunError> {
         self.current_run_mut()?.attach_session(session);
+        Ok(())
+    }
+
+    /// Records whether the run that is going called a tool step.
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going.
+    pub fn note_used_tool(&mut self, used_tool: bool) -> Result<(), RunError> {
+        self.current_run_mut()?.note_used_tool(used_tool);
         Ok(())
     }
 

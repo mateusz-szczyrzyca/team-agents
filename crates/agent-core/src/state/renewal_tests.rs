@@ -17,6 +17,13 @@ fn old_state() -> State {
     State::from_json(include_str!("../../tests/fixtures/state-before-renewals.json")).expect("a state of main loads")
 }
 
+/// A schema-14 state written before the no-tool retry: its runs recorded no tool call, and its renewal names an older
+/// trouble.
+fn no_tool_call_state() -> State {
+    State::from_json(include_str!("../../tests/fixtures/state-before-no-tool-call.json"))
+        .expect("a schema-14 state before the no-tool retry loads")
+}
+
 /// When these tests' runs start.
 fn started() -> Timestamp {
     "2026-11-20T20:00:00Z".parse().unwrap()
@@ -31,6 +38,21 @@ fn a_failed_member_of_main_with_the_retries_used_loads_without_a_renewal_limit()
     assert_eq!(found.member.renewals(), None);
     assert_eq!(found.member.last_session().map(SessionId::as_str), Some(OLD_SESSION));
     assert_eq!(found.member.runs().len(), 7);
+}
+
+#[test]
+fn a_state_written_before_the_no_tool_retry_loads_with_its_runs_and_renewal() {
+    let state = no_tool_call_state();
+    let found = state.find_task(&task()).expect("the failed task is there");
+
+    assert_eq!(found.member.renewals().map(Renewals::reason), Some(Trouble::Hang));
+    assert_eq!(found.member.runs().len(), 3);
+    assert!(found.member.runs().iter().all(|run| !run.used_tool()));
+    assert_eq!(found.member.session_runs().len(), 2, "the renewed session's runs");
+    assert_eq!(
+        State::from_json(&state.to_json().expect("saves")).expect("it loads again"),
+        state
+    );
 }
 
 /// Puts the failed task of the old state in its session again, with a run that has ended done: the state the

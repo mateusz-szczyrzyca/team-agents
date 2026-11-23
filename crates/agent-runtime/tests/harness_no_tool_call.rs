@@ -23,10 +23,8 @@ mod harness_no_tool_call {
 
     /// The golden text of the note.
     fn golden() -> String {
-        std::fs::read_to_string(
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/run/no-tool-call.txt"),
-        )
-        .unwrap()
+        std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/run/no-tool-call.txt"))
+            .unwrap()
     }
 
     #[test]

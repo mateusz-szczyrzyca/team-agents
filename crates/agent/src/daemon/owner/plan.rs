@@ -1094,6 +1094,7 @@ impl Owner {
             &parked.located.team,
             now,
             RunEnd::Stopped,
+            false,
             parked.run.final_message.as_deref(),
             &mut events,
         )?;

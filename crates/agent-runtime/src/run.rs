@@ -480,9 +480,7 @@ impl RunEngine {
             used_tool: false,
             unreadable: Unreadable::default(),
         };
-        let stopped_by = self
-            .supervise(&job, process, &mut follow, cancel, hold)
-            .await?;
+        let stopped_by = self.supervise(&job, process, &mut follow, cancel, hold).await?;
         follow.drain().await?;
         self.record_changes(&job, head_before).await;
         let stderr = read_end(&stderr).await?;

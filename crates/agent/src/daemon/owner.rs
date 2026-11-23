@@ -1173,6 +1173,7 @@ impl Owner {
             &located.team,
             now,
             RunEnd::NoStatus { exit_code: None },
+            false,
             None,
             &mut events,
         )?;
@@ -1201,6 +1202,7 @@ impl Owner {
                 &located.team,
                 now,
                 RunEnd::NoStatus { exit_code: None },
+                false,
                 None,
                 &mut events,
             )?;
@@ -1229,7 +1231,7 @@ impl Owner {
             }
             return Ok(());
         };
-        self.end_run(task, &located.team, now, RunEnd::Stopped, None, &mut events)?;
+        self.end_run(task, &located.team, now, RunEnd::Stopped, false, None, &mut events)?;
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
@@ -1384,6 +1386,7 @@ impl Owner {
             &located.team,
             now,
             end.clone(),
+            run.used_tool,
             run.final_message.as_deref(),
             &mut events,
         )?;
@@ -2365,12 +2368,17 @@ impl Owner {
     }
 
     /// Records how the run that is going ended, and says so in `events`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pieces of a run end each come from its own caller; grouping them is a refactoring of its own"
+    )]
     fn end_run(
         &mut self,
         task: &TaskId,
         team: &TeamId,
         at: Timestamp,
         end: RunEnd,
+        used_tool: bool,
         final_message: Option<&str>,
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
@@ -2382,6 +2390,10 @@ impl Owner {
                 task: task.clone(),
                 source: RunError::NotRunning,
             })?;
+        member.note_used_tool(used_tool).map_err(|source| OwnerError::Run {
+            task: task.clone(),
+            source,
+        })?;
         // A clock that was set back during the run must not end it before it started.
         member
             .end_run(at.max(started_at), end.clone())
