@@ -675,3 +675,52 @@ async fn a_run_with_no_outcome_file_and_no_usage_row_resumes_its_session() {
         "the session tells no size and resumes: {args}"
     );
 }
+
+// Rule: a renewal whose last message is owed to the briefing fails the start, with the typed history error, when the history
+// cannot be read: a run is never started unbriefed for want of the history.
+#[tokio::test]
+async fn an_older_run_whose_history_cannot_be_read_fails_the_start_with_the_history_error() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let last = rig
+        .state()
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .id()
+        .clone();
+    std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
+    std::fs::write(rig.home.history_file(), "this is not a history database").unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let notice = rig
+        .notification_with("cannot read the runs of the task from the history")
+        .await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Failed).await;
+    let started_third = rig.worktree(&tasks[0]).join(".fake-prompt-3").exists();
+    rig.stop().await.unwrap();
+
+    assert!(
+        !started_third,
+        "the run started unbriefed without its history: {notice}"
+    );
+    assert!(notice.contains("history"), "{notice}");
+}
