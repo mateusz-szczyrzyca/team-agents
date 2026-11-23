@@ -574,14 +574,24 @@ async fn startup_cached_confirmations_preserved_for_deduplicated_plan_runs() {
     // Plan versions in history is deduplicated (still len == 1).
     std::fs::write(dir.join("ok.txt"), "content").unwrap();
     daemon.start().await;
-    daemon
-        .state_where("run 2 ended or sent back twice", |state| {
-            state
-                .find_task(&task(1))
-                .and_then(|f| f.member.plan())
-                .is_some_and(|k| k.sent_back() >= 2)
-        })
-        .await;
+    // The send-back counter can already hold its final value from the first start, and the task settles as waiting
+    // for the human, never as Done: what this stop must observe is the run-specific persisted judgement. Wait for
+    // history to record step 1.1 as Confirmed — only the run that judged the repaired check writes it, and it is
+    // written when that run ends, before the settlement that follows.
+    let step = "1.1".parse::<ItemId>().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while !reader
+        .latest_judgements(&task(1))
+        .unwrap()
+        .get(&step)
+        .is_some_and(|record| record.state == agent_core::plan::judge::JudgementState::Confirmed)
+    {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the run that confirms step 1.1 after ok.txt appears"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
     daemon.stop().await.unwrap();
 
     let versions = reader.plan_versions(&task(1)).unwrap();
