@@ -1,5 +1,5 @@
 //! Automatic idle removal uses the same safeguards as the human command.
-use super::{Owner, OwnerError};
+use super::{IDLE_SCAN_SECONDS, Owner, OwnerError};
 use agent_core::decide::idle::{Decision, Hold, decide};
 use agent_core::decide::wait::Obligation;
 use agent_core::ids::TeamId;
@@ -21,6 +21,7 @@ impl Owner {
         }
         let now = Timestamp::now(&self.parts.clock)?;
         let started_at = Timestamp::from_utc(self.started_at)?;
+        self.idle_attempts.retain(|id, _| self.parts.state.team(id).is_some());
         let teams: Vec<_> = self.parts.state.teams().iter().map(|team| team.id().clone()).collect();
         for id in teams {
             let Some(team) = self.parts.state.team(&id) else {
@@ -48,17 +49,17 @@ impl Owner {
             }
             self.save().await?;
             if decision == Decision::Remove {
-                let first_attempt = self
-                    .parts
-                    .state
-                    .team(&id)
-                    .and_then(Team::idle_watch)
-                    .is_some_and(|watch| watch.refusal.is_none());
-                if first_attempt && let Err(failure) = self.journal_idle(&id, Outcome::Attempt, &reason).await {
-                    self.idle_refusal(&id, failure).await?;
+                if self
+                    .idle_attempts
+                    .get(&id)
+                    .is_some_and(|last| (now.as_utc() - last.as_utc()).whole_seconds() < IDLE_SCAN_SECONDS)
+                {
                     continue;
                 }
-                if !first_attempt {
+                // Persisted refusal deduplicates notices; each retry still needs its own history acknowledgement.
+                self.idle_attempts.insert(id.clone(), now);
+                if let Err(failure) = self.journal_idle(&id, Outcome::Attempt, &reason).await {
+                    self.idle_refusal(&id, failure).await?;
                     continue;
                 }
                 let request = RemoveRequest {

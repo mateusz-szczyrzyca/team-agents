@@ -479,6 +479,8 @@ pub(super) struct Owner {
     parts: OwnerParts,
     /// Start of this owner, excluding daemon downtime from automatic idle removal.
     started_at: time::UtcDateTime,
+    /// Last removal attempt per team, limiting retries to the idle scan interval.
+    idle_attempts: HashMap<TeamId, Timestamp>,
     /// The runs that are going.
     runs: JoinSet<Result<RunVerdict, EngineError>>,
     /// The task of each run that is going, by the run's task in the runtime.
@@ -616,6 +618,7 @@ impl Owner {
         };
         Self {
             started_at: agent_core::ids::Clock::now(&parts.clock),
+            idle_attempts: HashMap::new(),
             parts,
             runs: JoinSet::new(),
             running: HashMap::new(),
