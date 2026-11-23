@@ -82,7 +82,7 @@ fn detailed_replies_project_no_tool_metadata_only_for_clients_before_eight() {
                 };
                 let decoded = serde_json::from_value::<Vec<OldRun>>(runs.clone());
                 assert_eq!(
-                    decoded.as_ref().map(Vec::len).unwrap_or(usize::MAX),
+                    decoded.as_ref().map_or(usize::MAX, Vec::len),
                     member.runs().len(),
                     "old clients must decode every run: {decoded:?}"
                 );
