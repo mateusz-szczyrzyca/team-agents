@@ -289,3 +289,214 @@ fn two_teams_share_one_global_turn() {
     let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
     assert_eq!(provider, "deepinfra");
 }
+
+// Characterization (the behavior is already implemented; the tables pin it). Rule: a busy first worker of a provider is
+// not a busy provider — a free sibling of the same provider serves next, and the free workers of a provider serve in
+// their configured (workers) order.
+#[test]
+fn a_busy_first_worker_does_not_skip_its_provider_and_a_free_sibling_serves() {
+    // Each case: (pool rows, last served, expected worker index, expected provider).
+    let cases: &[(&[(&str, &str, bool)], Option<&str>, usize, &str)] = &[
+        // The first worker of the turn provider is busy; its free sibling of the same provider serves.
+        (
+            &[("w-or-a", "openrouter", true), ("w-or-b", "openrouter", false)],
+            None,
+            1,
+            "openrouter",
+        ),
+        // The next provider behind it is free too, but the sibling of the turn provider still serves first.
+        (
+            &[
+                ("w-or-a", "openrouter", true),
+                ("w-or-b", "openrouter", false),
+                ("w-di", "deepinfra", false),
+            ],
+            None,
+            1,
+            "openrouter",
+        ),
+        // Configured order: with several free workers of the provider, the earliest in the pool order serves.
+        (
+            &[("w-or-a", "openrouter", false), ("w-or-b", "openrouter", false)],
+            None,
+            0,
+            "openrouter",
+        ),
+        // A provider never serves with its earliest free worker alone: after deepinfra, the sibling still holds the turn.
+        (
+            &[
+                ("w-or-a", "openrouter", true),
+                ("w-or-b", "openrouter", false),
+                ("w-di", "deepinfra", false),
+            ],
+            Some("deepinfra"),
+            1,
+            "openrouter",
+        ),
+    ];
+    for (case, &(rows, last, index, provider)) in cases.iter().enumerate() {
+        let workers = pool(rows);
+        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last))
+            .unwrap_or_else(|| panic!("case {case}: expected a pick"));
+        assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
+        assert_eq!(got, provider, "case {case}: provider");
+    }
+}
+
+// Characterization. Rule: a provider is skipped for a request when its free workers cannot meet it — only a free worker
+// that declares the required capabilities holds the turn for its provider.
+#[test]
+fn a_free_provider_that_cannot_meet_the_requires_is_skipped_for_one_that_can() {
+    // Each case: (pool rows, required capabilities, last served, expected worker index and provider, or none).
+    let cases: &[(
+        &[(&str, &str, bool, &[&str])],
+        &[&str],
+        Option<&str>,
+        Option<(usize, &str)>,
+    )] = &[
+        // Openrouter is free but cannot `node`; the deepinfra worker that declares it serves.
+        (
+            &[
+                ("w-plain", "openrouter", false, &[]),
+                ("w-node", "deepinfra", false, &["node"]),
+            ],
+            &["node"],
+            None,
+            Some((1, "deepinfra")),
+        ),
+        // The same when the rotation wraps from deepinfra back to openrouter: incapable openrouter is still skipped.
+        (
+            &[
+                ("w-plain", "openrouter", false, &[]),
+                ("w-node", "deepinfra", false, &["node"]),
+            ],
+            &["node"],
+            Some("deepinfra"),
+            Some((1, "deepinfra")),
+        ),
+        // The capable provider holds the turn when it comes first in the rotation.
+        (
+            &[
+                ("w-node", "deepinfra", false, &["node"]),
+                ("w-plain", "openrouter", false, &[]),
+            ],
+            &["node"],
+            None,
+            Some((0, "deepinfra")),
+        ),
+        // When no provider can meet the request, nothing serves.
+        (&[("w-plain", "openrouter", false, &[])], &["node"], None, None),
+    ];
+    for (case, &(rows, needed, last, expected)) in cases.iter().enumerate() {
+        let workers = pool_caps(rows);
+        let requires = requires(needed);
+        match expected {
+            Some((index, provider)) => {
+                let (worker, got) = next_pool_worker(&workers, &requires, LastServed(last)).unwrap();
+                assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
+                assert_eq!(got, provider, "case {case}: provider");
+            }
+            None => assert_eq!(
+                next_pool_worker(&workers, &requires, LastServed(last)),
+                None,
+                "case {case}: no provider can meet"
+            ),
+        }
+    }
+}
+
+// Characterization. Rule: a last served provider that names no provider of the pool (unknown — removed or renamed since)
+// starts the rotation at the first provider, like no provider was served before.
+#[test]
+fn an_unknown_last_provider_starts_the_rotation_at_the_first_provider() {
+    // Each case: (pool rows, last served, expected worker index, expected provider).
+    let cases: &[(&[(&str, &str, bool)], Option<&str>, usize, &str)] = &[
+        // An unknown last provider: the first provider of the pool serves.
+        (
+            &[("w-di", "deepinfra", false), ("w-or", "openrouter", false)],
+            Some("ghost"),
+            0,
+            "deepinfra",
+        ),
+        // An empty name is unknown too.
+        (
+            &[("w-di", "deepinfra", false), ("w-or", "openrouter", false)],
+            Some(""),
+            0,
+            "deepinfra",
+        ),
+        // ... even with more providers in the pool.
+        (
+            &[
+                ("w-di", "deepinfra", false),
+                ("w-or", "openrouter", false),
+                ("w-ge", "gemini", false),
+            ],
+            Some("alien"),
+            0,
+            "deepinfra",
+        ),
+        // Contrast: a known provider of the pool still advances the rotation.
+        (
+            &[("w-di", "deepinfra", false), ("w-or", "openrouter", false)],
+            Some("deepinfra"),
+            1,
+            "openrouter",
+        ),
+        // Contrast: after the last provider of the pool the rotation wraps to the first.
+        (
+            &[("w-di", "deepinfra", false), ("w-or", "openrouter", false)],
+            Some("openrouter"),
+            0,
+            "deepinfra",
+        ),
+    ];
+    for (case, &(rows, last, index, provider)) in cases.iter().enumerate() {
+        let workers = pool(rows);
+        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last))
+            .unwrap_or_else(|| panic!("case {case}: expected a pick"));
+        assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
+        assert_eq!(got, provider, "case {case}: provider");
+    }
+}
+
+// Characterization. Rule: capabilities are byte-for-byte strings, matched exactly — a non-ASCII capability is one string
+// among others, not a prefix, a suffix or a case-twin of it.
+#[test]
+fn non_ascii_capabilities_are_matched_exactly_and_byte_for_byte() {
+    // Each case: (pool rows, required capabilities, expected worker index, or none).
+    let cases: &[(&[(&str, &str, bool, &[&str])], &[&str], Option<usize>)] = &[
+        // The identical non-ASCII capability serves.
+        (&[("w-ja", "openrouter", false, &["日本語"])], &["日本語"], Some(0)),
+        // A shorter string is not the capability, though it is its prefix.
+        (&[("w-ja", "openrouter", false, &["日本語"])], &["日本"], None),
+        // A longer string is not the capability either, though the capability is its prefix.
+        (&[("w-ja", "openrouter", false, &["日本語"])], &["日本語ノード"], None),
+        // A byte-twin of another spelling of the word is not the capability.
+        (&[("w-cafe", "openrouter", false, &["café"])], &["cafe"], None),
+        // Of two siblings, only the one that declares the exact bytes serves.
+        (
+            &[
+                ("w-ja", "openrouter", false, &["日本語"]),
+                ("w-short", "deepinfra", false, &["日本"]),
+            ],
+            &["日本語"],
+            Some(0),
+        ),
+    ];
+    for (case, &(rows, needed, expected)) in cases.iter().enumerate() {
+        let workers = pool_caps(rows);
+        let requires = requires(needed);
+        match expected {
+            Some(index) => {
+                let (worker, _) = next_pool_worker(&workers, &requires, LastServed(None)).unwrap();
+                assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
+            }
+            None => assert_eq!(
+                next_pool_worker(&workers, &requires, LastServed(None)),
+                None,
+                "case {case}: no exact byte match"
+            ),
+        }
+    }
+}
