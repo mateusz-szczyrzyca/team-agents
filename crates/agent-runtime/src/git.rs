@@ -750,6 +750,34 @@ impl Git {
         Ok(true)
     }
 
+    /// Lists every local branch of this repository, in the order git prints them.
+    ///
+    /// # Errors
+    /// [`GitError::NotABranch`] when git printed a name that is not a valid branch name;
+    /// [`GitError::NotUtf8`] when git printed non-UTF-8 output; [`GitError::Failed`]; [`GitError::Run`].
+    pub async fn local_branches(&self) -> Result<Vec<BranchName>, GitError> {
+        let operation = GitOperation::ForEachRef;
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("for-each-ref"),
+                    arg("--format=%(refname:short)"),
+                    arg("refs/heads/"),
+                ],
+            )
+            .await?;
+        let printed = text(operation, &captured.stdout)?;
+        printed
+            .lines()
+            .map(|name| {
+                name.parse()
+                    .map_err(|source| GitError::NotABranch { operation, source })
+            })
+            .collect()
+    }
+
     /// Lists all local branches currently checked out in any worktree of this repository.
     ///
     /// # Errors

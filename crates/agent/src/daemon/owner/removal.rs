@@ -262,6 +262,20 @@ impl Owner {
         };
         if let Some(checkout) = &checkout {
             let git = self.git_at(checkout, &agent);
+            // A branch of the team is one whose name carries one of its task IDs, also a branch the state no longer names
+            // (a split part's, say): it is bundled and deleted like the others.
+            let listed = git
+                .local_branches()
+                .await
+                .map_err(|error| internal("cannot list the branches", &error))?;
+            for branch in listed {
+                if tasks_of(team)
+                    .iter()
+                    .any(|task| branch.as_str().contains(task.as_str()))
+                {
+                    branches.insert(branch);
+                }
+            }
             for branch in &branches {
                 let Some(tip) = git
                     .branch_tip(branch)
