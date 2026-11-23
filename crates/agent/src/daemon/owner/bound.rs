@@ -2,6 +2,8 @@
 //! The task is started anew before its next run, which is briefed from the checkpoint. [`starts_anew`] is the decision;
 //! this module gathers what it takes, from the configuration and from the history.
 
+use std::path::Path;
+
 use agent_core::config::{Config, context_bound};
 use agent_core::decide::context::starts_anew;
 use agent_core::ids::{RunId, TaskId};
@@ -39,6 +41,27 @@ pub(super) fn bound_of(config: &Config, participant: &Participant) -> Option<u64
     };
     context_bound(own, section)
 }
+
+/// What a run's outcome says of the size of its session's context.
+#[derive(Debug)]
+pub(super) enum SizeRead {
+    /// The run's last model call reached this many tokens.
+    Told(u64),
+    /// The run told no size: the CLI reported none.
+    NotTold,
+    /// The size cannot be read, and the cause is kept.
+    Unreadable(String),
+}
+
+/// The size of the context of run `run`, read from its outcome file in `run_dir` first and from the history at
+/// `history` only when there is no outcome file. The stub reports no size.
+pub(super) async fn size_of_run(run_dir: &Path, history: &Path, run: &RunId) -> SizeRead {
+    let _ = (run_dir, history, run);
+    SizeRead::NotTold
+}
+
+#[cfg(test)]
+mod tests;
 
 impl Owner {
     /// Starts `task` anew in a new session when the context its last run reached is above its agent's bound. Returns the
