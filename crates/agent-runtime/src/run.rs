@@ -10,6 +10,7 @@ pub mod activity;
 pub mod compose;
 mod hold;
 mod launch;
+pub mod outcome;
 pub use launch::check_environment;
 mod output;
 
@@ -485,7 +486,9 @@ impl RunEngine {
         self.record_process_end(&job, head_before, follow.parser.usage()).await;
         let stderr = read_end(&stderr).await?;
         follow.unreadable.report(&job);
+        let usage = follow.parser.usage();
         let output = follow.parser.finish(&stderr, self.parts.config.limits().tail_lines);
+        self.record_outcome(&job, usage, output.final_message.clone()).await;
         let (stopped_by, exit) = match stopped_by {
             Ended::Cancelled => {
                 return Ok(RunVerdict::Interrupted {
@@ -635,6 +638,25 @@ impl RunEngine {
     async fn record_process_end(&self, job: &RunJob, head_before: Option<CommitId>, usage: RunUsage) {
         self.record_changes(job, head_before).await;
         self.record_usage(job, usage);
+    }
+
+    /// Writes the run's outcome to its own directory. Best-effort: a refused write is logged with its cause, and the owner
+    /// then reads the size of the session from the history, as it did before the file existed.
+    async fn record_outcome(&self, job: &RunJob, usage: RunUsage, final_message: Option<String>) {
+        let dir = self.parts.store.home().run_dir(&job.task, &job.run);
+        let outcome = outcome::RunOutcome {
+            last_context: usage.last_context,
+            final_message,
+        };
+        if let Err(error) = outcome::write_outcome(dir.as_path(), &outcome).await {
+            tracing::warn!(
+                event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %job.task,
+                run = %job.run,
+                error = %error_chain(&error),
+                "the outcome of a run was not written: the size of its session comes from the history"
+            );
+        }
     }
 
     /// Writes what the run's stream told of its usage to the history. Best-effort: a refused write is logged with its cause, and the run goes on.
