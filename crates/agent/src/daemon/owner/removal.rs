@@ -139,8 +139,8 @@ async fn remove_tree(path: PathBuf) -> std::io::Result<()> {
 }
 
 /// Whether `path` exists. Only "not found" is an answer; any other failure to look is a failure of the removal.
-fn exists(path: &Path) -> Result<bool, Failure> {
-    match std::fs::metadata(path) {
+async fn exists(path: &Path) -> Result<bool, Failure> {
+    match tokio::fs::metadata(path).await {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(internal(&format!("cannot look at {}", path.display()), &error)),
@@ -526,7 +526,7 @@ impl Owner {
                 }
                 Err(failure) => {
                     // A broken Git directory may still own unbundled commits: refuse before deleting anything.
-                    if exists(&dir.as_path().join(".git"))? {
+                    if exists(&dir.as_path().join(".git")).await? {
                         return Err(failure);
                     }
                     notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message));
@@ -544,12 +544,12 @@ impl Owner {
         let mut task_dirs = Vec::new();
         for task in tasks_of(team) {
             let dir = home.worktree_dir(repo, &task);
-            if exists(&dir)? {
+            if exists(&dir).await? {
                 let bytes = size_of(dir.clone()).await?;
                 worktrees.push((task.clone(), absolute(&dir)?, bytes));
             }
             let dir = home.task_dir(&task);
-            if exists(&dir)? {
+            if exists(&dir).await? {
                 let bytes = size_of(dir.clone()).await?;
                 task_dirs.push((task, dir, bytes));
             }
@@ -581,7 +581,9 @@ impl Owner {
         };
         let file = self.parts.store.home().removed_bundle(team);
         if let Some(parent) = file.parent() {
-            std::fs::create_dir_all(parent).map_err(|error| internal("cannot make the bundles directory", &error))?;
+            tokio::fs::create_dir_all(parent)
+                .await
+                .map_err(|error| internal("cannot make the bundles directory", &error))?;
         }
         let bundle = absolute(&file)?;
         let git = self.git_at(checkout, &plan.agent);
@@ -741,7 +743,7 @@ impl Owner {
                 let dir_path = dir.as_path().to_path_buf();
                 // A directory without a `.git` entry is not a worktree of the repository (a document or art work kept
                 // in the same place): it has no commits and nothing git would keep, so it is removed as a tree.
-                let is_worktree = match exists(&dir_path.join(".git")) {
+                let is_worktree = match exists(&dir_path.join(".git")).await {
                     Ok(found) => found,
                     Err(failure) => {
                         removal
