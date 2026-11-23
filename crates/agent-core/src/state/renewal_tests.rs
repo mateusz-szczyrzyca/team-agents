@@ -389,7 +389,11 @@ fn a_state_of_0_80_0_begins_a_session_above_its_bound_and_its_next_run_starts_a_
 
     {
         let member = loaded.find_task(&task()).expect("the task").member;
-        assert_eq!(member.last_session(), None, "the session above the bound is not resumed");
+        assert_eq!(
+            member.last_session(),
+            None,
+            "the session above the bound is not resumed"
+        );
         assert!(member.awaits_new_session());
         let renewals = member.renewals().expect("the new session was recorded");
         assert_eq!(renewals.reason(), Trouble::ContextBound);
@@ -401,5 +405,9 @@ fn a_state_of_0_80_0_begins_a_session_above_its_bound_and_its_next_run_starts_a_
         .begin_run("run-20261121-010000-c0nt".parse().unwrap(), next, None)
         .expect("the next run starts");
     let session_runs: Vec<_> = member.session_runs().iter().map(|run| run.id().to_string()).collect();
-    assert_eq!(session_runs, ["run-20261121-010000-c0nt"], "the next run is the only run of its session");
+    assert_eq!(
+        session_runs,
+        ["run-20261121-010000-c0nt"],
+        "the next run is the only run of its session"
+    );
 }
