@@ -7,6 +7,7 @@ use agent_core::protocol::{Client, Failure, RemoveRequest};
 use agent_core::state::{IdleWatch, RunState, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use std::collections::BTreeMap;
+mod activity;
 
 impl Owner {
     /// Observes activity and attempts removal of teams beyond their idle limit.
@@ -21,13 +22,20 @@ impl Owner {
             let Some(team) = self.parts.state.team(&id) else {
                 continue;
             };
-            let hold = self.idle_hold(team, now);
-            let recorded = if hold == Hold::Running {
-                now
-            } else {
-                recorded_activity(team)
+            let observation = self.observe_idle(team, now).await;
+            let (watch, hold) = match observation {
+                Ok(observation) => observation,
+                Err(failure) => {
+                    if team.idle_watch().is_none() {
+                        let watch = IdleWatch::observe(None, recorded_activity(team), now, BTreeMap::new());
+                        if let Some(mut team) = self.parts.state.team_mut(&id) {
+                            team.record_idle_watch(watch);
+                        }
+                    }
+                    self.idle_refusal(&id, failure).await?;
+                    continue;
+                }
             };
-            let watch = IdleWatch::observe(team.idle_watch(), recorded, now, BTreeMap::new());
             let decision = decide(now, watch.last_activity, limit, hold);
             let reason = format!("idle since {} (limit {} seconds)", watch.last_activity, limit.as_secs());
             if let Some(mut team) = self.parts.state.team_mut(&id) {
@@ -48,7 +56,7 @@ impl Owner {
     }
 
     /// Activity and intentional holds prevent an automatic removal attempt.
-    fn idle_hold(&self, team: &Team, now: Timestamp) -> Hold {
+    fn idle_hold(&self, team: &Team, now: Timestamp) -> Result<Hold, Failure> {
         for member in team
             .crew()
             .roster()
@@ -62,22 +70,30 @@ impl Owner {
                 || self.request_checking.values().any(|checking| checking.task() == task)
                 || self.gate_answer_tasks.values().any(|owner| owner == task)
             {
-                return Hold::Running;
+                return Ok(Hold::Running);
             }
             match member.status() {
-                TaskStatus::Running => return Hold::Running,
-                TaskStatus::Paused | TaskStatus::Stopped => return Hold::Human,
+                TaskStatus::Running => return Ok(Hold::Running),
+                TaskStatus::Paused | TaskStatus::Stopped => return Ok(Hold::Human),
                 TaskStatus::Queued
                 | TaskStatus::Waiting
                 | TaskStatus::Questions
                 | TaskStatus::Failed
                 | TaskStatus::Done => {}
             }
+            if let Some(run) = member.runs().last()
+                && let RunState::Ended { at, end } = run.state()
+                && super::super::settle::wake_time(end, *at, self.parts.settings.config.limits())
+                    .map_err(|error| super::removal::internal("cannot reconstruct provider wait", &error))?
+                    .is_some_and(|wake| wake > now)
+            {
+                return Ok(Hold::Provider);
+            }
             if self.wakes.get(task).is_some_and(|wake| *wake > now) {
-                return Hold::Provider;
+                return Ok(Hold::Provider);
             }
         }
-        Hold::None
+        Ok(Hold::None)
     }
 
     /// Persist the first refusal before notifying, so a restart cannot repeat it.

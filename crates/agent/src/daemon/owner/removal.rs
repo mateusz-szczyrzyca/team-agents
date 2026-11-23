@@ -142,7 +142,7 @@ async fn remove_tree(path: PathBuf) -> std::io::Result<()> {
 }
 
 /// Whether `path` exists. Only "not found" is an answer; any other failure to look is a failure of the removal.
-async fn exists(path: &Path) -> Result<bool, Failure> {
+pub(super) async fn exists(path: &Path) -> Result<bool, Failure> {
     match tokio::fs::metadata(path).await {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -151,7 +151,7 @@ async fn exists(path: &Path) -> Result<bool, Failure> {
 }
 
 /// The path as an absolute path that git and the reply can name; a path that is not UTF-8 is refused, not replaced.
-fn absolute(path: &Path) -> Result<AbsolutePath, Failure> {
+pub(super) fn absolute(path: &Path) -> Result<AbsolutePath, Failure> {
     let text = path.to_str().ok_or_else(|| Failure {
         kind: FailureKind::Internal,
         message: format!("the path {} is not UTF-8 and cannot be named", path.display()),
@@ -160,7 +160,7 @@ fn absolute(path: &Path) -> Result<AbsolutePath, Failure> {
 }
 
 /// The tasks of a team: its crew and its reviewers.
-fn tasks_of(team: &Team) -> Vec<TaskId> {
+pub(super) fn tasks_of(team: &Team) -> Vec<TaskId> {
     team.crew()
         .roster()
         .into_iter()
@@ -170,7 +170,7 @@ fn tasks_of(team: &Team) -> Vec<TaskId> {
 }
 
 /// Every local branch the team works on or worked on, as the state names them.
-fn branches_of(team: &Team) -> Result<BTreeSet<BranchName>, Failure> {
+pub(super) fn branches_of(team: &Team) -> Result<BTreeSet<BranchName>, Failure> {
     let mut branches = BTreeSet::new();
     for (_, member) in team.crew().roster() {
         let branch = work_branch(team, member).map_err(|error| internal("cannot name a branch of the team", &error))?;
@@ -570,7 +570,7 @@ impl Owner {
     }
 
     /// Git for `dir`, with the identity of `agent`.
-    fn git_at(&self, dir: &AbsolutePath, agent: &AgentName) -> Git {
+    pub(super) fn git_at(&self, dir: &AbsolutePath, agent: &AgentName) -> Git {
         Git::new(
             dir.clone(),
             CommitIdentity::for_agent(self.parts.settings.config.git(), agent),
