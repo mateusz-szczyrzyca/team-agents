@@ -732,6 +732,35 @@ impl Owner {
     /// Deletes the worktrees, the task directories and the local branches of a removed team. A step that fails is
     /// named in `removal.left_behind`; nothing is ever deleted before its commits are in the bundle or on GitHub.
     async fn delete_local(&self, plan: &Plan, removal: &mut Removal) {
+        for (task, dir, bytes) in &plan.worktrees {
+            let dir_path = dir.as_path().to_path_buf();
+            // A directory without a `.git` entry is not a worktree of the repository (a document or art work kept
+            // in the same place): it has no commits and nothing git would keep, so it is removed as a tree.
+            let is_worktree = match exists(&dir_path.join(".git")).await {
+                Ok(found) => found,
+                Err(failure) => {
+                    removal
+                        .left_behind
+                        .push(format!("worktree of {task}: {}", failure.message));
+                    continue;
+                }
+            };
+            let outcome = match (is_worktree, &plan.checkout) {
+                (false, _) => remove_tree(dir_path).await.map_err(|error| error_chain(&error)),
+                (true, Some(checkout)) => self
+                    .git_at(checkout, &plan.agent)
+                    .worktree_remove(dir, RemoveMode::Force)
+                    .await
+                    .map_err(|error| error_chain(&error)),
+                (true, None) => Err("no repository checkout is available to remove this Git worktree".to_owned()),
+            };
+            match outcome {
+                Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
+                Err(cause) => removal
+                    .left_behind
+                    .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display())),
+            }
+        }
         if let Some(checkout) = &plan.checkout {
             let git = self.git_at(checkout, &plan.agent);
             for (task, _) in &plan.heads {
@@ -739,33 +768,6 @@ impl Owner {
                     removal
                         .left_behind
                         .push(format!("kept HEAD of {task}: {}", error_chain(&error)));
-                }
-            }
-            for (task, dir, bytes) in &plan.worktrees {
-                let dir_path = dir.as_path().to_path_buf();
-                // A directory without a `.git` entry is not a worktree of the repository (a document or art work kept
-                // in the same place): it has no commits and nothing git would keep, so it is removed as a tree.
-                let is_worktree = match exists(&dir_path.join(".git")).await {
-                    Ok(found) => found,
-                    Err(failure) => {
-                        removal
-                            .left_behind
-                            .push(format!("worktree of {task}: {}", failure.message));
-                        continue;
-                    }
-                };
-                let outcome = if is_worktree {
-                    git.worktree_remove(dir, RemoveMode::Force)
-                        .await
-                        .map_err(|error| error_chain(&error))
-                } else {
-                    remove_tree(dir_path).await.map_err(|error| error_chain(&error))
-                };
-                match outcome {
-                    Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
-                    Err(cause) => removal
-                        .left_behind
-                        .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display())),
                 }
             }
             for branch in &plan.existing {
