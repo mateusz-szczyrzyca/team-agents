@@ -35,7 +35,7 @@ use std::path::Path;
 
 use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, ErrorTail, McpServerKind, OutputCause, OutputError, RunFile, RunOutput,
-    RunRequest, SessionId, StreamOutcome,
+    RunRequest, RunUsage, SessionId, StreamOutcome,
 };
 use agent_core::config::{AbsolutePath, InvalidValue, ValueRule};
 use agent_core::kinds::CliKind;
@@ -379,6 +379,69 @@ impl Progress {
             error_tail: ErrorTail::from_text(&errors, tail_lines),
         }
     }
+}
+
+/// One model call as its stream shows it. A part the stream does not show is `None`: a call that does not say its
+/// context does not count into a size, and nothing is estimated in its place.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub(crate) struct CallUsage {
+    /// Tokens of the call's context: what the model read, its input, the cached input and what was written to the
+    /// cache.
+    pub(crate) context: Option<u64>,
+    /// Output tokens the model wrote in the call.
+    pub(crate) written: Option<u64>,
+    /// The call's cost in US dollars, as the CLI reported it.
+    pub(crate) cost: Option<f64>,
+}
+
+/// The model calls of one run, in the order the stream first named them. A stream may name a call more than once (the
+/// same ID on each of its content blocks): the call is then counted once, with the figures of its latest line.
+#[derive(Debug, Default)]
+pub(crate) struct UsageTally {
+    /// Each call by its ID, with the order in which the stream first named it.
+    calls: BTreeMap<String, (usize, CallUsage)>,
+}
+
+impl UsageTally {
+    /// Records the figures of the call `id`, replacing those of an earlier line of the same call.
+    pub(crate) fn record(&mut self, id: String, call: CallUsage) {
+        let order = self.calls.len();
+        self.calls
+            .entry(id)
+            .and_modify(|(_, known)| *known = call)
+            .or_insert((order, call));
+    }
+
+    /// What the calls tell of the run. The context is that of the first and of the last call; the output and the cost
+    /// are summed over the calls, and a sum is told only when every call tells its part and the sum does not overflow.
+    pub(crate) fn usage(&self) -> RunUsage {
+        let mut ordered: Vec<(usize, CallUsage)> = self.calls.values().copied().collect();
+        ordered.sort_by_key(|(order, _)| *order);
+        let calls: Vec<CallUsage> = ordered.into_iter().map(|(_, call)| call).collect();
+        RunUsage {
+            first_context: calls.first().and_then(|call| call.context),
+            last_context: calls.last().and_then(|call| call.context),
+            tokens_written: sum_tokens(&calls, |call| call.written),
+            cost_usd: sum_costs(&calls),
+        }
+    }
+}
+
+/// The sum of one part over `calls`: none when there are no calls, when one call does not tell the part, or when the
+/// sum would overflow.
+fn sum_tokens(calls: &[CallUsage], part: impl Fn(&CallUsage) -> Option<u64>) -> Option<u64> {
+    if calls.is_empty() {
+        return None;
+    }
+    calls.iter().try_fold(0_u64, |sum, call| sum.checked_add(part(call)?))
+}
+
+/// The sum of the cost over `calls`: none when there are no calls or one call does not tell its cost.
+fn sum_costs(calls: &[CallUsage]) -> Option<f64> {
+    if calls.is_empty() {
+        return None;
+    }
+    calls.iter().try_fold(0.0_f64, |sum, call| Some(sum + call.cost?))
 }
 
 #[cfg(test)]

@@ -14,13 +14,16 @@ use std::num::NonZeroU32;
 
 use agent_core::cli::{
     ActivityEvent, BuildRunError, CliAdapter, OutputCause, OutputError, OutputParser, RunMode, RunOutput, RunRequest,
-    RunSpec, StreamOutcome,
+    RunSpec, RunUsage, StreamOutcome,
 };
 use agent_core::kinds::CliKind;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::{Progress, mcp_file, path_under, read_event, serena_excludes, servers, text_event, tool_activity};
+use super::{
+    CallUsage, Progress, UsageTally, mcp_file, path_under, read_event, serena_excludes, servers, text_event,
+    tool_activity,
+};
 
 /// The longest a print-mode turn may take: `agy`'s own limit is five minutes.
 const PRINT_TIMEOUT: &str = "8h";
@@ -92,6 +95,7 @@ impl CliAdapter for AgyAdapter {
         Box::new(AgyParser {
             progress: Progress::new(),
             pieces: BTreeMap::new(),
+            usage: UsageTally::default(),
         })
     }
 }
@@ -138,6 +142,33 @@ struct Step {
     tool_name: Option<String>,
     /// The call and what came of it.
     tool_info: Option<ToolInfo>,
+    /// What the step used; the stream shows it on a step that is done.
+    usage: Option<StepUsage>,
+}
+
+/// The usage of a step as Antigravity reports it. Each part is optional: a part that is absent is not told.
+#[derive(Debug, Clone, Copy, Deserialize)]
+struct StepUsage {
+    /// Tokens of the input that was not read from the cache.
+    #[serde(rename = "input_tokens")]
+    input: Option<u64>,
+    /// Tokens of the input read from the cache.
+    #[serde(rename = "cache_read_tokens")]
+    cache_read: Option<u64>,
+    /// Tokens the model wrote.
+    #[serde(rename = "output_tokens")]
+    output: Option<u64>,
+}
+
+impl StepUsage {
+    /// The step as the tally keeps it: its context is its input with what the cache read; none unless both are told.
+    fn call(self) -> CallUsage {
+        CallUsage {
+            context: self.input.and_then(|input| input.checked_add(self.cache_read?)),
+            written: self.output,
+            cost: None,
+        }
+    }
 }
 
 /// Whether a step is over.
@@ -220,6 +251,8 @@ fn head(text: &str, max: usize) -> &str {
 struct AgyParser {
     /// What the stream has shown.
     progress: Progress,
+    /// The steps of the run with their usage, each counted once under its step number.
+    usage: UsageTally,
     /// The pieces of the responses that are not done, by step.
     pieces: BTreeMap<u64, String>,
 }
@@ -228,6 +261,9 @@ impl AgyParser {
     /// The steps a change of `step` shows; `line` is the line it came from. A response that would be one open
     /// response too many is refused with [`OutputCause::TooManyOpenSteps`] and not kept.
     fn step(&mut self, line: &str, step: Step) -> Result<Vec<ActivityEvent>, OutputError> {
+        if let Some(usage) = step.usage {
+            self.usage.record(step.index.to_string(), usage.call());
+        }
         let done = step.state == Some(StepState::Done);
         Ok(match step.kind {
             Some(StepType::AgentResponse) => {
@@ -316,6 +352,10 @@ impl OutputParser for AgyParser {
             Event::Finished { result } => self.finished(line, result),
             Event::Other => Ok(Vec::new()),
         }
+    }
+
+    fn usage(&self) -> RunUsage {
+        self.usage.usage()
     }
 
     fn finish(self: Box<Self>, stderr: &str, tail_lines: NonZeroU32) -> RunOutput {
