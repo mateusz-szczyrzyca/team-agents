@@ -4,6 +4,7 @@
 # by a test, so that no test races an `exec` of a file that is still open for writing.
 #
 #   done                  a short run that ends with STATUS: DONE
+#   done-child            ends like `done` after starting a child whose PID is recorded in .fake-child
 #   done-after-ok          run 1 ends like `done`; a later invocation waits for ok.txt to appear before it ends (count in .fake-runs)
 #   fail                  ends with STATUS: FAILED
 #   fail-tool             like `fail`, after streaming one tool call (a tool_use block): a failed run the harness counts as

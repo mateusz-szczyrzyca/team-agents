@@ -183,8 +183,8 @@ mod daemon_process {
                 &TaskId::from_str(TASK).unwrap(),
             )
             .join(".fake-child");
-        // The child pid is written with `echo $! > .fake-child`, which creates the file before the pid is in it:
-        // wait until it reads as a pid, not until it exists.
+        // The fixture publishes a whole PID marker by temporary file and rename. Wait for that publication
+        // before reading the PID; the marker may still be absent while the child is starting.
         eventually("the run to write its child pid", || {
             match std::fs::read_to_string(&marker) {
                 Ok(text) if text.trim().is_empty() => false,

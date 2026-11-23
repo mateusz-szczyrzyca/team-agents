@@ -10,7 +10,7 @@ use agent_core::state::{
 };
 use agent_core::status::TaskStatus;
 
-use super::super::fixture::{Daemon, answer, n};
+use super::super::fixture::{Daemon, PATIENCE, answer, n};
 use super::PlanQuestion;
 use crate::fixtures::{LIST, at, normal, repo, solo_state, task, team_id};
 
@@ -579,7 +579,7 @@ async fn startup_cached_confirmations_preserved_for_deduplicated_plan_runs() {
     // history to record step 1.1 as Confirmed — only the run that judged the repaired check writes it, and it is
     // written when that run ends, before the settlement that follows.
     let step = "1.1".parse::<ItemId>().unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let deadline = std::time::Instant::now() + PATIENCE;
     while !reader
         .latest_judgements(&task(1))
         .unwrap()
