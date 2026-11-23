@@ -174,13 +174,15 @@ hide_own_files() {
 # Records that the repository's gate passed on a clean tree at the head, where the daemon looks for it: the task is the
 # name of the worktree's directory.
 record_gate() {
-  local task head dir
+  local task head dir temporary
   task=$(basename "$PWD")
   head=$(git rev-parse HEAD)
   dir="$home/tasks/$task"
   mkdir -p "$dir"
+  temporary=$(mktemp "$dir/.gate.XXXXXXXXXX")
   printf '{"tree":"clean","result":{"head":"%s","finished_at":"2026-11-13T10:00:00Z","outcome":{"kind":"passed"},"log":"%s/gate-1.log"}}\n' \
-    "$head" "$dir" > "$dir/gate.json"
+    "$head" "$dir" > "$temporary"
+  mv -- "$temporary" "$dir/gate.json"
 }
 
 # Keeps the stand-in's own files out of git's sight, says that the run has committed and waits for the test to say that the
