@@ -580,6 +580,11 @@ impl RestartFixture {
     fn messages(&self) -> String {
         self.fixture.messages()
     }
+
+    /// The worktree of `task`, as [`Fixture::worktree`].
+    fn worktree(&self, task: &TaskId) -> PathBuf {
+        self.fixture.worktree(task)
+    }
 }
 
 fn task_status(state: &State, task: &TaskId) -> TaskStatus {
@@ -1058,6 +1063,42 @@ async fn a_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_s
     );
 }
 
+/// The retried run of a coordinator that reported `STATUS: FAILED` without a tool is launched in a fresh session — a
+/// changed session identity, a `--session-id` and no `--resume` — not merely told it starts again: the renewal is the
+/// CLI change the briefing promises, and its retry accounting is the state's new session, not the old one.
+#[tokio::test]
+async fn a_coordinator_retried_without_a_tool_is_launched_in_a_fresh_session() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run reported FAILED without calling a tool and was retried once; the second run (a new session) is
+    // doing the work.
+    let state = f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the retried run is a new session of the CLI"
+    );
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+    let log = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-log")).unwrap();
+    let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
+    assert_ne!(sessions[0], sessions[1], "the CLI reports a changed session: {log}");
+    let args = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-args-2")).unwrap();
+    assert!(args.contains("--session-id"), "{args}");
+    assert!(!args.contains("--resume"), "{args}");
+}
+
 #[tokio::test]
 async fn a_member_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
     let mut f = Fixture::new(&[
@@ -1227,6 +1268,53 @@ async fn the_retry_of_a_failed_run_without_a_tool_does_not_repeat_after_a_restar
     let messages = f.messages();
     assert!(messages.contains("member_failed"), "{messages}");
     assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+/// The run of a no-tool retry that was still queued when the daemon was restarted starts in a fresh session after the
+/// restart too: the renewal is durable, the retry stays one, and the retried run is not resumed from the session
+/// before it.
+#[tokio::test]
+async fn a_no_tool_retry_still_starts_fresh_after_a_restart_of_the_daemon() {
+    let mut f = RestartFixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowfail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run (slowfail) is running when the free space drops below what a new run needs: it fails without a tool,
+    // is retried once, and the retried run stays queued on the disk gate, a deterministic point to stop.
+    f.status_is(&tasks[1], TaskStatus::Running).await;
+    f.free_space.set(10 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    f.stop().await.unwrap();
+
+    // After the restart the retry is still one, and with the space back the retried run starts in a fresh session.
+    f.start().await;
+    f.free_space.set(200 * GIBIBYTE);
+    let state = f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "the retry is still a single one: {}",
+        f.messages()
+    );
+    let log = std::fs::read_to_string(f.worktree(&tasks[1]).join(".fake-log")).unwrap();
+    let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
+    assert_ne!(sessions[0], sessions[1], "the retried run is a fresh session: {log}");
+    let args = std::fs::read_to_string(f.worktree(&tasks[1]).join(".fake-args-2")).unwrap();
+    assert!(args.contains("--session-id"), "{args}");
+    assert!(!args.contains("--resume"), "{args}");
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the state keeps the fresh session of the retried run"
+    );
 }
 
 #[tokio::test]
