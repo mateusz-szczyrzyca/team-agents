@@ -326,6 +326,27 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
         })
     })
     .await;
+    // The daemon is stopped before anything else moves: the state is then the one the run left. The rounds the waiting run
+    // worked for are closed by hand, so that the task has no open round, and the state is saved and the daemon started again.
+    rig.stop().await.unwrap();
+    let mut state = rig.state();
+    let open: Vec<_> = state
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .rounds()
+        .to_vec();
+    let at: agent_core::state::Timestamp = "2999-01-01T00:00:00Z".parse().unwrap();
+    for round in open {
+        state
+            .close_round(&round, at, agent_core::state::RoundEnd::Abandoned)
+            .unwrap();
+    }
+    std::fs::write(rig.home.state_file(), state.to_json().unwrap()).unwrap();
+    rig.start().await;
     resume_unless_already_going(&rig, &tasks[0]).await;
     let prompt = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
