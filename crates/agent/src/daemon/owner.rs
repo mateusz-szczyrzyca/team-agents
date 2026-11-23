@@ -13,6 +13,7 @@ mod disk;
 mod fixture;
 mod gate;
 mod history;
+mod idle;
 mod last_step;
 mod plan;
 mod removal;
