@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.76.0 — 23.11.2026 — PR pending
+## 0.76.0 — 23.11.2026 — PR #222
 
 ### Enhancements
 - [agent-core] Add the internal foundation for restarting removed teams: saved replacement identities, bounded restart accounting and preserved merged items and split parts. Repeating a saved replacement leaves its current work intact. The daemon still removes idle teams without starting replacements; automatic restart will be activated separately.
