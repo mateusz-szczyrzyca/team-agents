@@ -113,7 +113,7 @@ const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_the_bound_and_finishes_the_item() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work-stream:first,leave-stream:second,work"),
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -128,13 +128,9 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let worktree = rig.worktree(&tasks[0]);
-    rig.state_where("run 2 to end", |state| {
-        state
-            .find_task(&tasks[0])
-            .is_some_and(|found| found.member.runs().len() == 2 && !found.member.runs()[1].is_running())
-    })
-    .await;
-    rig.resume(&tasks[0]).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
     let briefing = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
     let state = rig
@@ -270,5 +266,39 @@ async fn the_new_session_after_an_answer_is_briefed_with_the_item_still_in_progr
         briefing.contains("I have to ask."),
         "the last final message is not in the briefing: {briefing}"
     );
+    assert!(!args.contains("--resume"), "the old session was resumed: {args}");
+}
+
+// Rule: a session above its agent's bound that waits for a message, its round closed, is started anew as it is: the new
+// session's prompt holds the size paragraph and the task's whole prompt, and no briefing, because a briefing is gathered
+// from the snapshot of an open round. This is the known gap of the briefing (snapshots are stored per round).
+#[tokio::test]
+async fn a_renewed_session_of_a_task_with_no_open_round_starts_with_its_whole_prompt_and_no_briefing() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,sleep-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Waiting).await;
+    rig.resume(&tasks[0]).await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("grown to 200000 tokens"), "{prompt}");
+    assert!(prompt.contains("# Working context"), "{prompt}");
+    assert!(!prompt.contains(BRIEFING), "a briefing without an open round: {prompt}");
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
