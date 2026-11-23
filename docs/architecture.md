@@ -149,9 +149,10 @@ engine relies on:
   outcomes reads only the tail, and opencode reports a provider's refusal on stdout.
 - A queued task that waits `[replacement] busy_after` seconds for its busy agent is handed over through the takeover path
   (`decide/busy.rs` decides, `owner/takeover.rs` hands over). The moment its wait began is `waiting_since` in the state,
-  so a restart keeps the time waited. The renewal also keeps `busy_notice_owed` until every affected item's notice has
-  been accepted by the bus for the whole team, not just for the replaced member. An outbox tries each notice after a
-  delivery failure or a daemon restart and clears the obligation only after every item was told. A review protects a
+  so a restart keeps the time waited. The renewal also keeps `busy_notice_owed` for notices to the whole team,
+  including every affected item. The outbox retries transient bus failures and rebuilds pending notices after a
+  daemon restart. Permanent bus refusals and rendering failures are logged and drop the affected notice; the
+  obligation clears when every notice has either been accepted or dropped. A review protects a
   busy task only when that task's recorded rounds name the item being reviewed, not when another member's item is under review.
 - An agent's runs are limited by `[limits] runs_per_agent` and `runs_per_worker` (default `1`, `0` no limit): a queued
   task whose agent holds its limit over all teams waits, queued, for that run. The decision is
