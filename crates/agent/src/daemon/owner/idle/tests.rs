@@ -360,3 +360,26 @@ async fn unavailable_history_refuses_idle_deletion_without_losing_files() {
     owner.check_idle_teams().await.unwrap();
     assert_eq!(daemon.notifications().len(), 1);
 }
+
+#[tokio::test]
+async fn reviewer_worktree_commits_keep_the_team_alive() {
+    let daemon = Daemon::new(&super::super::fixture::reviewed_pair_state(), None);
+    files(&daemon);
+    let path = daemon.home.worktree_dir(&repo(), &task(3));
+    std::fs::create_dir_all(&path).unwrap();
+    git(&path, 7100, &["init", "-q", "-b", "main"]);
+    git(&path, 7100, &["commit", "--allow-empty", "-qm", "Review work"]);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .and_then(agent_core::state::Team::idle_watch)
+            .map(|watch| watch.last_activity),
+        Some(at(7100))
+    );
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
+}
