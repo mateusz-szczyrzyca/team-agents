@@ -100,29 +100,6 @@ impl RowArgs {
             || self.show.is_some()
     }
 
-    /// The usage lines of the runs a query by task or by run is about, after its rows: one line for each run, a run
-    /// without a row told as not told, and nothing when none of the runs has a row, so an older history reads as it did.
-    fn usage_text(&self, reader: &Reader) -> Result<String, LogError> {
-        let runs: Vec<RunId> = match (&self.run, &self.task) {
-            (Some(run), _) => vec![run.clone()],
-            (None, Some(task)) => reader
-                .runs_of_task(task)?
-                .into_iter()
-                .map(|row| row.start.value.run)
-                .collect(),
-            (None, None) => return Ok(String::new()),
-        };
-        let usage = reader.run_usages(&runs)?;
-        if usage.is_empty() {
-            return Ok(String::new());
-        }
-        Ok(runs.iter().fold(String::new(), |mut text, run| {
-            text.push_str(&agent_core::story::usage_line(run, usage.get(run)));
-            text.push('\n');
-            text
-        }))
-    }
-
     /// Prints a bounded query of the directly opened history.
     ///
     /// In text, the rows of the scope and the steps of its runs are one text, the newest `limit` things of it.
@@ -181,8 +158,6 @@ impl RowArgs {
                 };
                 let (mut feed, text) = Feed::open_in(&reader, filter, steps, limit, zones.output)?;
                 out.write_all(text.as_bytes()).map_err(LogError::Output)?;
-                out.write_all(self.usage_text(&reader)?.as_bytes())
-                    .map_err(LogError::Output)?;
                 out.flush().map_err(LogError::Output)?;
                 let Some(runtime) = &runtime else {
                     return Ok(());

@@ -15,7 +15,7 @@ use agent_core::history::RunStart;
 use agent_core::ids::{AgentName, RoundId, RunId};
 use agent_core::local_time::Zone;
 use agent_core::log::{LogEntry, LogEvent};
-use agent_core::story::StepView;
+use agent_core::story::{StepView, usage_line};
 use agent_runtime::history::{LogFilter, LogWindow, Reader, RunRow};
 
 use super::LogError;
@@ -92,8 +92,18 @@ impl Feed {
         let covered = feed.covered(reader)?;
         let timed = feed.new_steps(reader, &covered)?;
         let timeline = feed.timeline(reader, &rows, timed)?;
-        let text = timeline.newest(limit);
+        let mut text = timeline.newest(limit);
         feed.told = timeline.newest_runs(limit);
+        // The usage of a run whose end row the text does not show is told after the text, so no usage is lost.
+        if limit > 0 {
+            let ended = timeline.newest_ended_runs(limit);
+            for (run, usage) in &timeline.usage {
+                if !ended.contains(run) {
+                    text.push_str(&usage_line(run, Some(usage)));
+                    text.push('\n');
+                }
+            }
+        }
         Ok((feed, text))
     }
 
@@ -225,6 +235,8 @@ impl Feed {
         timeline
             .teams
             .extend(teams.into_iter().map(|(team, runs)| Team::new(team, runs)));
+        let ids: Vec<RunId> = self.runs.keys().cloned().collect();
+        timeline.usage = reader.run_usages(&ids)?;
         Ok(timeline)
     }
 }

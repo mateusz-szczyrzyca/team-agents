@@ -2,7 +2,7 @@
 
 use agent_core::cli::RunUsage;
 use agent_core::ids::RunId;
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params, params_from_iter};
 
 use super::error::{ReadError, RecordKind, ValueProblem, WriteError};
 
@@ -134,8 +134,12 @@ fn read_count(run: &RunId, value: Option<i64>) -> Result<Option<u64>, ReadError>
         .transpose()
 }
 
-/// The usage of each of `runs` that has a row, read in the one snapshot of `snapshot`; a run without a row is not in
-/// the result, and a history without the table has none.
+/// How many runs one query of [`read_many`] asks for: far below the number of variables SQLite accepts in a statement,
+/// whatever its build.
+const RUNS_PER_QUERY: usize = 500;
+
+/// The usage of each of `runs` that has a row, read in the one snapshot of `snapshot` with one query for each
+/// [`RUNS_PER_QUERY`] runs; a run without a row is not in the result, and a history without the table has none.
 ///
 /// # Errors
 /// [`ReadError::Query`] when a row cannot be read, [`ReadError::Value`] when a count in it is negative.
@@ -147,9 +151,44 @@ pub(super) fn read_many(
     if runs.is_empty() || !has_table(snapshot)? {
         return Ok(found);
     }
-    for run in runs {
-        if let Some(usage) = read_row(snapshot, run)? {
-            found.insert(run.clone(), usage);
+    let query_error = |source| ReadError::Query {
+        table: "run_usage",
+        source,
+    };
+    for chunk in runs.chunks(RUNS_PER_QUERY) {
+        let asked: std::collections::HashMap<&str, &RunId> = chunk.iter().map(|run| (run.as_str(), run)).collect();
+        let marks = vec!["?"; chunk.len()].join(", ");
+        let mut statement = snapshot
+            .prepare(&format!(
+                "SELECT run, first_context, last_context, tokens_written, cost_usd FROM run_usage WHERE run IN ({marks})"
+            ))
+            .map_err(query_error)?;
+        let rows = statement
+            .query_map(params_from_iter(chunk.iter().map(RunId::as_str)), |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<i64>>(3)?,
+                    row.get::<_, Option<f64>>(4)?,
+                ))
+            })
+            .map_err(query_error)?;
+        for row in rows {
+            let (id, first, last, written, cost) = row.map_err(query_error)?;
+            // The query asked for these runs only: an id that is none of them cannot come back.
+            let Some(run) = asked.get(id.as_str()) else {
+                continue;
+            };
+            found.insert(
+                (*run).clone(),
+                RunUsage {
+                    first_context: read_count(run, first)?,
+                    last_context: read_count(run, last)?,
+                    tokens_written: read_count(run, written)?,
+                    cost_usd: cost,
+                },
+            );
         }
     }
     Ok(found)

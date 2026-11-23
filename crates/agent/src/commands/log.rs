@@ -10,7 +10,7 @@ mod timeline;
 mod views;
 mod wait;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::Write;
 use std::path::Path;
 
@@ -163,13 +163,16 @@ pub(crate) fn log_in(history: &Path, request: &LogRequest, zone: Zone, out: &mut
 /// # Errors
 /// [`LogError::Read`] when the usage cannot be read.
 fn usage_of_ended(reader: &Reader, records: &[SequencedRecord]) -> Result<BTreeMap<RunId, RunUsage>, LogError> {
-    let mut runs: Vec<RunId> = Vec::new();
-    for stored in records {
-        if let Record::RunEnd(end) = &stored.record
-            && !runs.contains(&end.run)
-        {
-            runs.push(end.run.clone());
-        }
-    }
+    let runs: BTreeSet<RunId> = records
+        .iter()
+        .filter_map(|stored| {
+            if let Record::RunEnd(end) = &stored.record {
+                Some(end.run.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    let runs: Vec<RunId> = runs.into_iter().collect();
     Ok(reader.run_usages(&runs)?)
 }
