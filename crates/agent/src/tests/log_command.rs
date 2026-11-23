@@ -344,3 +344,69 @@ fn focused_views_refuse_an_unknown_round_or_team_with_status_3() {
     assert_eq!((code_team, out_team.as_str()), (ExitCode::from(3), ""));
     assert!(err_team.contains(other_team), "{err_team}");
 }
+
+/// Writes the usage `usage` for the first run that ended in `round` of the history at `path`.
+fn write_usage_of_a_run_of(path: &Path, round: &RoundId, usage: agent_core::cli::RunUsage) {
+    let run = Reader::open(path)
+        .unwrap()
+        .round_records(round)
+        .unwrap()
+        .into_iter()
+        .find_map(|stored| match stored.record {
+            agent_core::history::Record::RunEnd(end) => Some(end.run),
+            _ => None,
+        })
+        .expect("the round has a run that ended");
+    let mut db = agent_runtime::history::HistoryDb::open(path, agent_core::history::MaxTextBytes::default()).unwrap();
+    agent_runtime::history::Store::write_usage(&mut db, &[agent_runtime::history::RunUsageRecord { run, usage }])
+        .unwrap();
+}
+
+#[test]
+fn a_run_whose_stream_told_its_usage_has_a_line_after_its_end() {
+    let (_dir, home, written) = with_history();
+    let usage = agent_core::cli::RunUsage {
+        first_context: Some(1_000),
+        last_context: Some(2_500),
+        tokens_written: Some(400),
+        cost_usd: Some(0.25),
+    };
+    write_usage_of_a_run_of(&home.join("history.db"), &written.rounds[0], usage);
+
+    let (code, out, err) = agent(&environment(&home), &["log", "--round", written.rounds[0].as_str()]);
+
+    assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""));
+    assert!(
+        out.contains("usage: context first 1000, last 2500; output 400; cost 0.250000 USD\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_part_the_cli_did_not_tell_is_told_as_not_told_in_the_usage_line() {
+    let (_dir, home, written) = with_history();
+    let usage = agent_core::cli::RunUsage {
+        first_context: None,
+        last_context: None,
+        tokens_written: Some(500),
+        cost_usd: None,
+    };
+    write_usage_of_a_run_of(&home.join("history.db"), &written.rounds[0], usage);
+
+    let (code, out, _err) = agent(&environment(&home), &["log", "--round", written.rounds[0].as_str()]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        out.contains("usage: context first not told, last not told; output 500; cost not told USD\n"),
+        "{out}"
+    );
+}
+
+#[test]
+fn a_run_without_a_usage_row_has_no_usage_line() {
+    let (_dir, home, written) = with_history();
+
+    let (_code, out, _err) = agent(&environment(&home), &["log", "--round", written.rounds[0].as_str()]);
+
+    assert!(!out.contains("usage:"), "{out}");
+}
