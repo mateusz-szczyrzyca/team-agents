@@ -1636,6 +1636,18 @@ impl Owner {
                 "queued in a new session",
             );
             ready(Ok((TaskStatus::Queued, None)))
+        } else if already_retried
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed
+                }
+            )
+            && !used_tool
+        {
+            // A second run that reported FAILED without calling a tool has used the one retry: the human is told the
+            // named reason — the CLI or the model did not offer or use the tools — not a generic failure.
+            ready(Ok((TaskStatus::Failed, Some(Notice::FailedNoTool))))
         } else {
             ready(Ok((TaskStatus::Failed, Some(notice))))
         }
