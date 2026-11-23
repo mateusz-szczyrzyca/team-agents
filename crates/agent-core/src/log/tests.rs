@@ -113,6 +113,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             "run_ended_without_status",
             LogLevel::Warn,
         ),
+        (LogEvent::RunNoToolRetry, "run_no_tool_retry", LogLevel::Info),
+        (LogEvent::RunNoToolFailed, "run_no_tool_failed", LogLevel::Warn),
         (LogEvent::RunHung, "run_hung", LogLevel::Warn),
         (LogEvent::RunQuotaExhausted, "run_quota_exhausted", LogLevel::Warn),
         (LogEvent::RunRateLimited, "run_rate_limited", LogLevel::Warn),
