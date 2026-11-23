@@ -3,3 +3,5 @@
 {{message}}
 
 The harness publishes an item only while its assignee task waits. If you take over the work, still report `STATUS: DONE`: the harness will tell the human, the human will resume {{member}}, and {{member}} must end with a status. Or ask the human (a questions file, `STATUS: QUESTIONS`).
+
+You may wait for the human. Take the work yourself only if your role rules allow it.
