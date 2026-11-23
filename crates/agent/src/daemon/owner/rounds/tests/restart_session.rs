@@ -306,3 +306,41 @@ async fn the_briefing_of_the_new_session_tells_how_each_earlier_run_ended() {
         .expect("the cut run is listed");
     assert!(missing < cut, "oldest first: {briefing}");
 }
+
+// Rule: a cut the daemon caused is no retry, for a stop as for a crash: when the stop cuts the third run of a session whose
+// two earlier runs ended without a status, the task goes on in a new session of the `daemon_down` reason, and no new
+// session of its agent is charged.
+#[tokio::test]
+async fn a_stop_that_cuts_the_third_run_after_two_endings_without_status_is_no_retry() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "nostatus,nostatus,hold,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("run 3 to start", || rig.runs(&tasks[0]) >= 3).await;
+
+    rig.stop().await.unwrap();
+    let stopped = rig.state();
+    rig.start().await;
+    let state = rig
+        .item_where("1.1", "merged after the new session", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    let before = stopped.find_task(&tasks[0]).unwrap().member;
+    let renewals = before.renewals().expect("the stop began a new session");
+    assert_eq!(renewals.reason(), Trouble::DaemonDown);
+    assert_eq!(renewals.used(), 0, "the cut is the daemon's, not a retry");
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 4);
+    assert_ne!(member.runs()[3].session(), member.runs()[2].session());
+}
