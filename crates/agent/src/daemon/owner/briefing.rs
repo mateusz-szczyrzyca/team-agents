@@ -46,6 +46,31 @@ pub(super) fn context_paragraph(texts: &HarnessPrompts, tokens: u64) -> Result<S
     Ok(texts.render(HarnessPrompt::BriefingContext, &values)?)
 }
 
+/// The last message of the session before, as the briefing gives it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct LastMessage {
+    /// The message's text.
+    pub(super) text: String,
+    /// The limit in bytes the history cut the text at, when it did: the message is then not whole.
+    pub(super) cut_at: Option<u32>,
+}
+
+impl LastMessage {
+    /// A message that is whole: the outcome file kept it.
+    fn whole(text: String) -> Self {
+        Self { text, cut_at: None }
+    }
+}
+
+/// The note after the last message when the history cut it at `limit` bytes.
+///
+/// # Errors
+/// [`ComposeError`] when the note cannot be filled.
+pub(super) fn message_cut_paragraph(texts: &HarnessPrompts, limit: u32) -> Result<String, ComposeError> {
+    let values = Variables::new().with("limit", limit.to_string())?;
+    Ok(texts.render(HarnessPrompt::BriefingMessageCut, &values)?)
+}
+
 /// The section that ends a briefing: the last message of the session before, whole.
 ///
 /// # Errors
@@ -305,7 +330,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`BriefingProblem`] when the history cannot be read.
-    pub(super) async fn last_final_message(&self, task: &TaskId) -> Result<Option<String>, BriefingProblem> {
+    pub(super) async fn last_final_message(&self, task: &TaskId) -> Result<Option<LastMessage>, BriefingProblem> {
         // The run's own outcome file holds the message whole; the history cuts a text at its limit.
         let last = self
             .parts
@@ -315,7 +340,7 @@ impl Owner {
         if let Some(run) = last {
             let run_dir = self.parts.store.home().run_dir(task, &run);
             match read_outcome(run_dir.as_path()).await {
-                Ok(Some(outcome)) => return Ok(outcome.final_message),
+                Ok(Some(outcome)) => return Ok(outcome.final_message.map(LastMessage::whole)),
                 // A run before the outcome file: the history's text is all there is.
                 Ok(None) => {}
                 Err(source) => return Err(BriefingProblem::Outcome(source)),
@@ -331,12 +356,15 @@ impl Owner {
         })
         .await
         .map_err(BriefingProblem::RunsJoin)?;
+        let limit = self.parts.settings.config.history().max_text_bytes.get();
         match read {
-            Ok(newest) => Ok(newest
-                .runs
-                .last()
-                .and_then(|row| row.end.as_ref())
-                .and_then(|end| end.value.final_message.clone())),
+            Ok(newest) => Ok(newest.runs.last().and_then(|row| row.end.as_ref()).and_then(|end| {
+                let text = end.value.final_message.clone()?;
+                Some(LastMessage {
+                    text,
+                    cut_at: end.cut.has("final_message").then_some(limit),
+                })
+            })),
             Err(ReadError::Empty { .. }) => Ok(None),
             Err(source) => Err(BriefingProblem::Runs(Box::new(source))),
         }
@@ -351,7 +379,7 @@ impl Owner {
         &self,
         task: &TaskId,
         briefed: bool,
-    ) -> Result<Option<String>, BriefingProblem> {
+    ) -> Result<Option<LastMessage>, BriefingProblem> {
         if !briefed {
             return Ok(None);
         }

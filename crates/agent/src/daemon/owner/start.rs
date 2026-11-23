@@ -37,7 +37,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::briefing::BriefingDraft;
+use super::briefing::{BriefingDraft, LastMessage};
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -238,14 +238,23 @@ fn with_size_paragraph(ctx: &Context<'_>, member: &Member, prompt: String) -> Re
 }
 
 /// The prompt with the last message of the session before at its end, when the session is briefed with one.
-fn with_last_message(ctx: &Context<'_>, prompt: String, last_message: Option<&str>) -> Result<String, StartProblem> {
-    Ok(match last_message {
-        Some(message) => format!(
-            "{prompt}\n\n{}",
-            super::briefing::last_message_paragraph(ctx.texts, message)?
-        ),
-        None => prompt,
-    })
+fn with_last_message(
+    ctx: &Context<'_>,
+    prompt: String,
+    last_message: Option<&LastMessage>,
+) -> Result<String, StartProblem> {
+    let Some(message) = last_message else {
+        return Ok(prompt);
+    };
+    let mut text = format!(
+        "{prompt}\n\n{}",
+        super::briefing::last_message_paragraph(ctx.texts, &message.text)?
+    );
+    if let Some(limit) = message.cut_at {
+        text.push_str("\n\n");
+        text.push_str(&super::briefing::message_cut_paragraph(ctx.texts, limit)?);
+    }
+    Ok(text)
 }
 
 /// The note that tells a run retried after its session reported FAILED without a tool call why it starts again,
@@ -282,7 +291,7 @@ pub(super) async fn plan(
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingDraft>,
-    last_message: Option<&str>,
+    last_message: Option<&LastMessage>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state

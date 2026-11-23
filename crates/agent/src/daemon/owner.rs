@@ -977,7 +977,7 @@ impl Owner {
                 &mut self.parts.rng,
                 &task,
                 briefing.as_ref(),
-                last_message.as_deref(),
+                last_message.as_ref(),
             )
             .await
         };
