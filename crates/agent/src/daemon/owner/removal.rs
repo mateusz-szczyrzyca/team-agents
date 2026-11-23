@@ -249,65 +249,10 @@ impl Owner {
             })
             .cloned()
             .collect();
-        let mut stopped = Vec::new();
-        if !running.is_empty() {
-            if !request.force {
-                let names: Vec<String> = running.iter().map(ToString::to_string).collect();
-                return Ok(Err(Failure {
-                    kind: FailureKind::Conflict,
-                    message: format!(
-                        "team {} has a run going in {}: stop it with `agent stop`, or remove it with --force, which \
-                         ends its runs first",
-                        request.team,
-                        names.join(", ")
-                    ),
-                }));
-            }
-            for task in &tasks {
-                self.stop_gates(task);
-            }
-            if tasks
-                .iter()
-                .any(|task| self.in_flight.contains(task) || self.parked.contains_key(task))
-            {
-                if let Err(failure) = self
-                    .control_request(client, Steer::Stop, &Target::Team(request.team.clone()))
-                    .await?
-                {
-                    return Ok(Err(failure));
-                }
-            }
-            let checks: Vec<_> = self.aborted_checks.iter().copied().collect();
-            while checks.iter().any(|id| self.aborted_checks.contains(id)) {
-                if let Some(joined) = self.checks.join_next_with_id().await {
-                    self.check_batch_done(joined).await?;
-                }
-            }
-            while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
-                if let Some(joined) = self.gate_answers.join_next_with_id().await {
-                    self.gate_answer_done(joined)?;
-                }
-            }
-            while self
-                .request_checking
-                .values()
-                .any(|checking| tasks.contains(checking.task()))
-            {
-                if let Some(joined) = self.request_checks.join_next_with_id().await {
-                    self.request_check_done(joined).await?;
-                }
-            }
-            if tasks.iter().any(|task| self.in_flight.contains(task)) {
-                return Ok(Err(Failure {
-                    kind: FailureKind::Conflict,
-                    message: format!(
-                        "a run of team {} did not end after it was stopped: try again",
-                        request.team
-                    ),
-                }));
-            }
-            stopped = running;
-        }
+        let stopped = match self.settle_removal(client, &request, &tasks, running).await? {
+            Ok(stopped) => stopped,
+            Err(failure) => return Ok(Err(failure)),
+        };
         while tasks.iter().any(|task| self.pending_removals.contains(task)) {
             if let Some(joined) = self.disk_jobs.join_next_with_id().await {
                 self.disk_job_done(joined).await;
@@ -374,6 +319,73 @@ impl Owner {
         Ok(Ok(removal))
     }
 
+    /// Refuses active work unless forced, then ends and joins it before removal can touch its files.
+    async fn settle_removal(
+        &mut self,
+        client: &Client,
+        request: &RemoveRequest,
+        tasks: &[TaskId],
+        running: Vec<TaskId>,
+    ) -> Result<Result<Vec<TaskId>, Failure>, OwnerError> {
+        if !running.is_empty() {
+            if !request.force {
+                let names: Vec<String> = running.iter().map(ToString::to_string).collect();
+                return Ok(Err(Failure {
+                    kind: FailureKind::Conflict,
+                    message: format!(
+                        "team {} has a run going in {}: stop it with `agent stop`, or remove it with --force, which \
+                         ends its runs first",
+                        request.team,
+                        names.join(", ")
+                    ),
+                }));
+            }
+            for task in tasks {
+                self.stop_gates(task);
+            }
+            if tasks
+                .iter()
+                .any(|task| self.in_flight.contains(task) || self.parked.contains_key(task))
+                && let Err(failure) = self
+                    .control_request(client, Steer::Stop, &Target::Team(request.team.clone()))
+                    .await?
+            {
+                return Ok(Err(failure));
+            }
+            let checks: Vec<_> = self.aborted_checks.iter().copied().collect();
+            while checks.iter().any(|id| self.aborted_checks.contains(id)) {
+                if let Some(joined) = self.checks.join_next_with_id().await {
+                    self.check_batch_done(joined).await?;
+                }
+            }
+            while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
+                if let Some(joined) = self.gate_answers.join_next_with_id().await {
+                    self.gate_answer_done(joined)?;
+                }
+            }
+            while self
+                .request_checking
+                .values()
+                .any(|checking| tasks.contains(checking.task()))
+            {
+                if let Some(joined) = self.request_checks.join_next_with_id().await {
+                    self.request_check_done(joined).await?;
+                }
+            }
+            if tasks.iter().any(|task| self.in_flight.contains(task)) {
+                return Ok(Err(Failure {
+                    kind: FailureKind::Conflict,
+                    message: format!(
+                        "a run of team {} did not end after it was stopped: try again",
+                        request.team
+                    ),
+                }));
+            }
+            return Ok(Ok(running));
+        }
+        Ok(Ok(Vec::new()))
+    }
+
     /// Reports a completed removal; notification failure cannot undo deleted files and is logged.
     async fn removal_notice(&mut self, removal: &Removal) {
         let rendered = (|| -> Result<String, Failure> {
@@ -394,7 +406,7 @@ impl Owner {
         })();
         match rendered {
             Ok(text) => {
-                let (title, body) = text.split_once('\n').map_or((text.as_str(), ""), |parts| parts);
+                let (title, body) = text.split_once('\n').unwrap_or((text.as_str(), ""));
                 self.deliver(title, body, "team removal notice").await;
             }
             Err(error) => tracing::warn!(
@@ -444,25 +456,7 @@ impl Owner {
         let mut bundled = Vec::new();
         let mut dirty = Vec::new();
         let mut heads = Vec::new();
-        // The checkout is the one of the first worktree that git can read; a directory that is not a checkout holds no
-        // commits, and it is named in the reply rather than failing the removal.
-        let mut checkout = None;
-        let mut notes = Vec::new();
-        for (task, dir, _) in &worktrees {
-            match checkout_of(&self.git_at(dir, &agent)).await {
-                Ok(found) => {
-                    checkout = Some(found);
-                    break;
-                }
-                Err(failure) => {
-                    // A broken Git directory may still own unbundled commits: refuse before deleting anything.
-                    if exists(&dir.as_path().join(".git"))? {
-                        return Err(failure);
-                    }
-                    notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message));
-                }
-            }
-        }
+        let (checkout, notes) = self.removal_checkout(&worktrees, &agent).await?;
         if let Some(checkout) = &checkout {
             let git = self.git_at(checkout, &agent);
             // A branch of the team is one whose name carries one of its task IDs, also a branch the state no longer names
@@ -512,6 +506,34 @@ impl Owner {
             heads,
             notes,
         })
+    }
+
+    /// Finds a repository through a surviving worktree, refusing damaged Git metadata.
+    async fn removal_checkout(
+        &self,
+        worktrees: &[(TaskId, AbsolutePath, u64)],
+        agent: &AgentName,
+    ) -> Result<(Option<AbsolutePath>, Vec<String>), Failure> {
+        // The checkout is the one of the first worktree that git can read; a directory that is not a checkout holds no
+        // commits, and it is named in the reply rather than failing the removal.
+        let mut checkout = None;
+        let mut notes = Vec::new();
+        for (task, dir, _) in worktrees {
+            match checkout_of(&self.git_at(dir, agent)).await {
+                Ok(found) => {
+                    checkout = Some(found);
+                    break;
+                }
+                Err(failure) => {
+                    // A broken Git directory may still own unbundled commits: refuse before deleting anything.
+                    if exists(&dir.as_path().join(".git"))? {
+                        return Err(failure);
+                    }
+                    notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message));
+                }
+            }
+        }
+        Ok((checkout, notes))
     }
 
     /// The worktrees of `team` that exist and its task directories that exist, each with its bytes. The sizes are read
