@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.74.0 — 23.11.2026 — PR pending
+## 0.74.0 — 23.11.2026 — PR #220
 
 ### New features
 - [agent] [agent-core] [agent-runtime] `agent remove <team> [--force]` removes a team's local work and takes it out of status. Before deletion, unmerged branches and detached commits are saved in `AGENTS_HOME/removed/<team>.bundle`, and open pull requests are closed with a reason; history, notifications and GitHub branches stay. `--force` first ends active work. The output names tracked uncommitted changes, the bundle, freed bytes and anything left behind, and a notification records the removal.
