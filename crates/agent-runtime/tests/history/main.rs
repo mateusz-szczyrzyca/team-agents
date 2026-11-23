@@ -35,6 +35,9 @@ mod writer;
 mod notes;
 
 #[cfg(test)]
+mod newest_runs;
+
+#[cfg(test)]
 mod redaction;
 
 #[cfg(test)]

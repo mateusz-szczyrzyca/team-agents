@@ -181,3 +181,23 @@ fn a_turn_limit_is_resumed_up_to_its_limit_and_then_starts_a_new_session() {
     assert_eq!(step(Role::Member, Trouble::TurnLimit, 4, true), LadderStep::NewSession);
     assert_eq!(step(Role::Worker, Trouble::TurnLimit, 4, true), LadderStep::GiveUp);
 }
+
+#[test]
+fn a_cut_by_the_daemon_going_down_is_stored_as_daemon_down() {
+    assert_eq!(serde_json::to_string(&Trouble::DaemonDown).unwrap(), "\"daemon_down\"");
+    assert_eq!(
+        serde_json::from_str::<Trouble>("\"daemon_down\"").unwrap(),
+        Trouble::DaemonDown
+    );
+}
+
+#[test]
+fn a_cut_by_the_daemon_is_not_a_bad_run_to_retry_in_the_same_session() {
+    for role in WORKING_ROLES {
+        assert_eq!(
+            step(role, Trouble::DaemonDown, 1, true),
+            LadderStep::NewSession,
+            "{role:?}"
+        );
+    }
+}

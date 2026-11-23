@@ -5,6 +5,20 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.77.0 — 23.11.2026 — PR #223
+
+### New features
+- [agent] [agent-core] **Action:** after a restart of the daemon, a run that was cut (the daemon stopped or crashed while it worked) goes on in a **new session** of the same agent, in the same worktree, whose first prompt is the briefing with the reason `daemon_down`: it lists the files the run left uncommitted, who worked on the task, the plan's steps as the harness judged them and your answers. The files stay in the worktree as they were, the round keeps its pull request and its review passes, and the cut counts as no retry. Set `[restart] session = "same"` in `agents.toml` to resume the old session as before.
+
+### Enhancements
+- [agent] [agent-core] A task started in a new session is briefed with more of what its earlier runs left: who worked on it and how each run ended (`DONE`, `QUESTIONS`, `no status`, `hang`, `turn limit`, `stopped`, `failed`, or cut before its end was recorded), the newest ten runs.
+- [agent] [agent-core] The steps of the plan in that briefing are grouped as confirmed (the check passed), declared (no check ran, or a reviewer decides), mismatch (the check failed) and not done, so the new session checks the declared steps and repairs the mismatched ones first.
+- [agent] [agent-core] The briefing lists the human's answers to the questions of the task with their verdicts, the newest ten, and says when older runs or answers are left out.
+- [agent] [agent-core] The briefing tells the new session to find the real state first (the commits, the uncommitted files, the gate) before it goes on.
+
+### Configuration
+- [agent-core] new: `[restart] session` (default `"new"`) — `"new"`: a run cut by a restart of the daemon goes on in a new session with a briefing; `"same"`: it resumes the session it was cut in, as before 0.77.0.
+
 ## 0.76.0 — 23.11.2026 — PR #222
 
 ### Enhancements

@@ -254,6 +254,17 @@ min_free_gb = 20
 [snapshot]
 warn_mb = 200
 
+# --- A restart of the daemon ---------------------------------------------------------------------------------------
+# A run that was going when the daemon stopped (or crashed) was cut from outside. `session` says where the same agent goes on:
+#   "new"    a new session, whose first prompt is a briefing of what the cut run left: its commits, the files it left
+#            uncommitted, its plan, who worked on the task before and your answers; no retry of the task is counted for it
+#   "same"   the session the run was cut in, resumed with a note that the harness restarted (how it was before 0.77.0)
+# A reviewer, a worker, a task whose round is closed and a task that is not queued always resume as before.
+#   session   "new" or "same" (default: "new")
+
+[restart]
+session = "new"
+
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
 # asked to merge the base into its branch, at most `conflict_passes` times per round; after that you are asked.

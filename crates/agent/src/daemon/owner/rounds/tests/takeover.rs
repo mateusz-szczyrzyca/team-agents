@@ -563,7 +563,12 @@ async fn a_stop_of_the_daemon_during_the_last_retry_still_tells_the_lead() {
         true,
     )
     .await;
-    configure(&rig, "[replacement]\nagents = [\"inv-lead\"]\n");
+    // The stop is the daemon's cut: by default it begins a free session and the member goes on. This test is about the
+    // ladder a stop climbs at the last retry, which it does when the run is resumed in its own session.
+    configure(
+        &rig,
+        "[replacement]\nagents = [\"inv-lead\"]\n\n[restart]\nsession = \"same\"\n",
+    );
     rig.start().await;
     let (_, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))

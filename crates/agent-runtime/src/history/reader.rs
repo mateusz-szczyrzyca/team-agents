@@ -6,7 +6,7 @@
 //! writer was in the middle of.
 
 use std::collections::{BTreeMap, HashMap};
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::Path;
 use std::str::FromStr;
 use std::time::Duration;
@@ -49,6 +49,15 @@ pub struct Stored<T> {
     pub value: T,
     /// The fields that were cut at the limit of text.
     pub cut: Cut,
+}
+
+/// The newest runs of a task and whether older ones were left out.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewestRuns {
+    /// The newest runs, oldest first.
+    pub runs: Vec<RunRow>,
+    /// Whether the task has runs older than those in [`NewestRuns::runs`].
+    pub left_out: bool,
 }
 
 /// A run with what was recorded about it.
@@ -427,6 +436,29 @@ impl Reader {
             task.as_str(),
         )?;
         read_runs(&snapshot, &ids)
+    }
+
+    /// The newest `limit` runs of `task`, oldest first, read without decoding the older ones.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn newest_runs_of_task(&self, task: &TaskId, limit: NonZeroUsize) -> Result<NewestRuns, ReadError> {
+        let snapshot = self.snapshot("runs")?;
+        // One more than the limit tells whether older runs exist; only the keys of the rows are read for it.
+        let wanted = limit.get().saturating_add(1);
+        let mut ids = keys(
+            &snapshot,
+            "runs",
+            &format!("SELECT run FROM runs WHERE task = ?1 ORDER BY at DESC, rowid DESC LIMIT {wanted}"),
+            task.as_str(),
+        )?;
+        let left_out = ids.len() > limit.get();
+        ids.truncate(limit.get());
+        ids.reverse();
+        Ok(NewestRuns {
+            runs: read_runs(&snapshot, &ids)?,
+            left_out,
+        })
     }
 
     /// The runs of `agent`, in every team, oldest first.

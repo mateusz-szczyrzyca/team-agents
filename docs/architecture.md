@@ -280,11 +280,29 @@ a solo agent, a coordinator or a member is started once in a new session of the 
 member, with its reason) is saved with the decision, so a restart before the new run keeps it; the run after it resumes
 no session. When that run starts, the daemon takes a snapshot of the worktree (recorded in the history) and the prompt is
 the briefing (`harness/run/briefing.md`): why the task is started anew, its whole prompt, the commits of its branch since
-the base, the uncommitted files, its plan of steps and the unread messages of its team (read from the last 4 MiB of
+the base, the uncommitted files, the runs of the task before it (agent and end, the newest 10), its plan of steps grouped
+as confirmed, declared, mismatch and not done (the judgements in the history), the human's answers to its questions
+(the newest 10 of the question files) and the unread messages of its team (read from the last 4 MiB of
 the bus's log and its cursors in at most 64 MiB of its state, `agentbus/unread.rs`; when only the newest are shown the
 briefing says so). Every word of it is in the catalog: the values are facts (the reason as the state records it, the
-plan's marks). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
+plan's marks, the end of each run). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
 reviewer are not started anew; when the new session goes bad too, the task fails as before.
+
+**A run cut by the daemon going down** (`daemon/recovery.rs` `recover_with` and `after_cut`, `Owner::interrupted`,
+`[restart] session`): a run that a stop or a crash of the daemon ended with no exit code is not resumed in its old
+session. Only the run the daemon itself ends is a cut by the daemon — a run that ended with no exit code on its own may
+have been killed by a signal: `recover` ends a run that was going when the daemon died, and the daemon's stop ends the
+runs it stops. At that point, for a solo agent, a coordinator or a member whose run worked for an open round,
+`State::begin_holder_session` records a new session with the reason `daemon_down` — a session boundary as for a
+hand-over, made before the no-status retries are counted, so the cut neither fails the task nor charges a retry or a new
+session of the agent, whether the daemon was stopped or crashed, and the round, its pull request and its passes are
+untouched. `snapshot_interrupted` snapshots the worktree, and the briefing of the task's next run names that snapshot.
+The record of a run says only "ended with no exit code" for a signal and for a cut alike, so the briefing tells the last
+run before a `daemon_down` session as cut by the daemon and every other such run as ended with no status; a run cut
+by an earlier stop is therefore told "no status" in a later briefing (the state and the history keep no mark for it). A
+worker, a reviewer, a task with no open round and a task that already awaits a new session resume as before, and so does
+every task when `[restart] session = "same"` (`resume-restart.md`): the stop then counts its cut among the retries and may
+climb the ladder. A task with no session id has none to leave: it is started in a new session, briefed, all the same.
 
 **The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,
 `replacements`): when the ladder has no step left, the daemon offers the task to the agents of `[replacement] agents`, in

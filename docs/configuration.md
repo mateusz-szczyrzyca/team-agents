@@ -56,6 +56,7 @@ Top-level key and tables:
 | `[history]` | table | `enabled = true`, `max_text_bytes = 1048576`, `keep_days = 0` | the history database (`history.db`) |
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
+| `[restart]` | table | `session = "new"` | the session a run that a restart of the daemon cut goes on in |
 | `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[publish]` | table | `tries = 3` | what happens when a branch cannot be published to GitHub |
 | `[web]` | table | loopback, nobody let in | the dashboard |
@@ -227,6 +228,23 @@ deciding and retains its corrections and human question across restarts. The
 `part_limit` and `corrections` are nonnegative integers through `4294967295`. Missing tables or keys use the defaults; unknown keys,
 negative values, fractional values and strings are rejected. Scope changes always require human approval once
 the proposal satisfies the structural checks. Acceptance criteria are required for every kind of deliverable.
+
+### `[restart]`
+
+A run that was going when the daemon stopped, or crashed, was cut from outside: nothing the agent did caused it. When the
+daemon starts again, the same agent goes on in the same worktree and on the same branch, and `session` says in which
+session.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `session` | `"new"` | `"new"`: a new session of the same agent, whose first prompt is the briefing of the task with the reason `daemon_down` — its commits, the files it left uncommitted (a snapshot of the worktree is taken first; the files stay in the worktree as they were), its plan with the steps as the harness judged them, who worked on the task before, and your answers. No retry of the task and no new session of `[replacement] new_sessions` is counted for a cut the daemon caused, and the round keeps its pull request and its review passes. `"same"`: the session the run was cut in is resumed with the note that the harness restarted, as before 0.77.0; a new session costs the reading of the task again, which is why the key exists |
+
+A new session is started for a solo agent, a coordinator and a member whose task is queued and whose run worked for a round
+that is still open. A task that keeps no session id (a CLI that reports its session only when it ends) is started in a new
+session too. A reviewer keeps its findings file only, a worker its request: a cut review or request starts again as
+before, whatever `session` says. So does a task whose round is closed (a state written by an older version): nothing is
+briefed from a snapshot it has none of. The restart is logged as `decision_taken` with `decision` `restart`, and
+`agent status` says `in a new session` on the task's line.
 
 ### `[replacement]`
 

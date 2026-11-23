@@ -43,6 +43,10 @@ mod harness_lead_briefing {
                 "refs/agents/snapshots/round-20261121-101400-a1b2/task-20261121-101500-k2m4/1",
             ),
             ("plan", "- [x] 1 Read the code\n- [>] 2 Write the parser"),
+            ("runs", "- 2026-11-21 10:14 claude-1: no status"),
+            ("runs_left_out", ""),
+            ("answers", "- Question 1, Which parser?: ok"),
+            ("answers_left_out", ""),
             ("left_out", ""),
             ("messages", "- #12 inv-opus:\n  Look at the cache first."),
         ]

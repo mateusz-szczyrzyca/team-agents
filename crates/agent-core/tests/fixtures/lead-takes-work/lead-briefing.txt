@@ -1,7 +1,15 @@
 ## What the member's runs left
 
 The harness recorded why its last runs went bad as `no_status`: `no_status` — they ended without a `STATUS:` line;
-`hang` — they showed no activity until the watchdog stopped them; `turn_limit` — they used up their turn budget.
+`hang` — they showed no activity until the watchdog stopped them; `turn_limit` — they used up their turn budget;
+`daemon_down` — the daemon went down while they were going: they were cut from outside, not by the agent's fault.
+
+The runs of the member's work, oldest first, each with the agent that ran it and how it ended (none when the list is
+empty):
+
+
+
+- 2026-11-21 10:14 claude-1: no status
 
 The work of task task-20261121-101500-k2m4 is on branch agents/claude-1/task-20261121-101500-k2m4-1.1, forked from main. Its commits since then, oldest first (none when
 the list is empty):
@@ -15,11 +23,20 @@ differ from the last commit there (none when the list is empty) — they are on 
 - notes/żółw.md
 
 The steps of the member's `.agent/plan.md` as its runs left them — `[ ]` to do, `[>]` in hand, `[x]` done, `[-]` given
-up. They are what the member declared, not evidence: check them. An empty list: the task keeps no plan, or it does not
-read.
+up. They are grouped: `Confirmed` — the harness ran the step's check and it passed; `Declared` — the member marked the step
+done and no check ran, or it waits for a reviewer; `Mismatch` — the member marked the step done and its check failed;
+`Not done` — `[ ]` to do, `[>]` in hand, `[-]` given up. Declared steps are what the member says, not evidence: check
+them, and repair the mismatched ones first. An empty list: the task keeps no plan, or it does not read.
 
 - [x] 1 Read the code
 - [>] 2 Write the parser
+
+The human's answers to the questions of the task, oldest first, each with its verdict: `ok` accepts the recommendation,
+any other text is the human's own answer (none when the list is empty):
+
+
+
+- Question 1, Which parser?: ok
 
 The messages to the member that no run of it read, oldest first (none when the list is empty).
 

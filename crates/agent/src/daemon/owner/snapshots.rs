@@ -70,7 +70,14 @@ impl Owner {
                 .instrument(span.clone())
                 .await
             {
-                Ok(record) => self.history.record(Record::Snapshot(Box::new(record))),
+                Ok(record) => {
+                    let reference = format!(
+                        "refs/agents/snapshots/{}/{}/{}",
+                        target.round, target.task, record.number
+                    );
+                    self.cut_snapshots.insert(target.task.clone(), reference);
+                    self.history.record(Record::Snapshot(Box::new(record)));
+                }
                 Err(error) => {
                     let _entered = span.enter();
                     tracing::warn!(

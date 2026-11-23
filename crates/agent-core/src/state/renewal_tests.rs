@@ -274,3 +274,21 @@ fn a_renewal_before_the_last_run_started_is_refused_with_the_task_and_its_cause(
     let found = state.find_task(&task()).expect("the task");
     assert_eq!(found.member.renewals(), None, "nothing is recorded");
 }
+
+#[test]
+fn a_new_session_after_the_daemon_went_down_counts_no_renewal_and_survives_a_restart() {
+    let mut state = old_state();
+    state
+        .begin_holder_session(&task(), Trouble::DaemonDown, started())
+        .expect("a task that ran may begin a session");
+    let saved = state.to_json().expect("the state saves");
+
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    let member = loaded.find_task(&task()).expect("the task").member;
+    let renewals = member.renewals().expect("the new session was recorded");
+    assert_eq!(renewals.reason(), Trouble::DaemonDown);
+    assert_eq!(renewals.used(), 0, "the cut was the daemon's, not the task's");
+    assert!(member.awaits_new_session());
+    assert_eq!(member.last_session(), None, "no session before the cut is resumed");
+}
