@@ -546,7 +546,10 @@ after two hours without a run or new commit. It uses the same bundle, cleanup an
 rate-limit reset waits, and accepted claims waiting for another team's pull request to merge protect the team.
 Work queued for an agent, including provider retries and rounds awaiting a free investigator, also protects the team.
 An unanswered question does not protect it. This release removes idle teams **without starting replacements**;
-the approved next part adds restart. `[limits] idle_team_restarts = 1` is reserved and has no effect yet.
+`[limits] idle_team_restarts = 1` is reserved and has no effect yet. Version 0.76.0 supplies the internal
+recovery foundation: saved replacement identities, restart accounting and preserved merged progress. The daemon
+does not call it yet; automatic replacement will be activated by a separate task. See the
+[recovery state contract](docs/state.md#recovery-foundation).
 
 **Action:** set `[limits] idle_team_minutes = 0` before restarting the daemon if you want the old behavior.
 Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
