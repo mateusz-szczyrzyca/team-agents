@@ -4,6 +4,9 @@
 //! kept — the queue is full, the database cannot be written or opened — it is counted as lost, and the cause is reported
 //! once. One thread writes, a record or a batch of the queue per transaction.
 
+mod persist;
+pub use persist::PersistLogError;
+
 use std::collections::{BTreeSet, HashMap};
 use std::fmt;
 use std::future::Future;
