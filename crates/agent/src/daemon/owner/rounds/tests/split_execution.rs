@@ -1105,7 +1105,7 @@ async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead
         &[
             investigator(
                 "inv-lead",
-                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,clean-done:DELIVERED: #3,sleep",
+                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,clean-held-done:DELIVERED: #3,sleep",
             ),
             normal("claude-1", "clean-done:already delivered,sleep"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
@@ -1195,6 +1195,10 @@ async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead
             }
     })
     .await;
+
+    // The open round is transient once the already-merged PR is delivered. Let the lead finish only after the
+    // saved open state above has been observed, so a delayed poll cannot miss it.
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-release-4"), "").unwrap();
 
     // Team finishes after part c delivered by lead:
     let state = rig

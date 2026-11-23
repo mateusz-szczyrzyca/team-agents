@@ -56,6 +56,7 @@
 #   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
 #   clean-sleep     hides own files and ends with STATUS: SLEEPING without changing the worktree
 #   clean-done:TEXT hides own files and ends with TEXT and STATUS: DONE without changing the worktree
+#   clean-held-done:TEXT does the same after the test creates .fake-release-N for this run
 #   split-line:L@S  ends with the line `SPLIT: L` and `STATUS: S` (and, for QUESTIONS, writes questions-1.md in this task's
 #                   directory): a coordinator whose submission the harness may refuse, with the status it ends with
 #   deaf-ACTION     does ACTION without reading its messages first, like an agent that ignores the wake-up text
@@ -532,6 +533,15 @@ case $action in
   clean-done:*)
     hide_own_files
     result "${action#clean-done:}"'\nSTATUS: DONE'
+    ;;
+  clean-held-done:*)
+    hide_own_files
+    for _ in $(seq 1 3600); do
+      [[ -f ".fake-release-$n" ]] && break
+      sleep 0.05
+    done
+    [[ -f ".fake-release-$n" ]] || { echo "the test never released delivery run $n" >&2; exit 65; }
+    result "${action#clean-held-done:}"'\nSTATUS: DONE'
     ;;
   return:*)
     spec=${action#return:}
