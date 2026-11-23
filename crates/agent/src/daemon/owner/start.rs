@@ -37,7 +37,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::briefing::{BriefingDraft, LastMessage};
+use super::briefing::{BriefingDraft, LastMessage, MessageSource};
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -254,16 +254,15 @@ fn with_last_message(
     let Some(message) = last_message else {
         return Ok(prompt);
     };
-    let heading = if message.whole {
-        HarnessPrompt::BriefingLastMessage
-    } else {
-        HarnessPrompt::BriefingLastMessageHistory
+    let (heading, cut_at) = match message.source {
+        MessageSource::Outcome => (HarnessPrompt::BriefingLastMessage, None),
+        MessageSource::History { cut_at } => (HarnessPrompt::BriefingLastMessageHistory, cut_at),
     };
     let mut text = format!(
         "{prompt}\n\n{}",
         super::briefing::last_message_paragraph(ctx.texts, heading, &message.text)?
     );
-    if let Some(limit) = message.cut_at {
+    if let Some(limit) = cut_at {
         text.push_str("\n\n");
         text.push_str(&super::briefing::message_cut_paragraph(ctx.texts, limit)?);
     }

@@ -59,10 +59,20 @@ pub(super) fn unknown_size_paragraph(texts: &HarnessPrompts) -> Result<String, C
 pub(super) struct LastMessage {
     /// The message's text.
     pub(super) text: String,
-    /// Whether the outcome file kept the message whole; a message read from the history is not said to be whole.
-    pub(super) whole: bool,
-    /// The limit in bytes the history cut the text at, when it did: the message is then not whole.
-    pub(super) cut_at: Option<u32>,
+    /// Where the text was read from, which says whether it is whole.
+    pub(super) source: MessageSource,
+}
+
+/// Where the last message of a run was read from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MessageSource {
+    /// The run's outcome file: the message is whole.
+    Outcome,
+    /// The history, which cuts a text at its limit: `cut_at` is that limit in bytes when the history cut the message.
+    History {
+        /// The limit in bytes, when the history cut the message.
+        cut_at: Option<u32>,
+    },
 }
 
 impl LastMessage {
@@ -70,8 +80,7 @@ impl LastMessage {
     fn whole(text: String) -> Self {
         Self {
             text,
-            whole: true,
-            cut_at: None,
+            source: MessageSource::Outcome,
         }
     }
 }
@@ -389,10 +398,10 @@ impl Owner {
         match read {
             Ok(newest) => Ok(newest.runs.last().and_then(|row| row.end.as_ref()).and_then(|end| {
                 let text = end.value.final_message.clone()?;
+                let cut_at = end.cut.has("final_message").then_some(limit);
                 Some(LastMessage {
                     text,
-                    whole: false,
-                    cut_at: end.cut.has("final_message").then_some(limit),
+                    source: MessageSource::History { cut_at },
                 })
             })),
             Err(ReadError::Empty { .. }) => Ok(None),
