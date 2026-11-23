@@ -5,6 +5,8 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod idle;
+pub use idle::IdleMinutes;
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;
@@ -404,6 +406,10 @@ impl Default for Watchdog {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
 pub struct Limits {
+    /// Idle time before a team is removed; zero disables automatic removal.
+    pub idle_team_minutes: IdleMinutes,
+    /// Replacement budget reserved for automatic team restart support.
+    pub idle_team_restarts: u32,
     /// Maximum turns of a single CLI invocation; must be positive.
     pub max_turns: NonZeroU32,
     /// Automatic continuations after consecutive turn-limit endings; zero disables them.
@@ -427,6 +433,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
+            idle_team_minutes: IdleMinutes::from(0),
+            idle_team_restarts: 0,
             max_turns: DEFAULT_MAX_TURNS,
             turn_limit_resumes: DEFAULT_TURN_LIMIT_RESUMES,
             quota_pause_minutes: Minutes::literal(DEFAULT_QUOTA_PAUSE_MINUTES),
