@@ -1,4 +1,4 @@
--- Version 21: a run's context size, output tokens and cost as its stream told them, kept in `run_usage` outside the
+-- Version 22: a run's context size, output tokens and cost as its stream told them, kept in `run_usage` outside the
 -- ledger, like judgements. A history made before has no row for its runs: they read as "not told".
 PRAGMA defer_foreign_keys = ON;
 CREATE TABLE run_usage (

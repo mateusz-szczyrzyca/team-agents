@@ -684,6 +684,7 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
         session: None,
         final_message: None,
         progress: Progress::Made,
+        used_tool: true,
     };
 
     owner.finished(&task(1), run).await.unwrap();
@@ -691,4 +692,616 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
     assert_eq!(last_end(&owner.parts.state, 1), RunEnd::Stopped);
     assert_eq!(status(&owner.parts.state, 1), TaskStatus::Stopped);
     assert!(owner.reasons.is_empty());
+}
+
+/// A run that reported `STATUS: FAILED` without calling a tool step — the opposite value of the used-tool initializer,
+/// `false` — is retried once in a new session at the owner boundary: the task is queued, nobody is told, and the
+/// renewal marks the run that follows as already retried.
+#[tokio::test]
+async fn a_run_that_reported_failed_without_a_tool_is_retried() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    let run = FinishedRun {
+        classified: Classified {
+            end: RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            pause: None,
+        },
+        finish: RunFinish {
+            exit: ExitStatus::Code(0),
+            stopped_by: StoppedBy::Nobody,
+        },
+        session: None,
+        final_message: None,
+        progress: Progress::Made,
+        used_tool: false,
+    };
+
+    owner.finished(&task(1), run).await.unwrap();
+
+    assert_eq!(status(&owner.parts.state, 1), TaskStatus::Queued);
+    assert!(owner.reasons.is_empty(), "a retry tells nobody: {:?}", owner.reasons);
+    let renewals = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .renewals()
+        .unwrap();
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
+/// A failure that did not report `STATUS: FAILED` is never retried at the owner boundary, even when the run called no
+/// tool on a fresh, not-yet-retried session: the decision gets the run's real end, not a fabricated one.
+#[tokio::test]
+async fn a_failure_that_did_not_report_failed_is_not_retried() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::NoStatus { exit_code: Some(1) },
+            false,
+            crate::fixtures::at(0),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert!(told.is_some(), "the human is told of a real failure");
+}
+
+/// A second run that reported `STATUS: FAILED` without calling a tool — the task was already retried once for a no-tool
+/// failure — fails the task with the diagnostic that names the no-tool runs, not the generic failure notice.
+#[tokio::test]
+async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_reason() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    // run 1 reported FAILED without a tool: the task was started anew once, its one retry.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // The retried run 2 began and reported FAILED without a tool: it is the immediate run of the renewal, the one this
+    // settle ends.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(4),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert!(
+        matches!(told.as_ref(), Some(Notice::FailedNoTool { .. })),
+        "the human is told the no-tool reason, not a generic failure: {told:?}"
+    );
+}
+
+/// A later independent new session of the task — begun for another trouble after the one no-tool retry was used — has
+/// the retry again: the durable marker is the reason of the last renewal, so the first failed run without a tool of
+/// that new session is retried once, as the brief requires, and the renewal of that retry marks it again.
+#[tokio::test]
+async fn a_first_no_tool_failure_of_a_later_independent_session_is_retried_once() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    // run 1 reported FAILED without a tool: the task is started anew once, its one retry.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // run 2, the retried run, ends hung; the ladder starts the task anew for the hang.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    member.end_run(crate::fixtures::at(4), RunEnd::Hung).unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::Hang,
+            crate::fixtures::at(5),
+        )
+        .unwrap();
+    // run 3, the first run of that independent new session, reported FAILED without a tool: it is retried once.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(crate::fixtures::run(3), crate::fixtures::at(6), None)
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(7),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(7),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Queued);
+    assert!(told.is_none(), "a retry tells nobody: {told:?}");
+    // The renewal of the retry is the marker now: the run that follows it cannot be retried again.
+    let renewals = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .renewals()
+        .unwrap();
+    assert_eq!(renewals.used(), 3);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
+/// A second failed run without a tool is named on the status line only when its notice is a reported failure: a notice
+/// that is not the end of a `STATUS: FAILED` run is told as itself, never as an empty no-tool reason.
+#[tokio::test]
+async fn a_notice_that_is_not_failed_is_told_as_itself_when_the_no_tool_retry_was_used() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    // run 1 reported FAILED without a tool: the task was started anew once, its one retry.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // The retried run 2 began and reported FAILED without a tool: it is the immediate run of the renewal, the one this
+    // settle ends.
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::NoStatus { exit: Some(1) };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(4),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert_eq!(
+        told.as_ref(),
+        Some(&Notice::NoStatus { exit: Some(1) }),
+        "a notice that is not a reported failure is told as itself: {told:?}"
+    );
+}
+
+/// A later no-tool FAILED — while the durable marker of the exhausted retry survives — is not the retry: a run that
+/// succeeded in between ended the retry's session, so the task fails plainly and the human is told the failure, not
+/// the no-tool reason.
+#[tokio::test]
+async fn a_no_tool_failure_after_a_successful_retry_fails_plainly() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    // run 1 reported FAILED without a tool: the task is started anew once, its one retry.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // run 2, the retried run, succeeded: the session of the retry is over.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(crate::fixtures::run(2), crate::fixtures::at(3), None)
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    // run 3, later, reported FAILED without a tool while the durable marker of the old retry survives.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(crate::fixtures::run(3), crate::fixtures::at(5), None)
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(6),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(6),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert!(
+        matches!(told.as_ref(), Some(Notice::Failed { .. })),
+        "a run that is not the retry is told plainly, not as the no-tool reason: {told:?}"
+    );
+}
+
+/// A first no-tool FAILED of a later independent session — begun after the retried run succeeded — is retried once
+/// again: the durable marker bounds the run it renewed, not every later first run of a later session. run 1 (session
+/// A) FAILED without a tool and was retried; run 2 (session B), the retried run, succeeded; run 3, the first run of
+/// session C, FAILED without a tool: it is sent to a new session, not told as an exhausted retry.
+#[tokio::test]
+async fn a_first_no_tool_failure_of_a_later_independent_session_after_a_successful_retry_is_retried() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    // run 1 (session A) reported FAILED without a tool: the task is started anew once, its one retry.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(
+            crate::fixtures::run(1),
+            crate::fixtures::at(0),
+            Some("ses-a".parse().unwrap()),
+        )
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(1),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    // run 2 (session B), the retried run, succeeded.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(
+            crate::fixtures::run(2),
+            crate::fixtures::at(3),
+            Some("ses-b".parse().unwrap()),
+        )
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(4),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    // run 3, the first run of independent session C, reported FAILED without a tool.
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(
+            crate::fixtures::run(3),
+            crate::fixtures::at(5),
+            Some("ses-c".parse().unwrap()),
+        )
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(6),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(6),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Queued);
+    assert!(told.is_none(), "a retry tells nobody: {told:?}");
+    // The renewal of the retry is the marker now: the run that follows it cannot be retried again.
+    let renewals = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .renewals()
+        .unwrap();
+    assert_eq!(renewals.used(), 2);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
+/// The same retry of a later independent session survives a restart of the daemon: the durable marker is read back
+/// from the state, and the first no-tool FAILED of a session begun after the retried run succeeded is retried once.
+#[tokio::test]
+async fn the_retry_of_a_later_independent_session_survives_a_restart() {
+    use crate::daemon::notice::Notice;
+
+    // The state the daemon wrote before a restart: run 1 (session A) FAILED without a tool, the task was renewed once
+    // for it, and run 2 (session B), the retried run, succeeded.
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(
+                crate::fixtures::run(1),
+                crate::fixtures::at(0),
+                Some("ses-a".parse().unwrap()),
+            )
+            .unwrap();
+        member
+            .end_run(
+                crate::fixtures::at(1),
+                RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Failed,
+                },
+            )
+            .unwrap();
+    }
+    state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(2),
+        )
+        .unwrap();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member
+            .begin_run(
+                crate::fixtures::run(2),
+                crate::fixtures::at(3),
+                Some("ses-b".parse().unwrap()),
+            )
+            .unwrap();
+        member
+            .end_run(
+                crate::fixtures::at(4),
+                RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                },
+            )
+            .unwrap();
+    }
+    // A fresh daemon reads that state, as after a restart: run 3, the first run of independent session C, FAILED
+    // without a tool.
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let mut member = owner.member_mut(&task(1)).unwrap().1;
+    member
+        .begin_run(
+            crate::fixtures::run(3),
+            crate::fixtures::at(5),
+            Some("ses-c".parse().unwrap()),
+        )
+        .unwrap();
+    member
+        .end_run(
+            crate::fixtures::at(6),
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(6),
+            notice,
+        )
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Queued);
+    assert!(told.is_none(), "a retry tells nobody: {told:?}");
 }

@@ -2534,7 +2534,7 @@ async fn split_part_queued_corrective_lead_waits_for_completion() {
 #[tokio::test]
 async fn split_part_idle_lead_with_current_run_waits_for_completion() {
     let fixture = include_str!("../../../../../../agent-core/tests/fixtures/state-before-conflict-accounting.json");
-    let mut state: agent_core::state::State = serde_json::from_str(fixture).unwrap();
+    let mut state: agent_core::state::State = agent_core::state::State::from_json(fixture).unwrap();
     let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
     let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
 

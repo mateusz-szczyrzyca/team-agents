@@ -56,7 +56,7 @@ const SIGNALLED_HOME: &str = "AGENT_TEST_SIGNALLED_DAEMON_HOME";
 const SPAWNED_PANIC_DB: &str = "AGENT_TEST_SPAWNED_PANIC_DB";
 
 /// Reviewers of which the first to run fails and every later run approves.
-const FAILS_FIRST: &str = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
+const FAILS_FIRST: &str = "fail-first-tool:VERDICT: APPROVE\\nSUMMARY: fine";
 
 /// Reviewers that never give a verdict.
 const SILENT: &str = "sleep";

@@ -29,6 +29,9 @@ pub enum Trouble {
     Hang,
     /// The run exhausted its turn budget.
     TurnLimit,
+    /// The run reported `STATUS: FAILED` without calling any tool step: the CLI did not offer, or the run did not use,
+    /// the tools of the bus.
+    NoToolCall,
     /// The task waited too long for its agent, which was busy in another task: a free agent took it over. No run went bad.
     Busy,
     /// The daemon went down while the run was going: the run was cut from outside, and no run went bad.
@@ -76,8 +79,8 @@ pub fn next_step(
         // `after_hang` reads only whether there is a session to resume; the one a task has is the one it resumes.
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
-        // A busy agent's wait and a cut by the daemon's own stop are not bad runs: the ladder has no rung for them.
-        Trouble::Busy | Trouble::DaemonDown => false,
+        // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
+        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown => false,
     };
     if retried {
         return LadderStep::SameSession;

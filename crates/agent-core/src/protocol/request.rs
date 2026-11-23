@@ -438,6 +438,7 @@ impl Request {
             super::ReplyFormat::Plan => super::encode_plan(self),
             super::ReplyFormat::Executor => super::encode_executor(self),
             super::ReplyFormat::Versions => super::encode_versions(self),
+            super::ReplyFormat::FailedReason => super::encode_failed_reason(self),
         }
     }
 

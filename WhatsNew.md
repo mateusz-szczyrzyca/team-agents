@@ -5,6 +5,22 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.79.0 — 23.11.2026 — PR #224
+
+### New features
+- [agent] [agent-core] A task that fails twice at startup without calling a tool shows the reason in `agent status`; the human notice names the agent, CLI and model and advises checking its configuration before giving it more work.
+
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] A first run that reports failure without calling a tool is retried once in a new session, for every role, including after a CLI change. The retry remains bounded after a daemon restart.
+- [agent] Every failed team member tells and wakes its coordinator, with its actual run ending, item and last words when available, so the coordinator can wait for the human or take over when its role permits it.
+
+### Enhancements
+- [agent-core] **Action:** state schema 15 preserves earlier tasks and runs while recording tool use and startup failure reasons. Keep a backup before upgrading if you need to downgrade.
+- [agent] [agent-core] [agent-runtime] **Action:** history schema 21 preserves existing events, round links, search and cursors while adding `run_no_tool_retry` at info and `run_no_tool_failed` at warn, with the task, agent, CLI and model. Keep a history backup if you need to downgrade.
+
+### Configuration
+- [agent-core] changed: `[replacement] new_sessions` (default `1`) — the startup retry always runs, even at `0`, and consumes one session of this shared recovery budget; at the default, a later hang or missing status gets no further recovery session.
+
 ## 0.78.0 — 23.11.2026 — PR #225
 
 ### Enhancements

@@ -355,3 +355,31 @@ async fn a_member_without_a_status_on_an_item_is_a_member_no_status_notice_with_
         "{text}"
     );
 }
+
+#[tokio::test]
+async fn failed_member_notices_give_role_limited_recovery_guidance() {
+    let texts = texts().await;
+    let cases = [
+        (
+            BusNotice::MemberFailed {
+                member: agent("claude-1"),
+                message: "I could not do it.".to_owned(),
+            },
+            include_str!("fixtures/member-failed.txt"),
+        ),
+        (
+            BusNotice::MemberFailedItem {
+                member: agent("claude-1"),
+                message: "I could not do it.".to_owned(),
+                item: "1.1".parse().unwrap(),
+                branch: "agents/claude-1/task-x-1.1".parse().unwrap(),
+            },
+            include_str!("fixtures/member-failed-item.txt"),
+        ),
+    ];
+    for (event, expected) in cases {
+        let (kind, _, text) = notice(render_notice(&texts, &event).unwrap());
+        assert_eq!(kind, NoticeKind::MemberFailed);
+        assert_eq!(text, expected);
+    }
+}

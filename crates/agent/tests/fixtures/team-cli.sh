@@ -8,10 +8,14 @@
 #   sleep           ends with STATUS: SLEEPING
 #   bus-sleep       reads its messages as the `--agent` its MCP configuration names, then ends with STATUS: SLEEPING
 #   fail            ends with STATUS: FAILED
+#   changed-session-fail  as a run whose CLI changed mid-task: reports a changed session identity and ends with
+#                   STATUS: FAILED without calling a tool, as the first run of the changed CLI that cannot work
 #   nostatus        ends without a STATUS line
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   fail-first:TEXT  the first task of the home to run this action ends with STATUS: FAILED; every other one ends with
 #                   TEXT, a line break and STATUS: DONE: of two reviewers, exactly one cannot work
+#   fail-first-tool:TEXT  like fail-first, and the run that fails records a tool call (a streamed bus tool_use line)
+#                   before it ends: of two reviewers, exactly one fails after real work, so nobody is retried for it
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
@@ -170,13 +174,15 @@ hide_own_files() {
 # Records that the repository's gate passed on a clean tree at the head, where the daemon looks for it: the task is the
 # name of the worktree's directory.
 record_gate() {
-  local task head dir
+  local task head dir temporary
   task=$(basename "$PWD")
   head=$(git rev-parse HEAD)
   dir="$home/tasks/$task"
   mkdir -p "$dir"
+  temporary=$(mktemp "$dir/.gate.XXXXXXXXXX")
   printf '{"tree":"clean","result":{"head":"%s","finished_at":"2026-11-13T10:00:00Z","outcome":{"kind":"passed"},"log":"%s/gate-1.log"}}\n' \
-    "$head" "$dir" > "$dir/gate.json"
+    "$head" "$dir" > "$temporary"
+  mv -- "$temporary" "$dir/gate.json"
 }
 
 # Keeps the stand-in's own files out of git's sight, says that the run has committed and waits for the test to say that the
@@ -236,6 +242,11 @@ fi
 init
 read_messages
 case $action in
+  opencode-startup)
+    # OpenCode's first launch after the configuration switch fails without tools; the next session works.
+    if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: %s"}}\n' "$n" "$status"
+    ;;
   proposal:*)
     task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
     cp "$home/fake-proposals/${action#proposal:}.json" "$home/tasks/$task/split-proposal-1.1.json"
@@ -522,6 +533,12 @@ case $action in
     result 'Nothing to do now.\nSTATUS: SLEEPING'
     ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
+  changed-session-fail)
+    # A CLI change: the run reports a changed session identity (its result names a different `session_id` than the one it
+    # was launched with) and ends with STATUS: FAILED without calling a tool, as the first run of the changed CLI.
+    session="changed-session"
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
   nostatus) result 'I think that is all.' ;;
   nostatus-dirty)
     # Leaves a file it did not commit and ends without a status, as a session that went bad in the middle of its work.
@@ -543,6 +560,16 @@ case $action in
       result 'I could not do it.\nSTATUS: FAILED'
     else
       result "${action#fail-first:}"'\nSTATUS: DONE'
+    fi
+    ;;
+  fail-first-tool:*)
+    # Like fail-first, and the run that fails records a tool call (one streamed tool_use line of the bus) before it ends:
+    # the harness counts the run as one that used a tool, so a task that fails this way is not retried for "no tool call".
+    if (set -o noclobber; > "$home/.fake-first-failed") 2> /dev/null; then
+      printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+      result 'I could not do it.\nSTATUS: FAILED'
+    else
+      result "${action#fail-first-tool:}"'\nSTATUS: DONE'
     fi
     ;;
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;

@@ -8,7 +8,7 @@ fn schema_13_before_part_rounds_keeps_its_complete_saved_document() {
     let state = State::from_json(text).unwrap();
     assert_eq!(
         state.to_json().unwrap(),
-        text.replacen("\"schema_version\": 13", "\"schema_version\": 14", 1)
+        text.replacen("\"schema_version\": 13", "\"schema_version\": 15", 1)
     );
     assert!(state.teams().iter().all(|team| team.splits().is_empty()));
     assert!(

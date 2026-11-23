@@ -847,3 +847,9 @@ History version 20 admits the `team_removed` information event. Its migration (`
 preserves the existing logs, their links, search entries and cursors. The version-19 fixture
 `crates/agent-runtime/tests/fixtures/history-before-team-removal.sql` verifies upgrading a history with an existing log.
 Removing a team leaves its history available after its live state and local files have been removed.
+
+History version 21 admits the `run_no_tool_retry` information event and the `run_no_tool_failed` warning. Its forward
+migration (`021-no-tool-events.sql`) preserves existing daemon logs, round links, search text and the log cursor.
+The populated version-20 fixture `crates/agent-runtime/tests/fixtures/history-before-no-tool-events.sql` and its
+upgrade regression verify that old events remain readable alongside the new ones. Back up the history before
+upgrading if you need to return to an older daemon: older versions refuse a history newer than their supported schema.

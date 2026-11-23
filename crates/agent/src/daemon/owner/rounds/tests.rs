@@ -280,7 +280,7 @@ async fn a_lead_whose_gate_never_passes_is_sent_back_three_times_and_then_the_hu
 // ---- a reviewer that cannot work ---------------------------------------------------------------------------------
 
 /// One of two reviewers that run it fails; the others approve.
-const ONE_FAILS: &str = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
+const ONE_FAILS: &str = "fail-first-tool:VERDICT: APPROVE\\nSUMMARY: fine";
 
 // Rule: a reviewer whose task failed is replaced by another free investigator, and the pass is decided by the reviews
 // of those that worked.
@@ -778,7 +778,7 @@ async fn lead_done_blocked_notice_dedup_resume_member_with_status_then_pr() {
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "sleep,done,integrate"),
-            normal("claude-1", "fail,work"),
+            normal("claude-1", "fail-first-tool:member failed,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -987,6 +987,10 @@ use super::rig::CHAIN;
 /// The reviewers that approve whatever they are asked to review.
 const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 
+/// A reviewer whose first run reports FAILED without calling a tool, and whose retried run approves: the review thus
+/// counts from the second run, and the reviewer is not failed nor replaced.
+const FAILS_THEN_APPROVES: &str = "fail,done:VERDICT: APPROVE\\nSUMMARY: fine";
+
 /// A rig with a solo agent that does two items one after the other and two reviewers that approve both.
 async fn approving_rig() -> Rig {
     Rig::new(
@@ -1060,6 +1064,58 @@ async fn two_approving_reviews_merge_the_pull_request_through_the_api_at_the_hea
         .collect();
     assert_eq!(reviewers.len(), 2);
     assert_eq!(rig.github.reviews(1).len(), 2);
+}
+
+// Rule: a run of a reviewer that reported FAILED without calling a tool is retried once too: the reviewer keeps its
+// place, approves from its retried run, and the merge happens on the two reviews.
+#[tokio::test]
+async fn a_reviewer_run_that_failed_without_a_tool_is_retried_once_and_still_approves() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", FAILS_THEN_APPROVES),
+            investigator("inv-r2", FAILS_THEN_APPROVES),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let ItemPhase::Done { completion } = phase_of(&state, "1.1") else {
+        panic!("item 1.1 is not done");
+    };
+    let Completion::Merged { .. } = completion else {
+        panic!("item 1.1 was not merged");
+    };
+    let reviews = rig.github.reviews(1);
+    assert_eq!(reviews.len(), 2, "{reviews:?}");
+    for review in &reviews {
+        assert_eq!(review["event"], "COMMENT");
+        assert!(review["body"].as_str().unwrap().contains("APPROVED"), "{review}");
+    }
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        1
+    );
+    let reviewers = state.team(&team).unwrap().reviewers();
+    assert_eq!(reviewers.len(), 2, "{reviewers:?}");
+    for member in reviewers {
+        assert_ne!(member.status(), TaskStatus::Failed, "{member:?}");
+        let task = member.task();
+        assert_eq!(rig.kept_runs(task), 2, "the reviewer was retried once: {member:?}");
+        let second = rig.kept_prompt(task, 2);
+        assert!(
+            second.contains("did not offer or did not use the tools of the bus"),
+            "{second}"
+        );
+    }
 }
 
 #[tokio::test]

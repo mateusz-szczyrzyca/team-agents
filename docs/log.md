@@ -311,6 +311,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 |---|---|---|
 | `cli_output_unreadable` | `warn` | A line of a model CLI's output cannot be read as its event format. |
 | `run_ended_without_status` | `warn` | A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails. |
+| `run_no_tool_retry` | `info` | The first failed run of a session called no tool and is retried once in a new session (`task`, `agent`, `cli`, `model`). |
+| `run_no_tool_failed` | `warn` | The retry also failed without a tool call; check this agent's CLI and model configuration before giving it more work (`task`, `agent`, `cli`, `model`). |
 | `run_hung` | `warn` | The hang watchdog stops a silent run, or process cleanup cannot kill or reap a process so that its end is known. |
 | `run_quota_exhausted` | `warn` | A run stops because its model quota is exhausted. |
 | `run_rate_limited` | `warn` | A run stops because of a rate limit. |
@@ -364,3 +366,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers
 queue the lead with the human's instructions while the item stays blocked on its required capability.
+
+The no-tool events above require history schema 21. Opening a version-20 history migrates it forward, preserving
+existing events, round links, search entries and the log cursor. Older daemons refuse the newer history; retain a
+backup before upgrading if a downgrade is needed. The event names and levels are stable monitoring interfaces.

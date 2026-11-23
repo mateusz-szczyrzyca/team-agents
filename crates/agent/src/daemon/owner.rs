@@ -39,6 +39,7 @@ use std::time::Duration;
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
+use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
@@ -463,6 +464,11 @@ struct Ended<'a> {
     settled: Settled,
     /// Whether the run did anything before it ended.
     progress: Progress,
+    /// The run's end, as the classifier reported it: the decision after a `STATUS: FAILED` needs the real end, never a
+    /// fabricated one.
+    end: RunEnd,
+    /// Whether the run recorded a step that calls a tool.
+    used_tool: bool,
 }
 
 /// How a questions file went.
@@ -1222,6 +1228,7 @@ impl Owner {
             &located.team,
             now,
             RunEnd::NoStatus { exit_code: None },
+            false,
             None,
             &mut events,
         )?;
@@ -1250,6 +1257,7 @@ impl Owner {
                 &located.team,
                 now,
                 RunEnd::NoStatus { exit_code: None },
+                false,
                 None,
                 &mut events,
             )?;
@@ -1281,7 +1289,7 @@ impl Owner {
             }
             return Ok(());
         };
-        self.end_run(task, &located.team, now, RunEnd::Stopped, None, &mut events)?;
+        self.end_run(task, &located.team, now, RunEnd::Stopped, false, None, &mut events)?;
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
@@ -1436,6 +1444,7 @@ impl Owner {
             &located.team,
             now,
             end.clone(),
+            run.used_tool,
             run.final_message.as_deref(),
             &mut events,
         )?;
@@ -1453,6 +1462,8 @@ impl Owner {
                 now,
                 settled,
                 progress: run.progress,
+                end: end.clone(),
+                used_tool: run.used_tool,
             };
             self.settled_status(ended, &mut events)
                 .instrument(settle_span.clone())
@@ -1591,6 +1602,8 @@ impl Owner {
             now,
             settled,
             progress,
+            end,
+            used_tool,
         } = ended;
         // The troubles of the ladder: a task whose last step went bad with one may be asked about instead of failing.
         let trouble = match settled {
@@ -1610,7 +1623,7 @@ impl Owner {
             }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
-                (TaskStatus::Failed, Some(notice))
+                self.settle_failed_without_tool(task, &end, used_tool, now, notice)?
             }
             Settled::Questions => {
                 self.hangs.remove(task);
@@ -1642,6 +1655,76 @@ impl Owner {
             return Ok(asked);
         }
         Ok(next)
+    }
+
+    /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no
+    /// tool step, opened its session, and was not already retried for a failed run without a tool call is sent to a new
+    /// session (queued, nobody told); any other failed run fails the task and the human is told, as before. `end` is the
+    /// run's real end as the classifier reported it, so a failure that did not report `STATUS: FAILED` is never retried.
+    fn settle_failed_without_tool(
+        &mut self,
+        task: &TaskId,
+        end: &RunEnd,
+        used_tool: bool,
+        at: Timestamp,
+        notice: Notice,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        let (first_of_session, already_retried) = match self.parts.state.find_task(task) {
+            Some(found) => {
+                let first = found.member.first_of_session();
+                let already = found
+                    .member
+                    .renewals()
+                    .is_some_and(|renewals| renewals.reason() == Trouble::NoToolCall)
+                    && found.member.is_the_renewed_run();
+                (first, already)
+            }
+            None => (false, false),
+        };
+        if after_failed_without_tool(end, used_tool, first_of_session, already_retried) == AfterFailedWithoutTool::Retry
+        {
+            if let Err(source) = self.parts.state.renew_task(task, Trouble::NoToolCall, at) {
+                return Err(source.into());
+            }
+            let context = self.notice_context(task, at, None)?;
+            tracing::info!(
+                event = LogEvent::RunNoToolRetry.as_str(),
+                task = %task,
+                agent = context.agent,
+                cli = %context.cli.map_or_else(|| "unknown".to_owned(), |cli| cli.to_string()),
+                model = context.model.unwrap_or("default"),
+                "first failed run without a tool call queued in a new session",
+            );
+            Ok((TaskStatus::Queued, None))
+        } else if already_retried
+            && first_of_session
+            && matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed
+                }
+            )
+            && !used_tool
+        {
+            // A second run that reported FAILED without calling a tool has used the one retry: the human is told the
+            // named reason — the CLI or the model did not offer or use the tools — beside what the run said last. The
+            // reason is drawn only from a reported failure; any other notice is told as itself.
+            let Notice::Failed { message } = notice else {
+                return Ok((TaskStatus::Failed, Some(notice)));
+            };
+            let context = self.notice_context(task, at, None)?;
+            tracing::warn!(
+                event = LogEvent::RunNoToolFailed.as_str(),
+                task = %task,
+                agent = context.agent,
+                cli = %context.cli.map_or_else(|| "unknown".to_owned(), |cli| cli.to_string()),
+                model = context.model.unwrap_or("default"),
+                "two runs failed without a tool call; check this agent's CLI and model configuration",
+            );
+            Ok((TaskStatus::Failed, Some(Notice::FailedNoTool { message })))
+        } else {
+            Ok((TaskStatus::Failed, Some(notice)))
+        }
     }
 
     /// Decide continuation from the persisted suffix of the session, so a restart never resets its budget: the same
@@ -2381,12 +2464,17 @@ impl Owner {
     }
 
     /// Records how the run that is going ended, and says so in `events`.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pieces of a run end each come from its own caller; grouping them is a refactoring of its own"
+    )]
     fn end_run(
         &mut self,
         task: &TaskId,
         team: &TeamId,
         at: Timestamp,
         end: RunEnd,
+        used_tool: bool,
         final_message: Option<&str>,
         events: &mut Vec<EventKind>,
     ) -> Result<(), OwnerError> {
@@ -2398,6 +2486,10 @@ impl Owner {
                 task: task.clone(),
                 source: RunError::NotRunning,
             })?;
+        member.note_used_tool(used_tool).map_err(|source| OwnerError::Run {
+            task: task.clone(),
+            source,
+        })?;
         // A clock that was set back during the run must not end it before it started.
         member
             .end_run(at.max(started_at), end.clone())

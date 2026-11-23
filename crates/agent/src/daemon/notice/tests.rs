@@ -129,6 +129,55 @@ async fn a_run_that_failed_after_its_start_is_not_told_as_a_start() {
     assert!(body.contains("cannot write the activity"), "{body}");
 }
 
+#[tokio::test]
+async fn a_failed_no_tool_notice_names_the_cli_the_model_and_the_advice() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: Some("o3-mini"),
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let texts = texts().await;
+    let rendered = Notice::FailedNoTool {
+        message: "I could not do it.".to_owned(),
+    }
+    .render(&texts, &context)
+    .unwrap();
+
+    assert_eq!(rendered.title(), "❌ team-agents");
+    assert!(rendered.body().contains("Status: ❌ failed"), "{}", rendered.body());
+    assert!(
+        rendered.body().contains("without calling a tool"),
+        "names two no-tool runs: {}",
+        rendered.body()
+    );
+    assert!(rendered.body().contains("claude"), "names the CLI: {}", rendered.body());
+    assert!(
+        rendered.body().contains("o3-mini"),
+        "names the model: {}",
+        rendered.body()
+    );
+    assert!(
+        rendered.body().contains(
+            "Do not give claude-1 more work until its claude CLI setup and o3-mini model configuration are checked"
+        ),
+        "advises on the assignment: {}",
+        rendered.body()
+    );
+    assert!(
+        rendered.body().contains("I could not do it."),
+        "keeps what the run said last: {}",
+        rendered.body()
+    );
+}
+
 #[test]
 fn layout_as_a_table_every_field_present() {
     let task_id: TaskId = "task-20261111-191500-1111".parse().unwrap();
@@ -789,4 +838,30 @@ fn layout_notification_formats_time_header_with_the_offset_of_the_event_in_zone(
         "{}",
         notification.body()
     );
+}
+
+#[tokio::test]
+async fn the_failed_no_tool_notice_matches_its_complete_golden() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: Some("o3-mini"),
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let texts = texts().await;
+    let rendered = Notice::FailedNoTool {
+        message: "I could not do it.".to_owned(),
+    }
+    .render(&texts, &context)
+    .unwrap();
+
+    assert_eq!(rendered.title(), "❌ team-agents");
+    assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
 }

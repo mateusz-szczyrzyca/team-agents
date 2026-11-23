@@ -1,4 +1,4 @@
-PRAGMA user_version = 21;
+PRAGMA user_version = 22;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -338,7 +338,7 @@ CREATE TABLE daemon_logs (
     level TEXT NOT NULL CHECK (level IN ('error', 'warn', 'info', 'debug')),
     module TEXT NOT NULL CHECK (module <> ''),
     event TEXT NOT NULL CHECK (event IN (
-        'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
+        'cli_output_unreadable', 'run_ended_without_status', 'run_no_tool_failed', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
         'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
         'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
         'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
@@ -347,7 +347,7 @@ CREATE TABLE daemon_logs (
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-        'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged'
+        'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry'
     )),
     team TEXT,
     task TEXT,
@@ -364,7 +364,7 @@ CREATE TABLE daemon_logs (
             'team_not_started', 'notification_failed'
         ))
         OR (level = 'warn' AND event IN (
-            'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
+            'cli_output_unreadable', 'run_ended_without_status', 'run_no_tool_failed', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
@@ -375,7 +375,7 @@ CREATE TABLE daemon_logs (
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
-            'task_waits_for_agent'
+            'task_waits_for_agent', 'run_no_tool_retry'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )

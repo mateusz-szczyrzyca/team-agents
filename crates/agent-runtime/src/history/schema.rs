@@ -436,6 +436,10 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     },
     Migration {
         version: 21,
-        sql: include_str!("021-run-usage.sql"),
+        sql: include_str!("021-no-tool-events.sql"),
+    },
+    Migration {
+        version: 22,
+        sql: include_str!("022-run-usage.sql"),
     },
 ];

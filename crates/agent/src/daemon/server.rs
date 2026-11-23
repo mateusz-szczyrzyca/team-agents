@@ -420,7 +420,7 @@ async fn answer(
             Ok((reply, split)) => {
                 let mut response = Response::ok(id, reply);
                 response.split = split;
-                if tells_versions && format == ReplyFormat::Versions {
+                if tells_versions && matches!(format, ReplyFormat::Versions | ReplyFormat::FailedReason) {
                     response.daemon_versions = Some(crate::versions::of_this_build());
                 }
                 response

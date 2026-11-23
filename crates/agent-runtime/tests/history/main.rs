@@ -81,3 +81,6 @@ mod writer_plans;
 #[cfg(test)]
 mod run_usage;
 mod team_removal;
+
+#[cfg(test)]
+mod no_tool_events;

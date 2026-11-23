@@ -6,6 +6,8 @@
 #   done                  a short run that ends with STATUS: DONE
 #   done-child            ends like `done`, leaving a child behind (pid in .fake-child)
 #   fail                  ends with STATUS: FAILED
+#   fail-tool             like `fail`, after streaming one tool call (a tool_use block): a failed run the harness counts as
+#                         one that used a tool, so a task that fails this way is not retried for "no tool call"
 #   nostatus              ends cleanly without a STATUS line
 #   crash                 exits with status 3 and prints nothing
 #   garbage               prints a line that is not JSON, then ends like `done`
@@ -78,6 +80,11 @@ case $scenario in
     finish_done
     ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
+  fail-tool)
+    init
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result false 'I could not do it.\nSTATUS: FAILED'
+    ;;
   sleep) init; result false 'Going to sleep.\nSTATUS: SLEEPING' ;;
   nostatus) init; result false 'I think that is all.' ;;
   crash) exit 3 ;;

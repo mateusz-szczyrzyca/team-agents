@@ -224,6 +224,7 @@ fn every_kind() -> Vec<NoticeKind> {
         NoticeKind::TurnLimitNoSession,
         NoticeKind::Paused,
         NoticeKind::Failed,
+        NoticeKind::FailedNoTool,
         NoticeKind::NoStatus,
         NoticeKind::NoStatusSignal,
         NoticeKind::StartFailed,
@@ -250,6 +251,7 @@ fn every_kind() -> Vec<NoticeKind> {
             | NoticeKind::TurnLimitNoSession
             | NoticeKind::Paused
             | NoticeKind::Failed
+            | NoticeKind::FailedNoTool
             | NoticeKind::NoStatus
             | NoticeKind::NoStatusSignal
             | NoticeKind::StartFailed

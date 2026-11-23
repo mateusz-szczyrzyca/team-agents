@@ -113,6 +113,10 @@ pub enum LogEvent {
     CliOutputUnreadable,
     /// A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails.
     RunEndedWithoutStatus,
+    /// A first failed run without a tool call is queued once in a new session.
+    RunNoToolRetry,
+    /// The retry also failed without a tool call; this agent needs its configuration checked.
+    RunNoToolFailed,
     /// The hang watchdog stops a silent run.
     RunHung,
     /// A run stops because its model quota is exhausted.
@@ -242,6 +246,7 @@ impl LogEvent {
             | Self::NotificationFailed => LogLevel::Error,
             Self::CliOutputUnreadable
             | Self::RunEndedWithoutStatus
+            | Self::RunNoToolFailed
             | Self::RunHung
             | Self::RunQuotaExhausted
             | Self::RunRateLimited
@@ -261,6 +266,7 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::RunNoToolRetry
             | Self::TeamRemoved
             | Self::RoundChanged
             | Self::ItemPhaseChanged

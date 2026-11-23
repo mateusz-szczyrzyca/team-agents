@@ -73,6 +73,159 @@ fn a_member_that_failed_says_so_with_the_end_of_its_message() {
 }
 
 #[test]
+fn a_failed_members_last_words_stop_at_its_status_line() {
+    let team = crew_of(PLAIN, 1, 0);
+
+    // The member's final message ends with its own `STATUS:` line: the coordinator is told what it said, not that line
+    // again — the notice already says the run ended with `STATUS: FAILED`.
+    let told = told(
+        &team,
+        2,
+        &reported(RunOutcome::Failed),
+        Some("I could not do it.\nSTATUS: FAILED"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailed {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_failed_members_last_words_on_an_item_stop_at_its_status_line() {
+    let team = working();
+
+    let told = told(
+        &team,
+        2,
+        &reported(RunOutcome::Failed),
+        Some("I could not do it.\nSTATUS: FAILED"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailedItem {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+/// Every way a member's run can fail tells the coordinator who failed and, for a member on an item, what it worked on:
+/// a reported `FAILED` (with or without an item), a run without a status that then fails (with or without an item), and
+/// a turn limit that fails. A `TurnLimit` on an item keeps the item-less no-status notice, as
+/// `turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed` pins.
+#[test]
+fn every_failed_member_path_tells_the_coordinator_who_and_what() {
+    // A reported FAILED without an item.
+    let team = crew_of(PLAIN, 1, 0);
+    let notice = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberFailed { ref member, .. } if member == &agent("claude-1")));
+
+    // A reported FAILED on an item names the item and its branch.
+    let team = working();
+    let notice = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+    assert!(matches!(
+        notice.notice,
+        BusNotice::MemberFailedItem { ref member, item, ref branch, .. }
+            if member == &agent("claude-1")
+                && item == "1.1".parse().unwrap()
+                && branch == &"agents/claude-1/task-20261111-153002-k3x9-1.1".parse::<BranchName>().unwrap()
+    ));
+
+    // A run without a status, then failed, without an item.
+    let mut team = crew_of(PLAIN, 1, 0);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let notice = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberNoStatus { ref member } if member == &agent("claude-1")));
+
+    // A run without a status, then failed, on an item names the item and its branch.
+    let mut team = working();
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let notice = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert!(matches!(
+        notice.notice,
+        BusNotice::MemberNoStatusItem { ref member, item, ref branch, .. }
+            if member == &agent("claude-1")
+                && item == "1.1".parse().unwrap()
+                && branch == &"agents/claude-1/task-20261111-153002-k3x9-1.1".parse::<BranchName>().unwrap()
+    ));
+
+    // A turn limit that fails the member.
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::TurnLimit, None).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberNoStatus { ref member } if member == &agent("claude-1")));
+
+    for end in [
+        RunEnd::Hung,
+        RunEnd::QuotaExhausted { resets_at: None },
+        RunEnd::RateLimited,
+        RunEnd::Stopped,
+        reported(RunOutcome::Questions),
+        reported(RunOutcome::Sleeping),
+        reported(RunOutcome::Excluded),
+        reported(RunOutcome::Done),
+    ] {
+        for (has_item, mut team) in [(false, crew_of(PLAIN, 1, 0)), (true, working())] {
+            ran(&mut team, 2, 1, end.clone(), &[TaskStatus::Failed]);
+            let notice = told(&team, 2, &end, Some("The run could not continue."))
+                .unwrap_or_else(|| panic!("failed member not told for {end:?}"));
+            assert_eq!(notice.to, agent("inv-opus"));
+            match notice.notice {
+                BusNotice::MemberRunFailed {
+                    member,
+                    message,
+                    end: actual_end,
+                } => {
+                    assert!(!has_item);
+                    assert_eq!(member, agent("claude-1"));
+                    assert_eq!(actual_end, end);
+                    assert_eq!(message, "The run could not continue.");
+                }
+                BusNotice::MemberRunFailedItem {
+                    member,
+                    end: actual_end,
+                    message,
+                    item,
+                    branch,
+                } => {
+                    assert!(has_item);
+                    assert_eq!(member, agent("claude-1"));
+                    assert_eq!(actual_end, end);
+                    assert_eq!(message, "The run could not continue.");
+                    assert_eq!(item, "1.1".parse().unwrap());
+                    assert_eq!(branch, "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap());
+                }
+                other => panic!("wrong failure notice for {end:?}: {other:?}"),
+            }
+        }
+    }
+}
+
+#[test]
 fn a_member_that_ended_without_a_status_says_so() {
     let mut team = crew_of(PLAIN, 1, 0);
     ran(
@@ -331,4 +484,69 @@ fn turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed() {
             },
         }
     );
+}
+
+#[test]
+fn a_failed_member_without_last_words_tells_the_coordinator_the_end_reason() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::Hung, None).unwrap();
+    assert!(
+        matches!(notice.notice, BusNotice::MemberRunFailedItem { message, end, .. }
+        if end == RunEnd::Hung && message == "The member failed after Hung.")
+    );
+}
+
+#[test]
+fn a_failed_member_cannot_hide_its_failure_behind_a_split_request() {
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::Hung, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::Hung, Some("SPLIT: 1.1")).unwrap();
+    assert!(
+        matches!(notice.notice, BusNotice::MemberRunFailedItem { message, end, .. }
+        if end == RunEnd::Hung && message == "SPLIT: 1.1")
+    );
+}
+
+#[tokio::test]
+async fn failed_member_notices_render_the_actual_end_and_last_words_for_every_other_ending() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let texts = agent_runtime::team_prompts::TeamPrompts::load(&root, &agent_core::config::Language::default())
+        .await
+        .unwrap();
+    for (end, reason) in [
+        (RunEnd::Hung, "the watchdog stopped an inactive run"),
+        (
+            RunEnd::QuotaExhausted { resets_at: None },
+            "the account quota was exhausted",
+        ),
+        (RunEnd::RateLimited, "the provider rate-limited the run"),
+        (RunEnd::Stopped, "the human stopped the run"),
+        (reported(RunOutcome::Questions), "the run reported `STATUS: QUESTIONS`"),
+        (reported(RunOutcome::Sleeping), "the run reported `STATUS: SLEEPING`"),
+        (reported(RunOutcome::Excluded), "the run reported `STATUS: EXCLUDED`"),
+        (reported(RunOutcome::Done), "the run reported `STATUS: DONE`"),
+    ] {
+        for (has_item, mut team) in [(false, crew_of(PLAIN, 1, 0)), (true, working())] {
+            ran(&mut team, 2, 1, end.clone(), &[TaskStatus::Failed]);
+            let told = told(&team, 2, &end, Some("The run could not continue.")).unwrap();
+            let outgoing = crate::daemon::team::render_notice(&texts, &told.notice).unwrap();
+            let agent_runtime::agentbus::Outgoing::Notice { kind, text, .. } = outgoing else {
+                panic!("expected a failure notice");
+            };
+            assert_eq!(kind, agent_runtime::agentbus::NoticeKind::MemberFailed);
+            let scope = if has_item {
+                " on item 1.1 (branch `agents/claude-1/task-20261111-153002-k3x9-1.1`)"
+            } else {
+                ""
+            };
+            assert_eq!(
+                text,
+                format!(
+                    "claude-1 failed{scope}: {reason}. Last words or reason:\n\nThe run could not continue.\n\nYou may wait for the human. Take the work yourself only if your role rules allow it.\n"
+                ),
+                "actual ending: {end:?}"
+            );
+        }
+    }
 }

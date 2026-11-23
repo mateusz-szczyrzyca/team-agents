@@ -34,14 +34,36 @@ pub(in crate::daemon) enum BusNotice {
     MemberFailed {
         /// The member.
         member: AgentName,
-        /// The end of its final message.
+        /// The end of its final message, without its closing `STATUS:` line.
         message: String,
     },
     /// A member reported `FAILED` while working on an item.
     MemberFailedItem {
         /// The member.
         member: AgentName,
-        /// The end of its final message.
+        /// The end of its final message, without its closing `STATUS:` line.
+        message: String,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
+    },
+    /// A member failed after a run ending that did not report `FAILED`.
+    MemberRunFailed {
+        /// The member.
+        member: AgentName,
+        /// The actual ending of its run.
+        end: RunEnd,
+        /// Its last words or the reason when no words were available.
+        message: String,
+    },
+    /// A member failed on an item after a run ending that did not report `FAILED`.
+    MemberRunFailedItem {
+        /// The member.
+        member: AgentName,
+        /// The actual ending of its run.
+        end: RunEnd,
+        /// Its last words or the reason when no words were available.
         message: String,
         /// The item it worked on.
         item: ItemId,
@@ -185,7 +207,8 @@ pub(in crate::daemon) fn notice_for(
     // The coordinator and the member are named as the team's bus knows them: by the agent each task was first given to.
     let to = agent_name(coordinator.bus_agent())?;
     let who = agent_name(member.bus_agent())?;
-    if let Some((item, _branch)) = worked_on(team, member)
+    if member.status() != TaskStatus::Failed
+        && let Some((item, _branch)) = worked_on(team, member)
         && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
     {
         return Ok(Some(Told {
@@ -196,6 +219,14 @@ pub(in crate::daemon) fn notice_for(
                 task: member.task().clone(),
             },
         }));
+    }
+    if member.status() == TaskStatus::Failed && !matches!(end, RunEnd::NoStatus { .. } | RunEnd::TurnLimit) {
+        let message = match message {
+            Some(message) if !message.trim().is_empty() => report(&end_of(message)),
+            Some(_) | None => format!("The member failed after {end:?}."),
+        };
+        let notice = failed_notice(team, member, who, end, message);
+        return Ok(Some(Told { to, notice }));
     }
     let notice = match end {
         RunEnd::Reported {
@@ -216,13 +247,13 @@ pub(in crate::daemon) fn notice_for(
         } => match worked_on(team, member) {
             Some((item, branch)) => BusNotice::MemberFailedItem {
                 member: who,
-                message: end_of(message.unwrap_or_default()),
+                message: report(&end_of(message.unwrap_or_default())),
                 item,
                 branch,
             },
             None => BusNotice::MemberFailed {
                 member: who,
-                message: end_of(message.unwrap_or_default()),
+                message: report(&end_of(message.unwrap_or_default())),
             },
         },
         RunEnd::NoStatus { .. } if member.status() == TaskStatus::Failed => match worked_on(team, member) {
@@ -348,6 +379,37 @@ fn report(message: &str) -> String {
 
 /// What a status line starts with.
 const STATUS_PREFIX: &str = "STATUS:";
+
+/// Preserve a settled failure's actual ending and the member's item context.
+fn failed_notice(team: &Team, member: &Member, who: AgentName, end: &RunEnd, message: String) -> BusNotice {
+    let reported_failed = matches!(
+        end,
+        RunEnd::Reported {
+            outcome: RunOutcome::Failed
+        }
+    );
+    match (reported_failed, worked_on(team, member)) {
+        (true, Some((item, branch))) => BusNotice::MemberFailedItem {
+            member: who,
+            message,
+            item,
+            branch,
+        },
+        (true, None) => BusNotice::MemberFailed { member: who, message },
+        (false, Some((item, branch))) => BusNotice::MemberRunFailedItem {
+            member: who,
+            end: end.clone(),
+            message,
+            item,
+            branch,
+        },
+        (false, None) => BusNotice::MemberRunFailed {
+            member: who,
+            end: end.clone(),
+            message,
+        },
+    }
+}
 
 /// The item `member` works on and its branch, if it has one.
 fn worked_on(team: &Team, member: &Member) -> Option<(ItemId, BranchName)> {

@@ -31,8 +31,9 @@ impl Columns {
 }
 
 /// The line of the task of `member` under its `team`: its ID, its role, its agent and what it does — for a reviewer
-/// what the record of the team says of its review —, then that it runs in a new session, whom it was taken over from,
-/// what `activity` says of it while it runs, and the questions that wait for answers.
+/// what the record of the team says of its review —, then that it runs in a new session, why it failed when the reason
+/// is named, whom it was taken over from, what `activity` says of it while it runs, and the questions that wait for
+/// answers.
 pub(super) fn line(
     member: &MemberSummary,
     team: &TeamSummary,
@@ -46,6 +47,10 @@ pub(super) fn line(
     let renewed = member
         .new_sessions
         .map_or_else(String::new, |_| ", in a new session".to_owned());
+    let failed = member
+        .failed_reason
+        .as_ref()
+        .map_or_else(String::new, |reason| format!(", {reason}"));
     let returned = super::returned::task_note(member);
     let taken_over = member
         .held_by
@@ -66,7 +71,7 @@ pub(super) fn line(
     });
     let (role_width, agent_width) = (columns.role, columns.agent);
     format!(
-        "  {}  {:<role_width$}  {:<agent_width$}  {status}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
+        "  {}  {:<role_width$}  {:<agent_width$}  {status}{failed}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
         member.task,
         member.role.to_string(),
         member.agent.name(),
