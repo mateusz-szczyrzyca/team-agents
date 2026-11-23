@@ -768,3 +768,92 @@ async fn an_older_run_whose_history_cannot_be_read_fails_the_start_with_the_hist
     );
     assert!(notice.contains("history"), "{notice}");
 }
+
+// Rule: the size paragraph of a replacement belongs to the first run of the new session only: a run after it that is resumed
+// says nothing of the replacement, although the size of the session it replaced could not be read.
+#[tokio::test]
+async fn a_run_resumed_after_a_replacement_with_an_unknown_size_says_nothing_of_it() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-here,nostatus-stream:third,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("third.jsonl"), usage_line(42_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let last = rig
+        .state()
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .id()
+        .clone();
+    std::fs::write(
+        rig.home.run_dir(&tasks[0], &last).join("outcome.json"),
+        "not an outcome",
+    )
+    .unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let _third = rig.prompt(&tasks[0], 3).await;
+    let fourth = rig.prompt(&tasks[0], 4).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-4")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(
+        args.contains("--resume"),
+        "the run after the replacement is resumed: {args}"
+    );
+    assert!(!fourth.contains("its size could not be read"), "{fourth}");
+    assert!(!fourth.contains("replaces it as a precaution"), "{fourth}");
+}
+
+// Rule: the same holds after a replacement with a known size: a resumed run after it says nothing of the replacement.
+#[tokio::test]
+async fn a_run_resumed_after_a_replacement_with_a_known_size_says_nothing_of_it() {
+    let mut rig = Rig::new(
+        &[
+            normal(
+                "claude-1",
+                "work-stream:first,ask-stream:second,nostatus-stream:third,work",
+            ),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    std::fs::write(scripts.join("third.jsonl"), usage_line(42_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let _third = rig.prompt(&tasks[0], 3).await;
+    let fourth = rig.prompt(&tasks[0], 4).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-4")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(
+        args.contains("--resume"),
+        "the run after the replacement is resumed: {args}"
+    );
+    assert!(!fourth.contains("grown to"), "{fourth}");
+}
