@@ -385,8 +385,18 @@ The owner keeps the last attempt time in memory per team and prunes entries for 
 the normal startup idle interval still applies, and persisted refusals do not prevent retries. The `w6gn` shape (a merged split part followed by an
 unstarted part with no round) is covered by a fake-CLI daemon test.
 
-This part removes teams only. Automatic replacement, provider selection, resumed progress and enforcement of the
-reserved `idle_team_restarts` budget belong to the dependent restart part.
+The daemon still removes teams only. The recovery foundation in `agent-core` has no owner call site:
+`decide::restart` checks a bounded allowance, `Team::recovery_team` projects merged progress into a fresh crew,
+and `State::prepare_recovery` reserves stable identities and an ordinal. A saved intent survives source removal;
+`State::install_recovery` inserts its exact planned team once and records installation in the same state change.
+An installed intent never resurrects a replacement that was subsequently removed. The optional ordered ledger
+rejects forged projections, identity reuse and inconsistent restart lineages when loaded.
+
+These are state operations, not filesystem or bus transactions. Activation must save the reservation before
+removal or external creation, reconcile those effects using the reserved identities, then save installation
+before launching runs. Provider selection, recovery briefings, replacement/exhaustion events and notifications,
+and owner enforcement of `idle_team_restarts` are a separate task. It must test interruptions at each persistence
+and external-operation boundary. See the [recovery state contract](state.md#recovery-foundation).
 
 ### Teams (`agent run` and the team's life)
 

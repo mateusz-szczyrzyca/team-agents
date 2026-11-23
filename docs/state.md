@@ -28,6 +28,36 @@ runs but resumes only sessions after this boundary and counts only those runs fo
 Older states omit the field; they load without migration and acquire a boundary on their next handover. The
 pre-renewal state fixture and handover reload tests exercise both formats.
 
+### Recovery foundation
+
+Version 0.76.0 adds optional top-level `recoveries` to schema 14. It is an ordered list of reservations:
+`source` (the old team snapshot), `replacement` (the exact fresh team), `ordinal` (a positive restart count),
+and `phase` (`pending` or `installed`). Absence means no prior reservations; an empty list is omitted on save.
+The [pre-recovery fixture](../crates/agent-core/src/state/recovery/legacy.json) proves that an older documentation
+team loads with an unused allowance. All existing state migrations remain supported. Older binaries reject a
+nonempty ledger's unknown field; retain a backup before using a caller that writes recovery records. The daemon
+in this release never creates a reservation, so ordinary daemon saves omit the new field.
+
+Preparation fixes the replacement team/task identities and creation time before any external effects. Retrying
+preparation returns the original plan even if the proposed destination or configured budget changes. The ordinal
+starts at one and follows an installed predecessor; it survives removal of either team. A zero allowance,
+a used-up allowance or an overflowing count creates no reservation. Source snapshots and plans remain in the
+ledger so retries cannot reuse old identities or reset the budget. There is no ledger pruning in this release.
+
+The replacement retains its repository, task list, merge policy, completed items, approved splits and merged
+part rounds. Unmerged work returns to pending with no open round. A merged whole item whose old round was still
+open keeps that evidence in a closed historical round. New crew identities keep their selected agents but start
+with fresh sessions; old reviews, questions and runs remain only in the source snapshot. The loader validates
+each replacement against that projection, plus fresh identities and ordered, installed restart predecessors.
+
+Installation requires the source to be absent and the replacement identities to be free. It inserts the exact
+saved team and changes the intent to `installed` together; repeated calls leave current progress untouched.
+Once installed, an intent cannot recreate a replacement even after that replacement is removed. Preparation and
+installation failures leave state unchanged. Callers must persist preparation before cleanup or external setup,
+reconcile those operations after interruption, and persist installation before launching runs. This API performs
+no disk, GitHub, worktree, bus or notification operations. The daemon remains removal-only until a separate
+activation task wires those operations and tests their crash boundaries.
+
 ### Approved split definitions
 
 Schema 13 adds optional per-team `splits`, a list of whole validated plans in approval order. Each plan has

@@ -166,6 +166,18 @@ pub struct ClosedBeforeOpened {
 }
 
 impl Round {
+    /// Retains historical evidence of a merged item without resuming its unfinished bookkeeping.
+    pub(super) fn recovered_merge(&self, completed_at: Timestamp) -> Self {
+        let mut recovered = self.clone();
+        if self.is_open() {
+            recovered.state = RoundLife::Closed {
+                at: self.opened_at.max(completed_at),
+                how: RoundEnd::Merged,
+            };
+        }
+        recovered
+    }
+
     /// The verified team pull request delivering this round, retained after completion.
     #[must_use]
     pub const fn delivered_by(&self) -> Option<&super::PullRequest> {
