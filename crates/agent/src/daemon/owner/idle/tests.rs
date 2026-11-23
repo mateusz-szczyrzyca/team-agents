@@ -474,3 +474,30 @@ async fn old_team_is_kept_until_the_current_daemon_has_run_for_the_idle_bound() 
     }
     assert_eq!(daemon.notifications().len(), 1);
 }
+
+#[tokio::test]
+async fn queued_crew_and_reviewers_keep_the_team_alive_until_scheduled() {
+    for queued in [1, 2, 3] {
+        let mut state = sleeping(super::super::fixture::reviewed_pair_state());
+        state
+            .find_task_mut(&task(queued))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Queued)
+            .unwrap();
+        let daemon = Daemon::new(&state, None);
+        files(&daemon);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        daemon.clock.advance(time::Duration::days(1));
+
+        owner.check_idle_teams().await.unwrap();
+
+        assert_eq!(owner.parts.state.teams().len(), 1, "queued task {queued}");
+        assert_eq!(
+            owner.parts.state.find_task(&task(queued)).unwrap().member.status(),
+            TaskStatus::Queued
+        );
+        assert!(daemon.home.worktree_dir(&repo(), &task(1)).exists());
+        assert_eq!(daemon.notifications(), Vec::<String>::new());
+    }
+}
