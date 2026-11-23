@@ -115,7 +115,7 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
         &[
             normal(
                 "claude-1",
-                "work-stream:first,ask-stream:second,work-if-briefed:grown to 200000 tokens|- draft.txt|Work of run 1 of claude-1|Do the second thing in the repository.|PRIOR-FINAL-MARKER|Continue the part?",
+                "work-stream:first,ask-stream:second,work-if-briefed:grown to 200000 tokens|- draft.txt|Work of run 1 of claude-1|Do the second thing in the repository.|PRIOR-FINAL-MARKER|Continue the part?|HUMAN-ANSWER-MARKER keep the store",
             ),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
@@ -138,7 +138,7 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
     let worktree = rig.worktree(&tasks[0]);
     rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
         .await;
-    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    answer_first_question(&rig, &tasks[0], 1, "HUMAN-ANSWER-MARKER keep the store").await;
     let briefing = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
     let state = rig
