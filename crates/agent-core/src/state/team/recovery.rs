@@ -2,7 +2,7 @@
 
 use super::{Crew, ItemPhase, Member, RoundEnd, Shape, Team, TeamError, check_team};
 use crate::ids::TeamId;
-use crate::state::Timestamp;
+use crate::state::{Completion, Timestamp};
 
 impl Team {
     /// Builds a new team with the same task list and merged progress, with fresh member sessions.
@@ -30,8 +30,20 @@ impl Team {
         fresh.rounds = self
             .rounds
             .iter()
-            .filter(|round| round.part_pull_request().is_some() || round.ended() == Some(RoundEnd::Merged))
-            .cloned()
+            .filter_map(|round| {
+                if round.part().is_none()
+                    && let Some(ItemPhase::Done {
+                        completion: Completion::Merged { at, .. },
+                    }) = round
+                        .item()
+                        .and_then(|id| self.item(id))
+                        .map(super::super::ItemProgress::phase)
+                {
+                    return Some(round.recovered_merge(*at));
+                }
+                // Only completed evidence belongs to the replacement; unfinished work gets new rounds.
+                (round.part_pull_request().is_some() || round.ended() == Some(RoundEnd::Merged)).then(|| round.clone())
+            })
             .collect();
         check_team(&fresh)?;
         Ok(fresh)
