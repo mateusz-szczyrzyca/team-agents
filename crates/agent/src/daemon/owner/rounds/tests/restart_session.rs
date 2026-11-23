@@ -344,3 +344,84 @@ async fn a_stop_that_cuts_the_third_run_after_two_endings_without_status_is_no_r
     assert_eq!(member.runs().len(), 4);
     assert_ne!(member.runs()[3].session(), member.runs()[2].session());
 }
+
+/// Rewrites the saved state of `rig` with `change`, as a state of another version would read: the daemon is stopped.
+fn rewrite_state(rig: &Rig, change: impl Fn(&mut serde_json::Value)) {
+    let path = rig.home.state_file();
+    let mut state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    change(&mut state);
+    std::fs::write(path, serde_json::to_string_pretty(&state).unwrap()).unwrap();
+}
+
+/// Takes the key `name` out of every object of `value`.
+fn remove_key(value: &mut serde_json::Value, name: &str) {
+    match value {
+        serde_json::Value::Object(map) => {
+            map.remove(name);
+            map.values_mut().for_each(|inner| remove_key(inner, name));
+        }
+        serde_json::Value::Array(items) => items.iter_mut().for_each(|inner| remove_key(inner, name)),
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+// Rule: a run whose CLI never reported a session has none to leave: its task still goes on in a new session, briefed.
+#[tokio::test]
+async fn a_cut_run_that_has_no_session_id_goes_on_in_a_new_briefed_session() {
+    let mut rig = rig_with("script:cut,script:finish", "").await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the cut run to leave its files", || worktree.join("blob.bin").exists())
+        .await;
+    rig.stop().await.unwrap();
+    // The CLI of this run reported no session: the state has none for any of its runs.
+    rewrite_state(&rig, |state| remove_key(state, "session"));
+
+    rig.start().await;
+    let briefing = rig.prompt(&tasks[0], 2).await;
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+    let state = rig
+        .item_where("1.1", "merged after the new session", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(briefing.starts_with(BRIEFING), "{briefing}");
+    assert!(briefing.contains("- blob.bin"), "{briefing}");
+    assert_eq!(state.find_task(&tasks[0]).unwrap().member.runs().len(), 2);
+}
+
+// Rule: a state saved by the version before has no `daemon_down` session for the run its stop cut: the run is resumed in
+// its own session as that version did, and the task finishes.
+#[tokio::test]
+async fn a_state_saved_before_the_new_sessions_resumes_its_cut_run_as_before() {
+    let mut rig = rig_with("script:cut,script:finish", "").await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the cut run to leave its files", || worktree.join("blob.bin").exists())
+        .await;
+    rig.stop().await.unwrap();
+    // The version before knew no renewal of this kind: its stop left the task queued, with the cut run ended.
+    rewrite_state(&rig, |state| remove_key(state, "renewals"));
+
+    rig.start().await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+    let state = rig
+        .item_where("1.1", "merged in the old session", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("THE HARNESS RESTARTED"), "{prompt}");
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert!(member.renewals().is_none());
+    assert_eq!(member.runs()[0].session(), member.runs()[1].session());
+}

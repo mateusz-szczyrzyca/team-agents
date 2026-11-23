@@ -550,3 +550,134 @@ fn a_cut_run_of_a_reviewer_or_a_worker_begins_no_new_session() {
 fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
     recover_with(state, now, limits, RestartSession::Same)
 }
+
+// ---- where there is no session to leave ----------------------------------------------------------------------------
+
+/// Like `dying_in_a_round` with no run ended before the cut one, which ran in `session` (none for a CLI that reports no
+/// session before its run ends).
+fn dying_in_a_round_with_session(n: u32, session: Option<&str>) -> State {
+    let mut state = team_state();
+    state
+        .team_mut(&crate::fixtures::team_id(0))
+        .unwrap()
+        .open_round(round(), Some("1.1".parse().unwrap()), at(1))
+        .unwrap();
+    state
+        .find_task_mut(&task(n))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    state
+        .team_mut(&crate::fixtures::team_id(0))
+        .unwrap()
+        .begin_run(
+            &task(n),
+            agent_core::state::NewRun {
+                id: run(1),
+                at: at(10),
+                session: session.map(|id| id.parse().unwrap()),
+                rounds: vec![round()],
+            },
+        )
+        .unwrap();
+    state
+}
+
+#[test]
+fn a_run_cut_before_its_cli_reported_a_session_still_begins_a_new_session() {
+    let mut state = dying_in_a_round_with_session(2, None);
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New).unwrap();
+
+    let member = state.find_task(&task(2)).unwrap().member;
+    assert_eq!(recovery.renewed, [task(2)]);
+    assert_eq!(member.last_session(), None, "it had no session to resume");
+    assert!(member.awaits_new_session());
+}
+
+#[test]
+fn a_run_of_a_round_that_is_closed_is_resumed_as_before() {
+    let mut state = dying_in_a_round_with_session(2, Some("ses-1"));
+    state
+        .team_mut(&crate::fixtures::team_id(0))
+        .unwrap()
+        .close_round(&round(), at(20), agent_core::state::RoundEnd::Abandoned)
+        .unwrap();
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New).unwrap();
+
+    let member = state.find_task(&task(2)).unwrap().member;
+    assert_eq!(recovery.renewed, Vec::<TaskId>::new());
+    assert_eq!(member.renewals(), None);
+    assert_eq!(member.last_session().map(SessionId::as_str), Some("ses-1"));
+}
+
+#[test]
+fn a_reviewer_running_in_a_state_written_before_the_restart_key_begins_no_session() {
+    let mut state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-renewals.json"
+    ))
+    .unwrap();
+    let renewals_of = |state: &State| -> Vec<Option<agent_core::state::Renewals>> {
+        all_tasks(state)
+            .iter()
+            .map(|task| state.find_task(task).unwrap().member.renewals().copied())
+            .collect()
+    };
+    let before = renewals_of(&state);
+
+    let recovery = recover_with(&mut state, at(4_000_000_000), &limits(), RestartSession::New).unwrap();
+
+    assert_eq!(recovery.renewed, Vec::<TaskId>::new());
+    assert_eq!(renewals_of(&state), before, "no session begins in an old state");
+}
+
+#[test]
+fn a_member_running_in_a_state_written_before_the_restart_key_begins_a_daemon_down_session() {
+    let mut state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-renewals.json"
+    ))
+    .unwrap();
+    let member: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+    let open_round: RoundId = "round-20261111-193900-p7w3".parse().unwrap();
+    let team = state.find_task(&member).unwrap().team.id().clone();
+    // The member failed after seven endings without a status; the human let it go on, and the daemon died in its run.
+    let began: Timestamp = "2026-11-21T10:00:00Z".parse().unwrap();
+    {
+        let (_, mut found) = state.find_task_mut(&member).unwrap();
+        found.transition(TaskStatus::Queued).unwrap();
+        found.transition(TaskStatus::Running).unwrap();
+    }
+    state
+        .team_mut(&team)
+        .unwrap()
+        .begin_run(
+            &member,
+            agent_core::state::NewRun {
+                id: "run-20261121-100000-aaaa".parse().unwrap(),
+                at: began,
+                session: Some("ses-old".parse().unwrap()),
+                rounds: vec![open_round],
+            },
+        )
+        .unwrap();
+
+    let recovery = recover_with(
+        &mut state,
+        "2026-11-21T10:05:00Z".parse().unwrap(),
+        &limits(),
+        RestartSession::New,
+    )
+    .unwrap();
+
+    let found = state.find_task(&member).unwrap().member;
+    assert_eq!(recovery.renewed, std::slice::from_ref(&member));
+    assert_eq!(found.status(), TaskStatus::Queued);
+    assert!(found.awaits_new_session());
+    assert_eq!(
+        found.renewals().map(agent_core::state::Renewals::reason),
+        Some(Trouble::DaemonDown)
+    );
+    assert_eq!(found.renewals().map(agent_core::state::Renewals::used), Some(0));
+}
