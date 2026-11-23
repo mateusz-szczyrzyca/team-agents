@@ -11,25 +11,9 @@ use agent_core::log::LogEvent;
 use agent_core::state::Participant;
 use agent_runtime::history::{ReadError, Reader, log_decision};
 use agent_runtime::process::error_chain;
+use agent_runtime::run::outcome::read_outcome;
 
 use super::{Owner, OwnerError};
-
-/// Why the size of a run's context cannot be read from the history.
-#[derive(Debug, thiserror::Error)]
-pub(super) enum SizeProblem {
-    /// The history cannot be read.
-    #[error("cannot read the usage of run {run} from the history")]
-    Read {
-        /// The run whose usage was asked for.
-        run: RunId,
-        /// What the history refused.
-        #[source]
-        source: Box<ReadError>,
-    },
-    /// The reader of the history cannot be joined.
-    #[error("cannot join the reader of the usage of a run")]
-    Join(#[source] tokio::task::JoinError),
-}
 
 /// The bound in tokens of the session of `participant`: its agent's own `max_context`, else the `[session]` one; `None`
 /// when the bound is off.
@@ -56,8 +40,26 @@ pub(super) enum SizeRead {
 /// The size of the context of run `run`, read from its outcome file in `run_dir` first and from the history at
 /// `history` only when there is no outcome file. The stub reports no size.
 pub(super) async fn size_of_run(run_dir: &Path, history: &Path, run: &RunId) -> SizeRead {
-    let _ = (run_dir, history, run);
-    SizeRead::NotTold
+    match read_outcome(run_dir).await {
+        Ok(Some(outcome)) => return outcome.last_context.map_or(SizeRead::NotTold, SizeRead::Told),
+        Ok(None) => {}
+        Err(error) => return SizeRead::Unreadable(error_chain(&error)),
+    }
+    // A run with no outcome file is one that ended before the file was written: its size is the history's, if any.
+    if !history.exists() {
+        return SizeRead::NotTold;
+    }
+    let (path, wanted) = (history.to_path_buf(), run.clone());
+    let read =
+        tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))).await;
+    match read {
+        Err(join) => SizeRead::Unreadable(error_chain(&join)),
+        Ok(Err(ReadError::Empty { .. })) => SizeRead::NotTold,
+        Ok(Err(source)) => SizeRead::Unreadable(error_chain(&source)),
+        Ok(Ok(usage)) => usage
+            .and_then(|usage| usage.last_context)
+            .map_or(SizeRead::NotTold, SizeRead::Told),
+    }
 }
 
 #[cfg(test)]
@@ -87,22 +89,25 @@ impl Owner {
             };
             (last.id().clone(), bound)
         };
-        let size = match self.context_of_run(&run).await {
-            Ok(size) => size,
-            Err(problem) => {
+        let run_dir = self.parts.store.home().run_dir(task, &run);
+        let history = self.parts.store.home().history_file();
+        let tokens = match size_of_run(run_dir.as_path(), history.as_path(), &run).await {
+            SizeRead::Told(tokens) => tokens,
+            SizeRead::NotTold => return Ok(false),
+            SizeRead::Unreadable(cause) => {
                 tracing::warn!(
                     event = LogEvent::HistoryRecordIncomplete.as_str(),
                     task = %task,
                     run = %run,
-                    error = %error_chain(&problem),
+                    error = %cause,
                     "the context of the last run cannot be read: its session is resumed"
                 );
                 return Ok(false);
             }
         };
-        let Some(tokens) = size.filter(|tokens| starts_anew(Some(*tokens), Some(bound))) else {
+        if !starts_anew(Some(tokens), Some(bound)) {
             return Ok(false);
-        };
+        }
         let at = self.after_last_run(task)?;
         let begun = self.parts.state.begin_context_session_with_size(task, at, tokens)?;
         log_decision(
@@ -111,35 +116,5 @@ impl Owner {
             &"NewSession",
         );
         Ok(begun)
-    }
-
-    /// The size of the context of the last model call of `run`, as the history recorded it; `None` when the run has no
-    /// usage row, which is a size not told.
-    ///
-    /// # Errors
-    /// [`SizeProblem`] when the history cannot be read.
-    pub(super) async fn context_of_run(&self, run: &RunId) -> Result<Option<u64>, SizeProblem> {
-        let path = self.parts.store.home().history_file();
-        if !path.exists() {
-            return Ok(None);
-        }
-        let wanted = run.clone();
-        // The usage of a run is handed to the history writer when the run ends and written after it: the writer is
-        // waited for, so that a session above its bound is never taken for one whose size is not told.
-        let history = self.history.clone();
-        let read = tokio::task::spawn_blocking(move || {
-            history.flush();
-            Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))
-        })
-        .await
-        .map_err(SizeProblem::Join)?;
-        match read {
-            Ok(usage) => Ok(usage.and_then(|usage| usage.last_context)),
-            Err(ReadError::Empty { .. }) => Ok(None),
-            Err(source) => Err(SizeProblem::Read {
-                run: run.clone(),
-                source: Box::new(source),
-            }),
-        }
     }
 }
