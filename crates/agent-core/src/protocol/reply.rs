@@ -13,8 +13,8 @@ use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::plan::judge::JudgementState;
 use crate::state::{
-    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
-    Round, Run, Team, Timestamp,
+    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Renewals,
+    Review, Round, Run, Team, Timestamp,
 };
 use crate::status::{ItemStatus, TaskStatus};
 
@@ -381,6 +381,10 @@ pub struct MemberSummary {
     /// as the daemon can, and from older daemons' replies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub waits_for: Option<RunElsewhere>,
+    /// Why the member's task failed, when the reason is one worth naming; absent otherwise and from older daemons'
+    /// replies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub failed_reason: Option<String>,
 }
 
 /// The run of an agent in another task, which a queued task of the same agent waits for.
@@ -433,7 +437,21 @@ impl MemberSummary {
             held_by: member.past_holders().last().map(|held| held.agent.agent_name()),
             returned: None,
             waits_for: None,
+            failed_reason: failed_reason_of(member.status(), member.renewals()),
         }
+    }
+}
+
+/// Why `member`'s task lies in `status`, when its last trouble is one worth telling on the status line: a failed task
+/// already retried once for a no-tool run names that, because it is a configuration problem, not ordinary work. The
+/// status column already says `failed`; the reason says of what.
+fn failed_reason_of(status: TaskStatus, renewals: Option<&Renewals>) -> Option<String> {
+    if status == TaskStatus::Failed
+        && renewals.is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
+    {
+        Some("two runs ended without calling a tool".to_owned())
+    } else {
+        None
     }
 }
 

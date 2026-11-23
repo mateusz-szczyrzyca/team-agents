@@ -28,6 +28,7 @@ fn member(agent: &str, task_name: &str, status: TaskStatus) -> MemberSummary {
         held_by: None,
         returned: None,
         waits_for: None,
+        failed_reason: None,
     }
 }
 
