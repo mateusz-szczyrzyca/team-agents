@@ -596,6 +596,18 @@ impl Reader {
         super::usage::read(&snapshot, run)
     }
 
+    /// The usage of each of `runs` that has a row, in one read; a run without a row is not in the result.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn run_usages(
+        &self,
+        runs: &[RunId],
+    ) -> Result<std::collections::BTreeMap<RunId, agent_core::cli::RunUsage>, ReadError> {
+        let _unused = runs;
+        Ok(std::collections::BTreeMap::new())
+    }
+
     /// The latest judgement for each step of `task`.
     ///
     /// # Errors

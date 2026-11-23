@@ -197,3 +197,62 @@ fn the_reader_tells_no_usage_for_a_run_without_a_row() {
 
     assert_eq!(read, None);
 }
+
+#[test]
+fn the_reader_gives_back_the_usage_of_many_runs_in_one_call_and_leaves_out_a_run_without_a_row() {
+    let (_dir, path, mut db) = database();
+    let world = complete(2);
+    db.write(&world.records()).unwrap();
+    let with_row = world.runs[0].start.run.clone();
+    let without_row = world.runs[1].start.run.clone();
+    let usage = RunUsage {
+        first_context: Some(10),
+        last_context: Some(20),
+        tokens_written: Some(5),
+        cost_usd: None,
+    };
+    db.write_usage(&[RunUsageRecord {
+        run: with_row.clone(),
+        usage,
+    }])
+    .unwrap();
+
+    let read = Reader::open(&path)
+        .unwrap()
+        .run_usages(&[with_row.clone(), without_row])
+        .unwrap();
+
+    assert_eq!(read, std::collections::BTreeMap::from([(with_row, usage)]));
+}
+
+#[test]
+fn the_reader_gives_no_usage_of_many_runs_when_it_is_asked_for_none() {
+    let (_dir, path, _db) = database();
+
+    let read = Reader::open(&path).unwrap().run_usages(&[]).unwrap();
+
+    assert!(read.is_empty());
+}
+
+#[test]
+fn a_run_of_a_populated_version_21_history_survives_the_upgrade_and_reads_as_not_told() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    rusqlite::Connection::open(&path)
+        .unwrap()
+        .execute_batch(include_str!("../fixtures/history-before-run-usage-v21-with-run.sql"))
+        .unwrap();
+    drop(HistoryDb::open(&path, roomy()).unwrap());
+    let run: agent_core::ids::RunId = "run-20261120-100100-lg01".parse().unwrap();
+
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let runs: i64 = raw
+        .query_row("SELECT COUNT(*) FROM runs", [], |row| row.get(0))
+        .unwrap();
+    let read = Reader::open(&path).unwrap().run_usage(&run).unwrap();
+    let many = Reader::open(&path).unwrap().run_usages(&[run]).unwrap();
+
+    assert_eq!(runs, 1);
+    assert_eq!(read, None);
+    assert!(many.is_empty());
+}
