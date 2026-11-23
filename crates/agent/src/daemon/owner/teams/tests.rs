@@ -1104,6 +1104,49 @@ async fn a_coordinator_retried_without_a_tool_is_launched_in_a_fresh_session() {
 }
 
 #[tokio::test]
+async fn a_first_run_of_a_changed_cli_session_failing_without_a_tool_is_retried_once() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep,changed-session-fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run slept in session A. A message wakes the coordinator; its CLI changed, so the woken run reports a
+    // different session and ends with STATUS: FAILED without calling a tool. Because the run opened the new session, it
+    // is retried once, and the retried run (a new session) does the work.
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.bus()
+        .send(
+            &agent("claude-1"),
+            &Recipient::Agent(agent("inv-opus")),
+            &Outgoing::Chat {
+                text: "The CLI changed; please continue.".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let state = f
+        .state_where("the retried run of the changed CLI to end", |state| {
+            let coordinator = state.find_task(&tasks[0]).unwrap().member;
+            coordinator.runs().len() == 3 && coordinator.status() == TaskStatus::Waiting
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the CLI change is a new session identity"
+    );
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
+#[tokio::test]
 async fn a_member_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),

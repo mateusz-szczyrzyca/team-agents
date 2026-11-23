@@ -8,6 +8,8 @@
 #   sleep           ends with STATUS: SLEEPING
 #   bus-sleep       reads its messages as the `--agent` its MCP configuration names, then ends with STATUS: SLEEPING
 #   fail            ends with STATUS: FAILED
+#   changed-session-fail  as a run whose CLI changed mid-task: reports a changed session identity and ends with
+#                   STATUS: FAILED without calling a tool, as the first run of the changed CLI that cannot work
 #   nostatus        ends without a STATUS line
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   fail-first:TEXT  the first task of the home to run this action ends with STATUS: FAILED; every other one ends with
@@ -511,6 +513,12 @@ case $action in
     result 'Nothing to do now.\nSTATUS: SLEEPING'
     ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
+  changed-session-fail)
+    # A CLI change: the run reports a changed session identity (its result names a different `session_id` than the one it
+    # was launched with) and ends with STATUS: FAILED without calling a tool, as the first run of the changed CLI.
+    session="changed-session"
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
   nostatus) result 'I think that is all.' ;;
   nostatus-dirty)
     # Leaves a file it did not commit and ends without a status, as a session that went bad in the middle of its work.
