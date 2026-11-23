@@ -721,6 +721,9 @@ async fn restart_after_second_no_status_does_not_give_a_fourth_run() {
     config.push_str("[replacement]\nnew_sessions = 0\nmode = \"off\"\n");
     // The run the restart cuts is resumed in its session: the retries of that session are what is counted.
     config.push_str("[restart]\nsession = \"same\"\n");
+    // The rig's clock ticks once per reading, so a slow machine ages the team: it must not be removed as idle (issue 218)
+    // while the test reads its state and its worktree.
+    config.push_str("[limits]\nidle_team_minutes = 0\n");
     std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
 
