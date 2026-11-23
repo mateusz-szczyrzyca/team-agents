@@ -614,7 +614,7 @@ fn a_run_of_a_round_that_is_closed_is_resumed_as_before() {
 }
 
 #[test]
-fn a_state_written_before_the_restart_key_is_recovered_as_it_was() {
+fn a_reviewer_running_in_a_state_written_before_the_restart_key_begins_no_session() {
     let mut state = State::from_json(include_str!(
         "../../../../agent-core/tests/fixtures/state-before-renewals.json"
     ))
@@ -631,4 +631,53 @@ fn a_state_written_before_the_restart_key_is_recovered_as_it_was() {
 
     assert_eq!(recovery.renewed, Vec::<TaskId>::new());
     assert_eq!(renewals_of(&state), before, "no session begins in an old state");
+}
+
+#[test]
+fn a_member_running_in_a_state_written_before_the_restart_key_begins_a_daemon_down_session() {
+    let mut state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-renewals.json"
+    ))
+    .unwrap();
+    let member: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+    let open_round: RoundId = "round-20261111-193900-p7w3".parse().unwrap();
+    let team = state.find_task(&member).unwrap().team.id().clone();
+    // The member failed after seven endings without a status; the human let it go on, and the daemon died in its run.
+    let began: Timestamp = "2026-11-21T10:00:00Z".parse().unwrap();
+    {
+        let (_, mut found) = state.find_task_mut(&member).unwrap();
+        found.transition(TaskStatus::Queued).unwrap();
+        found.transition(TaskStatus::Running).unwrap();
+    }
+    state
+        .team_mut(&team)
+        .unwrap()
+        .begin_run(
+            &member,
+            agent_core::state::NewRun {
+                id: "run-20261121-100000-aaaa".parse().unwrap(),
+                at: began,
+                session: Some("ses-old".parse().unwrap()),
+                rounds: vec![open_round],
+            },
+        )
+        .unwrap();
+
+    let recovery = recover_with(
+        &mut state,
+        "2026-11-21T10:05:00Z".parse().unwrap(),
+        &limits(),
+        RestartSession::New,
+    )
+    .unwrap();
+
+    let found = state.find_task(&member).unwrap().member;
+    assert_eq!(recovery.renewed, [member.clone()]);
+    assert_eq!(found.status(), TaskStatus::Queued);
+    assert!(found.awaits_new_session());
+    assert_eq!(
+        found.renewals().map(agent_core::state::Renewals::reason),
+        Some(Trouble::DaemonDown)
+    );
+    assert_eq!(found.renewals().map(agent_core::state::Renewals::used), Some(0));
 }
