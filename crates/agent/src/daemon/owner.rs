@@ -95,6 +95,9 @@ pub(super) const MAX_RUNS: NonZeroUsize = NonZeroUsize::new(16).unwrap();
 /// How many messages may wait for the owner.
 pub(super) const INBOX: usize = 64;
 
+/// Scan activity once a minute, avoiding Git queries on every owner message.
+const IDLE_SCAN_SECONDS: i64 = 60;
+
 /// How many events a subscriber may fall behind before it is let go.
 pub(super) const EVENT_BACKLOG: usize = 1024;
 
@@ -692,6 +695,7 @@ impl Owner {
         self.recover().await?;
         self.adopt_open_questions().await?;
         let mut retained_at = None;
+        let mut idle_checked_at: Option<Timestamp> = None;
         let mut tick = tokio::time::interval(self.parts.tick.max(Duration::from_millis(1)));
         tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
@@ -702,6 +706,11 @@ impl Owner {
                 &mut retained_at,
             ) {
                 self.history.retain(request);
+            }
+            let now = Timestamp::now(&self.parts.clock)?;
+            if idle_checked_at.is_none_or(|last| (now.as_utc() - last.as_utc()).whole_seconds() >= IDLE_SCAN_SECONDS) {
+                self.check_idle_teams().await?;
+                idle_checked_at = Some(now);
             }
             self.team_life().await?;
             self.start_queued().await?;

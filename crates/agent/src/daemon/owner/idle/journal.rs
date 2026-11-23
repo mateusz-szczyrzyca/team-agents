@@ -28,10 +28,17 @@ impl Owner {
             Outcome::Attempt => "attempt",
             Outcome::Refused => "refused",
         };
+        let next_parts: Vec<_> = team
+            .items()
+            .iter()
+            .filter_map(|item| team.next_part(item.id()))
+            .map(|(part, _)| part.to_string())
+            .collect();
         let fields = serde_json::json!({
             "decision": "idle_removal", "outcome": outcome, "reason": reason,
             "last_activity": team.idle_watch().map(|watch| watch.last_activity),
             "items": team.items(), "rounds": team.rounds(),
+            "splits": team.splits(), "next_parts": next_parts,
             "branches": branches_of(team)?,
         });
         let fields = serde_json::from_value(fields).map_err(|e| internal("cannot capture idle context", &e))?;
