@@ -95,3 +95,30 @@ fn recovery_starts_fresh_sessions_for_solo_and_team_crews() {
         assert_eq!(fresh.crew(), &expected);
     }
 }
+
+#[test]
+fn recovery_retains_merge_evidence_before_the_old_round_is_closed() {
+    for ending in [None, Some(RoundEnd::Approved), Some(RoundEnd::Merged)] {
+        let mut old = team(1);
+        old.open_round(round_id(1), Some(item("1.2")), at(1)).unwrap();
+        drive(&mut old, "1.2", PhaseKind::Done);
+        if let Some(ending) = ending {
+            old.close_round(&round_id(1), at(60), ending).unwrap();
+        }
+        let recovered = old.recovery_team(team_id(2), at(100), team_of(2, 10).crew().clone());
+        assert_eq!(
+            recovered.map(|fresh| (
+                fresh.item(item("1.2")).cloned(),
+                fresh.rounds().len(),
+                fresh.rounds().first().map(|round| (round.id().clone(), round.ended())),
+                fresh.open_rounds().count(),
+            )),
+            Ok((
+                old.item(item("1.2")).cloned(),
+                1,
+                Some((round_id(1), Some(ending.unwrap_or(RoundEnd::Merged)))),
+                0
+            ))
+        );
+    }
+}
