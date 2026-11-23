@@ -837,6 +837,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
         // warn (15)
         for variant in [
+            LogEvent::RunNoToolFailed,
             LogEvent::CliOutputUnreadable,
             LogEvent::RunEndedWithoutStatus,
             LogEvent::RunHung,
@@ -863,6 +864,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
         // info (6)
         for variant in [
+            LogEvent::RunNoToolRetry,
             LogEvent::TeamChanged,
             LogEvent::RoundChanged,
             LogEvent::ItemPhaseChanged,
@@ -1441,10 +1443,54 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
     super::removal_tests::record_team_removed(&mut observed).await;
+    record_no_tool_startup_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
         observed, expected,
         "every LogEvent variant must be produced by a real production cause"
     );
+}
+
+/// Provokes both startup recovery events through a member's failed first run and failed fresh-session retry.
+async fn record_no_tool_startup_events(observed: &mut BTreeSet<LogEvent>) {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+            normal("claude-1", "fail,fail"),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let state = rig.status_is(&tasks[1], agent_core::status::TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+
+    let round = state.teams()[0].rounds()[0].id();
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.runs().len(), 2);
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let selected: Vec<_> = logs
+        .iter()
+        .filter(|row| matches!(row.event(), LogEvent::RunNoToolRetry | LogEvent::RunNoToolFailed))
+        .collect();
+    assert_eq!(selected.len(), 2);
+    for ((row, run), (event, level)) in selected.iter().zip(member.runs()).zip([
+        (LogEvent::RunNoToolRetry, LogLevel::Info),
+        (LogEvent::RunNoToolFailed, LogLevel::Warn),
+    ]) {
+        assert_eq!(row.event(), event);
+        assert_eq!(row.level(), level);
+        assert_eq!(row.team(), Some(&team));
+        assert_eq!(row.rounds(), std::slice::from_ref(round));
+        assert_eq!(row.task(), Some(&tasks[1]));
+        assert_eq!(row.run(), Some(run.id()));
+        observed.insert(event);
+    }
 }
