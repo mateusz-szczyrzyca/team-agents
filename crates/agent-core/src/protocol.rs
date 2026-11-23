@@ -158,6 +158,7 @@ fn decode<T: DeserializeOwned>(line: &str, max: usize) -> Result<T, ProtocolErro
 /// Serializes one of the protocol's object-shaped messages with the split-aware version tag.
 fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_no_tool_metadata(&mut value);
     strip_plan_fields(&mut value);
     strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
@@ -169,6 +170,7 @@ fn encode_split<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 /// Serializes one of the protocol's object-shaped messages with the plan-aware version tag.
 fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_no_tool_metadata(&mut value);
     strip_executor_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(PLAN_PROTOCOL_VERSION);
@@ -179,6 +181,7 @@ fn encode_plan<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 /// Serializes executor-aware messages for protocol-six clients, stripping fields introduced in protocol seven.
 fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_no_tool_metadata(&mut value);
     strip_versions_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(EXECUTOR_PROTOCOL_VERSION);
@@ -189,6 +192,7 @@ fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
 /// Serializes version-seven messages without downgrading their metadata, except the failed reason of protocol eight.
 fn encode_versions<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_no_tool_metadata(&mut value);
     strip_failed_reason_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(VERSIONS_PROTOCOL_VERSION);
@@ -403,6 +407,38 @@ fn strip_failed_reason_fields(value: &mut serde_json::Value) {
     }
 }
 
+/// Projects protocol-eight run metadata out of replies to strict older clients.
+fn strip_no_tool_metadata(value: &mut serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let mut changed = object.remove("used_tool").is_some();
+            if object
+                .get("renewals")
+                .and_then(|renewals| renewals.get("reason"))
+                .and_then(serde_json::Value::as_str)
+                == Some("no_tool_call")
+            {
+                changed |= object.remove("renewals").is_some();
+            }
+            for nested in object.values_mut() {
+                changed |= strip_no_tool_metadata(nested);
+            }
+            changed
+        }
+        serde_json::Value::Array(values) => {
+            let mut changed = false;
+            for nested in values {
+                changed |= strip_no_tool_metadata(nested);
+            }
+            changed
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => false,
+    }
+}
+
 impl Frame {
     /// The frame as one line ending with a newline.
     ///
@@ -427,7 +463,8 @@ impl Frame {
             )));
         }
         let mut legacy = serde_json::to_value(self).map_err(|source| EncodeError { source })?;
-        if strip_split_fields(&mut legacy) {
+        let changed = strip_no_tool_metadata(&mut legacy);
+        if strip_split_fields(&mut legacy) || changed {
             encode(&legacy)
         } else {
             encode(self)
