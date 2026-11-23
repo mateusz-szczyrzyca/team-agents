@@ -533,8 +533,15 @@ impl State {
     /// # Errors
     /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
     pub fn begin_context_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
-        let _ = (task, at);
-        Ok(false)
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member
+            .begin_holder_session(crate::decide::ladder::Trouble::ContextBound, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
     }
 
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
