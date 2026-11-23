@@ -12,7 +12,7 @@ use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Reply, Target};
 use agent_core::state::CommitId;
-use agent_core::state::{ItemPhase, Team};
+use agent_core::state::{ItemPhase, Team, WakeDelivery};
 use agent_runtime::disk::directory_size;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, RemoveMode, Revision, StatusEntry, TreeState};
 use agent_runtime::github::{PullRequestUpdate, RepoSlug, StateChange};
@@ -293,6 +293,19 @@ impl Owner {
         if let Err(failure) = self.close_team_pulls(&request.team, &plan, &mut removal).await {
             return Ok(Err(failure));
         }
+        for task in &tasks {
+            if let Some(delivery) = self.parts.state.wake_delivery(task) {
+                let (phase, message, count) = match delivery {
+                    WakeDelivery::Pending { message, count } => ("pending", message, count),
+                    WakeDelivery::Delivered { message, count } => ("delivered", message, count),
+                };
+                let message = message.map_or_else(|| "unknown".to_owned(), |message| message.to_string());
+                removal.left_behind.push(format!(
+                    "removed wake budget: task {task}, message {message}, count {count}, state {phase}, source {}",
+                    self.parts.store.home().state_file().display()
+                ));
+            }
+        }
         // The team leaves the state before anything on disk goes: a daemon that stops in between has a team that is
         // gone and files left behind, never files gone under a team that the state still lists.
         let mut next = self.parts.state.clone();
@@ -554,6 +567,10 @@ impl Owner {
     /// Marks the team done on the bus and names what the bus keeps of its tasks, which the harness cannot release: the
     /// reservations stay until they expire or someone releases them, and the wake-ups of the bus are not removed.
     async fn release_on_bus(&self, team: &TeamId, tasks: &[TaskId], removal: &mut Removal) {
+        removal.left_behind.push(
+            "the bus itself was neither read for wake-ups nor cleaned; unread messages and reservations remain"
+                .to_owned(),
+        );
         if let Err(error) = self.parts.bus.team_done(team).await {
             removal.left_behind.push(format!(
                 "the team is not marked done on the bus: {}",
