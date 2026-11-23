@@ -28,7 +28,7 @@
 //!   the few it needs.
 //! - **The activity** of a step is the one the old `agentbus normalize` showed.
 //! - **The usage** of a run (its context size, the output tokens and the cost) is what the stream tells, per model
-//!   call, through [`OutputParser::usage`]: a part the CLI does not tell stays "not told", never an estimate.
+//!   call, through [`usage`](agent_core::cli::OutputParser::usage): a part the CLI does not tell stays "not told", never an estimate.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
