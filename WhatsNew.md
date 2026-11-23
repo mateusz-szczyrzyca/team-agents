@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.74.0 — 23.11.2026 — PR #220
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent remove <team> [--force]` removes a team's local work and takes it out of status. Before deletion, unmerged branches and detached commits are saved in `AGENTS_HOME/removed/<team>.bundle`, and open pull requests are closed with a reason; history, notifications and GitHub branches stay. `--force` first ends active work. The output names tracked uncommitted changes, the bundle, freed bytes and anything left behind, and a notification records the removal.
+- [agent] Bus wake-ups are neither read nor cleaned, and reservations remain until released or expired; removal reports the available wake-budget records and known reservations. A team without a surviving worktree is refused with recovery instructions.
+
+### Enhancements
+- [agent] Removal also cleans up document and artwork directories when the team has no Git worktrees, including their sizes in the freed-byte total.
+- [agent-runtime] **Action:** On the first start, the daemon migrates `history.db` to schema 20 to record team removals, preserving existing history. Older daemons refuse this newer schema; keep a backup before upgrading if you need to return to an older daemon.
+
 ## 0.73.0 — 23.11.2026 — PR #217 (continues #190)
 
 ### New features

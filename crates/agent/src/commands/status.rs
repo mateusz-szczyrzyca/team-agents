@@ -578,6 +578,7 @@ pub(super) const fn kind_of(reply: &Reply) -> &'static str {
         Reply::Gate { .. } => "gate",
         Reply::GateRecorded { .. } => "gate_recorded",
         Reply::Subscribed { .. } => "subscribed",
+        Reply::Removed { .. } => "removed",
     }
 }
 

@@ -15,6 +15,7 @@ mod gate;
 mod history;
 mod last_step;
 mod plan;
+mod removal;
 mod returned;
 mod round_state;
 mod rounds;
@@ -137,6 +138,9 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// A gate answer task failed before its completion could be recorded.
+    #[error("cannot settle a gate answer")]
+    GateAnswer(#[source] JoinError),
     /// The words that name a task in a notification cannot be made.
     #[error("cannot make the words of a notification")]
     TaskWords(#[from] super::notice::TaskWordsError),
@@ -522,6 +526,10 @@ pub(super) struct Owner {
     /// What stops the gates of each task that asked for one, whether its run is going or not; the human's stop or pause
     /// of the task cancels and removes it.
     gate_stops: HashMap<TaskId, CancellationToken>,
+    /// Replies whose arrival proves the gate service has finished using task files.
+    gate_answers: JoinSet<()>,
+    /// The task that owns each outstanding gate answer.
+    gate_answer_tasks: HashMap<JoinId, TaskId>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
     /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
@@ -625,6 +633,8 @@ impl Owner {
             incomplete: HashMap::new(),
             holds: HashMap::new(),
             gate_stops: HashMap::new(),
+            gate_answers: JoinSet::new(),
+            gate_answer_tasks: HashMap::new(),
             gate: None,
             pulls: None,
             github: HashMap::new(),
@@ -700,6 +710,7 @@ impl Owner {
                     Some(message) => self.handle(message).await?,
                     None => break,
                 },
+                Some(joined) = self.gate_answers.join_next_with_id() => self.gate_answer_done(joined)?,
                 Some(joined) = self.runs.join_next_with_id() => self.settle_joined(joined).await?,
                 Some(report) = next_report(&mut self.saved) => self.reported(report).await?,
                 Some(joined) = self.disk_jobs.join_next_with_id() => self.disk_job_done(joined).await,
@@ -728,6 +739,9 @@ impl Owner {
         // directory half removed.
         while let Some(joined) = self.disk_jobs.join_next_with_id().await {
             self.disk_job_done(joined).await;
+        }
+        while let Some(joined) = self.gate_answers.join_next_with_id().await {
+            self.gate_answer_done(joined)?;
         }
         checks_stopped?;
         stopped
@@ -1938,6 +1952,7 @@ impl Owner {
                             }
                         }
                         Command::Say(request) => self.say_request(&client, request).await?,
+                        Command::Remove(request) => self.remove_reply(&client, request).await?,
                         other => self.answer(&other),
                     };
                     if let Err(ref failure) = answer {
@@ -2031,6 +2046,10 @@ impl Owner {
             Command::Subscribe(_) => Err(Failure {
                 kind: FailureKind::Internal,
                 message: "a subscription is made by the connection, not asked of the owner".to_owned(),
+            }),
+            Command::Remove(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a removal is carried out by the owner, not answered from the state".to_owned(),
             }),
         }
     }

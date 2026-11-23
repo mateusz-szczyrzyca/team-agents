@@ -143,6 +143,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Warn,
         ),
         (LogEvent::TeamChanged, "team_changed", LogLevel::Info),
+        (LogEvent::TeamRemoved, "team_removed", LogLevel::Info),
         (LogEvent::RoundChanged, "round_changed", LogLevel::Info),
         (LogEvent::DeliveryClosed, "delivery_closed", LogLevel::Warn),
         (LogEvent::ItemPhaseChanged, "item_phase_changed", LogLevel::Info),

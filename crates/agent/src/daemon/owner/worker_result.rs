@@ -49,6 +49,13 @@ pub(super) struct Checking {
     checked: Checked,
 }
 
+impl Checking {
+    /// The worker whose files must survive until this check has been joined.
+    pub(super) fn task(&self) -> &TaskId {
+        &self.pending.worker_task
+    }
+}
+
 /// What reading a request and the worker's worktree came to.
 enum Gathered {
     /// The bus cannot say now: the request is tried again at the next look.

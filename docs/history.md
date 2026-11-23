@@ -815,3 +815,8 @@ History version 19 admits the `worker_request_damaged` event of the daemon's log
 (`019-worker-request-damaged.sql`) preserves existing daemon logs, their links, search entries and cursors. The previous schema
 is retained as `crates/agent-runtime/tests/fixtures/history-before-worker-request-damaged.sql` (the version-17 dump with migration
 18 applied) and tested on upgrade.
+
+History version 20 admits the `team_removed` information event. Its migration (`020-team-removed.sql`)
+preserves the existing logs, their links, search entries and cursors. The version-19 fixture
+`crates/agent-runtime/tests/fixtures/history-before-team-removal.sql` verifies upgrading a history with an existing log.
+Removing a team leaves its history available after its live state and local files have been removed.

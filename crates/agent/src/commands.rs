@@ -9,6 +9,7 @@ pub(crate) mod gate;
 pub(crate) mod guard;
 pub(crate) mod log;
 pub(crate) mod pause;
+pub(crate) mod remove;
 pub(crate) mod resume;
 pub(crate) mod run;
 pub(crate) mod say;

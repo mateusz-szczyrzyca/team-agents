@@ -556,6 +556,7 @@ of a task (`answer`, `question_asked`, `question_answered`) to `number`.
 | `answer` | `task`, `number`, `answers` (1–256 × `{question, verdict}`, none for a question twice) | `applied` |
 | `stop`, `pause`, `unpause`, `resume` | `target` | `applied` |
 | `say` | `target`, `text` (not blank, at most 64 KiB, no NUL) | `applied` |
+| `remove` | `team`, `force?` (absent means false) | `removed` (`team`, `stopped`, `tasks`, `bundle?`, `bundled`, `branches`, `closed_pull_requests`, `dirty_worktrees`, `freed_bytes`, `left_behind`) |
 | `gate` | `task` | `gate_recorded` |
 | `subscribe` | `team?` | `subscribed`, then events |
 
@@ -563,6 +564,12 @@ A `target` is `{"team": "team-…"}`, `{"task": "task-…"}` or `{"round": "roun
 `resume`, `say`) take a team or a task and refuse a round with `invalid`. A `verdict` is a string: `ok` (any case) accepts the
 recommendation, any other text is the human's own answer. The daemon checks `answers` against the questions file of the questions
 with that `number` (every question answered, `ok` only where there is a recommendation).
+
+The `remove` command adds no persisted team fields. It saves state without the team's tasks, rounds and wake-up
+budgets before deleting local files. A failed save leaves the in-memory team and local files intact. Reloading the
+saved state cannot recreate a removed team; its history remains in `history.db`. The reply's `dirty_worktrees`
+names tracked changes regardless of cleanup success; `left_behind` reports cleanup failures and the bus records
+not released by this command. `freed_bytes` counts only successfully removed directories.
 
 ### What the daemon serves
 

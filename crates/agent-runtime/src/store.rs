@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::string::FromUtf8Error;
 
 use agent_core::config::{AbsolutePath, RepoName};
-use agent_core::ids::{RunId, TaskId};
+use agent_core::ids::{RunId, TaskId, TeamId};
 use agent_core::state::{ChecksRecord, GateRecord, MAX_STATE_BYTES, PrNumber, RenderError, State, StateError};
 use tempfile::NamedTempFile;
 use tokio::io::AsyncReadExt;
@@ -52,6 +52,9 @@ const PROMPTS_DIR: &str = "prompts";
 
 /// The directory of the git worktrees in the home; one directory per repository, inside it one per task.
 const WORKTREES_DIR: &str = "worktrees";
+
+/// The directory under the home where the bundles of removed teams are written.
+const REMOVED_DIR: &str = "removed";
 
 /// The legacy activity filename; retained for identifying old files, never written.
 const ACTIVITY_FILE: &str = "activity.jsonl";
@@ -185,6 +188,12 @@ impl Home {
     #[must_use]
     pub fn worktrees_dir(&self) -> PathBuf {
         self.root().join(WORKTREES_DIR)
+    }
+
+    /// The git bundle that keeps the unmerged branches of the removed team `team`.
+    #[must_use]
+    pub fn removed_bundle(&self, team: &TeamId) -> PathBuf {
+        self.root().join(REMOVED_DIR).join(format!("{team}.bundle"))
     }
 
     /// The git worktree of `task`, a task of a team that works on `repo`.
