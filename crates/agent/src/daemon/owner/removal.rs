@@ -10,6 +10,7 @@ use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
+use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Reply, Target};
 use agent_core::state::CommitId;
 use agent_core::state::{ItemPhase, Team, WakeDelivery};
@@ -356,7 +357,40 @@ impl Owner {
             left_behind = removal.left_behind.len(),
             "team removed"
         );
+        self.removal_notice(&removal).await;
         Ok(Ok(removal))
+    }
+
+    /// Reports a completed removal; notification failure cannot undo deleted files and is logged.
+    async fn removal_notice(&mut self, removal: &Removal) {
+        let rendered = (|| -> Result<String, Failure> {
+            let bundle = removal.bundle.as_ref().map_or_else(
+                || "none (all commits are in the base branch)".to_owned(),
+                |path| path.as_path().display().to_string(),
+            );
+            let values = Variables::new()
+                .with("team", removal.team.to_string())
+                .and_then(|v| v.with("reason", "requested by the human"))
+                .and_then(|v| v.with("bundle", bundle))
+                .and_then(|v| v.with("bytes", removal.freed_bytes.to_string()))
+                .map_err(|error| internal("cannot build removal notice variables", &error))?;
+            self.parts
+                .texts
+                .render(HarnessPrompt::NoticeTeamRemoved, &values)
+                .map_err(|error| internal("cannot render removal notice", &error))
+        })();
+        match rendered {
+            Ok(text) => {
+                let (title, body) = text.split_once('\n').map_or((text.as_str(), ""), |parts| parts);
+                self.deliver(title, body, "team removal notice").await;
+            }
+            Err(error) => tracing::warn!(
+                event = agent_core::log::LogEvent::NotificationFailed.as_str(),
+                team = %removal.team,
+                error = %error.message,
+                "cannot render the team removal notice"
+            ),
+        }
     }
 
     /// Measures and decides the removal of `team_id`; nothing is changed.
