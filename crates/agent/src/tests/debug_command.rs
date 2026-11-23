@@ -1001,3 +1001,106 @@ fn debug_command_e2e_collects_bus_notifications_config_and_scans_secrets() {
     // 8. All-artifacts secret scan: NO file in bundle_path contains secret_val
     assert_no_secret_in_directory(&bundle_path, secret_val);
 }
+
+/// A team whose one run of `codex-1` has the usage `usage`, in a history with the bound `max_context` for `codex-1`.
+fn team_with_usage(max_context: u64, usage: agent_core::cli::RunUsage) -> (tempfile::TempDir, Home, TeamId) {
+    use agent_runtime::history::Store;
+
+    let (dir, home, _state, team, _lead, member, _round) = setup_test_home();
+    std::fs::write(
+        home.config_file(),
+        format!(
+            "[agents.codex-1]\ncli = \"codex\"\n\n[tiers]\nnormal = [\"codex-1\"]\nworkers = []\n\n[session]\nmax_context = {max_context}\n"
+        ),
+    )
+    .unwrap();
+    let at = "2026-11-18T06:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261118-060000-a1b2".parse().unwrap();
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default())
+            .unwrap();
+    database
+        .write(&[
+            agent_core::history::Record::Team(Box::new(agent_core::history::TeamStart {
+                team: team.clone(),
+                at,
+                repo: "example".to_owned(),
+                base_branch: "main".parse().unwrap(),
+                merge: agent_core::state::MergeMode::NoMerge,
+                task_list: "Live task list.".to_owned(),
+                plan: Vec::new(),
+            })),
+            agent_core::history::Record::Run(Box::new(agent_core::history::RunStart {
+                run: run.clone(),
+                team: team.clone(),
+                task: member,
+                at,
+                agent: agent_core::history::AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: agent_core::kinds::Tier::Normal,
+                    cli: agent_core::kinds::CliKind::Codex,
+                    model: None,
+                },
+                role: agent_core::kinds::Role::Member,
+                rounds: vec![],
+                why: agent_core::history::RunWhy::FirstRun,
+                prompt: "Growing session".to_owned(),
+                worktree: agent_core::config::AbsolutePath::try_from("/tmp/worktree".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: None,
+            })),
+            agent_core::history::Record::RunEnd(Box::new(agent_core::history::RunEndRecord {
+                run: run.clone(),
+                at,
+                end: agent_core::state::RunEnd::Stopped,
+                final_message: None,
+            })),
+        ])
+        .unwrap();
+    database
+        .write_usage(&[agent_runtime::history::RunUsageRecord { run, usage }])
+        .unwrap();
+    drop(database);
+    (dir, home, team)
+}
+
+#[test]
+fn debug_names_a_session_above_its_bound_and_keeps_the_series_of_its_runs() {
+    let usage = agent_core::cli::RunUsage {
+        first_context: Some(800),
+        last_context: Some(1_500),
+        tokens_written: Some(300),
+        cost_usd: Some(0.5),
+    };
+    let (_dir, home, team) = team_with_usage(1_000, usage);
+
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, _out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let summary = std::fs::read_to_string(
+        parent
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("SUMMARY.md"),
+    )
+    .unwrap();
+
+    assert!(summary.contains("Context of the runs by task:"), "{summary}");
+    assert!(
+        summary.contains("run run-20261118-060000-a1b2 (agent codex-1): context first 800 tokens, last 1500 tokens; output 300 tokens; cost 0.500000 USD"),
+        "{summary}"
+    );
+    assert!(
+        summary
+            .contains("run run-20261118-060000-a1b2 (session not known) is above its bound: last context 1500 tokens > 1000 tokens (agent codex-1)"),
+        "{summary}"
+    );
+}
