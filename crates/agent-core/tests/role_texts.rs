@@ -6,10 +6,22 @@ const ROLE_TEXTS: [(&str, &str); 5] = [
         "role-coordinator.md",
         include_str!("../../../prompts/harness/run/role-coordinator.md"),
     ),
-    ("role-member.md", include_str!("../../../prompts/harness/run/role-member.md")),
-    ("role-solo.md", include_str!("../../../prompts/harness/run/role-solo.md")),
-    ("role-worker.md", include_str!("../../../prompts/harness/run/role-worker.md")),
-    ("role-reviewer.md", include_str!("../../../prompts/harness/run/role-reviewer.md")),
+    (
+        "role-member.md",
+        include_str!("../../../prompts/harness/run/role-member.md"),
+    ),
+    (
+        "role-solo.md",
+        include_str!("../../../prompts/harness/run/role-solo.md"),
+    ),
+    (
+        "role-worker.md",
+        include_str!("../../../prompts/harness/run/role-worker.md"),
+    ),
+    (
+        "role-reviewer.md",
+        include_str!("../../../prompts/harness/run/role-reviewer.md"),
+    ),
 ];
 
 #[test]
