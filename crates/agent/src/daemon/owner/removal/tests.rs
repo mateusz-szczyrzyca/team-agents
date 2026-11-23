@@ -945,3 +945,93 @@ async fn mixed_git_and_plain_worktrees_are_removed() {
     assert_eq!(git(dir.path(), &["branch", "--list", branch.as_str()]).trim(), "");
     assert!(daemon.state().team(&team_id(0)).is_none());
 }
+
+#[tokio::test]
+async fn removal_joins_previously_halted_checks_before_cleanup() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let worktree = daemon.home.worktree_dir(&repo(), &task(1));
+    std::fs::create_dir_all(worktree.join(".agent")).unwrap();
+    std::fs::write(
+        worktree.join(".agent/plan.md"),
+        "Finish it.\n\n1. Work\n[x] 1.1 Build\n    Check: /bin/true\n",
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let round = agent_core::ids::RoundId::derive(&team_id(0), 1);
+    owner
+        .parts
+        .state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .open_round(round.clone(), None, at(0))
+        .unwrap();
+    owner
+        .parts
+        .state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: "run-20261122-060000-abcd".parse().unwrap(),
+                at: at(0),
+                session: None,
+                rounds: vec![round],
+            },
+        )
+        .unwrap();
+    owner
+        .parts
+        .state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .finished(
+            &task(1),
+            FinishedRun {
+                classified: Classified {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Done,
+                    },
+                    pause: None,
+                },
+                finish: RunFinish {
+                    exit: ExitStatus::Code(0),
+                    stopped_by: StoppedBy::Nobody,
+                },
+                progress: Progress::Made,
+                session: None,
+                final_message: Some("STATUS: DONE".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(owner.parked.contains_key(&task(1)));
+    owner.halt_parked_check(&task(1)).await.unwrap();
+    assert_eq!(owner.aborted_checks.len(), 1);
+    let removed = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        owner.checks.len(),
+        0,
+        "halted checks must be joined before their files go"
+    );
+    assert_eq!(owner.aborted_checks.len(), 0);
+    assert_eq!(removed.stopped, Vec::<agent_core::ids::TaskId>::new());
+    assert!(!worktree.exists());
+    assert!(!daemon.home.task_dir(&task(1)).exists());
+    assert!(daemon.state().team(&team_id(0)).is_none());
+}
