@@ -241,7 +241,9 @@ impl Owner {
         let running: Vec<TaskId> = tasks
             .iter()
             .filter(|task| {
-                self.in_flight.contains(*task) || self.gate_answer_tasks.values().any(|owner| owner == *task)
+                self.in_flight.contains(*task)
+                    || self.parked.contains_key(*task)
+                    || self.gate_answer_tasks.values().any(|owner| owner == *task)
             })
             .cloned()
             .collect();
@@ -262,12 +264,21 @@ impl Owner {
             for task in &tasks {
                 self.stop_gates(task);
             }
-            if tasks.iter().any(|task| self.in_flight.contains(task)) {
+            if tasks
+                .iter()
+                .any(|task| self.in_flight.contains(task) || self.parked.contains_key(task))
+            {
                 if let Err(failure) = self
                     .control_request(client, Steer::Stop, &Target::Team(request.team.clone()))
                     .await?
                 {
                     return Ok(Err(failure));
+                }
+            }
+            let checks: Vec<_> = self.aborted_checks.iter().copied().collect();
+            while checks.iter().any(|id| self.aborted_checks.contains(id)) {
+                if let Some(joined) = self.checks.join_next_with_id().await {
+                    self.check_batch_done(joined).await?;
                 }
             }
             while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
