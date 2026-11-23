@@ -53,11 +53,25 @@ fn count(value: Option<u64>) -> Result<Option<i64>, WriteError> {
         .transpose()
 }
 
-/// The usage of `run` as the table keeps it; `None` when there is no row for it, which is "not told".
+/// The usage of `run` as the table keeps it; `None` when there is no row for it, or no table, which is "not told".
 ///
 /// # Errors
 /// [`ReadError::Query`] when the row cannot be read, [`ReadError::Value`] when a count in it is negative.
 pub(super) fn read(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<RunUsage>, ReadError> {
+    // A history written before migration 21 has no table: none of its runs has a usage, and so none is told.
+    let tables: i64 = snapshot
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'run_usage'",
+            [],
+            |row| row.get(0),
+        )
+        .map_err(|source| ReadError::Query {
+            table: "run_usage",
+            source,
+        })?;
+    if tables == 0 {
+        return Ok(None);
+    }
     let row = snapshot
         .query_row(
             "SELECT first_context, last_context, tokens_written, cost_usd FROM run_usage WHERE run = ?1",
