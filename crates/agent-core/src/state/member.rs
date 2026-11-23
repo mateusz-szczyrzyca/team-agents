@@ -925,7 +925,13 @@ impl Member {
         let Some(last) = self.runs.last().and_then(Run::session) else {
             return false;
         };
-        let Some(previous) = self.runs.get(self.runs.len().wrapping_sub(2)).and_then(Run::session) else {
+        let Some(previous) = self
+            .runs
+            .len()
+            .checked_sub(2)
+            .and_then(|index| self.runs.get(index))
+            .and_then(Run::session)
+        else {
             return false;
         };
         last != previous
