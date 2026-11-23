@@ -383,3 +383,6 @@ async fn reviewer_worktree_commits_keep_the_team_alive() {
     );
     assert_eq!(daemon.notifications(), Vec::<String>::new());
 }
+
+#[path = "integration_tests.rs"]
+mod integration;
