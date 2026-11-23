@@ -411,3 +411,21 @@ fn a_state_of_0_80_0_begins_a_session_above_its_bound_and_its_next_run_starts_a_
         "the next run is the only run of its session"
     );
 }
+
+/// The size in tokens that ended a session above its bound is kept with the renewal, so that a restart before the new
+/// session's first run still knows it: the size paragraph of that run is built from the state.
+#[test]
+fn a_context_renewal_keeps_the_size_that_ended_the_session_through_a_restart() {
+    let mut state = State::from_json(include_str!("../../tests/fixtures/state-0.80.0-session.json"))
+        .expect("a state of 0.80.0 loads");
+    let late: Timestamp = "2026-11-21T00:00:00Z".parse().unwrap();
+
+    let begun = state.begin_context_session_with_size(&task(), late, 200_000);
+    assert!(matches!(begun, Ok(true)), "{begun:?}");
+    let saved = state.to_json().expect("the state saves");
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    let member = loaded.find_task(&task()).expect("the task").member;
+    let renewals = member.renewals().expect("the renewal was recorded");
+    assert_eq!(renewals.context_tokens(), Some(200_000));
+}

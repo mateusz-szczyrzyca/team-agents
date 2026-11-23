@@ -526,6 +526,21 @@ impl State {
         })
     }
 
+    /// Starts `task` anew because its session outgrew its agent's bound at `tokens`, at `at`, and keeps that size with the
+    /// renewal. The stub keeps nothing yet.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
+    pub fn begin_context_session_with_size(
+        &mut self,
+        task: &TaskId,
+        at: Timestamp,
+        tokens: u64,
+    ) -> Result<bool, RenewTaskError> {
+        let _ = tokens;
+        self.begin_context_session(task, at)
+    }
+
     /// Starts `task` anew in a new session because its session outgrew its agent's bound, at `at`: the runs after now
     /// are the new session's, and no session before it is resumed. Every role is started anew for it, and no renewal is
     /// counted. Returns whether the task was started anew: `false` for a task with no run.

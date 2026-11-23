@@ -51,6 +51,13 @@ impl Renewals {
         self.at
     }
 
+    /// The size in tokens of the context that ended the session, when the renewal is for the bound; `None` otherwise and
+    /// in a state written before it was kept. The stub returns none.
+    #[must_use]
+    pub const fn context_tokens(&self) -> Option<u64> {
+        None
+    }
+
     /// Why the task was last started anew.
     #[must_use]
     pub const fn reason(&self) -> Trouble {
