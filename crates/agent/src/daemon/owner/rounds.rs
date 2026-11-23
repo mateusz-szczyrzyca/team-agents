@@ -839,6 +839,10 @@ mod member_gone_tests;
 mod new_session_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/restart_session.rs"]
+mod restart_session_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/takeover.rs"]
 mod takeover_tests;
 
