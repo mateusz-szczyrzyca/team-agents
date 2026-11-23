@@ -282,6 +282,27 @@ when the next daemon finds it going and ends it with no status.
 | `final_message` | TEXT | the agent's final message, whole; `NULL` when the run ended without one |
 | `cut` | TEXT | the fields that were cut |
 
+### `run_usage`
+
+What a run's stream told of its context and cost, written when the run ended. Kept outside the ledger, like judgements:
+it is informational and does not enter the event order. One row for a run whose CLI told any of it; a run with no row
+— every run of a history of version 20 or older — is "not told". Each figure is `NULL` where the CLI does not tell it:
+nothing is estimated.
+
+| `run_usage` column | Type | Meaning |
+|---|---|---|
+| `run` | TEXT, key | the run (foreign key to `runs`) |
+| `first_context` | INTEGER | tokens of the context of the run's first model call; `NULL` when the stream does not show it |
+| `last_context` | INTEGER | tokens of the context of the run's last model call; `NULL` when not shown |
+| `tokens_written` | INTEGER | output tokens the model wrote over the run; `NULL` when any call does not tell it |
+| `cost_usd` | REAL | the cost in US dollars the CLI reported; `NULL` when the CLI reports none |
+
+Per CLI: Claude Code gives the context of each assistant message (input, cache read and cache creation) and the cost of
+the run; opencode gives the tokens and cost of each step; Antigravity gives the tokens of each step; Codex gives the
+output tokens of each turn and no context size, so its context is `NULL`.
+
+`run_usage`: `WITHOUT ROWID`.
+
 ### `run_changes`, `commits` and `changed_files`
 
 What a run changed, read from git when its process was gone — also for a run that was stopped. One row of `run_changes` for
