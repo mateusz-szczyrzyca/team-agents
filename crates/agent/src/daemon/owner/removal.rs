@@ -451,7 +451,13 @@ impl Owner {
                     checkout = Some(found);
                     break;
                 }
-                Err(failure) => notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message)),
+                Err(failure) => {
+                    // A broken Git directory may still own unbundled commits: refuse before deleting anything.
+                    if exists(&dir.as_path().join(".git"))? {
+                        return Err(failure);
+                    }
+                    notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message));
+                }
             }
         }
         if let Some(checkout) = &checkout {
