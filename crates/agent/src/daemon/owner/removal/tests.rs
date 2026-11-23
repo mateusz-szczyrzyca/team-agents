@@ -428,11 +428,7 @@ async fn a_bundle_that_cannot_be_written_leaves_the_team_and_its_files_intact() 
     assert!(daemon.state().team(&team_id(0)).is_some());
     assert!(daemon.home.worktree_dir(&repo(), &task(1)).join("work.txt").is_file());
     assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
-    assert!(
-        !git(dir.path(), &["branch", "--list", unmerged.as_str()])
-            .trim()
-            .is_empty()
-    );
+    assert_ne!(git(dir.path(), &["branch", "--list", unmerged.as_str()]).trim(), "");
 }
 
 #[tokio::test]
