@@ -110,6 +110,9 @@ pub(super) struct Agent {
     pub(super) investigator: bool,
     /// The actions of its runs, comma separated.
     pub(super) scenario: &'static str,
+    /// The agent's own `max_context` in tokens, written into its table when it is set; `None` leaves it out, so the
+    /// `[session]` bound applies.
+    pub(super) max_context: Option<u64>,
 }
 
 /// A normal agent.
@@ -118,6 +121,15 @@ pub(super) fn normal(name: &'static str, scenario: &'static str) -> Agent {
         name,
         investigator: false,
         scenario,
+        max_context: None,
+    }
+}
+
+/// A normal agent with its own bound `max_context` in tokens.
+pub(super) fn bounded(name: &'static str, scenario: &'static str, max_context: u64) -> Agent {
+    Agent {
+        max_context: Some(max_context),
+        ..normal(name, scenario)
     }
 }
 
@@ -127,6 +139,7 @@ pub(super) fn investigator(name: &'static str, scenario: &'static str) -> Agent 
         name,
         investigator: true,
         scenario,
+        max_context: None,
     }
 }
 
@@ -602,6 +615,9 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
             .unwrap();
         }
         write!(text, "[{table}.{}]\ncli = \"claude\"\nargs = [{args}]\n", agent.name).unwrap();
+        if let Some(tokens) = agent.max_context {
+            write!(text, "max_context = {tokens}\n").unwrap();
+        }
         if !agent.investigator {
             normals.push(format!("\"{}\"", agent.name));
         }

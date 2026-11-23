@@ -4,7 +4,7 @@
 use agent_core::decide::ladder::Trouble;
 use agent_core::state::MergeMode;
 
-use super::rig::{CHAIN, Rig, investigator, normal};
+use super::rig::{CHAIN, Rig, bounded, investigator, normal};
 
 /// The header every briefing of a new session starts with.
 const BRIEFING: &str = "# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED";
@@ -18,9 +18,14 @@ fn usage_line(input: u64) -> String {
 
 /// A rig whose agent streams one model call of `input` tokens in its first run, then works in the runs after it.
 async fn rig_streaming(input: u64) -> Rig {
+    rig_with_agent(normal("claude-1", "stream:first,work"), input).await
+}
+
+/// A rig whose agent `agent` streams one model call of `input` tokens in its first run, then works.
+async fn rig_with_agent(agent: super::rig::Agent, input: u64) -> Rig {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "stream:first,work"),
+            agent,
             investigator("inv-r1", "done:VERDICT: APPROVE"),
             investigator("inv-r2", "done:VERDICT: APPROVE"),
         ],
@@ -70,4 +75,28 @@ async fn a_session_below_its_agents_bound_is_resumed_as_before() {
 
     assert!(args.contains("--resume"), "the session is resumed: {args}");
     assert!(!prompt.contains(BRIEFING), "{prompt}");
+}
+
+// Rule: the bound of the agent replaces the `[session]` bound: a session above the agent's own bound is started anew
+// although the default would resume it, and one below it is resumed although the default would start it anew.
+#[tokio::test]
+async fn an_agents_own_bound_replaces_the_session_bound_in_both_directions() {
+    let mut lower = rig_with_agent(bounded("claude-1", "stream:first,work", 100_000), 120_000).await;
+    let (_, lower_tasks) = lower.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    let lower_briefing = lower.prompt(&lower_tasks[0], 2).await;
+    let lower_args = std::fs::read_to_string(lower.worktree(&lower_tasks[0]).join(".fake-args-2")).unwrap();
+    lower.stop().await.unwrap();
+
+    let mut higher = rig_with_agent(bounded("claude-1", "stream:first,work", 300_000), 200_000).await;
+    let (_, higher_tasks) = higher.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    higher.prompt(&higher_tasks[0], 2).await;
+    let higher_args = std::fs::read_to_string(higher.worktree(&higher_tasks[0]).join(".fake-args-2")).unwrap();
+    higher.stop().await.unwrap();
+
+    assert!(lower_briefing.contains("grown to 120000 tokens"), "{lower_briefing}");
+    assert!(!lower_args.contains("--resume"), "{lower_args}");
+    assert!(
+        higher_args.contains("--resume"),
+        "the session is resumed: {higher_args}"
+    );
 }
