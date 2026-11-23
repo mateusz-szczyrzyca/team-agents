@@ -8,6 +8,8 @@ use agent_core::state::{IdleWatch, RunState, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use std::collections::BTreeMap;
 mod activity;
+mod journal;
+use journal::Outcome;
 
 impl Owner {
     /// Observes activity and attempts removal of teams beyond their idle limit.
@@ -43,6 +45,19 @@ impl Owner {
             }
             self.save().await?;
             if decision == Decision::Remove {
+                let first_attempt = self
+                    .parts
+                    .state
+                    .team(&id)
+                    .and_then(Team::idle_watch)
+                    .is_some_and(|watch| watch.refusal.is_none());
+                if first_attempt && let Err(failure) = self.journal_idle(&id, Outcome::Attempt, &reason).await {
+                    self.idle_refusal(&id, failure).await?;
+                    continue;
+                }
+                if !first_attempt {
+                    continue;
+                }
                 let request = RemoveRequest {
                     team: id.clone(),
                     force: false,
@@ -101,21 +116,37 @@ impl Owner {
 
     /// Persist the first refusal before notifying, so a restart cannot repeat it.
     async fn idle_refusal(&mut self, id: &TeamId, failure: Failure) -> Result<(), OwnerError> {
-        let Some(watch) = self.parts.state.team(id).and_then(Team::idle_watch) else {
+        let Some(team) = self.parts.state.team(id) else {
+            return Ok(());
+        };
+        let Some(watch) = team.idle_watch() else {
             return Ok(());
         };
         if watch.refusal.is_some() {
             return Ok(());
         }
         let mut watch = watch.clone();
-        watch.refusal = Some(failure.message.clone());
+        let branches = super::removal::branches_of(team);
+        let message = match branches {
+            Ok(branches) => format!(
+                "{}; branches: {}",
+                failure.message,
+                branches.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            ),
+            Err(error) => format!("{}; cannot list branches: {}", failure.message, error.message),
+        };
+        if let Err(error) = self.journal_idle(id, Outcome::Refused, &message).await {
+            // The team remains intact; report journal failure while retaining the refusal in state.
+            tracing::warn!(team = %id, error = %error.message, "cannot persist idle refusal history");
+        }
+        watch.refusal = Some(message.clone());
         if let Some(mut team) = self.parts.state.team_mut(id) {
             team.record_idle_watch(watch);
         }
         self.save().await?;
         let rendered = Variables::new()
             .with("team", id.to_string())
-            .and_then(|v| v.with("reason", &failure.message))
+            .and_then(|v| v.with("reason", &message))
             .map_err(|error| super::removal::internal("cannot build idle refusal notice", &error))
             .and_then(|values| {
                 self.parts
