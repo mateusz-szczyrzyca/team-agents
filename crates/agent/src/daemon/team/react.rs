@@ -185,7 +185,8 @@ pub(in crate::daemon) fn notice_for(
     // The coordinator and the member are named as the team's bus knows them: by the agent each task was first given to.
     let to = agent_name(coordinator.bus_agent())?;
     let who = agent_name(member.bus_agent())?;
-    if let Some((item, _branch)) = worked_on(team, member)
+    if member.status() != TaskStatus::Failed
+        && let Some((item, _branch)) = worked_on(team, member)
         && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
     {
         return Ok(Some(Told {
@@ -196,6 +197,22 @@ pub(in crate::daemon) fn notice_for(
                 task: member.task().clone(),
             },
         }));
+    }
+    if member.status() == TaskStatus::Failed && !matches!(end, RunEnd::NoStatus { .. } | RunEnd::TurnLimit) {
+        let message = match message {
+            Some(message) if !message.trim().is_empty() => report(&end_of(message)),
+            Some(_) | None => format!("The member failed after {end:?}."),
+        };
+        let notice = match worked_on(team, member) {
+            Some((item, branch)) => BusNotice::MemberFailedItem {
+                member: who,
+                message,
+                item,
+                branch,
+            },
+            None => BusNotice::MemberFailed { member: who, message },
+        };
+        return Ok(Some(Told { to, notice }));
     }
     let notice = match end {
         RunEnd::Reported {

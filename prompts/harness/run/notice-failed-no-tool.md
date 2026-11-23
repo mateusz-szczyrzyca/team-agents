@@ -6,6 +6,4 @@ What it said last:
 
 {{message}}
 
-Do not assign this task to another agent until the {{cli}} CLI setup and the {{model}} model configuration are checked:
-a run that cannot call the tools of the bus cannot do the work. Once the configuration is fixed, resume the task and it
-will make a clean start.
+Do not give {{agent}} more work until its {{cli}} CLI setup and {{model}} model configuration are checked.
