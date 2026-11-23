@@ -90,6 +90,9 @@ async fn inspect_worktrees(
     let mut dirty = Vec::new();
     let mut heads = Vec::new();
     for (task, dir, _) in worktrees {
+        if !exists(&dir.as_path().join(".git")).await? {
+            continue;
+        }
         let handle = owner.git_at(dir, agent);
         match handle
             .tree_state()
