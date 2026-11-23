@@ -144,8 +144,24 @@ pub(super) enum AfterCut {
 /// What a restart of the daemon does with the session of the last run of `member`, a task of `role`, when `round` is the
 /// open round that run worked for (`None` when it worked for none) and `setting` is `[restart] session`.
 pub(super) fn after_cut(setting: RestartSession, role: Role, member: &Member, round: Option<&RoundId>) -> AfterCut {
-    let _ = (setting, role, member, round);
-    AfterCut::SameSession
+    let cut = matches!(
+        member.runs().last().map(Run::state),
+        Some(RunState::Ended {
+            end: RunEnd::NoStatus { exit_code: None },
+            ..
+        })
+    );
+    // A worker is a request of a task and a reviewer keeps its findings file only: neither has a session worth a briefing.
+    let works_on_its_own = match role {
+        Role::Solo | Role::Coordinator | Role::Member => true,
+        Role::Worker | Role::Reviewer => false,
+    };
+    // A task with no open round has no snapshot to brief from, and one that already awaits a new session is briefed.
+    let briefable = round.is_some() && member.status() == TaskStatus::Queued && !member.awaits_new_session();
+    match setting {
+        RestartSession::New if cut && works_on_its_own && briefable => AfterCut::NewSession,
+        RestartSession::New | RestartSession::Same => AfterCut::SameSession,
+    }
 }
 
 /// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.
