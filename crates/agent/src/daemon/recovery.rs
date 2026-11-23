@@ -83,7 +83,7 @@ pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Res
     recover_with(state, now, limits, RestartSession::Same)
 }
 
-/// Like [`recover`], and a run that was going when the daemon went down begins a new session of its task when `restart`
+/// Ends interrupted runs as `recover` of the tests does, and a run that was going when the daemon went down begins a new session of its task when `restart`
 /// and [`after_cut`] say so, before the retries of the session are counted: a cut the daemon caused is no retry. Only a
 /// run that recovery itself ends is a cut by the daemon: an earlier end with no exit code may be a signal's.
 ///
