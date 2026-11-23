@@ -672,7 +672,7 @@ async fn a_run_with_no_outcome_file_and_no_usage_row_resumes_its_session() {
     std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
     answer_first_question(&rig, &tasks[0], 1, "ok").await;
     let args = {
-        let _ = rig.prompt(&tasks[0], 3).await;
+        let _prompt = rig.prompt(&tasks[0], 3).await;
         std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap()
     };
     rig.stop().await.unwrap();
