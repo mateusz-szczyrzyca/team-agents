@@ -841,3 +841,36 @@ async fn removal_joins_pending_disk_cleanup_before_measuring_and_deleting() {
     assert!(!owner.pending_removals.contains(&task(1)));
     assert!(owner.disk_jobs.is_empty());
 }
+
+#[tokio::test]
+async fn removal_refuses_corrupt_git_metadata_without_deleting_state_or_files() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let checkout = checkout();
+    let (branch, _) = make_team_files(&daemon, checkout.path(), &state, 1);
+    let tip = git(checkout.path(), &["rev-parse", branch.as_str()]);
+    for number in [1, 2] {
+        let path = daemon.home.worktree_dir(&repo(), &task(number));
+        std::fs::write(path.join(".git"), "invalid git metadata\n").unwrap();
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let result = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.unwrap_err().kind, FailureKind::Internal);
+    assert!(owner.parts.state.team(&team_id(0)).is_some());
+    for number in [1, 2] {
+        assert!(daemon.home.task_dir(&task(number)).exists());
+        assert!(daemon.home.worktree_dir(&repo(), &task(number)).exists());
+    }
+    assert_eq!(git(checkout.path(), &["rev-parse", branch.as_str()]), tip);
+}
