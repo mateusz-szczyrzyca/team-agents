@@ -616,7 +616,7 @@ fn config(agents: &[Agent], github: &str, fix_passes: u32, home: &Home, bus: boo
         }
         write!(text, "[{table}.{}]\ncli = \"claude\"\nargs = [{args}]\n", agent.name).unwrap();
         if let Some(tokens) = agent.max_context {
-            write!(text, "max_context = {tokens}\n").unwrap();
+            writeln!(text, "max_context = {tokens}").unwrap();
         }
         if !agent.investigator {
             normals.push(format!("\"{}\"", agent.name));
