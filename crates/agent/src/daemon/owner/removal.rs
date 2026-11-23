@@ -336,6 +336,17 @@ impl Owner {
         let agent = AgentName::from_str(first.agent().name()).map_err(|error| internal("an agent name", &error))?;
         let Measure { worktrees, task_dirs } = self.measure(team, &repo).await?;
         let mut branches = branches_of(team)?;
+        if worktrees.is_empty() {
+            let names: Vec<&str> = branches.iter().map(BranchName::as_str).collect();
+            return Err(Failure {
+                kind: FailureKind::Refused,
+                message: format!(
+                    "cannot remove team {team_id}: no worktree survives to reach its local branches ({}); \
+                     keep one worktree, or bundle and delete the branches by hand; nothing was deleted",
+                    names.join(", ")
+                ),
+            });
+        }
         let mut existing = Vec::new();
         let mut bundled = Vec::new();
         let mut dirty = Vec::new();
