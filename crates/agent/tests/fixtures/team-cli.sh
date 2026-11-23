@@ -751,7 +751,16 @@ case $action in
     hide_own_files
     printf 'a draft the run did not commit\n' > draft.txt
     cat "$home/fake-scripts/${action#ask-stream:}.jsonl"
-    result 'I have to ask.\nSTATUS: QUESTIONS'
+    # The final message is the one line of `fake-scripts/NAME.final.txt` when the test writes it, else a short line.
+    final=$home/fake-scripts/${action#ask-stream:}.final.txt
+    if [[ -f $final ]]; then
+      text=$(< "$final")
+      text=${text//\\/\\\\}
+      text=${text//\"/\\\"}
+      result "$text\nSTATUS: QUESTIONS"
+    else
+      result 'I have to ask.\nSTATUS: QUESTIONS'
+    fi
     ;;
   nostatus-stream:*)
     # Like `stream:NAME`, and ends without a STATUS line: the run the harness retries after a no-status ending.

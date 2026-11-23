@@ -340,3 +340,46 @@ async fn a_context_renewal_after_no_status_starts_with_the_task_and_not_with_a_r
         "the task is not in the prompt: {prompt}"
     );
 }
+
+// Rule: the last message of the session before is given whole, whatever the history keeps: a history that cuts a text at a
+// small limit must not cut the briefing's message.
+#[tokio::test]
+async fn the_last_message_of_the_session_before_is_whole_when_the_history_cuts_texts_short() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        format!("{config}\n[history]\nmax_text_bytes = 16\n"),
+    )
+    .unwrap();
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    std::fs::write(
+        scripts.join("second.final.txt"),
+        "The whole message of the session before, longer than sixteen bytes: END-OF-MESSAGE\n",
+    )
+    .unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        briefing.contains("END-OF-MESSAGE"),
+        "the last message is cut: {briefing}"
+    );
+}
