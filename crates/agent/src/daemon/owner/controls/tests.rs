@@ -867,6 +867,59 @@ async fn a_first_no_tool_failure_of_a_later_independent_session_is_retried_once(
     assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
 }
 
+/// A second failed run without a tool is named on the status line only when its notice is a reported failure: a notice
+/// that is not the end of a `STATUS: FAILED` run is told as itself, never as an empty no-tool reason.
+#[tokio::test]
+async fn a_notice_that_is_not_failed_is_told_as_itself_when_the_no_tool_retry_was_used() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    // A fallen run without a tool call was already retried once: the durable "already retried" flag is that renewal.
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(1),
+        )
+        .unwrap();
+    let notice = Notice::NoStatus { exit: Some(1) };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(3),
+            notice,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert_eq!(
+        told.as_ref(),
+        Some(&Notice::NoStatus { exit: Some(1) }),
+        "a notice that is not a reported failure is told as itself: {told:?}"
+    );
+}
+
 /// A later no-tool FAILED — while the durable marker of the exhausted retry survives — is not the retry: a run that
 /// succeeded in between ended the retry's session, so the task fails plainly and the human is told the failure, not
 /// the no-tool reason.
