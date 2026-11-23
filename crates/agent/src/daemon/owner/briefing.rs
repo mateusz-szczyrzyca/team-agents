@@ -42,6 +42,12 @@ const PROMPT_VARIABLE: &str = "prompt";
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
 
+/// The word for a run that ended without a `STATUS:` line.
+const NO_STATUS_WORD: &str = "no status";
+
+/// The word for the run a stop or a crash of the daemon cut.
+const CUT_BY_DAEMON_WORD: &str = "cut by a stop of the daemon";
+
 /// How many of the newest runs of the task the briefing lists; the older ones are left out and noted.
 const RUNS_SHOWN: NonZeroUsize = NonZeroUsize::new(10).unwrap();
 
@@ -635,9 +641,8 @@ pub(super) fn run_end_word(end: Option<&RunEnd>) -> &'static str {
     match end {
         None => "cut before its end was recorded",
         Some(RunEnd::Reported { outcome }) => (*outcome).into(),
-        // A run the daemon's stop or crash cut has no exit code: it ended from outside, not by the agent's omission.
-        Some(RunEnd::NoStatus { exit_code: None }) => "cut by a stop of the daemon",
-        Some(RunEnd::NoStatus { exit_code: Some(_) }) => "no status",
+        // A run no exit code ended may be a run a signal killed or one the daemon cut: [`told_ends`] knows which.
+        Some(RunEnd::NoStatus { .. }) => NO_STATUS_WORD,
         Some(RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited) => "failed",
         Some(RunEnd::Hung) => "hang",
         Some(RunEnd::TurnLimit) => "turn limit",
@@ -649,7 +654,18 @@ pub(super) fn run_end_word(end: Option<&RunEnd>) -> &'static str {
 /// run that a signal killed and a run that the daemon's stop or crash cut the same way, with no exit code; the reason of
 /// the new session is what tells them apart: when the daemon went down, the last run is the one it cut.
 fn told_ends(runs: &[RunLine], reason: Trouble) -> Vec<&'static str> {
-    runs.iter().map(|run| run.end).collect()
+    let cut_last = reason == Trouble::DaemonDown;
+    runs.iter()
+        .enumerate()
+        .map(|(position, run)| {
+            let is_last = position + 1 == runs.len();
+            if cut_last && is_last && run.end == NO_STATUS_WORD {
+                CUT_BY_DAEMON_WORD
+            } else {
+                run.end
+            }
+        })
+        .collect()
 }
 
 /// The word the briefing gives a verdict: `ok` for the recommendation, otherwise the human's own answer.
