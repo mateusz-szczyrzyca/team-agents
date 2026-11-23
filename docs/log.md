@@ -133,6 +133,11 @@ else is read. Its parts, in the order of time (records with the same time keep t
    review pass with the reviewers' runs, each verdict and report whole; every fix pass with the findings it sent the team; the
    questions asked and the answers; the notifications; the controls; the end of the round.
 
+Text has one ordering exception: an uninterrupted group of reviewer run blocks for the same team, pull request and
+review pass follows the order of its first recorded review requests. Repeated runs of a reviewer task retain their
+relative order. If any request is missing, the whole group keeps its original order. Events stay in place, each run keeps
+all its timestamps and contents, and `--json` keeps chronological record order.
+
 A team's story is the stories of its rounds, in the order of their records, followed by a `Team events` section when the team
 has records that belong to no single round (such as a coordinator run started while more than one round is open, a team-wide
 control or notification, or `team_ended`). Because `team_ended` is linked to every round of its team, in a team of one or
@@ -337,7 +342,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
 | `github_step_waiting` | `warn` | A step of a round that calls GitHub or git fails and waits: once when it starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` (empty for a refusal) and the `detail` line `agent status` shows. |
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
-| `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. |
+| `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. A task that waited `[replacement] busy_after` seconds for its busy agent is handed over with `reason = "busy"`. |
 | `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
 | `worker_request_damaged` | `warn` | What the daemon keeps for a worker's request cannot be used: its file is cut short, has an unknown field, holds another request than its name says or cannot be read, a stage cannot be written, or the removal of the file, the output of its check or the wording of its answer fails. The file is set aside as `<name>.damaged` and the request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the answer falls back; the daemon goes on. |
 

@@ -1778,6 +1778,7 @@ Integrate the guide.
 
         world.start();
         world.settle_as_a_look(sentinel, &member, &worker);
+        eventually("request 99's pending file to be removed", || !path.exists());
 
         assert!(!path.exists(), "the file of the unknown request is dropped");
         assert_eq!(

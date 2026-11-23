@@ -103,6 +103,8 @@ pub enum TeamPrompt {
     WorkerStepReturned,
     /// The coordinator is told that an observed unmerged close returned an item to its member.
     DeliveryClosed,
+    /// The bus tells the team who holds an item now after a busy agent's waiting task was handed over.
+    ItemHandedOver,
     /// The notification that a team finished its work.
     NoticeTeamDone,
 }
@@ -111,6 +113,7 @@ impl TeamPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::DeliveryClosed,
+        Self::ItemHandedOver,
         Self::Context,
         Self::SplitRequested,
         Self::NoticeSplitQuestion,
@@ -211,6 +214,11 @@ impl TeamPrompt {
             Self::DeliveryClosed => {
                 PromptSpec::new("harness/team/bus-delivery-closed.md", Audience::Model, &["item", "pr"])
             }
+            Self::ItemHandedOver => PromptSpec::new(
+                "harness/team/bus-item-handed-over.md",
+                Audience::Model,
+                &["item", "from", "to", "task", "branch"],
+            ),
             Self::Part => part_spec(),
             Self::Context => PromptSpec::new(
                 "harness/team/context.md",

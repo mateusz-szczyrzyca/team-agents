@@ -170,6 +170,9 @@ replacements = 1
 mode = "auto"
 agents = []
 rejections = 5
+# A queued task waits this many seconds for its busy agent (one that runs another task at its limit of runs, see
+# [limits] runs_per_agent) before a free agent of `agents`, of the same or a higher place, takes it over. 0 never does.
+busy_after = 300
 
 # --- Git and GitHub ----------------------------------------------------------------------------------------------
 # The identity of every commit an agent makes; {agent} is the agent's name. `signing_key` is an SSH private key that

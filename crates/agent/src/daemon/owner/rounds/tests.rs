@@ -369,6 +369,17 @@ async fn a_round_whose_failed_reviewer_has_nobody_to_replace_it_waits_for_a_free
 
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.notification_with("gave no verdict on pull request 1").await;
+    rig.state_where("both reviewer results to be recorded", |state| {
+        let team = &state.teams()[0];
+        team.reviewers()
+            .iter()
+            .all(|reviewer| matches!(reviewer.status(), TaskStatus::Waiting | TaskStatus::Failed))
+            && team.items().iter().any(|item| {
+                matches!(item.phase(), ItemPhase::InReview { reviews, .. }
+                    if reviews.iter().any(|review| matches!(review.outcome, ReviewOutcome::Submitted { .. })))
+            })
+    })
+    .await;
     looked_again(&rig).await;
     let state = rig.state();
     let round = state.teams()[0].rounds()[0].id().clone();

@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 
-use agent_core::ids::{AgentName, BranchName, ItemId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId};
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 use agent_core::state::Team;
 use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, NoticeKind, Outgoing, RequestId};
@@ -21,6 +21,13 @@ pub(in crate::daemon) enum BusJob {
         to: AgentName,
         /// What it is told.
         notice: BusNotice,
+    },
+    /// Tell the whole team who holds an item after a busy hand-over.
+    BusyHandOver {
+        /// The task whose holder changed; its obligation is kept in the state until delivered.
+        task: TaskId,
+        /// The item whose holder changed.
+        item: ItemId,
     },
     /// Change a request for a worker.
     Answer {

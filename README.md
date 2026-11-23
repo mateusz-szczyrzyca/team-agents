@@ -266,6 +266,17 @@ of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is que
 queued task waits — it is not failed — and `agent status` says `queued, waits for claude-1, running in team-…`. It starts
 when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued.
 
+A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
+a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
+at that moment: the same worktree and branch, briefed with the reason `busy`, the bus tells the whole team who holds each item now,
+and `agent status` shows `for claude-1` next to the agent that holds it now and a `runs: <cli> <count>, …` line for the runs
+going per CLI. Team notice obligations survive daemon restarts and transient bus failures, which are retried.
+A notice that the bus permanently refuses, or that cannot be rendered, is logged and dropped; the obligation clears
+when every notice has either been accepted or dropped. Only the agents listed in `[replacement] agents` are candidates: an empty `[replacement] agents` list (or
+`busy_after = 0`) performs no busy hand-over and the task keeps waiting for its own agent. Tasks that are running, waiting
+for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
+handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
+
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
@@ -454,7 +465,9 @@ it also keeps `build_directory_removed` from then on, which such a file refused 
 Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
 `target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
-as JSON lines. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
+as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
+review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
+are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. Schema version `6` adds the search index and durable follow cursor after the daemon-log schema; older history files remain readable without migration
 by `agent log`, and the daemon migrates them when it opens them for writing.
 

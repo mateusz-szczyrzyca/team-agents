@@ -2,6 +2,7 @@
 //! item, the tasks that worked for it, its pull request and its review passes.
 
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 use agent_core::history::HistoryHealth;
@@ -39,6 +40,22 @@ pub(crate) enum StatusError {
     /// The settings of the home, which name the investigators, cannot be read.
     #[error("cannot read the settings of the home")]
     Settings(#[source] SettingsError),
+    /// The configuration file cannot be read.
+    #[error("cannot read the configuration file {path:?}")]
+    ConfigRead {
+        /// The file whose configuration could not be read.
+        path: PathBuf,
+        /// The I/O failure, kept as the cause.
+        source: io::Error,
+    },
+    /// The configuration file is not valid.
+    #[error("cannot parse the configuration file {path:?}")]
+    ConfigParse {
+        /// The file whose configuration could not be parsed.
+        path: PathBuf,
+        /// The parsed configuration's reason, kept as the cause.
+        source: agent_core::config::ConfigError,
+    },
     /// The output cannot be written.
     #[error("cannot write the status")]
     Output(#[source] io::Error),
@@ -126,6 +143,23 @@ impl Activity {
             )),
         }
     }
+
+    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
+    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
+    /// configured CLIs and is the only reason a configuration is omitted.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        let path = self.home.config_file();
+        match tokio::fs::read_to_string(&path).await {
+            Ok(text) => agent_core::config::Config::from_toml_str(&text)
+                .map(|config| cli_runs_line(&config, teams))
+                .map_err(|source| StatusError::ConfigParse { path, source }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(source) => Err(StatusError::ConfigRead { path, source }),
+        }
+    }
 }
 
 /// `at` as a person reads it in `zone`: the date, the time with its seconds and the zone.
@@ -177,6 +211,8 @@ pub(crate) enum Detail {
 struct Shown {
     /// The lines of the list, with what the rounds say after their lines.
     text: String,
+    /// The line of runs going per configured CLI, when at least one run is going.
+    cli_runs: Option<String>,
     /// The versions of the daemon that answered; absent from a daemon before it told them.
     daemon: Option<Versions>,
     /// What the history is doing, when it is not whole.
@@ -281,6 +317,7 @@ async fn listing_text(
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
+    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     let text = render_with_requests(
         &listing.teams,
         View::Full,
@@ -292,6 +329,7 @@ async fn listing_text(
     );
     Ok(Shown {
         text: format!("{text}{}", told.unread()),
+        cli_runs,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -305,6 +343,7 @@ async fn running_text(
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
+    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -330,6 +369,7 @@ async fn running_text(
     };
     Ok(Shown {
         text,
+        cli_runs,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -352,12 +392,13 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
     }
 }
 
-/// Writes `prefix`, then what `shown` says, then the line about low disk space if any and the line about the history when
-/// it is not whole.
+/// Writes `prefix`, then what `shown` says, then the line of runs per CLI if any, the line about low disk space if any
+/// and the line about the history when it is not whole.
 fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
+    let cli_runs = shown.cli_runs.as_deref().unwrap_or_default();
     write(
         out,
-        &format!("{prefix}{}", shown.text),
+        &format!("{prefix}{}{cli_runs}", shown.text),
         shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
@@ -698,6 +739,41 @@ fn render_with_requests(
 /// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
 pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
+}
+
+/// The line that counts the runs going on each CLI configured in `config` across `teams`, in the order of
+/// [`agent_core::kinds::CliKind`]; `None` when no run is going or `config` configures no agent.
+#[must_use]
+pub(crate) fn cli_runs_line(config: &agent_core::config::Config, teams: &[TeamSummary]) -> Option<String> {
+    use agent_core::kinds::CliKind;
+    use agent_core::state::Participant;
+
+    let cli_of = |participant: &Participant| match participant {
+        Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| agent.cli),
+        Participant::Investigator(name) => config.investigator(name).map(|agent| agent.cli),
+    };
+    let configured = |kind: CliKind| {
+        config.agents().values().any(|agent| agent.cli == kind)
+            || config.investigators().values().any(|agent| agent.cli == kind)
+    };
+    let running: Vec<CliKind> = teams
+        .iter()
+        .flat_map(|team| &team.members)
+        .filter(|member| member.status == TaskStatus::Running)
+        .filter_map(|member| cli_of(&member.agent))
+        .collect();
+    if running.is_empty() {
+        return None;
+    }
+    let parts: Vec<String> = [CliKind::Claude, CliKind::Codex, CliKind::Gemini, CliKind::Opencode]
+        .into_iter()
+        .filter(|kind| configured(*kind))
+        .map(|kind| {
+            let count = running.iter().filter(|&&cli| cli == kind).count();
+            format!("{kind} {count}")
+        })
+        .collect();
+    (!parts.is_empty()).then(|| format!("runs: {}\n", parts.join(", ")))
 }
 
 /// Tallies of a team's tasks by status, in the order the short view prints them: the tasks that act or wait first.

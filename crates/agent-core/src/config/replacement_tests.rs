@@ -45,3 +45,15 @@ fn a_negative_number_of_new_sessions_is_refused() {
 
     assert!(matches!(error, ConfigError::Parse(_)), "{error:?}");
 }
+
+#[test]
+fn a_queued_task_waits_five_minutes_for_its_busy_agent_unless_the_file_says_otherwise() {
+    let config = Config::from_toml_str(one_agent()).unwrap();
+    assert_eq!(config.replacement().busy_after(), 300);
+
+    let never = Config::from_toml_str(&with("[replacement]\nbusy_after = 0\n")).unwrap();
+    assert_eq!(never.replacement().busy_after(), 0);
+
+    let quick = Config::from_toml_str(&with("[replacement]\nbusy_after = 90\n")).unwrap();
+    assert_eq!(quick.replacement().busy_after(), 90);
+}
