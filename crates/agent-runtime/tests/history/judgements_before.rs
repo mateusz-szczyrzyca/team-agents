@@ -35,7 +35,7 @@ fn history_before_judgements_upgrades_and_retains_records() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
 
     let reader = Reader::open(&path).unwrap();
     assert_eq!(reader.round_records(round).unwrap(), before);
@@ -86,7 +86,7 @@ fn history_of_version_16_upgrades_and_retains_records() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 20);
+    assert_eq!(version, 21);
     let reader = Reader::open(&path).unwrap();
     assert_eq!(reader.round_records(round).unwrap(), before);
     assert_eq!(reader.step_judgements(&world.runs[0].start.task).unwrap(), Vec::new());
