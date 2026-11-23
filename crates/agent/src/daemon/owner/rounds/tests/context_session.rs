@@ -113,7 +113,7 @@ const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_the_bound_and_finishes_the_item() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work-stream:first,leave-stream:second,work"),
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
@@ -128,13 +128,9 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let worktree = rig.worktree(&tasks[0]);
-    rig.state_where("run 2 to end", |state| {
-        state
-            .find_task(&tasks[0])
-            .is_some_and(|found| found.member.runs().len() == 2 && !found.member.runs()[1].is_running())
-    })
-    .await;
-    rig.resume(&tasks[0]).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
     let briefing = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
     let state = rig
