@@ -672,7 +672,7 @@ fn a_member_running_in_a_state_written_before_the_restart_key_begins_a_daemon_do
     .unwrap();
 
     let found = state.find_task(&member).unwrap().member;
-    assert_eq!(recovery.renewed, [member.clone()]);
+    assert_eq!(recovery.renewed, std::slice::from_ref(&member));
     assert_eq!(found.status(), TaskStatus::Queued);
     assert!(found.awaits_new_session());
     assert_eq!(
