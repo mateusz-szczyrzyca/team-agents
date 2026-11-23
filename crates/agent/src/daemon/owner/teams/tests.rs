@@ -1220,6 +1220,186 @@ async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
     assert!(messages.contains("claude-1 failed"), "{messages}");
 }
 
+/// The script-notice messages of `notice` on the bus for `to`, as (fields, text) pairs, in order.
+fn notices(notice: &str, to: &str, messages: &str) -> Vec<(Vec<(String, String)>, String)> {
+    messages
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            if value["data"]["notice"].as_str() != Some(notice) || value["to"].as_str() != Some(to) {
+                return None;
+            }
+            let fields = value["data"]["fields"]
+                .as_object()
+                .map(|map| {
+                    map.iter()
+                        .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let text = value["text"].as_str().unwrap_or_default().to_owned();
+            Some((fields, text))
+        })
+        .collect()
+}
+
+/// The one script-notice message of `notice` on the bus for `to`.
+fn single_notice(notice: &str, to: &str, messages: &str) -> (Vec<(String, String)>, String) {
+    let mut found = notices(notice, to, messages);
+    assert_eq!(found.len(), 1, "one {notice} for {to}: {messages}");
+    found.pop().unwrap()
+}
+
+/// The coordinator's next run after a member failed on an item reads the `member_failed` notice whose text names the
+/// member, the item, the branch, what the member said last — the words before its `STATUS:` line — and only the
+/// choices its role allows: take over the item and report `STATUS: DONE`, or ask the human. No choice to give the
+/// item to another member: the harness publishes an item only while its assignee task waits.
+#[tokio::test]
+async fn a_double_no_tool_failure_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The two runs report FAILED without calling a tool: the first is the task's one retry, the second fails the
+    // member, and the coordinator is told and runs again, reading the notice with its next run.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(
+        fields,
+        [
+            ("branch".to_owned(), format!("agents/claude-1/{}-1.1", tasks[1])),
+            ("item".to_owned(), "1.1".to_owned()),
+            ("member".to_owned(), "claude-1".to_owned()),
+        ]
+    );
+    assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
+    assert!(
+        text.contains("What it said:\n\nI could not do it.\n\nThe harness publishes an item only while its assignee task waits."),
+        "{text}"
+    );
+    assert!(
+        text.contains("If you take over the work, still report `STATUS: DONE`"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"),
+        "{text}"
+    );
+    assert!(!text.contains("give its work to another member"), "{text}");
+    let notifications = f.notifications();
+    assert!(
+        notifications
+            .iter()
+            .any(|notice| notice.contains("failed twice without calling a tool")),
+        "{notifications:?}"
+    );
+}
+
+/// A run that used a tool when it failed is not retried; the member fails and the coordinator's next run reads the same
+/// notice, with the member, the item and the last words.
+#[tokio::test]
+async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail-first-tool:the member failed"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of this home that streams the marker tool call failed with it used: the run is not retried for
+    // "no tool call", the member is failed, and the coordinator is told and runs again.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "a run that used a tool is not retried: {}",
+        f.messages()
+    );
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(
+        fields,
+        [
+            ("branch".to_owned(), format!("agents/claude-1/{}-1.1", tasks[1])),
+            ("item".to_owned(), "1.1".to_owned()),
+            ("member".to_owned(), "claude-1".to_owned()),
+        ]
+    );
+    assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
+    assert!(text.contains("What it said:\n\nI could not do it.\n\n"), "{text}");
+    assert!(text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"), "{text}");
+}
+
+/// A member that failed without an item is told with all three choices, the give-away one included, and no item detail.
+#[tokio::test]
+async fn a_failed_member_without_an_item_is_told_with_the_choice_to_give_its_work_away() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    let prompt = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{prompt}");
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(fields, [("member".to_owned(), "claude-1".to_owned())]);
+    assert!(text.contains("claude-1 failed"), "{text}");
+    assert!(
+        text.contains(
+            "What it said:\n\nI could not do it.\n\nDecide: give its work to another member, do it yourself, or ask \
+             the human (a questions file, `STATUS: QUESTIONS`)"
+        ),
+        "{text}"
+    );
+}
+
+/// A first no-tool failure that the retry repairs is invisible to the human and to the coordinator as a failure: no
+/// `member_failed` notice and no notification are written for it.
+#[tokio::test]
+async fn a_no_tool_failure_that_is_retried_tells_neither_the_coordinator_nor_the_human() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,work"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    // The first run reported FAILED without calling a tool and was retried once; the retried run did the work, so the
+    // task is not failed and nobody is told of a failure.
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(!messages.contains("member_failed"), "{messages}");
+    assert!(
+        f.notifications().is_empty(),
+        "a retried run that then did the work tells the human nothing: {:?}",
+        f.notifications()
+    );
+}
+
 #[tokio::test]
 async fn the_retry_of_a_failed_run_without_a_tool_does_not_repeat_after_a_restart_of_the_daemon() {
     let mut f = RestartFixture::new(&[

@@ -73,6 +73,114 @@ fn a_member_that_failed_says_so_with_the_end_of_its_message() {
 }
 
 #[test]
+fn a_failed_members_last_words_stop_at_its_status_line() {
+    let team = crew_of(PLAIN, 1, 0);
+
+    // The member's final message ends with its own `STATUS:` line: the coordinator is told what it said, not that line
+    // again — the notice already says the run ended with `STATUS: FAILED`.
+    let told = told(
+        &team,
+        2,
+        &reported(RunOutcome::Failed),
+        Some("I could not do it.\nSTATUS: FAILED"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailed {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn a_failed_members_last_words_on_an_item_stop_at_its_status_line() {
+    let team = working();
+
+    let told = told(
+        &team,
+        2,
+        &reported(RunOutcome::Failed),
+        Some("I could not do it.\nSTATUS: FAILED"),
+    )
+    .unwrap();
+
+    assert_eq!(
+        told.notice,
+        BusNotice::MemberFailedItem {
+            member: agent("claude-1"),
+            message: "I could not do it.".to_owned(),
+            item: "1.1".parse().unwrap(),
+            branch: "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap(),
+        }
+    );
+}
+
+/// Every way a member's run can fail tells the coordinator who failed and, for a member on an item, what it worked on:
+/// a reported `FAILED` (with or without an item), a run without a status that then fails (with or without an item), and
+/// a turn limit that fails. A `TurnLimit` on an item keeps the item-less no-status notice, as
+/// `turn_limit_on_an_item_keeps_the_original_no_status_notice_when_failed` pins.
+#[test]
+fn every_failed_member_path_tells_the_coordinator_who_and_what() {
+    // A reported FAILED without an item.
+    let team = crew_of(PLAIN, 1, 0);
+    let notice = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberFailed { ref member, .. } if member == &agent("claude-1")));
+
+    // A reported FAILED on an item names the item and its branch.
+    let team = working();
+    let notice = told(&team, 2, &reported(RunOutcome::Failed), Some("I could not do it.")).unwrap();
+    assert!(matches!(
+        notice.notice,
+        BusNotice::MemberFailedItem { ref member, item, ref branch, .. }
+            if member == &agent("claude-1")
+                && item == "1.1".parse().unwrap()
+                && branch == &"agents/claude-1/task-20261111-153002-k3x9-1.1".parse::<BranchName>().unwrap()
+    ));
+
+    // A run without a status, then failed, without an item.
+    let mut team = crew_of(PLAIN, 1, 0);
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let notice = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberNoStatus { ref member } if member == &agent("claude-1")));
+
+    // A run without a status, then failed, on an item names the item and its branch.
+    let mut team = working();
+    ran(
+        &mut team,
+        2,
+        1,
+        RunEnd::NoStatus { exit_code: Some(3) },
+        &[TaskStatus::Failed],
+    );
+    let notice = told(&team, 2, &RunEnd::NoStatus { exit_code: Some(3) }, None).unwrap();
+    assert!(matches!(
+        notice.notice,
+        BusNotice::MemberNoStatusItem { ref member, item, ref branch, .. }
+            if member == &agent("claude-1")
+                && item == "1.1".parse().unwrap()
+                && branch == &"agents/claude-1/task-20261111-153002-k3x9-1.1".parse::<BranchName>().unwrap()
+    ));
+
+    // A turn limit that fails the member.
+    let mut team = working();
+    ran(&mut team, 2, 1, RunEnd::TurnLimit, &[TaskStatus::Failed]);
+    let notice = told(&team, 2, &RunEnd::TurnLimit, None).unwrap();
+    assert_eq!(notice.to, agent("inv-opus"));
+    assert!(matches!(notice.notice, BusNotice::MemberNoStatus { ref member } if member == &agent("claude-1")));
+}
+
+#[test]
 fn a_member_that_ended_without_a_status_says_so() {
     let mut team = crew_of(PLAIN, 1, 0);
     ran(
