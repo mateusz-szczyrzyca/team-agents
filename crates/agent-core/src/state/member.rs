@@ -858,10 +858,25 @@ impl Member {
     }
 
     /// Whether the last run opened the session it is in: the first run of the session, or the first run ever of the
-    /// task. A run that used a new session is a fresh start — the retries before it do not apply to it.
+    /// task. A run that used a new session is a fresh start — the retries before it do not apply to it. The session a
+    /// run is in follows the identity the CLI reports, not the count since the last renewal: a run whose CLI named a
+    /// session different from the one before it opened its own session, even when the task has runs since the last
+    /// renewal (a CLI change).
     #[must_use]
     pub fn first_of_session(&self) -> bool {
-        self.runs.len() == 1 || self.session_runs().len() == 1
+        self.runs.len() == 1 || self.session_runs().len() == 1 || self.opened_a_new_session()
+    }
+
+    /// Whether the last run named a session different from the one before it. A last run that named no session does
+    /// not count: the runs the unit tests build without one are not first of their session by identity.
+    fn opened_a_new_session(&self) -> bool {
+        let Some(last) = self.runs.last().and_then(Run::session) else {
+            return false;
+        };
+        let Some(previous) = self.runs.get(self.runs.len().wrapping_sub(2)).and_then(Run::session) else {
+            return false;
+        };
+        last != previous
     }
 
     /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
