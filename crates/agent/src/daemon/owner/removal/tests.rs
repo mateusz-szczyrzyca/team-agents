@@ -1035,3 +1035,46 @@ async fn removal_joins_previously_halted_checks_before_cleanup() {
     assert!(!daemon.home.task_dir(&task(1)).exists());
     assert!(daemon.state().team(&team_id(0)).is_none());
 }
+
+#[tokio::test]
+async fn plain_only_worktrees_are_removed_and_their_bytes_are_counted() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let mut expected_bytes = 0;
+    for number in [1, 2] {
+        let worktree = daemon.home.worktree_dir(&repo(), &task(number));
+        let task_dir = daemon.home.task_dir(&task(number));
+        std::fs::create_dir_all(&worktree).unwrap();
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(worktree.join("drawing.svg"), "<svg/>\n").unwrap();
+        std::fs::write(task_dir.join("run.log"), "finished\n").unwrap();
+        expected_bytes += super::size_of(worktree).await.unwrap();
+        expected_bytes += super::size_of(task_dir).await.unwrap();
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    for number in [1, 2] {
+        assert!(
+            !daemon.home.worktree_dir(&repo(), &task(number)).exists(),
+            "plain worktree {number} was left behind"
+        );
+        assert!(!daemon.home.task_dir(&task(number)).exists());
+    }
+    assert_eq!(removal.freed_bytes, expected_bytes);
+    assert_eq!(removal.tasks, vec![task(1), task(2)]);
+    assert_eq!(removal.bundle, None);
+    assert_eq!(removal.branches, Vec::<BranchName>::new());
+    assert!(daemon.state().team(&team_id(0)).is_none());
+}
