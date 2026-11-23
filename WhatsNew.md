@@ -5,11 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.80.0 — 23.11.2026 — PR #pending
+## 0.80.0 — 23.11.2026 — PR #227
 
 ### New features
 - [agent] [agent-runtime] `agent status <task>` gives the context of the task's last run: the size of the context at its first and its last model call, as the CLI told them. A CLI that tells no size shows `context: not told`, never a guess.
-- [agent] [agent-runtime] `agent log` prints one usage line per run that has one: its context, the output tokens it wrote and its cost in US dollars, each part "not told" where the CLI did not tell it.
+- [agent] [agent-core] [agent-runtime] `agent log` tells each run's usage at the run's own end, naming the run: its context, the output tokens it wrote and its cost in US dollars, each part "not told" where the CLI did not tell it. `agent log --task` and `--run` end with the same lines, and `--show usage` gives a row of numbers per run.
 - [agent] [agent-runtime] `agent debug` puts a team's series of run contexts into its summary and names each session whose context is above its bound.
 
 ### Enhancements
