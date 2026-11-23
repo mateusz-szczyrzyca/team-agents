@@ -11,8 +11,8 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] A task that fails twice at startup without calling a tool shows the reason in `agent status`; the human notice names the agent, CLI and model and advises checking its configuration before giving it more work.
 
 ### Bug fixes
-- [agent] [agent-core] A first run that reports failure without calling a tool is retried once in a new session, for every role, including after a CLI change. The retry remains bounded after a daemon restart.
-- [agent] Every failed team member tells and wakes its coordinator, with its item and last words when available, so the coordinator can wait for the human or take over when its role permits it.
+- [agent] [agent-core] [agent-runtime] A first run that reports failure without calling a tool is retried once in a new session, for every role, including after a CLI change. The retry remains bounded after a daemon restart.
+- [agent] Every failed team member tells and wakes its coordinator, with its actual run ending, item and last words when available, so the coordinator can wait for the human or take over when its role permits it.
 
 ### Enhancements
 - [agent-core] **Action:** state schema 15 preserves earlier tasks and runs while recording tool use and startup failure reasons. Keep a backup before upgrading if you need to downgrade.
