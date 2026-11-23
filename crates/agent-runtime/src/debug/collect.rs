@@ -29,6 +29,75 @@ use crate::store::Home;
 const FILE_LIMIT: u64 = 4 * 1024 * 1024;
 /// Maximum retained bytes across task files.
 const TOTAL_LIMIT: usize = 64 * 1024 * 1024;
+/// The context of each run of `records` that has a usage row in the history at `path`, grouped under its task, with a
+/// line for a run whose last context is above its agent's bound. Empty when no run has a row, so a summary of an older
+/// history does not change.
+fn context_series(
+    records: &[agent_core::history::SequencedRecord],
+    usage: &std::collections::BTreeMap<agent_core::ids::RunId, agent_core::cli::RunUsage>,
+    bounds: &std::collections::BTreeMap<String, u64>,
+) -> String {
+    let mut order: Vec<TaskId> = Vec::new();
+    let mut groups: std::collections::BTreeMap<TaskId, Vec<String>> = std::collections::BTreeMap::new();
+    for stored in records {
+        let agent_core::history::Record::Run(start) = &stored.record else {
+            continue;
+        };
+        let Some(usage) = usage.get(&start.run) else {
+            continue;
+        };
+        let line = format!(
+            "run {} (agent {}): context first {}, last {}; output {}; cost {}",
+            start.run,
+            start.agent.name,
+            tokens_text(usage.first_context),
+            tokens_text(usage.last_context),
+            tokens_text(usage.tokens_written),
+            usage
+                .cost_usd
+                .map_or_else(|| "not told".to_owned(), |cost| format!("{cost:.6} USD")),
+        );
+        if !groups.contains_key(&start.task) {
+            order.push(start.task.clone());
+        }
+        let lines = groups.entry(start.task.clone()).or_default();
+        lines.push(line);
+        let bound = bounds.get(start.agent.name.as_str()).copied();
+        if let (Some(bound), Some(last)) = (bound, usage.last_context)
+            && last > bound
+        {
+            let session = start
+                .session
+                .as_ref()
+                .map_or_else(|| "session not known".to_owned(), |id| format!("session {id}"));
+            lines.push(format!(
+                "run {} ({session}) is above its bound: last context {last} tokens > {bound} tokens (agent {})",
+                start.run, start.agent.name,
+            ));
+        }
+    }
+    if order.is_empty() {
+        return String::new();
+    }
+    let mut text = String::from("Context of the runs by task:\n");
+    for task in &order {
+        text.push_str("task ");
+        text.push_str(task.as_str());
+        text.push_str(":\n");
+        for line in groups.get(task).into_iter().flatten() {
+            text.push_str("  ");
+            text.push_str(line);
+            text.push('\n');
+        }
+    }
+    text
+}
+
+/// A count of tokens as the summary says it, or "not told".
+fn tokens_text(value: Option<u64>) -> String {
+    value.map_or_else(|| "not told".to_owned(), |tokens| format!("{tokens} tokens"))
+}
+
 /// Maximum directory entries visited, including directories.
 const ENTRY_LIMIT: usize = 4096;
 /// Maximum depth of task artifacts.
@@ -521,6 +590,91 @@ impl Collection {
         });
     }
 
+    /// Adds the context of the runs of the team to the history part of the summary, when a run has a usage row. The bounds
+    /// come from the configuration; a configuration that cannot be read names no session above a bound.
+    async fn context(&mut self, home: &Home, records: Vec<agent_core::history::SequencedRecord>) {
+        let bounds = self.context_bounds(home).await;
+        let runs: Vec<agent_core::ids::RunId> = records
+            .iter()
+            .filter_map(|stored| match &stored.record {
+                agent_core::history::Record::Run(start) => Some(start.run.clone()),
+                _ => None,
+            })
+            .collect();
+        let path = home.history_file();
+        let usage = tokio::task::spawn_blocking(move || super::history::read_live_run_usage(&path, &runs))
+            .await
+            .map_err(DebugRuntimeError::Worker);
+        let usage = match usage {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(error)) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::HistoryTail,
+                    part: "run usage".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return;
+            }
+            Err(error) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::HistoryTail,
+                    part: "run usage".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return;
+            }
+        };
+        let series = context_series(&records, &usage.into_iter().collect(), &bounds);
+        if series.is_empty() {
+            return;
+        }
+        match self.summary.history_tail.as_mut() {
+            Some(tail) => tail.push_str(&series),
+            None => self.summary.history_tail = Some(series),
+        }
+    }
+
+    /// The bound in tokens of each agent and investigator of the configuration that has one, by name. Empty when the
+    /// configuration cannot be read, which is reported as unreadable.
+    async fn context_bounds(&mut self, home: &Home) -> std::collections::BTreeMap<String, u64> {
+        let path = home.config_file();
+        let file = match super::required_text(&path, agent_core::config::MAX_CONFIG_BYTES).await {
+            Ok(file) => file,
+            Err(error) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::HistoryTail,
+                    part: "context bounds".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return std::collections::BTreeMap::new();
+            }
+        };
+        let config = match agent_core::config::Config::from_toml_str(&file.text) {
+            Ok(config) => config,
+            Err(error) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::HistoryTail,
+                    part: "context bounds".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return std::collections::BTreeMap::new();
+            }
+        };
+        let section = config.session().max_context;
+        let mut bounds = std::collections::BTreeMap::new();
+        for (name, agent) in config.agents() {
+            if let Some(bound) = agent_core::config::context_bound(agent.max_context, section) {
+                bounds.insert(name.to_string(), bound);
+            }
+        }
+        for (name, investigator) in config.investigators() {
+            if let Some(bound) = agent_core::config::context_bound(investigator.max_context, section) {
+                bounds.insert(name.to_string(), bound);
+            }
+        }
+        bounds
+    }
+
     async fn history(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
         let path = home.history_file();
         let id = team.id().clone();
@@ -552,6 +706,7 @@ impl Collection {
                         .join("\n")
                         .into_bytes(),
                 );
+                self.context(home, records).await;
             }
             Err(error) => self.assessment.unreadable.push(ReadFailure {
                 section: agent_core::debug_summary::SummarySection::HistoryTail,

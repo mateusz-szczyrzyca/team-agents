@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use crate::history::ReadError;
+use agent_core::cli::RunUsage;
 use agent_core::history::{Record, SequencedRecord};
 use agent_core::ids::{RunId, TeamId};
 
@@ -222,11 +223,54 @@ fn read_with_copy(
     Err(HistoryCollectionError::Changed)
 }
 
+/// The usage of the runs in `runs` as the live history at `history_path` says it: read from a copy of the database like
+/// the records of a team, so the home is not written to. A run without a row is not in the result.
+pub(crate) fn read_live_run_usage(
+    history_path: &Path,
+    runs: &[RunId],
+) -> Result<Vec<(RunId, RunUsage)>, HistoryCollectionError> {
+    if file_stamp(history_path)?.is_none() {
+        return Ok(Vec::new());
+    }
+    for _attempt in 0..SNAPSHOT_ATTEMPTS {
+        match snapshot_with(history_path, &mut copy_bounded, |copied| usage_of(copied, runs)) {
+            Err(HistoryCollectionError::Changed) => {}
+            result => return result,
+        }
+    }
+    Err(HistoryCollectionError::Changed)
+}
+
+/// The usage rows of `runs` in the database at `copied`.
+fn usage_of(copied: &Path, runs: &[RunId]) -> Result<Vec<(RunId, RunUsage)>, HistoryCollectionError> {
+    let reader = crate::history::Reader::open(copied).map_err(HistoryCollectionError::Read)?;
+    let mut found = Vec::new();
+    for run in runs {
+        if let Some(usage) = reader.run_usage(run).map_err(HistoryCollectionError::Read)? {
+            found.push((run.clone(), usage));
+        }
+    }
+    Ok(found)
+}
+
 fn snapshot(
     history_path: &Path,
     team: &TeamId,
     copy: &mut impl FnMut(&Path, &Path, u64) -> Result<u64, HistoryCollectionError>,
 ) -> Result<Vec<SequencedRecord>, HistoryCollectionError> {
+    snapshot_with(history_path, copy, |copied| {
+        let reader = crate::history::Reader::open(copied).map_err(HistoryCollectionError::Read)?;
+        reader.team_records(team).map_err(HistoryCollectionError::Read)
+    })
+}
+
+/// Copies the database at `history_path` with its sidecars, checks that nothing changed while copying, and reads the
+/// copy with `read`.
+fn snapshot_with<T>(
+    history_path: &Path,
+    copy: &mut impl FnMut(&Path, &Path, u64) -> Result<u64, HistoryCollectionError>,
+    read: impl FnOnce(&Path) -> Result<T, HistoryCollectionError>,
+) -> Result<T, HistoryCollectionError> {
     let wal_path = sidecar_path(history_path, "-wal");
     let shm_path = sidecar_path(history_path, "-shm");
 
@@ -263,6 +307,5 @@ fn snapshot(
         return Err(HistoryCollectionError::Changed);
     }
 
-    let reader = crate::history::Reader::open(&copied_db).map_err(HistoryCollectionError::Read)?;
-    reader.team_records(team).map_err(HistoryCollectionError::Read)
+    read(&copied_db)
 }
