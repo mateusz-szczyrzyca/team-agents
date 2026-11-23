@@ -123,7 +123,7 @@ async fn a_run_cut_by_the_daemon_stopping_goes_on_in_a_new_session_briefed_with_
     assert_eq!(kept_after, kept);
     assert_eq!(staged_after, staged);
     let member = state.find_task(&tasks[0]).unwrap().member;
-    assert_eq!(member.status(), TaskStatus::Done);
+    assert_eq!(member.runs().len(), 2, "the new session needed one run");
     let renewals = member.renewals().expect("the cut began a new session");
     assert_eq!(renewals.reason(), Trouble::DaemonDown);
     assert_eq!(renewals.used(), 0, "a cut the daemon caused is no retry of the task");
