@@ -290,3 +290,49 @@ fn a_run_the_daemon_cut_is_not_told_as_an_agent_that_ended_without_a_status() {
         "no status"
     );
 }
+
+#[tokio::test]
+async fn a_question_file_that_cannot_be_read_names_the_task_and_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("questions-1.md"),
+        question_file(1, "Which parser?", "ok"),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("questions-2.md"), [0xff, 0xfe, 0x00, 0x80]).unwrap();
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let refused = read_answers(dir.path(), &task).await.unwrap_err();
+
+    let BriefingProblem::Answers {
+        task: named,
+        path,
+        source: _,
+    } = refused
+    else {
+        panic!("expected the file to be refused: {refused:?}")
+    };
+    assert_eq!(named, task);
+    assert_eq!(path, dir.path().join("questions-2.md"));
+}
+
+#[tokio::test]
+async fn a_folder_that_cannot_be_listed_names_the_task_and_the_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let not_a_folder = dir.path().join("task");
+    std::fs::write(&not_a_folder, "a file where the folder should be").unwrap();
+    let task: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+
+    let refused = read_answers(&not_a_folder, &task).await.unwrap_err();
+
+    let BriefingProblem::AnswersDir {
+        task: named,
+        path,
+        source: _,
+    } = refused
+    else {
+        panic!("expected the folder to be refused: {refused:?}")
+    };
+    assert_eq!(named, task);
+    assert_eq!(path, not_a_folder);
+}

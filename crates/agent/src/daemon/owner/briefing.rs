@@ -125,11 +125,27 @@ pub(super) enum BriefingProblem {
     #[error("cannot read the step judgements of the task")]
     Judgements(#[source] OwnerError),
     /// The folder of the task cannot be read for its question files.
-    #[error("cannot read the question files of the task")]
-    AnswersDir(#[source] std::io::Error),
+    #[error("cannot read the question files of task {task} in {path}")]
+    AnswersDir {
+        /// The task.
+        task: TaskId,
+        /// The folder of the task.
+        path: std::path::PathBuf,
+        /// What the folder refused.
+        #[source]
+        source: std::io::Error,
+    },
     /// A question file of the task cannot be read.
-    #[error("cannot read a question file of the task")]
-    Answers(#[source] agent_runtime::text_file::TextFileError),
+    #[error("cannot read the question file {path} of task {task}")]
+    Answers {
+        /// The task.
+        task: TaskId,
+        /// The question file.
+        path: std::path::PathBuf,
+        /// What the file refused.
+        #[source]
+        source: agent_runtime::text_file::TextFileError,
+    },
 }
 
 impl Owner {
@@ -632,19 +648,35 @@ pub(super) fn verdict_word(verdict: &Verdict) -> &str {
     }
 }
 
-/// The answers the human gave in the question files of `task` in `folder`, oldest question first. A file that does not
-/// read is logged and left out: the new session reads the files itself.
+/// The answers the human gave in the question files of `task` in `folder`, oldest question first. A file whose text is not
+/// a questions file is logged and left out: the new session reads the files itself. A folder or a file that cannot be
+/// read at all fails the briefing, so that an answer is never silently missing.
 ///
 /// # Errors
-/// [`BriefingProblem::AnswersDir`] or [`BriefingProblem::Answers`] when the folder or a file cannot be read.
+/// [`BriefingProblem::AnswersDir`] or [`BriefingProblem::Answers`], each with the task and the path, when the folder or a
+/// file cannot be read.
 async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, BriefingProblem> {
     let mut entries = match tokio::fs::read_dir(folder).await {
         Ok(entries) => entries,
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(source) => return Err(BriefingProblem::AnswersDir(source)),
+        Err(source) => {
+            return Err(BriefingProblem::AnswersDir {
+                task: task.clone(),
+                path: folder.to_path_buf(),
+                source,
+            });
+        }
     };
     let mut numbers: Vec<NonZeroU32> = Vec::new();
-    while let Some(entry) = entries.next_entry().await.map_err(BriefingProblem::AnswersDir)? {
+    while let Some(entry) = entries
+        .next_entry()
+        .await
+        .map_err(|source| BriefingProblem::AnswersDir {
+            task: task.clone(),
+            path: folder.to_path_buf(),
+            source,
+        })?
+    {
         // A name that is not `questions-<number>.md` is no question file: it is not an error.
         if let Some(number) = entry.file_name().to_str().and_then(question_file_number) {
             numbers.push(number);
@@ -654,9 +686,14 @@ async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, B
     let mut answers = Vec::new();
     for number in numbers {
         let path = folder.join(format!("questions-{number}.md"));
-        let Some(file) = read_text_file(&path, MAX_QUESTIONS_BYTES)
-            .await
-            .map_err(BriefingProblem::Answers)?
+        let Some(file) =
+            read_text_file(&path, MAX_QUESTIONS_BYTES)
+                .await
+                .map_err(|source| BriefingProblem::Answers {
+                    task: task.clone(),
+                    path: folder.to_path_buf(),
+                    source,
+                })?
         else {
             continue;
         };
