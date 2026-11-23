@@ -946,10 +946,9 @@ impl Owner {
             .remove(&task)
             .filter(|_| matches!(why, Some(Why::Woken)));
         // A session above its agent's bound is started anew first, so that the briefing below is of the new session.
-        let outgrown = match self.renew_for_context(&task).await {
-            Ok(outgrown) => outgrown,
-            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
-        };
+        if let Err(problem) = self.renew_for_context(&task).await {
+            return self.fail_to_start(&task, error_chain(&problem)).await;
+        }
         let briefing = match self.briefing_facts(&task).await {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
@@ -975,7 +974,6 @@ impl Owner {
                 &mut self.parts.rng,
                 &task,
                 briefing.as_ref(),
-                outgrown,
                 last_message.as_deref(),
             )
             .await

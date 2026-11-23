@@ -48,7 +48,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the state refuses the new session.
-    pub(super) async fn renew_for_context(&mut self, task: &TaskId) -> Result<Option<u64>, OwnerError> {
+    pub(super) async fn renew_for_context(&mut self, task: &TaskId) -> Result<bool, OwnerError> {
         let (run, bound) = {
             let found = self
                 .parts
@@ -57,10 +57,10 @@ impl Owner {
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
             let member = found.member;
             let (Some(last), Some(_)) = (member.runs().last(), member.last_session()) else {
-                return Ok(None);
+                return Ok(false);
             };
             let Some(bound) = bound_of(&self.parts.settings.config, member.agent()) else {
-                return Ok(None);
+                return Ok(false);
             };
             (last.id().clone(), bound)
         };
@@ -74,20 +74,20 @@ impl Owner {
                     error = %error_chain(&problem),
                     "the context of the last run cannot be read: its session is resumed"
                 );
-                return Ok(None);
+                return Ok(false);
             }
         };
         let Some(tokens) = size.filter(|tokens| starts_anew(Some(*tokens), Some(bound))) else {
-            return Ok(None);
+            return Ok(false);
         };
         let at = self.after_last_run(task)?;
-        let begun = self.parts.state.begin_context_session(task, at)?;
+        let begun = self.parts.state.begin_context_session_with_size(task, at, tokens)?;
         log_decision(
             "context",
             &format!("task={task}, context={tokens}, bound={bound}"),
             &"NewSession",
         );
-        Ok(begun.then_some(tokens))
+        Ok(begun)
     }
 
     /// The size of the context of the last model call of `run`, as the history recorded it; `None` when the run has no

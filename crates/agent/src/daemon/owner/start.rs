@@ -216,6 +216,27 @@ async fn compose_run_prompt(
     }
 }
 
+/// Whether the session of `member` was replaced because it outgrew its agent's bound, and its new session has not begun.
+fn replaced_by_bound(member: &Member) -> bool {
+    member
+        .renewals()
+        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::ContextBound)
+        && member.awaits_new_session()
+}
+
+/// The prompt with the size that ended the session before at its start, while a renewal for the bound is pending: the size
+/// is the one the state keeps, so that a restart before the new session's first run still names it.
+fn with_size_paragraph(ctx: &Context<'_>, member: &Member, prompt: String) -> Result<String, StartProblem> {
+    let pending = member
+        .renewals()
+        .filter(|_| replaced_by_bound(member))
+        .and_then(agent_core::state::Renewals::context_tokens);
+    Ok(match pending {
+        Some(tokens) => format!("{}\n\n{prompt}", super::briefing::context_paragraph(ctx.texts, tokens)?),
+        None => prompt,
+    })
+}
+
 /// The prompt with the last message of the session before at its end, when the session is briefed with one.
 fn with_last_message(ctx: &Context<'_>, prompt: String, last_message: Option<&str>) -> Result<String, StartProblem> {
     Ok(match last_message {
@@ -261,7 +282,6 @@ pub(super) async fn plan(
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingDraft>,
-    outgrown: Option<u64>,
     last_message: Option<&str>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
@@ -284,11 +304,7 @@ pub(super) async fn plan(
         .map(|session| SessionId::from_str(session.as_str()))
         .transpose()?;
     // A session above its agent's bound is replaced: its next run is a whole new session, whatever the run before ended as.
-    let replaced = member
-        .renewals()
-        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::ContextBound)
-        && member.awaits_new_session();
-    let kind = if replaced {
+    let kind = if replaced_by_bound(member) {
         PromptKind::First
     } else if ctx.why == Some(&Why::NoStatus) {
         PromptKind::Resume(ResumeReason::NoStatus)
@@ -335,10 +351,7 @@ pub(super) async fn plan(
         None => prompt,
     };
     // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
-    let prompt = match outgrown {
-        Some(tokens) => format!("{}\n\n{prompt}", super::briefing::context_paragraph(ctx.texts, tokens)?),
-        None => prompt,
-    };
+    let prompt = with_size_paragraph(ctx, member, prompt)?;
     let prompt = with_last_message(ctx, prompt, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {

@@ -527,7 +527,7 @@ impl State {
     }
 
     /// Starts `task` anew because its session outgrew its agent's bound at `tokens`, at `at`, and keeps that size with the
-    /// renewal. The stub keeps nothing yet.
+    /// renewal, so that a restart before the new session's first run still knows it.
     ///
     /// # Errors
     /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
@@ -537,8 +537,11 @@ impl State {
         at: Timestamp,
         tokens: u64,
     ) -> Result<bool, RenewTaskError> {
-        let _ = tokens;
-        self.begin_context_session(task, at)
+        let begun = self.begin_context_session(task, at)?;
+        if let Some((_, mut member)) = self.find_task_mut(task).filter(|_| begun) {
+            member.keep_context_tokens(tokens);
+        }
+        Ok(begun)
     }
 
     /// Starts `task` anew in a new session because its session outgrew its agent's bound, at `at`: the runs after now

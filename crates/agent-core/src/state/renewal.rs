@@ -36,6 +36,11 @@ pub struct Renewals {
     /// Whether the team is still owed notice of a busy hand-over, including across a restart.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     busy_notice_owed: bool,
+    /// The size in tokens of the context that outgrew the agent's bound and ended the session, kept until the new session
+    /// begins, so that its prompt can name it after a restart; `None` for a renewal of any other trouble, and in a state
+    /// written before it was kept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    context_tokens: Option<u64>,
 }
 
 impl Renewals {
@@ -51,11 +56,16 @@ impl Renewals {
         self.at
     }
 
-    /// The size in tokens of the context that ended the session, when the renewal is for the bound; `None` otherwise and
-    /// in a state written before it was kept. The stub returns none.
+    /// The size in tokens of the context that outgrew the agent's bound and ended the session, when the renewal is for the
+    /// bound; `None` otherwise and in a state written before it was kept.
     #[must_use]
     pub const fn context_tokens(&self) -> Option<u64> {
-        None
+        self.context_tokens
+    }
+
+    /// Records the size in tokens of the context that ended the session.
+    pub(super) const fn keep_context_tokens(&mut self, tokens: u64) {
+        self.context_tokens = Some(tokens);
     }
 
     /// Why the task was last started anew.
@@ -112,6 +122,7 @@ impl Renewals {
             asked: None,
             lead_owed: None,
             busy_notice_owed: false,
+            context_tokens: None,
         }
     }
 
@@ -126,6 +137,7 @@ impl Renewals {
             asked: None,
             lead_owed: None,
             busy_notice_owed: false,
+            context_tokens: None,
         }
     }
 
