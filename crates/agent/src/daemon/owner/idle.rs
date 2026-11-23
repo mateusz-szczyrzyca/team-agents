@@ -160,7 +160,7 @@ impl Owner {
                 self.deliver(title, body, "idle removal refusal").await;
             }
             Err(error) => {
-                tracing::warn!(event = agent_core::log::LogEvent::NotificationFailed.as_str(), team = %id, error = %error.message, "cannot render idle refusal")
+                tracing::warn!(event = agent_core::log::LogEvent::NotificationFailed.as_str(), team = %id, error = %error.message, "cannot render idle refusal");
             }
         }
         Ok(())
@@ -174,7 +174,7 @@ fn recorded_activity(team: &Team) -> Timestamp {
         .into_iter()
         .map(|(_, member)| member)
         .chain(team.reviewers())
-        .flat_map(|member| member.runs())
+        .flat_map(agent_core::state::Member::runs)
         .fold(team.created_at(), |last, run| {
             last.max(run.started_at()).max(match run.state() {
                 RunState::Running => run.started_at(),
