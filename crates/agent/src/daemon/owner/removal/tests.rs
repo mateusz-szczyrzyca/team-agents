@@ -558,3 +558,29 @@ async fn removal_without_surviving_worktrees_refuses_and_preserves_state_and_tas
     assert_eq!(daemon.state(), state);
     assert!(!daemon.home.removed_bundle(&team_id(0)).exists());
 }
+
+#[tokio::test]
+async fn failed_removal_state_save_keeps_the_live_team_and_its_files() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    std::fs::remove_file(daemon.home.state_file()).unwrap();
+    std::fs::create_dir(daemon.home.state_file()).unwrap();
+
+    let result = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await;
+
+    assert!(matches!(result, Err(super::OwnerError::Store { .. })));
+    assert_eq!(owner.parts.state, state);
+    assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
+    assert!(daemon.home.worktree_dir(&repo(), &task(1)).join("work.txt").is_file());
+}
