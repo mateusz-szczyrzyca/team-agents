@@ -44,11 +44,30 @@ pub(super) fn print(
         .filter(|r| team.is_none_or(|team| *team == r.start.value.team))
         .collect();
     if view == LogView::Usage {
-        output(
-            out,
-            &serde_json::json!({"message":"Tokens are not recorded yet (11.1)."}),
-            format,
-        )?;
+        let ids: Vec<_> = runs.iter().map(|row| row.start.value.run.clone()).collect();
+        let usage = reader.run_usages(&ids)?;
+        if usage.is_empty() {
+            // A history that keeps no usage, or none for these runs: nothing was recorded.
+            output(
+                out,
+                &serde_json::json!({"message":"Tokens are not recorded yet (11.1)."}),
+                format,
+            )?;
+        }
+        for row in &runs {
+            let Some(told) = usage.get(&row.start.value.run) else {
+                continue;
+            };
+            output(
+                out,
+                &serde_json::json!({
+                    "run": row.start.value.run, "task": row.start.value.task, "agent": row.start.value.agent.name,
+                    "first_context": told.first_context, "last_context": told.last_context,
+                    "tokens_written": told.tokens_written, "cost_usd": told.cost_usd,
+                }),
+                format,
+            )?;
+        }
         return out.flush().map_err(LogError::Output);
     }
     if matches!(

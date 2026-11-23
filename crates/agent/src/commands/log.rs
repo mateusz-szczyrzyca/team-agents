@@ -10,16 +10,15 @@ mod timeline;
 mod views;
 mod wait;
 
-use std::collections::BTreeSet;
-use std::fmt::Display;
+use std::collections::BTreeMap;
 use std::io::Write;
 use std::path::Path;
 
 use agent_core::cli::RunUsage;
 use agent_core::history::{Record, SequencedRecord};
-use agent_core::ids::{RoundId, TeamId};
+use agent_core::ids::{RoundId, RunId, TeamId};
 use agent_core::local_time::{TypedTimeError, Zone};
-use agent_core::story::{Selection, StoryOptions, json_lines, render_in};
+use agent_core::story::{Selection, StoryOptions, json_lines, render_with_usage};
 use agent_runtime::history::{ReadError, Reader};
 
 /// The exit status of `agent log` when the round or team asked for is not in the history.
@@ -143,7 +142,10 @@ pub(crate) fn log_in(history: &Path, request: &LogRequest, zone: Zone, out: &mut
         });
     }
     let text = match request.format {
-        Format::Text(options) => render_in(&records, &request.selection, options, zone),
+        Format::Text(options) => {
+            let usage = usage_of_ended(&reader, &records)?;
+            render_with_usage(&records, &request.selection, options, zone, &usage)
+        }
         Format::Json => json_lines(&records, &request.selection)
             .into_iter()
             .fold(String::new(), |mut text, line| {
@@ -152,51 +154,22 @@ pub(crate) fn log_in(history: &Path, request: &LogRequest, zone: Zone, out: &mut
                 text
             }),
     };
-    let text = match request.format {
-        Format::Text(_) => text + &usage_text(&reader, &records)?,
-        Format::Json => text,
-    };
     out.write_all(text.as_bytes()).map_err(LogError::Output)?;
     out.flush().map_err(LogError::Output)
 }
 
-/// One line for each run of `records` that has a usage row, after the story: what its stream told of its context, its
-/// output and its cost. A run with no row prints no line, so the story of an older history reads as it did.
+/// The usage of every run of `records` that ended, read in one call. A history without usage has none.
 ///
 /// # Errors
 /// [`LogError::Read`] when the usage cannot be read.
-fn usage_text(reader: &Reader, records: &[SequencedRecord]) -> Result<String, LogError> {
-    let mut seen = BTreeSet::new();
-    let mut text = String::new();
+fn usage_of_ended(reader: &Reader, records: &[SequencedRecord]) -> Result<BTreeMap<RunId, RunUsage>, LogError> {
+    let mut runs: Vec<RunId> = Vec::new();
     for stored in records {
-        let Record::RunEnd(end) = &stored.record else {
-            continue;
-        };
-        if !seen.insert(end.run.clone()) {
-            continue;
-        }
-        if let Some(usage) = reader.run_usage(&end.run)? {
-            text.push_str(&usage_line(&usage));
-            text.push('\n');
+        if let Record::RunEnd(end) = &stored.record
+            && !runs.contains(&end.run)
+        {
+            runs.push(end.run.clone());
         }
     }
-    Ok(text)
-}
-
-/// The usage line of a run: each part the CLI told, or "not told" where it did not tell it.
-fn usage_line(usage: &RunUsage) -> String {
-    format!(
-        "usage: context first {}, last {}; output {}; cost {} USD",
-        told(usage.first_context),
-        told(usage.last_context),
-        told(usage.tokens_written),
-        usage
-            .cost_usd
-            .map_or_else(|| "not told".to_owned(), |cost| format!("{cost:.6}")),
-    )
-}
-
-/// A part of a usage as text, or "not told" when the CLI did not tell it.
-fn told(value: Option<impl Display>) -> String {
-    value.map_or_else(|| "not told".to_owned(), |value| value.to_string())
+    Ok(reader.run_usages(&runs)?)
 }
