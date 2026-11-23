@@ -490,11 +490,16 @@ async fn a_dirty_worktree_git_cannot_remove_is_not_named_as_removed() {
         .unwrap();
 
     assert!(
-        !removal.dirty_worktrees.contains(&abs(&locked)),
+        removal.dirty_worktrees.contains(&abs(&locked)),
         "{:?}",
         removal.dirty_worktrees
     );
     assert!(locked.is_dir());
+    assert!(
+        removal.left_behind.iter().any(|left| left.contains(task(2).as_str())),
+        "{:?}",
+        removal.left_behind
+    );
 }
 
 #[tokio::test]
