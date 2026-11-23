@@ -584,3 +584,57 @@ async fn failed_removal_state_save_keeps_the_live_team_and_its_files() {
     assert!(daemon.home.task_dir(&task(1)).join("run.log").is_file());
     assert!(daemon.home.worktree_dir(&repo(), &task(1)).join("work.txt").is_file());
 }
+
+#[tokio::test]
+async fn removal_reports_persisted_wake_budgets_and_bus_cleanup_limit() {
+    use agent_core::state::WakeDelivery;
+    use std::num::NonZeroU64;
+
+    let mut state = pair_state();
+    state.record_wake_delivery(
+        task(1),
+        Some(WakeDelivery::Pending {
+            message: NonZeroU64::new(91),
+            count: 2,
+        }),
+    );
+    state.record_wake_delivery(
+        task(2),
+        Some(WakeDelivery::Delivered {
+            message: None,
+            count: 4,
+        }),
+    );
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removed = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    for (number, message, count, phase) in [(1, "91", 2, "pending"), (2, "unknown", 4, "delivered")] {
+        let expected = format!(
+            "removed wake budget: task {}, message {message}, count {count}, state {phase}, source {}",
+            task(number),
+            daemon.home.state_file().display()
+        );
+        assert!(removed.left_behind.contains(&expected), "{:?}", removed.left_behind);
+        assert_eq!(owner.parts.state.wake_delivery(&task(number)), None);
+    }
+    assert!(
+        removed
+            .left_behind
+            .iter()
+            .any(|line| line.contains("bus itself was neither read for wake-ups nor cleaned"))
+    );
+}
