@@ -1,6 +1,6 @@
 # YOUR LAST RUN ENDED WITHOUT CALLING A TOOL
 
-Your last run of {{agent}} ended with `STATUS: FAILED` and called no tool step: the CLI did not offer, or you did not use, the tools of the bus.
+Your last run of {{agent}} ended with `STATUS: FAILED` and called no tool step: the CLI did not offer or did not use the tools of the bus.
 This run is a fresh session of the same task; the briefing below says what the session before left.
 
 The tools of the bus are listed for your CLI in its tool catalog, under the MCP server `agentbus`: `read_messages`, the
