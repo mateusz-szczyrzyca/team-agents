@@ -311,9 +311,11 @@ confirms the step, while a non-zero exit, a signal or a timeout is a mismatch wi
 `tasks/<task>/checks/<run>/<step>.log`. Steps without checks or with `reviewer` remain declared. Stopping or
 restarting the daemon kills any running check process group (`tasks/<task>/checks/running`) and, on startup, finishes
 judging and settling any run that was waiting for its check without re-running the agent CLI or duplicating a
-recorded judgement. `agent status <task>` and `agent status <round>` show these states beside the steps. Judgements
-are retained in history schema 17, which automatically upgrades older histories; keep a backup before upgrading if
-you need to return to an older daemon.
+recorded judgement. `agent status <task>` and `agent status <round>` show these states beside the steps.
+Recovery tolerates an unrelated process exiting while the daemon scans process groups, so that process cannot
+prevent the daemon from restarting a pending check. Malformed process records still fail recovery with context.
+Judgements are retained in history schema 17, which automatically upgrades older histories; keep a backup before
+upgrading if you need to return to an older daemon.
 
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
