@@ -470,3 +470,60 @@ async fn a_worktree_git_cannot_remove_is_kept_and_its_bytes_are_not_counted_as_f
     );
     assert!(daemon.state().team(&team_id(0)).is_none());
 }
+
+#[tokio::test]
+async fn a_dirty_worktree_git_cannot_remove_is_not_named_as_removed() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let locked = daemon.home.worktree_dir(&repo(), &task(2));
+    git(dir.path(), &["worktree", "lock", locked.to_str().unwrap()]);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(
+        !removal.dirty_worktrees.contains(&abs(&locked)),
+        "{:?}",
+        removal.dirty_worktrees
+    );
+    assert!(locked.is_dir());
+}
+
+#[tokio::test]
+async fn a_worktree_with_only_untracked_files_is_not_named_as_having_uncommitted_changes() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    // make_team_files changes a tracked file of task 2; this worktree has an untracked file and nothing tracked.
+    let second = daemon.home.worktree_dir(&repo(), &task(2));
+    git(&second, &["checkout", "-q", "--", "README.md"]);
+    std::fs::write(second.join("notes.txt"), "untracked\n").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(removal.dirty_worktrees.is_empty(), "{:?}", removal.dirty_worktrees);
+}
