@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.74.0 — 23.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] `agent remove <team> [--force]` takes a team out of the daemon with what is only its own. A team with a run going is refused unless `--force` is given, which ends its runs first. Before anything is deleted, its unmerged branches are bundled into `removed/<team>.bundle` under `AGENTS_HOME` (fetchable with `git fetch`), and the open pull requests of its branches are closed with a comment. Then the team leaves `agent status`, and its worktrees, task directories and local branches are deleted; the output names what was bundled, closed, freed and left. Its history, notifications and GitHub branches stay.
+- [agent] [agent-core] The reservations of the team on the bus are not released by `agent remove`: the output names the ones still there, and they stay until they expire or are released by hand.
+
 ## 0.73.0 — 23.11.2026 — PR #217 (continues #190)
 
 ### New features
