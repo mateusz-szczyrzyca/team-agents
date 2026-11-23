@@ -26,8 +26,9 @@
 //!   harness refuses, `TooManyOpenSteps` for a stream that opens more unfinished responses than the parser
 //!   keeps. An event of a type the adapter does not know is not an error: the CLIs add events and this code reads only
 //!   the few it needs.
-//! - **The activity** of a step is the one the old `agentbus normalize` showed. Token usage is not read: accounting is
-//!   not part of this rewrite.
+//! - **The activity** of a step is the one the old `agentbus normalize` showed.
+//! - **The usage** of a run (its context size, the output tokens and the cost) is what the stream tells, per model
+//!   call, through [`OutputParser::usage`]: a part the CLI does not tell stays "not told", never an estimate.
 
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;

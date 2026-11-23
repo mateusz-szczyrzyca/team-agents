@@ -1599,3 +1599,14 @@ The optional member `holder_after_run` points to the prior holder's last run; se
 exclude runs at or before that boundary. Handing work to a replacement clears the prior holder's lead debt without
 creating a renewal or a fictitious failure. States without the field keep loading. Old split states are scheduled
 from their persisted merged rounds on the next poll, including after a restart between merge and continuation.
+
+## Run usage
+
+Each CLI adapter reads, per model call, what the stream tells of the context size, the output tokens and the cost
+([`OutputParser::usage`](../crates/agent-core/src/cli.rs)); a part the CLI does not tell is "not told", never an estimate.
+The engine writes a run's usage to the history's `run_usage` table once the process is gone, through a fire-and-forget
+job of the history writer (a full queue or a refused write is reported, and the run goes on). The table is outside the
+ledger, like judgements. `agent status`, `agent log` and `agent debug` read it through `Reader::run_usage`; a run with no
+row is "not told". The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
+`max_context`). Nothing resumes or stops a session by it yet.
+
