@@ -2061,3 +2061,78 @@ async fn outside_replacement_reuses_a_stopped_coordinators_task_for_the_next_par
     );
     rig.stop().await.unwrap();
 }
+
+/// One line of Claude Code's stream JSON: a model call of `input` tokens of context.
+fn usage_line(input: u64) -> String {
+    format!(
+        "{{\"type\":\"assistant\",\"message\":{{\"id\":\"msg-{input}\",\"role\":\"assistant\",\"content\":[{{\"type\":\"text\",\"text\":\"working\"}}],\"usage\":{{\"input_tokens\":{input},\"cache_read_input_tokens\":0,\"cache_creation_input_tokens\":0,\"output_tokens\":100}}}}}}\n"
+    )
+}
+
+/// Runs the split of one item into two parts, in which the member that did part a works on part b in the same task: its
+/// first run streams `input` tokens. Returns the arguments and the prompt of its second run, which is part b's first run.
+async fn next_part_of_a_split(input: u64) -> (String, String) {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "ask,integrate"),
+            normal("claude-1", "work-stream:first,ask-here,work"),
+            investigator("inv-r1", "done:VERDICT: APPROVE"),
+            investigator("inv-r2", "done:VERDICT: APPROVE"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(input)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: tasks[0].clone(),
+                number: n(1),
+                answers: answers(&[(1, &approval(2))]),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Questions).await;
+    let worktree = rig.worktree(&tasks[1]);
+    let args = std::fs::read_to_string(worktree.join(".fake-args-2")).unwrap();
+    let prompt = rig.prompt(&tasks[1], 2).await;
+    rig.stop().await.unwrap();
+    (args, prompt)
+}
+
+// Rule: a member whose session stays below its agent's bound resumes it for the next part of its split, as before: part b's
+// first run is the second run of the task, and it resumes the session of part a.
+#[tokio::test]
+async fn a_session_below_the_bound_resumes_for_the_next_part_of_a_split() {
+    let (args, _) = next_part_of_a_split(42_000).await;
+
+    assert!(
+        args.contains("--resume"),
+        "the next part does not resume its session: {args}"
+    );
+}
+
+// Rule: a session above the bound is not resumed for the next part of a split either: the part's first run is briefed.
+#[tokio::test]
+async fn a_session_above_the_bound_is_replaced_for_the_next_part_of_a_split() {
+    let (args, prompt) = next_part_of_a_split(200_000).await;
+
+    assert!(
+        !args.contains("--resume"),
+        "the session above the bound was resumed: {args}"
+    );
+    assert!(prompt.contains("grown to 200000 tokens"), "{prompt}");
+}
