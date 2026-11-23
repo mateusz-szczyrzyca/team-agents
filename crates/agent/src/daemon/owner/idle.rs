@@ -1,10 +1,11 @@
 //! Automatic idle removal uses the same safeguards as the human command.
 use super::{Owner, OwnerError};
 use agent_core::decide::idle::{Decision, Hold, decide};
+use agent_core::decide::wait::Obligation;
 use agent_core::ids::TeamId;
 use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::protocol::{Client, Failure, RemoveRequest};
-use agent_core::state::{IdleWatch, RunState, Team, Timestamp};
+use agent_core::state::{IdleWatch, RoundLife, RunState, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use std::collections::BTreeMap;
 mod activity;
@@ -76,6 +77,11 @@ impl Owner {
     fn idle_hold(&self, team: &Team, now: Timestamp) -> Result<Hold, Failure> {
         if team.delivery_waits().next().is_some() {
             return Ok(Hold::ExternalMerge);
+        }
+        if team.rounds().iter().any(|round| {
+            *round.life() == RoundLife::Open && self.round_obligation(team, round) == Some(Obligation::FreeInvestigator)
+        }) {
+            return Ok(Hold::Queued);
         }
         for member in team
             .crew()

@@ -388,7 +388,7 @@ impl Owner {
     }
 
     /// The pending operation, including gates which do not run a model task.
-    fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
+    pub(in crate::daemon::owner) fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
         if round.delivered_by().is_some() {
             return Some(Obligation::Merge);
         }
