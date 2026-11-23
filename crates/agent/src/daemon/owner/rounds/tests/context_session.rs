@@ -304,3 +304,33 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
     );
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
+
+// Rule: a renewal for the bound removes the session the next run would resume, so the next run is a whole new session: its
+// prompt is the task's full prompt, not the short resume that follows a run which ended without a STATUS line.
+#[tokio::test]
+async fn a_context_renewal_after_no_status_starts_with_the_task_and_not_with_a_resume() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "nostatus-stream:first,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-2")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(!args.contains("--resume"), "the old session was resumed: {args}");
+    assert!(
+        prompt.contains("Do the first thing in the repository."),
+        "the task is not in the prompt: {prompt}"
+    );
+}

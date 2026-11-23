@@ -48,6 +48,7 @@
 #                   whatever the run is to have done
 #   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
 #                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
+#   nostatus-stream:NAME  like `stream:NAME`, and ends without a STATUS line
 #   sleep-stream:NAME  like `stream:NAME`, and ends with STATUS: SLEEPING
 #   ask-stream:NAME  like `ask-here` after the stream of `stream:NAME`: asks in questions-1.md, leaves the file `draft.txt`
 #                   uncommitted, and ends with STATUS: QUESTIONS
@@ -751,6 +752,11 @@ case $action in
     printf 'a draft the run did not commit\n' > draft.txt
     cat "$home/fake-scripts/${action#ask-stream:}.jsonl"
     result 'I have to ask.\nSTATUS: QUESTIONS'
+    ;;
+  nostatus-stream:*)
+    # Like `stream:NAME`, and ends without a STATUS line: the run the harness retries after a no-status ending.
+    cat "$home/fake-scripts/${action#nostatus-stream:}.jsonl"
+    result 'I think that is all.'
     ;;
   sleep-stream:*)
     # Like `stream:NAME`, and ends sleeping: the task waits for a message, its round closed, with nothing left in the worktree.
