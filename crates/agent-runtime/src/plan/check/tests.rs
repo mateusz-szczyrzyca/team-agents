@@ -1,3 +1,4 @@
+use std::error::Error as _;
 use std::fs;
 
 use agent_core::ids::RunId;
@@ -1000,6 +1001,52 @@ fn proc_scan_skips_an_exiting_process_that_names_its_group_minus_one() {
     assert!(
         !member,
         "a -1 group ID must not be mistaken for a member of the recorded group 7778"
+    );
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_rejects_a_group_that_is_not_a_number() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-bad-group");
+    let pid_dir = fake_proc.join("7780");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7780 (sh) {}\n", stat_fields("abc", "42"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_stat_group_and_ticks_in(&fake_proc, 7780)
+        .expect_err("a group that is not a number must not be swallowed by recovery");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn proc_scan_rejects_a_group_that_is_not_a_number() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-scan-bad-group");
+    let pid_dir = fake_proc.join("7781");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7781 (sh) {}\n", stat_fields("abc", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_group_has_member_since_in(&fake_proc, 7781, 90)
+        .expect_err("a scan over a stat with a group that is not a number must fail, not skip the entry");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_keeps_the_ticks_parse_error_source() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-bad-ticks");
+    let pid_dir = fake_proc.join("7782");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7782 (sh) {}\n", stat_fields("7782", "not-ticks"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_stat_group_and_ticks_in(&fake_proc, 7782)
+        .expect_err("a start time that is not a number of ticks must fail");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        error.source().is_some() && error.source().unwrap().downcast_ref::<std::num::ParseIntError>().is_some(),
+        "the parse error must stay reachable through the io error chain, not only in its message"
     );
 }
 
