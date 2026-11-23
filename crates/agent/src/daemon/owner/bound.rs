@@ -101,10 +101,15 @@ impl Owner {
             return Ok(None);
         }
         let wanted = run.clone();
-        let read =
-            tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.run_usage(&wanted)))
-                .await
-                .map_err(SizeProblem::Join)?;
+        // The usage of a run is handed to the history writer when the run ends and written after it: the writer is
+        // waited for, so that a session above its bound is never taken for one whose size is not told.
+        let history = self.history.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            history.flush();
+            Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))
+        })
+        .await
+        .map_err(SizeProblem::Join)?;
         match read {
             Ok(usage) => Ok(usage.and_then(|usage| usage.last_context)),
             Err(ReadError::Empty { .. }) => Ok(None),
