@@ -477,6 +477,8 @@ enum Asked {
 pub(super) struct Owner {
     /// What it is made of.
     parts: OwnerParts,
+    /// Start of this owner, excluding daemon downtime from automatic idle removal.
+    started_at: time::UtcDateTime,
     /// The runs that are going.
     runs: JoinSet<Result<RunVerdict, EngineError>>,
     /// The task of each run that is going, by the run's task in the runtime.
@@ -613,6 +615,7 @@ impl Owner {
             }
         };
         Self {
+            started_at: agent_core::ids::Clock::now(&parts.clock),
             parts,
             runs: JoinSet::new(),
             running: HashMap::new(),

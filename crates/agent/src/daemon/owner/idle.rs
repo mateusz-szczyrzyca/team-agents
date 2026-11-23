@@ -19,6 +19,7 @@ impl Owner {
             return Ok(());
         }
         let now = Timestamp::now(&self.parts.clock)?;
+        let started_at = Timestamp::from_utc(self.started_at)?;
         let teams: Vec<_> = self.parts.state.teams().iter().map(|team| team.id().clone()).collect();
         for id in teams {
             let Some(team) = self.parts.state.team(&id) else {
@@ -38,8 +39,9 @@ impl Owner {
                     continue;
                 }
             };
-            let decision = decide(now, watch.last_activity, limit, hold);
-            let reason = format!("idle since {} (limit {} seconds)", watch.last_activity, limit.as_secs());
+            let idle_since = watch.last_activity.max(started_at);
+            let decision = decide(now, idle_since, limit, hold);
+            let reason = format!("idle since {idle_since} (limit {} seconds)", limit.as_secs());
             if let Some(mut team) = self.parts.state.team_mut(&id) {
                 team.record_idle_watch(watch);
             }
