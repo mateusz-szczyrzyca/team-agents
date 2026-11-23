@@ -205,3 +205,68 @@ fn a_request_is_the_workers_while_the_bus_has_it_running_for_its_task_or_for_its
     }
     assert_eq!(known("running", None, None).status, DelegationStatus::Running);
 }
+
+#[tokio::test]
+async fn removal_refuses_or_joins_a_workers_pending_check() {
+    use std::num::NonZeroU64;
+
+    use agent_core::protocol::{Client, FailureKind, RemoveRequest};
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::worker_request::{Pending, Stage};
+
+    use super::super::fixture::{Daemon, pair_state};
+    use crate::fixtures::{repo, task, team_id};
+
+    for force in [false, true] {
+        let daemon = Daemon::new(&pair_state(), None);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let task_dir = daemon.home.task_dir(&task(2));
+        std::fs::create_dir_all(&task_dir).unwrap();
+        for number in [1, 2] {
+            std::fs::create_dir_all(daemon.home.worktree_dir(&repo(), &task(number))).unwrap();
+        }
+        let pending = Pending {
+            request: RequestId::new(NonZeroU64::new(1).unwrap()),
+            team: team_id(0),
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            worker: "claude-2".parse().unwrap(),
+            worker_task: task(2),
+            summary: "finished".to_owned(),
+            run_seconds: 0,
+            base: None,
+            stage: Stage::Ended,
+        };
+        owner.start_request_check(
+            &task_dir,
+            pending,
+            checked(&[], &[], None),
+            "1.1".parse().unwrap(),
+            "/bin/true".to_owned(),
+        );
+
+        let result = owner
+            .remove_request(
+                &Client::Cli,
+                RemoveRequest {
+                    team: team_id(0),
+                    force,
+                },
+            )
+            .await
+            .unwrap();
+
+        if force {
+            assert_eq!(owner.request_checking.len(), 0);
+            assert!(owner.request_checks.is_empty());
+            assert_eq!(result.unwrap().stopped, vec![task(2)]);
+            assert!(!task_dir.exists());
+        } else {
+            assert_eq!(result.unwrap_err().kind, FailureKind::Conflict);
+            assert!(owner.parts.state.team(&team_id(0)).is_some());
+            assert!(task_dir.exists());
+            let joined = owner.request_checks.join_next_with_id().await.unwrap();
+            owner.request_check_done(joined).await.unwrap();
+        }
+    }
+}
