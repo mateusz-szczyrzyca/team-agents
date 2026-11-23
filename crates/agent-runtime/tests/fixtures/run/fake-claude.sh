@@ -32,8 +32,20 @@
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
 
+# Writes the values, one a line, into the file whole: staged in a same-directory temporary and renamed over the file,
+# so a reader that looks at the record while the run is still writing it sees the whole record or no file, never a
+# torn one.
+whole() {
+  local file temporary
+  file=$1
+  shift
+  temporary=$(mktemp "$file.XXXXXXXXXX")
+  printf '%s\n' "$@" > "$temporary"
+  mv -- "$temporary" "$file"
+}
+
 scenario=$(cat .fake-scenario)
-printf '%s\n' "$@" > .fake-args
+whole .fake-args "$@"
 
 session=""
 resumed=no
@@ -76,7 +88,7 @@ case $scenario in
   done) finish_done ;;
   done-child)
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     finish_done
     ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
@@ -111,14 +123,14 @@ case $scenario in
   hang)
     init
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     wait
     ;;
   hang-slow-stop)
     init
     trap 'touch .fake-term; sleep 2; exit 0' TERM
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     while true; do wait; done
     ;;
   hang-first)
@@ -127,21 +139,21 @@ case $scenario in
     else
       init
       sleep 600 &
-      echo $! > .fake-child
+      whole .fake-child "$!"
       wait
     fi
     ;;
   hang-then-step)
     runs=1
     if [[ -f .fake-runs ]]; then runs=$(( $(< .fake-runs) + 1 )); fi
-    echo "$runs" > .fake-runs
+    whole .fake-runs "$runs"
     if ((runs >= 3)); then
       finish_done
     else
       init
       if ((runs == 2)); then say "working"; fi
       sleep 600 &
-      echo $! > .fake-child
+      whole .fake-child "$!"
       wait
     fi
     ;;

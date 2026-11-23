@@ -50,6 +50,9 @@
 #                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
 #   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
 #                   the number of the run): a message can reach the agent while its run works
+#   held-write      re-publishes the record of the run's own prompt (`.fake-prompt-N`) through a held write window
+#                   (`.fake-held-N` until the test creates `.fake-release-N`): a reader that reads the record while the
+#                   window is open must see the whole record or no file, never a torn one
 #   answer:K        ends with FINDING K: FIXED and STATUS: DONE, and changes nothing in the worktree
 #   clean-sleep     hides own files and ends with STATUS: SLEEPING without changing the worktree
 #   clean-done:TEXT hides own files and ends with TEXT and STATUS: DONE without changing the worktree
@@ -77,6 +80,18 @@
 # out. A committed script, never written by a test, so that no test races an `exec` of a file that is still open.
 set -eu
 
+# Writes the values, one a line, into the file whole: staged in a same-directory temporary and renamed over the file,
+# so a reader that looks at the record while the run is still writing it sees the whole record or no file, never a
+# torn one.
+whole() {
+  local file temporary
+  file=$1
+  shift
+  temporary=$(mktemp "$file.XXXXXXXXXX")
+  printf '%s\n' "$@" > "$temporary"
+  mv -- "$temporary" "$file"
+}
+
 scenario=""
 session=""
 name=""
@@ -101,16 +116,17 @@ prompt=${args[${#args[@]}-1]}
 
 n=1
 if [[ -f .fake-runs ]]; then n=$(( $(< .fake-runs) + 1 )); fi
-echo "$n" > .fake-runs
-printf '%s\n' "$prompt" > ".fake-prompt-$n"
-printf '%s\n' "${args[@]}" > ".fake-args-$n"
+whole .fake-runs "$n"
+whole ".fake-prompt-$n" "$prompt"
+whole ".fake-args-$n" "${args[@]}"
 branch=$(git rev-parse --abbrev-ref HEAD 2>&1) || branch="git failed: $branch"
 echo "$n $session $branch" >> .fake-log
 
 # Keep evidence used after a merged round removes its worktrees.
 records_dir="$(git rev-parse --git-common-dir)/fake-records/$(basename "$PWD")"
 mkdir -p "$records_dir"
-cp .fake-runs ".fake-prompt-$n" "$records_dir/"
+whole "$records_dir/.fake-runs" "$n"
+whole "$records_dir/.fake-prompt-$n" "$prompt"
 
 IFS=, read -r -a actions <<< "$scenario"
 action=${actions[$((n - 1))]:-${actions[${#actions[@]}-1]}}
@@ -622,6 +638,24 @@ case $action in
     commit_work
     record_gate
     result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
+    ;;
+  held-write)
+    # Holds the record of the run's own prompt (`.fake-prompt-N`) in a write window the test opens (`.fake-held-N`) and
+    # closes (`.fake-release-N`): the content is staged in a same-directory temporary before the window opens and
+    # renamed over the record when it closes, so a reader that reads the record while the window is open sees the
+    # whole record or no file, never a torn one.
+    temporary=$(mktemp ".fake-prompt-$n.XXXXXXXXXX")
+    printf '%s\n' "$prompt" > "$temporary"
+    : > ".fake-held-$n"
+    for _ in $(seq 1 600); do
+      [[ -f ".fake-release-$n" ]] && break
+      sleep 0.05
+    done
+    [[ -f ".fake-release-$n" ]] || { echo "the test never released run $n" >&2; exit 65; }
+    mv -- "$temporary" ".fake-prompt-$n"
+    commit_work
+    record_gate
+    result 'Finished the item.\nFINDING 1: FIXED\nSTATUS: DONE'
     ;;
   answer:*) result 'FINDING '"${action#answer:}"': FIXED\nSTATUS: DONE' ;;
   work)
