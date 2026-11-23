@@ -46,6 +46,11 @@
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
 #                   records the gate as `work` does and ends with STATUS: DONE: a test writes the script, which commits
 #                   whatever the run is to have done
+#   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
+#                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
+#   leave-stream:NAME  like `stream:NAME`, and leaves the file `draft.txt` uncommitted in the worktree (hidden from the
+#                   fake's own files) and ends with STATUS: SLEEPING, so that its item stays in progress for the next run and
+#                   a briefing of the next session can name the file
 #   stream:NAME     prints the lines of the file `fake-scripts/NAME.jsonl` of the home the configuration names — events of Claude
 #                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
 #   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
@@ -728,6 +733,18 @@ case $action in
   stream:*)
     cat "$home/fake-scripts/${action#stream:}.jsonl"
     result 'Streamed.\nSTATUS: DONE'
+    ;;
+  work-stream:*)
+    commit_work
+    record_gate
+    cat "$home/fake-scripts/${action#work-stream:}.jsonl"
+    result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  leave-stream:*)
+    hide_own_files
+    printf 'a draft the run did not commit\n' > draft.txt
+    cat "$home/fake-scripts/${action#leave-stream:}.jsonl"
+    result 'Left a draft and waits.\nSTATUS: SLEEPING'
     ;;
   split-line:*)
     spec=${action#split-line:}
