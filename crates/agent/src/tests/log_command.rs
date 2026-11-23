@@ -410,3 +410,114 @@ fn a_run_without_a_usage_row_has_no_usage_line() {
 
     assert!(!out.contains("usage:"), "{out}");
 }
+
+/// The runs that ended in the team of `written`, in the order of their records, with the task of each.
+fn ended_runs(path: &Path, written: &Written) -> Vec<(agent_core::ids::RunId, agent_core::ids::TaskId)> {
+    let records = Reader::open(path).unwrap().team_records(&written.team).unwrap();
+    let mut tasks = std::collections::BTreeMap::new();
+    let mut ended = Vec::new();
+    for stored in records {
+        match stored.record {
+            agent_core::history::Record::Run(start) => {
+                tasks.insert(start.run.clone(), start.task.clone());
+            }
+            agent_core::history::Record::RunEnd(end) => {
+                let task = tasks.get(&end.run).expect("the run started").clone();
+                ended.push((end.run, task));
+            }
+            _ => {}
+        }
+    }
+    ended
+}
+
+/// Writes the usage `usage` for `run` in the history at `path`.
+fn write_usage_of(path: &Path, run: &agent_core::ids::RunId, usage: agent_core::cli::RunUsage) {
+    let mut db = agent_runtime::history::HistoryDb::open(path, agent_core::history::MaxTextBytes::default()).unwrap();
+    agent_runtime::history::Store::write_usage(
+        &mut db,
+        &[agent_runtime::history::RunUsageRecord {
+            run: run.clone(),
+            usage,
+        }],
+    )
+    .unwrap();
+}
+
+const TOLD: agent_core::cli::RunUsage = agent_core::cli::RunUsage {
+    first_context: Some(1_000),
+    last_context: Some(2_500),
+    tokens_written: Some(400),
+    cost_usd: Some(0.25),
+};
+
+#[test]
+fn the_usage_of_a_run_is_told_at_its_own_end_with_its_run_and_a_run_without_usage_is_told_as_not_told() {
+    let (_dir, home, written) = with_history();
+    let path = home.join("history.db");
+    let ended = ended_runs(&path, &written);
+    assert!(ended.len() >= 2, "the history has two runs that ended");
+    let (first, _) = &ended[0];
+    let (second, _) = &ended[1];
+    write_usage_of(&path, first, TOLD);
+
+    let (code, out, err) = agent(&environment(&home), &["log", "--team", written.team.as_str()]);
+
+    assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""));
+    let header_of = |run: &agent_core::ids::RunId| out.find(&format!("run {run}: ")).expect("the run is told");
+    let usage_of_first = out
+        .find(&format!(
+            "run {first} usage: context first 1000, last 2500; output 400; cost 0.250000 USD"
+        ))
+        .expect("the usage of the first run is told with its run");
+    let usage_of_second = out
+        .find(&format!(
+            "run {second} usage: context first not told, last not told; output not told; cost not told USD"
+        ))
+        .expect("a run without usage is told as not told, with its run");
+    assert!(header_of(first) < usage_of_first, "{out}");
+    assert!(usage_of_first < header_of(second), "{out}");
+    assert!(header_of(second) < usage_of_second, "{out}");
+}
+
+#[test]
+fn the_usage_of_the_runs_of_a_task_is_told_when_the_log_is_asked_by_task() {
+    let (_dir, home, written) = with_history();
+    let path = home.join("history.db");
+    let (run, task) = ended_runs(&path, &written).remove(0);
+    write_usage_of(&path, &run, TOLD);
+
+    let (code, out, err) = agent(&environment(&home), &["log", "--task", task.as_str()]);
+
+    assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""));
+    assert!(
+        out.contains(&format!(
+            "run {run} usage: context first 1000, last 2500; output 400; cost 0.250000 USD\n"
+        )),
+        "{out}"
+    );
+}
+
+#[test]
+fn the_usage_view_tells_the_usage_of_each_run_when_there_is_any() {
+    let (_dir, home, written) = with_history();
+    let path = home.join("history.db");
+    let (run, _) = ended_runs(&path, &written).remove(0);
+    write_usage_of(&path, &run, TOLD);
+
+    let (code, out, err) = agent(
+        &environment(&home),
+        &["log", "--team", written.team.as_str(), "--show", "usage", "--json"],
+    );
+
+    assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""));
+    let row: serde_json::Value = out
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .find(|row| row["run"] == run.as_str())
+        .unwrap_or_else(|| panic!("a row for the run: {out}"));
+    assert_eq!(row["first_context"], 1_000);
+    assert_eq!(row["last_context"], 2_500);
+    assert_eq!(row["tokens_written"], 400);
+    assert_eq!(row["cost_usd"], 0.25);
+}
