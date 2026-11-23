@@ -41,7 +41,7 @@ async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losi
         .unwrap()
         .runs_of_team(&team)
         .unwrap();
-    assert!(!before.is_empty());
+    assert_ne!(before, Vec::new());
     let state = rig.state();
     let found = state.find_task(task).unwrap();
     let branch = work_branch(found.team, found.member).unwrap();
@@ -105,26 +105,30 @@ async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losi
     ] {
         assert!(notice.contains(&text), "missing {text:?} in {notice:?}");
     }
-    for restart in [false, true] {
-        if restart {
-            rig.stop().await.unwrap();
-            rig.start().await;
-        }
-        let status = Connection::connect(&rig.home.socket_file())
-            .await
-            .unwrap()
-            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
-            .await
-            .unwrap();
-        assert_eq!(status, Reply::Teams { teams: vec![] });
-        assert!(rig.state().find_task(task).is_none());
-    }
+    assert_removed_after_restart(&mut rig, task).await.unwrap();
     rig.stop().await.unwrap();
     let after = Reader::open(&rig.home.root().join("history.db"))
         .unwrap()
         .runs_of_team(&team)
         .unwrap();
     assert_eq!(after, before);
+}
+
+/// Checks that removal stays absent from status and state across a daemon restart.
+async fn assert_removed_after_restart(rig: &mut Rig, task: &agent_core::ids::TaskId) -> anyhow::Result<()> {
+    for restart in [false, true] {
+        if restart {
+            rig.stop().await?;
+            rig.start().await;
+        }
+        let status = Connection::connect(&rig.home.socket_file())
+            .await?
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+            .await?;
+        assert_eq!(status, Reply::Teams { teams: vec![] });
+        assert!(rig.state().find_task(task).is_none());
+    }
+    Ok(())
 }
 
 /// Proves the removal event through the owner, for the complete event-cause inventory too.
@@ -200,10 +204,10 @@ pub(super) async fn record_team_removed(observed: &mut std::collections::BTreeSe
         Some("requested by the human")
     );
     assert_eq!(
-        row.fields().get("freed_bytes").and_then(|v| v.as_u64()),
+        row.fields().get("freed_bytes").and_then(serde_json::Value::as_u64),
         Some(removal.freed_bytes)
     );
-    assert_eq!(row.fields().get("tasks").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(row.fields().get("tasks").and_then(serde_json::Value::as_u64), Some(1));
     assert_eq!(row.fields().get("bundle").and_then(|v| v.as_str()), Some("none"));
     observed.insert(row.event());
 }

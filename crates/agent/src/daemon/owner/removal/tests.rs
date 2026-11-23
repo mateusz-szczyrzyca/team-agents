@@ -6,6 +6,11 @@ use std::path::Path;
 use std::process::Command as Process;
 use std::str::FromStr;
 
+use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+use agent_core::state::{NewRun, RunEnd};
+use agent_core::status::RunOutcome;
+use agent_runtime::run::{FinishedRun, Progress};
+
 use crate::client::ClientError;
 use agent_core::config::AbsolutePath;
 use agent_core::ids::BranchName;
@@ -709,11 +714,6 @@ async fn forced_removal_waits_for_the_gate_to_finish_before_deleting_files() {
 
 #[tokio::test]
 async fn removal_refuses_parked_checks_or_joins_them_before_forced_cleanup() {
-    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
-    use agent_core::state::{NewRun, RunEnd};
-    use agent_core::status::RunOutcome;
-    use agent_runtime::run::{FinishedRun, Progress};
-
     for force in [false, true] {
         let state = pair_state();
         let daemon = Daemon::new(&state, None);
