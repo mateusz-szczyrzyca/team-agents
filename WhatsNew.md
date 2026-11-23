@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.75.0 — 23.11.2026 — PR pending
 
 ### New features
-- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements; automatic replacement follows in the next part. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running or queued work, rounds waiting for a free investigator, human pause or stop, provider reset waits and another team's pull-request merge protect a team; an open human question does not.
+- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements; automatic replacement follows in the next part. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running or queued work, rounds waiting for a free investigator, human pause or stop, provider reset waits and another team's pull-request merge protect a team; a sleeping team waiting for review verdicts or an open human question alone does not.
 - [agent] [agent-runtime] Before automatic removal, history records the last activity, items, split parts, round states and branches. Removal keeps the command's bundle safeguards and notification. A refusal keeps the team and names its branches in one notification; new work permits another attempt.
 
 ### Enhancements
