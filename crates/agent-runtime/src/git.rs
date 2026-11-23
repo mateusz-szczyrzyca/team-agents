@@ -180,6 +180,9 @@ impl fmt::Display for Revision {
 /// What git was asked to do, for an error message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 pub enum GitOperation {
+    /// `git bundle create`.
+    #[strum(serialize = "bundle create")]
+    BundleCreate,
     /// `git worktree add`.
     #[strum(serialize = "worktree add")]
     WorktreeAdd,
@@ -801,8 +804,17 @@ impl Git {
     ///
     /// # Errors
     /// [`GitError::Failed`] when git refuses, for example a branch that does not exist; [`GitError::Run`].
-    pub async fn bundle_create(&self, _file: &AbsolutePath, _branches: &[BranchName]) -> Result<(), GitError> {
-        Ok(())
+    pub async fn bundle_create(&self, file: &AbsolutePath, branches: &[BranchName]) -> Result<(), GitError> {
+        let file = file.as_path().as_os_str();
+        let refs: Vec<String> = branches
+            .iter()
+            .map(|branch| format!("refs/heads/{}", branch.as_str()))
+            .collect();
+        let mut args: Vec<&OsStr> = vec![arg("bundle"), arg("create"), file];
+        args.extend(refs.iter().map(|text| arg(text)));
+        self.run_ok(GitOperation::BundleCreate, Reach::Local, &args)
+            .await
+            .map(drop)
     }
 
     /// Adds a worktree at `path` with `branch` out.
