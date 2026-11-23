@@ -79,9 +79,8 @@ pub fn next_step(
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
         // A run that failed without a tool call is retried by its own decision, never by the ladder: a NoToolCall
         // renewal starts the new session already, so no run resumes the one before it.
-        Trouble::NoToolCall => false,
-        // A busy agent's wait is not a bad run: the ladder has no rung for it.
-        Trouble::Busy => false,
+        // A busy agent's wait is not a bad run: the ladder has no rung for it either.
+        Trouble::NoToolCall | Trouble::Busy => false,
     };
     if retried {
         return LadderStep::SameSession;
