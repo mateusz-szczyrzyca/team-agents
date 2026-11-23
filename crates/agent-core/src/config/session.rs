@@ -17,9 +17,10 @@ pub struct Session {
 }
 
 impl Default for Session {
-    /// RED stub: the default is not the one the template and the measurements give.
     fn default() -> Self {
-        Self { max_context: 0 }
+        Self {
+            max_context: DEFAULT_MAX_CONTEXT,
+        }
     }
 }
 
@@ -27,9 +28,8 @@ impl Default for Session {
 /// the bound is `0`, which switches it off.
 #[must_use]
 pub fn context_bound(agent: Option<u64>, section: u64) -> Option<u64> {
-    // RED stub: no bound is ever given.
-    let _ = (agent, section);
-    None
+    let bound = agent.unwrap_or(section);
+    (bound != 0).then_some(bound)
 }
 
 #[cfg(test)]
