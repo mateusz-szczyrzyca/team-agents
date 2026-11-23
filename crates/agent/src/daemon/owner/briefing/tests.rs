@@ -4,6 +4,9 @@ use std::num::NonZeroU64;
 use std::path::Path;
 
 use agent_core::config::Language;
+use agent_core::questions::Verdict;
+use agent_core::state::RunEnd;
+use agent_core::status::RunOutcome;
 
 use super::*;
 
@@ -52,4 +55,56 @@ async fn a_briefing_with_every_unread_message_has_no_note() {
 
     assert!(!text.contains(NOTE), "{text}");
     assert!(text.contains("- #1508 inv-opus:"), "{text}");
+}
+
+#[test]
+fn a_run_whose_end_was_never_recorded_is_told_as_cut() {
+    assert_eq!(run_end_word(None), "cut before its end was recorded");
+}
+
+#[test]
+fn each_way_a_run_ends_has_its_word_in_the_briefing() {
+    let cases = [
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            "DONE",
+        ),
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Questions,
+            },
+            "QUESTIONS",
+        ),
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Failed,
+            },
+            "FAILED",
+        ),
+        (RunEnd::NoStatus { exit_code: Some(1) }, "no status"),
+        (RunEnd::Hung, "hang"),
+        (RunEnd::TurnLimit, "turn limit"),
+        (RunEnd::Stopped, "stopped"),
+        (RunEnd::RateLimited, "failed"),
+        (RunEnd::QuotaExhausted { resets_at: None }, "failed"),
+    ];
+    for (end, word) in cases {
+        assert_eq!(run_end_word(Some(&end)), word, "{end:?}");
+    }
+}
+
+#[test]
+fn only_the_newest_items_are_shown_and_a_flag_says_older_ones_are_left_out() {
+    assert_eq!(newest_shown(vec![1, 2, 3], 10), (vec![1, 2, 3], false));
+    assert_eq!(newest_shown(vec![1, 2, 3, 4], 2), (vec![3, 4], true));
+    assert_eq!(newest_shown(Vec::<u8>::new(), 2), (Vec::new(), false));
+}
+
+#[test]
+fn an_accepted_verdict_is_ok_and_an_own_answer_is_its_text() {
+    assert_eq!(verdict_word(&Verdict::Accept), "ok");
+    let own = Verdict::from_text("No, drop it.").unwrap().unwrap();
+    assert_eq!(verdict_word(&own), "No, drop it.");
 }

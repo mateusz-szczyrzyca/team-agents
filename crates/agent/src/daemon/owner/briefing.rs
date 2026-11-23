@@ -11,7 +11,9 @@ use agent_core::ids::{AgentName, BranchName, InvalidName, RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::plan::{PLAN_FILE, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables};
-use agent_core::state::{InvalidTimestamp, Timestamp};
+use agent_core::questions::Verdict;
+use agent_core::state::{InvalidTimestamp, RunEnd, Timestamp};
+use agent_core::status::RunOutcome;
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::agentbus::{Completeness, Reader, UnreadMessage, UnreadMessagesError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
@@ -368,6 +370,24 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::TurnLimit => "turn_limit",
         Trouble::Busy => "busy",
     }
+}
+
+/// The word the briefing gives how a run ended; a run with no recorded end was cut before it.
+pub(super) fn run_end_word(end: Option<&RunEnd>) -> &'static str {
+    let _ = end;
+    ""
+}
+
+/// The newest `shown` of `items`, oldest first, and whether older ones were left out.
+pub(super) fn newest_shown<T>(items: Vec<T>, shown: usize) -> (Vec<T>, bool) {
+    let _ = shown;
+    (items, false)
+}
+
+/// The word the briefing gives a verdict: `ok` for the recommendation, otherwise the human's own answer.
+pub(super) fn verdict_word(verdict: &Verdict) -> &str {
+    let _ = verdict;
+    ""
 }
 
 /// The steps of the plan in the worktree as id, title and state; `None` when there is no plan or it does not read. A
