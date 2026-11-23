@@ -3,6 +3,22 @@ use super::super::fixture::{Daemon, pair_state};
 use crate::fixtures::{at, repo, task, team_id};
 use agent_core::status::TaskStatus;
 
+/// Idle fixtures have no run queued for the scheduler.
+fn idle_pair_state() -> agent_core::state::State {
+    sleeping(pair_state())
+}
+
+/// End the initial queued work without changing shared fixtures.
+fn sleeping(mut state: agent_core::state::State) -> agent_core::state::State {
+    for n in [1, 2, 3] {
+        if let Some((_, mut member)) = state.find_task_mut(&task(n)) {
+            member.transition(TaskStatus::Running).unwrap();
+            member.transition(TaskStatus::Waiting).unwrap();
+        }
+    }
+    state
+}
+
 /// Plain worktrees exercise document/art teams without requiring a Git repository.
 fn files(daemon: &Daemon) {
     for n in [1, 2] {
@@ -14,7 +30,7 @@ fn files(daemon: &Daemon) {
 
 #[tokio::test]
 async fn team_is_removed_at_the_bound_when_activity_and_startup_coincide() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     files(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(7199));
@@ -48,7 +64,7 @@ async fn team_is_removed_at_the_bound_when_activity_and_startup_coincide() {
 #[tokio::test]
 async fn disabled_running_human_and_provider_holds_preserve_files() {
     for hold in ["disabled", "running", "paused", "stopped", "provider"] {
-        let mut state = pair_state();
+        let mut state = idle_pair_state();
         if hold == "paused" || hold == "stopped" {
             state
                 .find_task_mut(&task(1))
@@ -83,7 +99,7 @@ async fn disabled_running_human_and_provider_holds_preserve_files() {
 
 #[tokio::test]
 async fn refusal_retains_team_and_notifies_once_across_restart() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     let (mut owner, sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(7200));
     owner.check_idle_teams().await.unwrap();
@@ -124,7 +140,7 @@ fn git(path: &std::path::Path, seconds: u32, args: &[&str]) {
 
 #[tokio::test]
 async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     files(&daemon);
     let path = daemon.home.worktree_dir(&repo(), &task(1));
     let repository = tempfile::tempdir().unwrap();
@@ -189,7 +205,7 @@ async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
 
 #[tokio::test]
 async fn damaged_git_metadata_refuses_removal_and_reports_once() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     files(&daemon);
     let path = daemon.home.worktree_dir(&repo(), &task(1));
     std::fs::write(path.join(".git"), "gitdir: /does-not-exist-fixture\n").unwrap();
@@ -216,9 +232,10 @@ async fn damaged_git_metadata_refuses_removal_and_reports_once() {
 
 #[tokio::test]
 async fn persisted_quota_hold_is_honored_until_its_recorded_reset() {
-    let mut state = pair_state();
+    let mut state = idle_pair_state();
     {
         let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
         member.transition(TaskStatus::Running).unwrap();
         member.begin_run(crate::fixtures::run(1), at(0), None).unwrap();
         member
@@ -246,7 +263,7 @@ async fn persisted_quota_hold_is_honored_until_its_recorded_reset() {
 async fn accepted_external_delivery_preserves_an_idle_team() {
     use agent_core::ids::RoundId;
     use agent_core::state::ItemPhase;
-    let mut state = crate::fixtures::solo_state();
+    let mut state = sleeping(crate::fixtures::solo_state());
     let id = team_id(0);
     let round = RoundId::derive(&id, 1);
     let item = "1.1".parse().unwrap();
@@ -294,7 +311,7 @@ async fn idle_history_records_activity_and_refusal_once() {
     use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reader, Setup, TracingReporter};
     use std::sync::Arc;
     for removable in [true, false] {
-        let daemon = Daemon::new(&pair_state(), None);
+        let daemon = Daemon::new(&idle_pair_state(), None);
         if removable {
             files(&daemon);
         }
@@ -344,7 +361,7 @@ async fn idle_history_records_activity_and_refusal_once() {
 
 #[tokio::test]
 async fn unavailable_history_refuses_idle_deletion_without_losing_files() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     files(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     owner.history = agent_runtime::history::History::unavailable(
@@ -363,7 +380,7 @@ async fn unavailable_history_refuses_idle_deletion_without_losing_files() {
 
 #[tokio::test]
 async fn reviewer_worktree_commits_keep_the_team_alive() {
-    let daemon = Daemon::new(&super::super::fixture::reviewed_pair_state(), None);
+    let daemon = Daemon::new(&sleeping(super::super::fixture::reviewed_pair_state()), None);
     files(&daemon);
     let path = daemon.home.worktree_dir(&repo(), &task(3));
     std::fs::create_dir_all(&path).unwrap();
@@ -395,9 +412,10 @@ async fn provider_retry_queued_after_reset_survives_idle_scan_and_restart() {
         },
         agent_core::state::RunEnd::RateLimited,
     ] {
-        let mut state = pair_state();
+        let mut state = idle_pair_state();
         {
             let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
             member.transition(TaskStatus::Running).unwrap();
             member.begin_run(crate::fixtures::run(1), at(0), None).unwrap();
             member.end_run(at(1), end).unwrap();
@@ -427,7 +445,7 @@ async fn provider_retry_queued_after_reset_survives_idle_scan_and_restart() {
 
 #[tokio::test]
 async fn old_team_is_kept_until_the_current_daemon_has_run_for_the_idle_bound() {
-    let daemon = Daemon::new(&pair_state(), None);
+    let daemon = Daemon::new(&idle_pair_state(), None);
     files(&daemon);
     daemon.clock.advance(time::Duration::seconds(86400));
     let (mut owner, _sinks) = daemon.bare_owner().await;
