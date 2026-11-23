@@ -3,6 +3,45 @@
 
 use agent_core::prompt::{Variables, VariablesError};
 
+/// One run of the task, as the briefing lists it: when it started, the agent that ran it and how it ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BriefingRun<'a> {
+    /// When the run started, as the briefing shows the time.
+    pub started: &'a str,
+    /// The agent that ran it.
+    pub agent: &'a str,
+    /// How it ended, in words: `DONE`, `QUESTIONS`, `no status`, `hang`, `turn limit`, `stopped` or `failed`.
+    pub end: &'a str,
+}
+
+/// One question of the task that the human answered, as the briefing lists it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BriefingAnswer<'a> {
+    /// The question's number in its file.
+    pub number: &'a str,
+    /// The rest of the question's heading line.
+    pub title: &'a str,
+    /// The human's verdict: `ok` for the recommendation, or the human's own answer.
+    pub verdict: &'a str,
+}
+
+/// The facts a briefing adds to [`Briefing`]: the runs of the task, the human's answers, what the harness judged of the
+/// steps, and the notes that older ones are left out. Its default is the briefing of a task with none of them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BriefingNotes<'a> {
+    /// The runs of the task that its briefing lists, oldest first.
+    pub runs: &'a [BriefingRun<'a>],
+    /// The note that older runs are left out of [`BriefingNotes::runs`], when they are.
+    pub runs_left_out: Option<&'a str>,
+    /// The human's answers to the questions of the task, oldest first.
+    pub answers: &'a [BriefingAnswer<'a>],
+    /// The note that older answers are left out of [`BriefingNotes::answers`], when they are.
+    pub answers_left_out: Option<&'a str>,
+    /// The judgement the harness gave each step that is marked done, by step ID: `confirmed`, `declared` or `mismatch`.
+    /// A done step with no entry is shown as declared.
+    pub judgements: &'a [(&'a str, &'a str)],
+}
+
 /// A commit of the task's branch since its base.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BriefingCommit<'a> {
@@ -67,6 +106,15 @@ pub struct Briefing<'a> {
 /// # Errors
 /// [`VariablesError`] when a value cannot be given to its variable.
 pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesError> {
+    briefing_variables_with(facts, &BriefingNotes::default())
+}
+
+/// The values of the variables of the briefing for `facts` and `notes`, as [`briefing_variables`] gives them.
+///
+/// # Errors
+/// [`VariablesError`] when a value cannot be given to its variable.
+pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) -> Result<Variables, VariablesError> {
+    let _ = notes;
     let commits = lines(
         facts
             .commits
@@ -107,3 +155,6 @@ pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesEr
 fn lines(lines: impl Iterator<Item = String>) -> String {
     lines.collect::<Vec<_>>().join("\n")
 }
+
+#[cfg(test)]
+mod tests;
