@@ -24,6 +24,7 @@ pub mod opinion;
 pub mod outcome;
 pub mod part;
 pub mod plan;
+pub mod pool;
 pub mod publish;
 pub mod rejection;
 pub mod replacement;
