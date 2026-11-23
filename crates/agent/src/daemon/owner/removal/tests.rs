@@ -908,3 +908,40 @@ async fn removal_discards_task_caches_and_preserves_the_other_teams_entries() {
         retained
     );
 }
+
+#[tokio::test]
+async fn mixed_git_and_plain_worktrees_are_removed() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    let branch = branch_of(&state, 1);
+    let git_tree = daemon.home.worktree_dir(&repo(), &task(1));
+    let plain_tree = daemon.home.worktree_dir(&repo(), &task(2));
+    std::fs::create_dir_all(git_tree.parent().unwrap()).unwrap();
+    worktree(dir.path(), &git_tree, &branch);
+    std::fs::create_dir_all(&plain_tree).unwrap();
+    std::fs::write(plain_tree.join("drawing.svg"), "<svg/>\n").unwrap();
+    for number in [1, 2] {
+        std::fs::create_dir_all(daemon.home.task_dir(&task(number))).unwrap();
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let result = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(result.map(|removal| removal.tasks), Ok(vec![task(1), task(2)]));
+    for number in [1, 2] {
+        assert!(!daemon.home.worktree_dir(&repo(), &task(number)).exists());
+        assert!(!daemon.home.task_dir(&task(number)).exists());
+    }
+    assert_eq!(git(dir.path(), &["branch", "--list", branch.as_str()]).trim(), "");
+    assert!(daemon.state().team(&team_id(0)).is_none());
+}
