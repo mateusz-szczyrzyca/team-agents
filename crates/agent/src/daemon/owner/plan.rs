@@ -1405,7 +1405,10 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError::PlanJudgementsRead`] when an existing `history.db` cannot be read.
-    async fn latest_judgements(&self, task: &TaskId) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+    pub(super) async fn latest_judgements(
+        &self,
+        task: &TaskId,
+    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
         let path = self.parts.store.home().history_file();
         if !path.exists() {
             return Ok(HashMap::new());
