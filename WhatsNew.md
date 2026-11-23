@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.78.0 — 23.11.2026 — PR pending
+
+### Enhancements
+- [agent] The restart tests now pin what the daemon does where a cut run has no session to leave: a run whose CLI had reported no session still starts a new, briefed session; a run of a round that is already closed is resumed in its own session as before; a state written by an older version begins no new session.
+
 ## 0.77.0 — 23.11.2026 — PR #223
 
 ### New features
