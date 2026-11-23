@@ -360,7 +360,10 @@ impl Owner {
         self.release_on_bus(&request.team, &tasks, &mut removal).await;
         self.delete_local(&plan, &mut removal).await;
         tracing::info!(
-            event = agent_core::log::LogEvent::TeamChanged.as_str(),
+            event = agent_core::log::LogEvent::TeamRemoved.as_str(),
+            reason = "requested by the human",
+            bundle = %removal.bundle.as_ref().map_or_else(|| "none".to_owned(), |path| path.as_path().display().to_string()),
+            freed_bytes = removal.freed_bytes,
             team = %request.team,
             tasks = tasks.len(),
             bundled = plan.bundled.len(),

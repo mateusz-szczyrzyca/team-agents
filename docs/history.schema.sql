@@ -1,4 +1,4 @@
-PRAGMA user_version = 19;
+PRAGMA user_version = 20;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -342,7 +342,7 @@ CREATE TABLE daemon_logs (
         'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out', 'gate_dirty_tree',
         'state_save_failed', 'questions_file_invalid', 'configuration_name_missing', 'restart_corrected',
         'request_refused', 'daemon_panicked', 'daemon_task_failed', 'team_not_started', 'notification_failed',
-        'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
+        'history_record_incomplete', 'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
@@ -371,7 +371,7 @@ CREATE TABLE daemon_logs (
             'worker_request_damaged'
         ))
         OR (level = 'info' AND event IN (
-            'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
+            'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
@@ -412,3 +412,4 @@ CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CA
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
+

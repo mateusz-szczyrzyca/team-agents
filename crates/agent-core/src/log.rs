@@ -157,6 +157,8 @@ pub enum LogEvent {
     HistoryRecordIncomplete,
     /// A team is started or closed.
     TeamChanged,
+    /// A team was removed, with its preserved bundle and released bytes.
+    TeamRemoved,
     /// A round is opened or closed.
     RoundChanged,
     /// An accepted delivery ended because its pull request was closed without merging.
@@ -259,6 +261,7 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::TeamRemoved
             | Self::RoundChanged
             | Self::ItemPhaseChanged
             | Self::TaskStatusChanged
