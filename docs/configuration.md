@@ -355,7 +355,7 @@ Neither text may contain `<`, `>` or control characters.
 | Key | Default | Meaning |
 |---|---|---|
 | `history.enabled` | `true` | whether the daemon writes `history.db` in `AGENTS_HOME` ([`history.md`](history.md)); `false` records nothing and loses nothing |
-| `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut |; a final message cut this way is given to the next session with a note naming the limit, unless its run wrote the outcome file (`outcome.json`), which keeps it whole
+| `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut; a final message cut this way is given to the next session with a note naming the limit, unless its run wrote the outcome file (`outcome.json`), which keeps it whole |
 | `history.keep_days` | `0` | days to retain closed rounds; `0` keeps all; an open round is never deleted |
 
 A history that cannot be written — the file is a directory, the disk is full, the database is of a newer version — never stops
