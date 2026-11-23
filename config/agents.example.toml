@@ -87,6 +87,7 @@ asleep_minutes = 5
 
 [limits]
 # Remove teams after this many minutes without a run or new commit; 0 disables removal.
+# Count from the later of last activity and current daemon startup; downtime never counts.
 # Human pause/stop, provider reset waits and external-team merge waits protect the team.
 idle_team_minutes = 120
 # Reserved for automatic replacement in the next part; this release only removes teams.

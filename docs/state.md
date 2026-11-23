@@ -250,7 +250,9 @@ State
 and worktree keys mapped to commit IDs), and nullable `refusal` (the already reported removal failure). Old
 states omit it and still load. Their first scan reconstructs activity from team creation, run starts/ends and
 commit dates; subsequent new or changed tips count at observation time even when the commit has an old date.
-New activity clears the refusal marker. A restart preserves both the idle interval and notification suppression.
+New activity clears the refusal marker. A restart preserves activity and notification suppression, but removal
+counts idle time from the later of recorded activity and current daemon startup. Downtime does not count; the
+startup lower bound stays in memory and is not written as activity.
 The pre-change fixture is `crates/agent-core/src/state/team/idle/legacy.json`. Older binaries reject the added
 field; keep a pre-upgrade state backup if a downgrade is needed.
 

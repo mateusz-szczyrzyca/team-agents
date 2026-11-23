@@ -549,7 +549,8 @@ An unanswered question does not protect it. This release removes idle teams **wi
 the approved next part adds restart. `[limits] idle_team_restarts = 1` is reserved and has no effect yet.
 
 **Action:** set `[limits] idle_team_minutes = 0` before restarting the daemon if you want the old behavior.
-Old state loads using its recorded run and commit activity; startup does not reset the idle clock. The optional
+Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
+and the current daemon startup, so downtime never counts and an old team gets a full interval after restart. The optional
 `idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
 new field: keep a state backup before upgrading if you need to downgrade. The state schema remains 14 and the
 history schema remains 20.

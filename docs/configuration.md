@@ -145,7 +145,8 @@ resetting the count until a run ends in another way). The count is derived from 
 Provider quota exhaustion takes precedence over a turn limit and uses the quota pause instead.
 
 Idle teams are checked at startup and once per minute. Activity comes from saved run starts and ends, and local
-branch/worktree commits; a daemon restart does not grant an idle team another interval. Runs and active checks,
+branch/worktree commits. The interval starts at the later of recorded activity and current daemon startup:
+time while the daemon was stopped does not count, and old teams get a full interval after restart. Runs and active checks,
 human pause/stop, provider quota/rate-limit reset waits and accepted delivery claims awaiting another team's
 pull-request merge prevent removal. A queued provider retry remains protected until its next run starts,
 including after a daemon restart. An unanswered human question does not. A removed team is **not restarted

@@ -369,8 +369,10 @@ closes the gap between queuing a due retry and starting it. Questions do not hol
 `idle_team_minutes = 0` disables the scan. Plain document/art directories need no Git inspection.
 
 The optional persisted `idle_watch` stores the last activity and observed tips. Its first observation uses saved
-activity and commit dates rather than startup time. Later new or changed tips refresh the interval; a future
-activity timestamp never counts as idle. A refused removal is retained in the watch until new work occurs.
+activity and commit dates. The owner separately captures its startup time: the pure decision receives the later
+of startup and recorded activity, excluding downtime without rewriting the persisted observation. An old team
+gets a full interval after restart. Later new or changed tips refresh the interval; a future activity timestamp
+never counts as idle. A refused removal is retained in the watch until new work occurs.
 
 Before removal, a required `decision_taken` history entry captures activity, items, round phases, split plans,
 next parts and recovery branches. An enabled history writer must acknowledge the transaction; unavailable history
