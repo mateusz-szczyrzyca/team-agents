@@ -37,3 +37,24 @@ fn idle_limits_reject_negative_fractional_and_overflowing_values() {
         }
     }
 }
+
+#[test]
+fn template_names_both_idle_limits_with_their_defaults() {
+    let text = include_str!("../../../../../config/agents.example.toml");
+    let value: toml::Value = toml::from_str(text).unwrap();
+    let limits = value.get("limits").unwrap();
+    assert_eq!(
+        limits.get("idle_team_minutes").and_then(toml::Value::as_integer),
+        Some(120)
+    );
+    assert_eq!(
+        limits.get("idle_team_restarts").and_then(toml::Value::as_integer),
+        Some(1)
+    );
+    let config = Config::from_toml_str(text).unwrap();
+    assert_eq!(
+        config.limits().idle_team_minutes.as_duration(),
+        Duration::from_secs(7200)
+    );
+    assert_eq!(config.limits().idle_team_restarts, 1);
+}
