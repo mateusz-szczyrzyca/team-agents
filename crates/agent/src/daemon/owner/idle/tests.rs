@@ -127,9 +127,20 @@ async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
     let daemon = Daemon::new(&pair_state(), None);
     files(&daemon);
     let path = daemon.home.worktree_dir(&repo(), &task(1));
-    git(&path, 7000, &["init", "-q", "-b", "main"]);
-    git(&path, 7000, &["add", "."]);
-    git(&path, 7000, &["commit", "-qm", "Recent work"]);
+    let repository = tempfile::tempdir().unwrap();
+    git(repository.path(), 7000, &["init", "-q", "-b", "main"]);
+    git(
+        repository.path(),
+        7000,
+        &["commit", "--allow-empty", "-qm", "Recent work"],
+    );
+    std::fs::remove_dir_all(&path).unwrap();
+    let initial = format!("agents/current/{}", task(1));
+    git(
+        repository.path(),
+        7000,
+        &["worktree", "add", "-qb", &initial, path.to_str().unwrap()],
+    );
     let (mut owner, sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(7200));
     owner.check_idle_teams().await.unwrap();
@@ -149,7 +160,7 @@ async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
     let branch = format!("agents/old/{}", task(2));
     git(&path, 0, &["checkout", "-qb", &branch]);
     git(&path, 0, &["commit", "--allow-empty", "-qm", "Imported work"]);
-    git(&path, 0, &["checkout", "-q", "main"]);
+    git(&path, 0, &["checkout", "-q", &initial]);
     daemon.clock.advance(time::Duration::seconds(7000));
     owner.check_idle_teams().await.unwrap();
     assert_eq!(owner.parts.state.teams().len(), 1);
