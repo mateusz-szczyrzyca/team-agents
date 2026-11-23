@@ -26,6 +26,7 @@ pub mod plan;
 pub mod publish;
 pub mod rejection;
 pub mod replacement;
+pub mod restart;
 pub mod retry;
 pub mod reviewer;
 pub mod round;
