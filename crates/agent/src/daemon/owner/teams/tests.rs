@@ -1228,9 +1228,19 @@ async fn the_second_no_tool_failure_is_named_on_the_status_line_of_the_team() {
     // two runs that did not use the bus's tools — is what the team's status line names, not a bare "failed".
     f.status_is(&tasks[1], TaskStatus::Failed).await;
     let mut shown = Vec::new();
-    crate::commands::status::status(&mut f.connect().await, None, &mut shown)
-        .await
-        .unwrap();
+    let activity = crate::commands::status::Activity::new(
+        f.home.clone(),
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+    );
+    crate::commands::status::status_shown(
+        &mut f.connect().await,
+        None,
+        &activity,
+        crate::commands::status::Detail::Short,
+        &mut shown,
+    )
+    .await
+    .unwrap();
     f.stop().await.unwrap();
 
     let shown = String::from_utf8(shown).unwrap();
