@@ -132,7 +132,7 @@ pub(super) fn recover_with(
             cut_at = Some(ended_at);
         }
         if let Some(at) = cut_at
-            && cuts_begin_a_session(state, &task, role, restart, &open_round)
+            && cuts_begin_a_session(state, &task, role, restart, open_round.as_ref())
         {
             state
                 .begin_holder_session(&task, Trouble::DaemonDown, at)
@@ -233,11 +233,11 @@ fn cuts_begin_a_session(
     task: &TaskId,
     role: Role,
     restart: RestartSession,
-    open_round: &Option<RoundId>,
+    open_round: Option<&RoundId>,
 ) -> bool {
     state
         .find_task(task)
-        .is_some_and(|found| after_cut(restart, role, found.member, open_round.as_ref()) == AfterCut::NewSession)
+        .is_some_and(|found| after_cut(restart, role, found.member, open_round) == AfterCut::NewSession)
 }
 
 /// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.
