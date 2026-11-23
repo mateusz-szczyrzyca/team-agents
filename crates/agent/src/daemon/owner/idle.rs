@@ -95,11 +95,8 @@ impl Owner {
             match member.status() {
                 TaskStatus::Running => return Ok(Hold::Running),
                 TaskStatus::Paused | TaskStatus::Stopped => return Ok(Hold::Human),
-                TaskStatus::Queued
-                | TaskStatus::Waiting
-                | TaskStatus::Questions
-                | TaskStatus::Failed
-                | TaskStatus::Done => {}
+                TaskStatus::Queued => return Ok(Hold::Queued),
+                TaskStatus::Waiting | TaskStatus::Questions | TaskStatus::Failed | TaskStatus::Done => {}
             }
             if let Some(run) = member.runs().last()
                 && let RunState::Ended { at, end } = run.state()

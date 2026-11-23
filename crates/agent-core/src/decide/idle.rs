@@ -11,6 +11,8 @@ pub enum Hold {
     None,
     /// A task or a check still runs.
     Running,
+    /// Work is queued for the harness to assign or start an agent.
+    Queued,
     /// The human paused or stopped a task.
     Human,
     /// A provider's quota or rate limit has not reset.
