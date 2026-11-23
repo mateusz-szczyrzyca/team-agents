@@ -26,8 +26,12 @@ mod member;
 mod migrate;
 mod plan;
 mod question;
+mod recovery;
 #[cfg(test)]
 mod removal_tests;
+pub use recovery::{
+    Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
+};
 mod renewal;
 #[cfg(test)]
 mod renewal_tests;
