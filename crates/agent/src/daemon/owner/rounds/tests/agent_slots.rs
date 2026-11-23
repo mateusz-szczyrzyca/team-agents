@@ -950,7 +950,8 @@ async fn a_member_whose_item_waits_for_a_review_is_not_handed_over_while_a_free_
     let config_text = std::fs::read_to_string(rig.home.config_file()).unwrap();
     std::fs::write(
         rig.home.config_file(),
-        config_text + "\n[replacement]\nagents = [\"claude-3\"]\nbusy_after = 3600\n",
+        config_text
+            + "\n[replacement]\nagents = [\"claude-3\"]\nbusy_after = 3600\n\n[limits]\nidle_team_minutes = 0\n",
     )
     .unwrap();
     rig.start().await;
