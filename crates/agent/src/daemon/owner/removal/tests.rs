@@ -242,3 +242,57 @@ async fn a_removed_team_stays_removed_when_the_state_is_read_again() {
     assert!(again.team(&team_id(0)).is_none());
     assert!(again.find_task(&task(1)).is_none());
 }
+
+#[tokio::test]
+async fn a_branch_of_the_team_that_the_state_no_longer_names_is_bundled_and_deleted_too() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    // A split part's branch, from before the state named it: its name carries the team's task ID, and it has a commit.
+    let historical = BranchName::from_str(&format!("split/{}-part-a", task(1))).unwrap();
+    let scratch = dir.path().join("scratch");
+    git(
+        dir.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            historical.as_str(),
+            scratch.to_str().unwrap(),
+            "main",
+        ],
+    );
+    std::fs::write(scratch.join("part.txt"), "a part\n").unwrap();
+    git(&scratch, &["add", "part.txt"]);
+    git(&scratch, &["commit", "-q", "-m", "part a"]);
+    let tip = git(dir.path(), &["rev-parse", historical.as_str()]).trim().to_owned();
+    git(
+        dir.path(),
+        &["worktree", "remove", "--force", scratch.to_str().unwrap()],
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(removal.bundled.contains(&historical));
+    let bundle = daemon.home.removed_bundle(&team_id(0));
+    let heads = git(dir.path(), &["bundle", "list-heads", bundle.to_str().unwrap()]);
+    assert!(heads.contains(&format!("{tip} refs/heads/{historical}")), "{heads}");
+    assert!(
+        git(dir.path(), &["branch", "--list", historical.as_str()])
+            .trim()
+            .is_empty()
+    );
+}
