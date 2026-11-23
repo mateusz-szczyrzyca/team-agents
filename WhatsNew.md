@@ -5,6 +5,19 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.75.0 — 23.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements; automatic replacement follows in the next part. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running work, human pause or stop, provider reset waits and another team's pull-request merge protect a team; an open human question does not.
+- [agent] [agent-runtime] Before automatic removal, history records the last activity, items, split parts, round states and branches. Removal keeps the command's bundle safeguards and notification. A refusal keeps the team and names its branches in one notification; new work permits another attempt.
+
+### Enhancements
+- [agent-core] Idle observations survive a daemon restart. Older states use their recorded runs and commit dates, so restarting the daemon does not grant an already idle team another two hours. Keep a state backup before upgrading if you need to return to an older daemon, which does not recognize the new observation field.
+
+### Configuration
+- [agent-core] new: `[limits] idle_team_minutes` (default `120`) — minutes without work before automatic removal; `0` disables it.
+- [agent-core] new: `[limits] idle_team_restarts` (default `1`) — reserved for the next part's replacement limit; it has no effect in this release.
+
 ## 0.74.0 — 23.11.2026 — PR #220
 
 ### New features
