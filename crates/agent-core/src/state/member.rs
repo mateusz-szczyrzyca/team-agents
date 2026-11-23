@@ -920,7 +920,7 @@ impl Member {
     }
 
     /// Whether the last run named a session different from the one before it. A last run that named no session does
-    /// not count: the runs the unit tests build without one are not first of their session by identity.
+    /// not count: without a reported identity there is no evidence that the CLI opened a different session.
     fn opened_a_new_session(&self) -> bool {
         let Some(last) = self.runs.last().and_then(Run::session) else {
             return false;

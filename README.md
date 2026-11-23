@@ -311,7 +311,10 @@ commits of its branch, the files it left uncommitted (kept in a snapshot first),
 team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
 strike for a hung run and after the last turn-limit resume. A run that is the first of a session and ends `STATUS:
 FAILED` without calling any tool is retried once in a new session with a note telling it the bus tools are listed in
-its CLI's tool catalog under the MCP server `agentbus`; a second such end fails and notifies. When the new session goes bad too, the task is given — with
+its CLI's tool catalog under the MCP server `agentbus`. This applies to every role, including coordinators and reviewers.
+A second such failure names the agent, CLI and model in the human notice and shows the reason in `agent status`.
+Every failed team member also wakes its coordinator with the member, item and last words, whether or not it used tools.
+The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
 not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
 none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
@@ -557,8 +560,10 @@ does not call it yet; automatic replacement will be activated by a separate task
 Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
 and the current daemon startup, so downtime never counts and an old team gets a full interval after restart. The optional
 `idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
-new field: keep a state backup before upgrading if you need to downgrade. The state schema remains 14 and the
-history schema remains 20.
+new field: keep a state backup before upgrading if you need to downgrade. State schema 15 migrates schema 14 while preserving its tasks, runs and renewals. It adds optional tool-use evidence
+and the durable no-tool retry reason. Older daemons cannot read the new fields: back up state before upgrading if you
+need to downgrade. History schema remains 20. Socket protocol 8 adds the failure reason; older negotiated replies retain
+all runs but omit the new tool-use and no-tool renewal metadata.
 
 Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
 rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its
