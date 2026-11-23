@@ -29,10 +29,10 @@ struct Plan {
     /// The checkout of the repository, where git runs for what the worktrees share. It is not one of the worktrees
     /// that are removed, so it outlives them. `None` when no worktree of the repository is left.
     checkout: Option<AbsolutePath>,
-    /// The team's tasks that have a worktree on disk, with the directory of each.
-    worktrees: Vec<(TaskId, AbsolutePath)>,
-    /// The task directories of the team that exist, with their tasks.
-    task_dirs: Vec<(TaskId, PathBuf)>,
+    /// The team's tasks that have a worktree on disk, with the directory of each and its bytes.
+    worktrees: Vec<(TaskId, AbsolutePath, u64)>,
+    /// The task directories of the team that exist, with their tasks and bytes.
+    task_dirs: Vec<(TaskId, PathBuf, u64)>,
     /// Every local branch the team works on or worked on.
     branches: BTreeSet<BranchName>,
     /// The branches that exist in the repository and so are deleted.
@@ -44,20 +44,16 @@ struct Plan {
     /// The commit each worktree's HEAD points at, for the worktrees whose HEAD no branch of the team or the base holds:
     /// the commit is kept under `refs/agent-removed/<task>` in the bundle, since the removal takes the worktree away.
     heads: Vec<(TaskId, CommitId)>,
-    /// The bytes of the worktrees and of the task directories, as measured before the removal.
-    bytes: u64,
     /// What the measuring found that the reply must name, such as a worktree that is not a git checkout.
     notes: Vec<String>,
 }
 
-/// What the removal measures on disk: the worktrees and the task directories that exist, and their bytes.
+/// What the removal measures on disk: the worktrees and the task directories that exist, each with its bytes.
 struct Measure {
-    /// The team's tasks that have a worktree on disk, with the directory of each.
-    worktrees: Vec<(TaskId, AbsolutePath)>,
-    /// The task directories of the team that exist, with their tasks.
-    task_dirs: Vec<(TaskId, PathBuf)>,
-    /// The bytes of the worktrees and of the task directories.
-    bytes: u64,
+    /// The team's tasks that have a worktree on disk, with the directory of each and its bytes.
+    worktrees: Vec<(TaskId, AbsolutePath, u64)>,
+    /// The task directories of the team that exist, with their tasks and bytes.
+    task_dirs: Vec<(TaskId, PathBuf, u64)>,
 }
 
 /// A failure of a removal step, with the cause in words for the human.
@@ -79,6 +75,22 @@ fn not_found(team: &TeamId) -> Failure {
 /// The reference under which the bundle keeps the HEAD commit of a worktree of `task`.
 fn head_ref(task: &TaskId) -> String {
     format!("refs/agent-removed/{task}")
+}
+
+/// The bytes under `path`, walked on the blocking pool.
+async fn size_of(path: PathBuf) -> Result<u64, Failure> {
+    let measured = tokio::task::spawn_blocking(move || directory_size(&path))
+        .await
+        .map_err(|error| internal("the measure of a directory stopped", &error))?;
+    measured.map_err(|error| internal("cannot measure a directory", &error))
+}
+
+/// Removes the tree under `path` on the blocking pool; the error is the file system's, or the failure to run the
+/// removal at all.
+async fn remove_tree(path: PathBuf) -> std::io::Result<()> {
+    tokio::task::spawn_blocking(move || std::fs::remove_dir_all(&path))
+        .await
+        .map_err(std::io::Error::other)?
 }
 
 /// Whether `path` exists. Only "not found" is an answer; any other failure to look is a failure of the removal.
@@ -228,7 +240,7 @@ impl Owner {
             branches: Vec::new(),
             closed_pull_requests: Vec::new(),
             dirty_worktrees: plan.dirty.clone(),
-            freed_bytes: plan.bytes,
+            freed_bytes: 0,
             left_behind: plan.notes.clone(),
         };
         if let Err(failure) = self.write_bundle(&request.team, &plan, &mut removal).await {
@@ -278,11 +290,7 @@ impl Owner {
             message: format!("team {team_id} has no crew to take its identity from"),
         })?;
         let agent = AgentName::from_str(first.agent().name()).map_err(|error| internal("an agent name", &error))?;
-        let Measure {
-            worktrees,
-            task_dirs,
-            bytes,
-        } = self.measure(team, &repo)?;
+        let Measure { worktrees, task_dirs } = self.measure(team, &repo).await?;
         let mut branches = branches_of(team)?;
         let mut existing = Vec::new();
         let mut bundled = Vec::new();
@@ -292,7 +300,7 @@ impl Owner {
         // commits, and it is named in the reply rather than failing the removal.
         let mut checkout = None;
         let mut notes = Vec::new();
-        for (task, dir) in &worktrees {
+        for (task, dir, _) in &worktrees {
             match checkout_of(&self.git_at(dir, &agent)).await {
                 Ok(found) => {
                     checkout = Some(found);
@@ -334,7 +342,7 @@ impl Owner {
                     bundled.push(branch.clone());
                 }
             }
-            for (task, dir) in &worktrees {
+            for (task, dir, _) in &worktrees {
                 let handle = self.git_at(dir, &agent);
                 match handle
                     .tree_state()
@@ -367,36 +375,29 @@ impl Owner {
             bundled,
             dirty,
             heads,
-            bytes,
             notes,
         })
     }
 
-    /// The worktrees of `team` that exist, its task directories that exist, and the bytes of both.
-    fn measure(&self, team: &Team, repo: &RepoName) -> Result<Measure, Failure> {
+    /// The worktrees of `team` that exist and its task directories that exist, each with its bytes. The sizes are read
+    /// on the blocking pool: a tree of files is walked there, not on the owner's loop.
+    async fn measure(&self, team: &Team, repo: &RepoName) -> Result<Measure, Failure> {
         let home = self.parts.store.home();
         let mut worktrees = Vec::new();
         let mut task_dirs = Vec::new();
-        let mut bytes: u64 = 0;
         for task in tasks_of(team) {
             let dir = home.worktree_dir(repo, &task);
             if exists(&dir)? {
-                let size = directory_size(&dir).map_err(|error| internal("cannot measure a worktree", &error))?;
-                bytes = bytes.saturating_add(size);
-                worktrees.push((task.clone(), absolute(&dir)?));
+                let bytes = size_of(dir.clone()).await?;
+                worktrees.push((task.clone(), absolute(&dir)?, bytes));
             }
             let dir = home.task_dir(&task);
             if exists(&dir)? {
-                let size = directory_size(&dir).map_err(|error| internal("cannot measure a task directory", &error))?;
-                bytes = bytes.saturating_add(size);
-                task_dirs.push((task, dir));
+                let bytes = size_of(dir.clone()).await?;
+                task_dirs.push((task, dir, bytes));
             }
         }
-        Ok(Measure {
-            worktrees,
-            task_dirs,
-            bytes,
-        })
+        Ok(Measure { worktrees, task_dirs })
     }
 
     /// Git for `dir`, with the identity of `agent`.
@@ -573,13 +574,31 @@ impl Owner {
                         .push(format!("kept HEAD of {task}: {}", error_chain(&error)));
                 }
             }
-            for (task, dir) in &plan.worktrees {
-                if let Err(error) = git.worktree_remove(dir, RemoveMode::Force).await {
-                    removal.left_behind.push(format!(
-                        "worktree of {task} at {}: {}",
-                        dir.as_path().display(),
-                        error_chain(&error)
-                    ));
+            for (task, dir, bytes) in &plan.worktrees {
+                let dir_path = dir.as_path().to_path_buf();
+                // A directory without a `.git` entry is not a worktree of the repository (a document or art work kept
+                // in the same place): it has no commits and nothing git would keep, so it is removed as a tree.
+                let is_worktree = match exists(&dir_path.join(".git")) {
+                    Ok(found) => found,
+                    Err(failure) => {
+                        removal
+                            .left_behind
+                            .push(format!("worktree of {task}: {}", failure.message));
+                        continue;
+                    }
+                };
+                let outcome = if is_worktree {
+                    git.worktree_remove(dir, RemoveMode::Force)
+                        .await
+                        .map_err(|error| error_chain(&error))
+                } else {
+                    remove_tree(dir_path).await.map_err(|error| error_chain(&error))
+                };
+                match outcome {
+                    Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
+                    Err(cause) => removal
+                        .left_behind
+                        .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display())),
                 }
             }
             for branch in &plan.existing {
@@ -595,13 +614,14 @@ impl Owner {
                 .left_behind
                 .push("branches not deleted: no worktree of the repository is left to reach them".to_owned());
         }
-        for (task, dir) in &plan.task_dirs {
-            if let Err(error) = std::fs::remove_dir_all(dir) {
-                removal.left_behind.push(format!(
+        for (task, dir, bytes) in &plan.task_dirs {
+            match remove_tree(dir.clone()).await {
+                Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
+                Err(error) => removal.left_behind.push(format!(
                     "task directory of {task} at {}: {}",
                     dir.display(),
                     error_chain(&error)
-                ));
+                )),
             }
         }
     }
