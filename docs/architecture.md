@@ -1612,8 +1612,13 @@ ledger, like judgements. `agent status` reads the last run's row through `Reader
 is "not told". A result line that reports the run's output total (Claude Code, Antigravity) gives the tokens written in
 place of the sum of the calls, and a Claude message that tells no usage is a call that tells nothing, so the call before
 it is not told as the last one. The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
-`max_context`). A session above its agent's bound is not resumed: `owner::bound::renew_for_context` reads the last model
-call's context of the task's last run before the run starts (`Reader::run_usage`), `agent_core::decide::context::starts_anew`
-decides, and `State::begin_context_session` begins the session anew with the trouble `context_bound` and no renewal counted;
-the briefing of the new session is `briefing-context.md` followed by the briefing of the checkpoint.
+`max_context`). A session above its agent's bound is not resumed. `owner::bound::renew_for_context` reads the size of the task's last run
+through `size_of_run`: first the run's own outcome file (`outcome.json` in its directory, written by the engine when the process
+is gone, with the context of the last model call and the final message whole), and only for a run without that file the
+history's `Reader::run_usage`. `agent_core::decide::context::starts_anew` decides, and `State::begin_context_session_with_size`
+begins the session anew with the trouble `context_bound`, keeps the size in the renewal (`context_tokens`), and counts no
+renewal. The briefing of the new session is `briefing-context.md`, the briefing of the checkpoint (built from the task's
+newest round, so a task whose round closed is briefed too), and `briefing-last-message.md` with the last message whole, read
+from the outcome file of the last run. An unreadable outcome or history resumes the session and is logged; a last message
+that cannot be read fails the start.
 
