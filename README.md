@@ -510,7 +510,9 @@ How the human answers the agents and steers a task or a team, through the daemon
 
 `agent remove <team>` removes only that team's state, local branches, worktrees and task directories.
 It refuses an unknown team or a team with active runs, gates or worker checks. With `--force`, it ends and joins
-that work before deleting files; pending disk cleanup finishes before the freed bytes are measured.
+that work before deleting files. Previously halted checks are joined even without `--force`; pending disk cleanup
+finishes before the freed bytes are measured. Plain document or artwork directories alongside Git worktrees are
+removed too, without Git inspection.
 
 Before deletion, unmerged local branches and worktree HEAD commits go into `AGENTS_HOME/removed/<team>.bundle`.
 The command verifies the bundle and reports its path; restore a branch with

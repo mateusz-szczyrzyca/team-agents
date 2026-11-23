@@ -181,7 +181,7 @@ pub struct Removal {
     /// The tasks of the team that had a run going and were stopped first (`--force`).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub stopped: Vec<TaskId>,
-    /// The tasks whose directories and worktrees were removed.
+    /// The tasks removed from daemon state; any files cleanup could not remove are named in `left_behind`.
     pub tasks: Vec<TaskId>,
     /// The git bundle of the unmerged branches, absent when every branch was already in the base branch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -195,7 +195,7 @@ pub struct Removal {
     /// The open pull requests of the team that were closed with a comment.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub closed_pull_requests: Vec<crate::state::PrNumber>,
-    /// The worktrees with uncommitted tracked changes: removed with them, which is named here so that nobody is surprised.
+    /// Worktrees found with uncommitted tracked changes, whether cleanup removes them or leaves them behind.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub dirty_worktrees: Vec<AbsolutePath>,
     /// The bytes of the worktrees and task directories removed.

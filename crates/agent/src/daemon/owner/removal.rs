@@ -40,10 +40,10 @@ struct Plan {
     existing: Vec<BranchName>,
     /// The existing branches with commits the base branch does not have: they go into the bundle.
     bundled: Vec<BranchName>,
-    /// The worktrees with uncommitted tracked changes, which their removal takes with the changes.
+    /// The worktrees with uncommitted tracked changes, whether cleanup later removes them or leaves them behind.
     dirty: Vec<AbsolutePath>,
-    /// The commit each worktree's HEAD points at, for the worktrees whose HEAD no branch of the team or the base holds:
-    /// the commit is kept under `refs/agent-removed/<task>` in the bundle, since the removal takes the worktree away.
+    /// Worktree HEAD commits absent from the base, whether or not a team branch also holds them.
+    /// Each is kept under `refs/agent-removed/<task>` in the bundle before the worktree is removed.
     heads: Vec<(TaskId, CommitId)>,
     /// What the measuring found that the reply must name, such as a worktree that is not a git checkout.
     notes: Vec<String>,
@@ -78,8 +78,8 @@ fn is_untracked(entry: &StatusEntry) -> bool {
     entry.index == '?' && entry.worktree == '?'
 }
 
-/// Reads each worktree of a team: whether git tracks a change in it (untracked files alone are not one), and the
-/// commit its HEAD points at when no branch of the team or the base holds that commit.
+/// Reads tracked changes and HEAD commits of Git worktrees, skipping plain directories.
+/// HEAD commits absent from the base are kept even when a team branch also holds them.
 async fn inspect_worktrees(
     owner: &Owner,
     worktrees: &[(TaskId, AbsolutePath, u64)],
