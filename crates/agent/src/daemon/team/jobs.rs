@@ -106,6 +106,9 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                     .with("message", message)?,
             )?,
         ),
+        BusNotice::MemberRunFailed { .. } | BusNotice::MemberRunFailedItem { .. } => {
+            (NoticeKind::MemberFailed, Vec::new(), String::new())
+        }
         BusNotice::MemberNoStatus { member } => (
             NoticeKind::MemberNoStatus,
             vec![("member", member.to_string())],

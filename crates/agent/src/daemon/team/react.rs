@@ -48,6 +48,28 @@ pub(in crate::daemon) enum BusNotice {
         /// The branch it worked on.
         branch: BranchName,
     },
+    /// A member failed after a run ending that did not report `FAILED`.
+    MemberRunFailed {
+        /// The member.
+        member: AgentName,
+        /// The actual ending of its run.
+        end: RunEnd,
+        /// Its last words or the reason when no words were available.
+        message: String,
+    },
+    /// A member failed on an item after a run ending that did not report `FAILED`.
+    MemberRunFailedItem {
+        /// The member.
+        member: AgentName,
+        /// The actual ending of its run.
+        end: RunEnd,
+        /// Its last words or the reason when no words were available.
+        message: String,
+        /// The item it worked on.
+        item: ItemId,
+        /// The branch it worked on.
+        branch: BranchName,
+    },
     /// A member ended its turn without a status line.
     MemberNoStatus {
         /// The member.

@@ -496,3 +496,46 @@ fn a_failed_member_cannot_hide_its_failure_behind_a_split_request() {
     assert!(matches!(notice.notice, BusNotice::MemberFailedItem { message, .. }
         if message == "SPLIT: 1.1"));
 }
+
+#[tokio::test]
+async fn failed_member_notices_render_the_actual_end_and_last_words_for_every_other_ending() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
+    let texts = agent_runtime::team_prompts::TeamPrompts::load(&root, &agent_core::config::Language::default())
+        .await
+        .unwrap();
+    for (end, reason) in [
+        (RunEnd::Hung, "the watchdog stopped an inactive run"),
+        (
+            RunEnd::QuotaExhausted { resets_at: None },
+            "the account quota was exhausted",
+        ),
+        (RunEnd::RateLimited, "the provider rate-limited the run"),
+        (RunEnd::Stopped, "the human stopped the run"),
+        (reported(RunOutcome::Questions), "the run reported `STATUS: QUESTIONS`"),
+        (reported(RunOutcome::Sleeping), "the run reported `STATUS: SLEEPING`"),
+        (reported(RunOutcome::Excluded), "the run reported `STATUS: EXCLUDED`"),
+        (reported(RunOutcome::Done), "the run reported `STATUS: DONE`"),
+    ] {
+        for (has_item, mut team) in [(false, crew_of(PLAIN, 1, 0)), (true, working())] {
+            ran(&mut team, 2, 1, end.clone(), &[TaskStatus::Failed]);
+            let told = told(&team, 2, &end, Some("The run could not continue.")).unwrap();
+            let outgoing = crate::daemon::team::render_notice(&texts, &told.notice).unwrap();
+            let agent_runtime::agentbus::Outgoing::Notice { kind, text, .. } = outgoing else {
+                panic!("expected a failure notice");
+            };
+            assert_eq!(kind, agent_runtime::agentbus::NoticeKind::MemberFailed);
+            let scope = if has_item {
+                " on item 1.1 (branch `agents/claude-1/task-20261111-153002-k3x9-1.1`)"
+            } else {
+                ""
+            };
+            assert_eq!(
+                text,
+                format!(
+                    "claude-1 failed{scope}: {reason}. Last words or reason:\n\nThe run could not continue.\n\nYou may wait for the human. Take the work yourself only if your role rules allow it.\n"
+                ),
+                "actual ending: {end:?}"
+            );
+        }
+    }
+}
