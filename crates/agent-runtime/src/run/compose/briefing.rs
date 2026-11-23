@@ -1,6 +1,7 @@
 //! The briefing of a task started in a new session: the facts of the work the runs before it left behind, as the text
 //! of [`HarnessPrompt::Briefing`](agent_core::prompt::HarnessPrompt::Briefing).
 
+use agent_core::plan::judge::JudgementState;
 use agent_core::prompt::{Variables, VariablesError};
 
 /// One run of the task, as the briefing lists it: when it started, the agent that ran it and how it ended.
@@ -114,7 +115,6 @@ pub fn briefing_variables(facts: &Briefing<'_>) -> Result<Variables, VariablesEr
 /// # Errors
 /// [`VariablesError`] when a value cannot be given to its variable.
 pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) -> Result<Variables, VariablesError> {
-    let _ = notes;
     let commits = lines(
         facts
             .commits
@@ -122,18 +122,24 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
             .map(|commit| format!("- {} {}", commit.id, commit.subject)),
     );
     let uncommitted = lines(facts.uncommitted.iter().map(|path| format!("- {path}")));
-    let plan = lines(
-        facts
-            .plan
-            .unwrap_or_default()
+    let plan = plan_text(facts.plan.unwrap_or_default(), notes.judgements);
+    let runs = lines(
+        notes
+            .runs
             .iter()
-            .map(|step| format!("- {} {} {}", step.state, step.id, step.title)),
+            .map(|run| format!("- {} {}: {}", run.started, run.agent, run.end)),
+    );
+    let answers = lines(
+        notes
+            .answers
+            .iter()
+            .map(|answer| format!("- Question {}, {}: {}", answer.number, answer.title, answer.verdict)),
     );
     let messages = lines(facts.messages.iter().flat_map(|message| {
         std::iter::once(format!("- #{} {}:", message.id, message.from))
             .chain(message.text.lines().map(|line| format!("  {line}")))
     }));
-    let pairs: [(&str, &str); 11] = [
+    let pairs: [(&str, &str); 15] = [
         ("reason", facts.reason),
         ("task", facts.task),
         ("prompt", facts.prompt.trim_end()),
@@ -143,6 +149,13 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         ("uncommitted", &uncommitted),
         ("snapshot", facts.snapshot),
         ("plan", &plan),
+        ("runs", &runs),
+        ("runs_left_out", notes.runs_left_out.unwrap_or_default().trim_end()),
+        ("answers", &answers),
+        (
+            "answers_left_out",
+            notes.answers_left_out.unwrap_or_default().trim_end(),
+        ),
         ("left_out", facts.left_out.unwrap_or_default().trim_end()),
         ("messages", &messages),
     ];
@@ -150,6 +163,66 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         .iter()
         .try_fold(Variables::new(), |values, (name, value)| values.with(name, *value))
 }
+
+/// The steps of the plan, grouped as the briefing shows them: the steps marked done by how the harness judged them
+/// (`confirmed`, `mismatch`, or `declared` for any other judgement or none), then the steps not done, each group under
+/// its heading. A group with no step is left out.
+fn plan_text(steps: &[BriefingStep<'_>], judgements: &[(&str, &str)]) -> String {
+    let (mut confirmed, mut declared, mut mismatch, mut not_done) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for step in steps {
+        if step.state != DONE_MARK {
+            not_done.push(format!("- {} {} {}", step.state, step.id, step.title));
+            continue;
+        }
+        let line = format!("- {} {}", step.id, step.title);
+        let judgement = judgements.iter().find(|(id, _)| *id == step.id).map(|(_, word)| *word);
+        if judgement == Some(CONFIRMED_WORD) {
+            confirmed.push(line);
+        } else if judgement == Some(MISMATCH_WORD) {
+            mismatch.push(line);
+        } else {
+            declared.push(line);
+        }
+    }
+    let groups = [
+        (CONFIRMED_HEADING, confirmed),
+        (DECLARED_HEADING, declared),
+        (MISMATCH_HEADING, mismatch),
+        (NOT_DONE_HEADING, not_done),
+    ];
+    groups
+        .into_iter()
+        .filter(|(_, lines)| !lines.is_empty())
+        .map(|(heading, lines)| {
+            std::iter::once(heading.to_owned())
+                .chain(lines)
+                .collect::<Vec<_>>()
+                .join("\n")
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The mark of a step done, in the plan's own syntax.
+const DONE_MARK: &str = "[x]";
+
+/// The word of a judgement that the check passed, as [`JudgementState::as_str`] gives it.
+const CONFIRMED_WORD: &str = JudgementState::Confirmed.as_str();
+
+/// The word of a judgement that the check failed, as [`JudgementState::as_str`] gives it.
+const MISMATCH_WORD: &str = JudgementState::Mismatch.as_str();
+
+/// The heading of the steps whose check passed.
+const CONFIRMED_HEADING: &str = "Confirmed (the check passed):";
+
+/// The heading of the steps the agent declared done, with no check that passed or failed.
+const DECLARED_HEADING: &str = "Declared (the agent says so; no check ran, or it waits for a reviewer):";
+
+/// The heading of the steps the agent declared done and whose check failed.
+const MISMATCH_HEADING: &str = "Mismatch (the agent says so and the check failed):";
+
+/// The heading of the steps that are not done: to do, in hand or given up.
+const NOT_DONE_HEADING: &str = "Not done:";
 
 /// `lines`, one under the other.
 fn lines(lines: impl Iterator<Item = String>) -> String {
