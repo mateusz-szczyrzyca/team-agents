@@ -10,6 +10,8 @@ pub use idle::IdleMinutes;
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;
+mod restart;
+pub use restart::{Restart, RestartSession};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -885,6 +887,8 @@ pub struct Config {
     disk: Disk,
     /// The snapshots of worktrees.
     snapshot: Snapshot,
+    /// What a restart of the daemon does with the runs it cut.
+    restart: Restart,
     /// The publication tries and notifications.
     publish: Publish,
     /// The merges refused for a conflict.
@@ -962,6 +966,9 @@ struct RawConfig {
     /// See [`Config::snapshot`].
     #[serde(default)]
     snapshot: Snapshot,
+    /// See [`Config::restart`].
+    #[serde(default)]
+    restart: Restart,
     /// See [`Config::publish`].
     #[serde(default)]
     publish: Publish,
@@ -1028,6 +1035,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            restart,
             publish,
             merge,
             review,
@@ -1071,6 +1079,7 @@ impl RawConfig {
             limits,
             disk,
             snapshot,
+            restart,
             publish,
             merge,
             review,
@@ -1272,6 +1281,12 @@ impl Config {
     #[must_use]
     pub const fn snapshot(&self) -> &Snapshot {
         &self.snapshot
+    }
+
+    /// What a restart of the daemon does with the runs it cut: the session they go on in.
+    #[must_use]
+    pub const fn restart(&self) -> &Restart {
+        &self.restart
     }
 
     /// The publication tries and notifications.

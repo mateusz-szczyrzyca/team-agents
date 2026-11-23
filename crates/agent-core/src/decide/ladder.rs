@@ -34,6 +34,8 @@ pub enum Trouble {
     NoToolCall,
     /// The task waited too long for its agent, which was busy in another task: a free agent took it over. No run went bad.
     Busy,
+    /// The daemon went down while the run was going: the run was cut from outside, and no run went bad.
+    DaemonDown,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -77,10 +79,8 @@ pub fn next_step(
         // `after_hang` reads only whether there is a session to resume; the one a task has is the one it resumes.
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
-        // A run that failed without a tool call is retried by its own decision, never by the ladder: a NoToolCall
-        // renewal starts the new session already, so no run resumes the one before it.
-        // A busy agent's wait is not a bad run: the ladder has no rung for it either.
-        Trouble::NoToolCall | Trouble::Busy => false,
+        // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
+        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown => false,
     };
     if retried {
         return LadderStep::SameSession;

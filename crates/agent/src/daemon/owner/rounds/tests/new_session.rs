@@ -78,6 +78,11 @@ async fn a_stop_that_ends_the_last_retry_of_a_session_leaves_the_task_to_a_new_s
         false,
     )
     .await;
+    // The stop is the daemon's cut: by default it begins a free `daemon_down` session. This test is about the ladder, which
+    // the stop climbs only when the run is resumed in its session.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[restart]\nsession = \"same\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.wait_for("run 3 to start", || rig.runs(&tasks[0]) >= 3).await;

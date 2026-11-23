@@ -37,7 +37,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::briefing::BriefingFacts;
+use super::briefing::BriefingDraft;
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -249,7 +249,7 @@ pub(super) async fn plan(
     zone: agent_core::local_time::Zone,
     rng: &mut impl Rng,
     task: &TaskId,
-    briefing: Option<&BriefingFacts>,
+    briefing: Option<&BriefingDraft>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
@@ -311,7 +311,7 @@ pub(super) async fn plan(
         None => prompt,
     };
     let prompt = match briefing {
-        Some(facts) => facts.render(ctx.texts, task, &prompt)?,
+        Some(draft) => draft.render(ctx.texts, task, &prompt)?,
         None => prompt,
     };
     let run = RunId::generate(ctx.clock, rng)?;

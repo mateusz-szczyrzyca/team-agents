@@ -321,3 +321,21 @@ fn renewals_written_before_no_tool_call_still_load_its_original_reasons() {
         assert_eq!(renewals.used(), 1);
     }
 }
+
+#[test]
+fn a_new_session_after_the_daemon_went_down_counts_no_renewal_and_survives_a_restart() {
+    let mut state = old_state();
+    state
+        .begin_holder_session(&task(), Trouble::DaemonDown, started())
+        .expect("a task that ran may begin a session");
+    let saved = state.to_json().expect("the state saves");
+
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    let member = loaded.find_task(&task()).expect("the task").member;
+    let renewals = member.renewals().expect("the new session was recorded");
+    assert_eq!(renewals.reason(), Trouble::DaemonDown);
+    assert_eq!(renewals.used(), 0, "the cut was the daemon's, not the task's");
+    assert!(member.awaits_new_session());
+    assert_eq!(member.last_session(), None, "no session before the cut is resumed");
+}

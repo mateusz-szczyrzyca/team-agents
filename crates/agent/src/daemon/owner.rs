@@ -85,7 +85,7 @@ use super::notice::{Notice, NoticeContext, TaskWords, item_line};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
-use super::recovery::{RecoveryError, interrupted_status, recover};
+use super::recovery::{AfterCut, RecoveryError, after_cut, interrupted_status, open_round_of, recover_with};
 use super::settle::{Settled, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::process::error_chain;
@@ -509,6 +509,9 @@ pub(super) struct Owner {
     /// not briefed again until the bus took it, when the state is told so. Empty after a restart, so that what is still
     /// owed is told again.
     leads_being_told: HashSet<TaskId>,
+    /// The reference of the snapshot a restart took of the worktree of each task whose run it cut and started anew: the
+    /// briefing of the task's new session names it instead of taking another. Empty after the first run of each.
+    cut_snapshots: HashMap<TaskId, String>,
     /// The newest message of the bus when each lead's run that goes on began: what the lead says to its member after it is
     /// the reason of what it returns in that run. Not kept over a restart: a run that was going is not finished by the
     /// daemon that starts. A task whose mark could not be read has none.
@@ -636,6 +639,7 @@ impl Owner {
             hangs: HashMap::new(),
             reasons: HashMap::new(),
             leads_being_told: HashSet::new(),
+            cut_snapshots: HashMap::new(),
             lead_marks: HashMap::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
@@ -776,7 +780,15 @@ impl Owner {
         // A command check a dead daemon left running is ended before any run is looked at: nothing runs without its daemon.
         self.recover_leftover_checks().await?;
         let now = Timestamp::now(&self.parts.clock)?;
-        let recovery = recover(&mut self.parts.state, now, self.parts.settings.config.limits())?;
+        let recovery = recover_with(
+            &mut self.parts.state,
+            now,
+            self.parts.settings.config.limits(),
+            self.parts.settings.config.restart().session,
+        )?;
+        for task in &recovery.renewed {
+            log_decision("restart", &task.as_str(), &"NewSession");
+        }
         for (at, task) in recovery.wakes {
             self.wakes.insert(task, at);
         }
@@ -1249,14 +1261,17 @@ impl Owner {
                 None,
                 &mut events,
             )?;
+            // The stop is the daemon's own cut: a new session begins before the endings without a status are counted, so
+            // the cut is no retry of the session it ends.
+            self.begin_session_after_stop(task, &located)?;
             let found = self
                 .parts
                 .state
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
             let mut status = interrupted_status(located.role, found.member);
-            // The retries of the session are used up: the ladder may still start the task in a new session, or another
-            // agent or the lead take it over.
+            // The retries of the session are used up (with `[restart] session = "same"`, or for a worker): the ladder may
+            // still start the task in a new session, or another agent or the lead take it over.
             let failed = status == TaskStatus::Failed;
             if failed {
                 match self.restart_anew(task, &located)? {
@@ -1789,6 +1804,29 @@ impl Owner {
             }
         };
         Ok(next)
+    }
+
+    /// Begins a new session of `task`, whose run the daemon's own stop just cut, when `[restart] session` and the cut say
+    /// so: its next run is briefed with the reason `daemon_down`, and no retry is counted for it. The stop is the proof
+    /// that the daemon cut the run: an earlier end with no exit code may be a signal's.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone or the state refuses the new session.
+    fn begin_session_after_stop(&mut self, task: &TaskId, located: &Located) -> Result<(), OwnerError> {
+        let setting = self.parts.settings.config.restart().session;
+        let round = open_round_of(&self.parts.state, task);
+        let begins = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member;
+        if after_cut(setting, located.role, begins, round.as_ref()) == AfterCut::NewSession {
+            let at = self.after_last_run(task)?;
+            self.parts.state.begin_holder_session(task, Trouble::DaemonDown, at)?;
+            log_decision("restart", &task.as_str(), &"NewSession");
+        }
+        Ok(())
     }
 
     /// The ladder's step for `task`, which a restart or a stop of the daemon left with the no-status retries of its

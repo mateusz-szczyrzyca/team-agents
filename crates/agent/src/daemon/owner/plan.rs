@@ -887,7 +887,7 @@ impl Owner {
     /// The versions of the plan of `task` the history kept from runs other than `run`, oldest first, along with a map by
     /// run ID; none when the history cannot be read (logged): a step lost since then is then not found. A kept version
     /// that does not parse is left out and logged.
-    async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> (Vec<Plan>, HashMap<RunId, Plan>) {
+    pub(super) async fn earlier_plans(&self, task: &TaskId, run: Option<&RunId>) -> (Vec<Plan>, HashMap<RunId, Plan>) {
         let path = self.parts.store.home().history_file();
         let task_id = task.clone();
         let task_runs: Vec<RunId> = self
@@ -1407,7 +1407,10 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError::PlanJudgementsRead`] when an existing `history.db` cannot be read.
-    async fn latest_judgements(&self, task: &TaskId) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
+    pub(super) async fn latest_judgements(
+        &self,
+        task: &TaskId,
+    ) -> Result<HashMap<ItemId, JudgementRecord>, OwnerError> {
         let path = self.parts.store.home().history_file();
         if !path.exists() {
             return Ok(HashMap::new());
