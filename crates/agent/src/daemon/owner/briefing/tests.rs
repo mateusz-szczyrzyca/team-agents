@@ -414,12 +414,12 @@ async fn the_briefing_tells_the_runs_the_judged_steps_and_the_answers_the_histor
         .render(&texts().await, &task, "Fix the parser.")
         .unwrap();
 
-    let mut at = 0;
+    let mut rest = text.as_str();
     for part in WHAT_THE_HISTORY_GAVE {
-        let found = text[at..]
-            .find(part)
+        let (_, after) = rest
+            .split_once(part)
             .unwrap_or_else(|| panic!("{part:?} is missing or out of order:\n{text}"));
-        at += found + part.len();
+        rest = after;
     }
 }
 
