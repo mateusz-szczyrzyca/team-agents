@@ -992,3 +992,7 @@ mod tier_assignment_tests;
 #[cfg(test)]
 #[path = "rounds/tests/removal.rs"]
 mod removal_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/whole_records.rs"]
+mod whole_records_tests;

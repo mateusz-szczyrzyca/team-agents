@@ -18,7 +18,7 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::Settings;
-use agent_runtime::store::StateStore;
+use agent_runtime::store::{StateStore, StoreError};
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::sync::{broadcast, mpsc, oneshot};
@@ -39,9 +39,29 @@ struct Stepped {
     _events: broadcast::Receiver<agent_core::protocol::Event>,
 }
 
+/// The store of `rig`, open; a lock that another store has just released can still be held a few milliseconds by a
+/// child that inherited its open file description between fork and exec, so retry a `HomeLocked`.
+async fn open_store(rig: &Rig) -> Arc<StateStore> {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        match StateStore::open(rig.home.clone()).await {
+            Ok(store) => return Arc::new(store),
+            Err(StoreError::HomeLocked { path }) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for the lock of the home to free: {}",
+                    path.display(),
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot open the home store: {error}"),
+        }
+    }
+}
+
 /// Open a production owner without its scheduling loop, so the crash boundary requires no timing race.
 async fn stepped(rig: &Rig) -> Stepped {
-    let store = Arc::new(StateStore::open(rig.home.clone()).await.unwrap());
+    let store = open_store(rig).await;
     let settings = Arc::new(Settings::load(&rig.home).await.unwrap());
     let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
     let language = settings.config.language();

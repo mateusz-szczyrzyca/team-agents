@@ -187,11 +187,22 @@ async fn first_review(rig: &Rig, team: &TeamId) -> Vec<TaskId> {
     first.into_iter().map(|held| held.task).collect()
 }
 
-/// Waits for a step that waits and returns what the round of `team` says it waits for.
-async fn waiting_line(rig: &Rig, team: &TeamId) -> String {
-    rig.wait_for("a step that waits", || times(rig, LogEvent::GithubStepWaiting) > 0)
-        .await;
-    waits_for(rig, round_of(rig, team)).await.unwrap_or_default()
+/// Waits until the round of `team` says it waits for the read that `expected` names, and returns that line. The
+/// step is retried by the daemon's background refresh, so a single read of the round's detail right after the wait
+/// is logged can catch it between attempts: wait for the line itself instead.
+async fn waiting_line(rig: &Rig, team: &TeamId, expected: &str) -> String {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        let line = waits_for(rig, round_of(rig, team)).await.unwrap_or_default();
+        if line.starts_with(expected) {
+            return line;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for a step that waits for {expected:?}, last: {line:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
 }
 
 #[tokio::test]
@@ -227,7 +238,12 @@ async fn a_merge_whose_read_of_the_lead_s_commit_fails_waits_and_merges_after_re
     // The opinions do not confirm the findings, so the approval stands and the merge reads the lead's commit.
     let head = BrokenHead::of(&rig.worktree(&tasks[0]));
     std::fs::write(rig.home.root().join("opinion-release"), "ready").unwrap();
-    let waiting = waiting_line(&rig, &team).await;
+    let waiting = waiting_line(
+        &rig,
+        &team,
+        "GitHub: read the lead's commit before the merge #1, refused: ",
+    )
+    .await;
     assert!(
         waiting.starts_with("GitHub: read the lead's commit before the merge #1, refused: "),
         "{waiting}"
@@ -261,7 +277,7 @@ async fn a_verdict_whose_read_of_the_reviewed_commit_fails_waits_and_is_taken_af
     for held in &verifiers {
         release(held, VERIFIED).await;
     }
-    let waiting = waiting_line(&rig, &team).await;
+    let waiting = waiting_line(&rig, &team, "GitHub: read the commit a reviewer verified #1, refused: ").await;
     assert!(
         waiting.starts_with("GitHub: read the commit a reviewer verified #1, refused: "),
         "{waiting}"
@@ -297,7 +313,12 @@ async fn a_fix_response_whose_read_of_the_lead_s_commit_fails_waits_and_is_read_
         .await
         .unwrap()
         .unwrap();
-    let waiting = waiting_line(&rig, &team).await;
+    let waiting = waiting_line(
+        &rig,
+        &team,
+        "GitHub: read the lead's commit after its fix #1, refused: ",
+    )
+    .await;
     assert!(
         waiting.starts_with("GitHub: read the lead's commit after its fix #1, refused: "),
         "{waiting}"
