@@ -2,7 +2,7 @@
 //! never written has no row, which reads as "not told": the upgrade writes no usage of its own.
 
 use agent_core::cli::RunUsage;
-use agent_runtime::history::{HistoryDb, RunUsageRecord, Store};
+use agent_runtime::history::{HistoryDb, Reader, RunUsageRecord, Store};
 
 use super::support::{complete, database, roomy};
 
@@ -162,4 +162,39 @@ async fn the_usage_handed_to_the_writer_is_written_before_the_writer_answers() {
         .unwrap();
     assert_eq!(row, (Some(7), Some(9), Some(3), None));
     started.writer.close().unwrap();
+}
+
+#[test]
+fn the_reader_gives_back_the_usage_written_for_a_run() {
+    let (_dir, path, mut db) = database();
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+    let run = world.runs[0].start.run.clone();
+    let usage = RunUsage {
+        first_context: Some(10),
+        last_context: Some(20),
+        tokens_written: None,
+        cost_usd: Some(0.5),
+    };
+    db.write_usage(&[RunUsageRecord {
+        run: run.clone(),
+        usage,
+    }])
+    .unwrap();
+
+    let read = Reader::open(&path).unwrap().run_usage(&run).unwrap();
+
+    assert_eq!(read, Some(usage));
+}
+
+#[test]
+fn the_reader_tells_no_usage_for_a_run_without_a_row() {
+    let (_dir, path, mut db) = database();
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+    let run = world.runs[0].start.run.clone();
+
+    let read = Reader::open(&path).unwrap().run_usage(&run).unwrap();
+
+    assert_eq!(read, None);
 }

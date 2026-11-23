@@ -587,6 +587,15 @@ impl Reader {
         super::judgements::read(&snapshot, task)
     }
 
+    /// The usage of `run` as its stream told it; `None` when no usage was written for it, which is "not told".
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn run_usage(&self, _run: &RunId) -> Result<Option<agent_core::cli::RunUsage>, ReadError> {
+        // RED stub: the usage is not read yet.
+        Ok(None)
+    }
+
     /// The latest judgement for each step of `task`.
     ///
     /// # Errors
