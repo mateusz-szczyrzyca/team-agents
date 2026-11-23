@@ -26,7 +26,9 @@ fn two_hours() -> Duration {
 /// A team that did nothing since the epoch and has nothing that holds it.
 fn quiet() -> Look {
     Look {
-        team: "team-20260101-000000-aaaa".parse().expect("the team of a test is valid"),
+        team: "team-20260101-000000-aaaa"
+            .parse()
+            .expect("the team of a test is valid"),
         at: when(0),
         last: when(0),
         holds: Holds::Nothing,
@@ -62,7 +64,10 @@ fn a_bound_of_zero_never_makes_a_team_idle() {
         ..quiet()
     };
 
-    assert_eq!(super::decide(&long_idle, Duration::ZERO), Decision::Keep(Why::RecentlyActive));
+    assert_eq!(
+        super::decide(&long_idle, Duration::ZERO),
+        Decision::Keep(Why::RecentlyActive)
+    );
 }
 
 #[test]

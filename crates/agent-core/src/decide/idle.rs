@@ -59,4 +59,3 @@ pub fn decide(look: &Look, bound: Duration) -> Decision {
     }
     Decision::Remove
 }
-
