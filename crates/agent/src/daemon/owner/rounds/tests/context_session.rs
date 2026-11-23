@@ -581,4 +581,12 @@ async fn a_legacy_run_s_last_message_cut_by_the_history_is_said_to_be_cut() {
     rig.stop().await.unwrap();
 
     assert!(briefing.contains("cut at the history limit of 16 bytes"), "{briefing}");
+    assert!(
+        !briefing.contains("## The last message of the session before yours, whole"),
+        "a message read from the history is not whole: {briefing}"
+    );
+    assert!(
+        briefing.contains("## The last message of the session before yours\n"),
+        "{briefing}"
+    );
 }
