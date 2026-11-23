@@ -721,6 +721,8 @@ impl Owner {
         self.watched.retain(|task| !gone(task));
         self.cancels.retain(|task, _| !gone(task));
         self.gate_stops.retain(|task, _| !gone(task));
+        self.task_plans.retain(|task, _| !gone(task));
+        self.deferred_targets.retain(|task, _| !gone(task));
     }
 
     /// Deletes the worktrees, the task directories and the local branches of a removed team. A step that fails is
