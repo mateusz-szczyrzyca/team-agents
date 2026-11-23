@@ -1086,7 +1086,7 @@ async fn an_existing_reviewer_keeps_its_holder_while_the_investigator_runs_elsew
     let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
     std::fs::write(
         rig.home.config_file(),
-        config + "\n[replacement]\nagents = [\"inv-r3\"]\nbusy_after = 3600\n",
+        config + "\n[replacement]\nagents = [\"inv-r3\"]\nbusy_after = 3600\n\n[limits]\nidle_team_minutes = 0\n",
     )
     .unwrap();
     rig.start().await;
