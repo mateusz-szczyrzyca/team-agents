@@ -590,3 +590,95 @@ async fn a_legacy_run_s_last_message_cut_by_the_history_is_said_to_be_cut() {
         "{briefing}"
     );
 }
+
+// Rule: a run whose outcome file cannot be read, and whose history has no size for it either, may be oversized: the session is
+// replaced, not resumed, and the briefing says its size could not be read. The message comes from the history, which keeps it.
+#[tokio::test]
+async fn a_corrupt_outcome_file_with_no_size_in_the_history_replaces_the_session_with_an_unknown_size() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-here,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let last = rig
+        .state()
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .id()
+        .clone();
+    std::fs::write(
+        rig.home.run_dir(&tasks[0], &last).join("outcome.json"),
+        "not an outcome",
+    )
+    .unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains("its size could not be read"), "{prompt}");
+    assert!(
+        !args.contains("--resume"),
+        "the session was resumed on a size nobody could read: {args}"
+    );
+}
+
+// Rule: a run with neither an outcome file nor a usage row tells no size, and its session resumes as before.
+#[tokio::test]
+async fn a_run_with_no_outcome_file_and_no_usage_row_resumes_its_session() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-here,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let last = rig
+        .state()
+        .find_task(&tasks[0])
+        .unwrap()
+        .member
+        .runs()
+        .last()
+        .unwrap()
+        .id()
+        .clone();
+    std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let args = {
+        let _ = rig.prompt(&tasks[0], 3).await;
+        std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap()
+    };
+    rig.stop().await.unwrap();
+
+    assert!(
+        args.contains("--resume"),
+        "the session tells no size and resumes: {args}"
+    );
+}
