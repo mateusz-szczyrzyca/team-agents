@@ -295,11 +295,13 @@ impl Owner {
         }
         // The team leaves the state before anything on disk goes: a daemon that stops in between has a team that is
         // gone and files left behind, never files gone under a team that the state still lists.
-        if self.parts.state.remove_team(&request.team).is_none() {
+        let mut next = self.parts.state.clone();
+        if next.remove_team(&request.team).is_none() {
             return Ok(Err(not_found(&request.team)));
         }
+        self.parts.store.save(&next).await?;
+        self.parts.state = next;
         self.forget_team(&request.team, &tasks);
-        self.save().await?;
         self.release_on_bus(&request.team, &tasks, &mut removal).await;
         self.delete_local(&plan, &mut removal).await;
         tracing::info!(
