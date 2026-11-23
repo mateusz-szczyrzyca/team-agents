@@ -232,11 +232,6 @@ enum VersionsQuery {
     Omit,
 }
 
-/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
-/// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
-///
-/// # Errors
-/// [`StatusError`].
 /// The context line of `task`: what its last run's stream told of its context, read from the history of `home`;
 /// "context: not told" when the last run has no usage, and a line that says the history cannot be read when it cannot
 /// be (the rest of the status is shown all the same).
@@ -271,6 +266,11 @@ fn told_part(value: Option<u64>) -> String {
     value.map_or_else(|| "not told".to_owned(), |value| value.to_string())
 }
 
+/// Asks the daemon for the status of `target` (every team without one) and writes it to `out`, its versions first; the
+/// tasks that run say when they were last active. A team or a task is shown with its tasks whatever `detail` is.
+///
+/// # Errors
+/// [`StatusError`].
 pub(crate) async fn status_shown(
     connection: &mut Connection,
     target: Option<Target>,
@@ -299,8 +299,14 @@ pub(crate) async fn status_shown(
     };
     write_shown(out, &prefix, &shown, activity)?;
     if let Some(task) = task {
-        out.write_all(context_line(&activity.home, &task).as_bytes())
-            .map_err(StatusError::Output)?;
+        // SQLite is read off the async runtime: the history may be busy for as long as its timeout.
+        let home = activity.home.clone();
+        let line = match tokio::task::spawn_blocking(move || context_line(&home, &task)).await {
+            Ok(line) => line,
+            // The line is the only part of the status that waits for the history: it says why it is missing.
+            Err(error) => format!("context: cannot be read ({})\n", error_chain(&error)),
+        };
+        out.write_all(line.as_bytes()).map_err(StatusError::Output)?;
     }
     Ok(())
 }
