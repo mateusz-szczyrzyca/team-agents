@@ -345,7 +345,7 @@ during startup or execution. Runs ending without a status line upon daemon shutd
 count toward the consecutive limit; an interruption that exhausts the budget fails the task before another run starts.
 When a member fails or ends without status while
 holding an item, the coordinator receives a notice naming the item and the member's branch
-(`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). When the lead has reported
+(`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). For a member that fails after a hang, quota limit, rate limit, stop or unusable reported result, the notice preserves how its run actually ended and includes its last words or the end reason. When the lead has reported
 `STATUS: DONE` and waits while an item remains blocked behind a failed member, the human is told immediately once per
 item (`prompts/harness/pr/notice-standing-item.md`) with the member's last-run details and commands to speak to the
 member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a task clears the notification deduplication

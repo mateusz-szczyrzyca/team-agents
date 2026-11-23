@@ -225,15 +225,7 @@ pub(in crate::daemon) fn notice_for(
             Some(message) if !message.trim().is_empty() => report(&end_of(message)),
             Some(_) | None => format!("The member failed after {end:?}."),
         };
-        let notice = match worked_on(team, member) {
-            Some((item, branch)) => BusNotice::MemberFailedItem {
-                member: who,
-                message,
-                item,
-                branch,
-            },
-            None => BusNotice::MemberFailed { member: who, message },
-        };
+        let notice = failed_notice(team, member, who, end, message);
         return Ok(Some(Told { to, notice }));
     }
     let notice = match end {
@@ -387,6 +379,37 @@ fn report(message: &str) -> String {
 
 /// What a status line starts with.
 const STATUS_PREFIX: &str = "STATUS:";
+
+/// Preserve a settled failure's actual ending and the member's item context.
+fn failed_notice(team: &Team, member: &Member, who: AgentName, end: &RunEnd, message: String) -> BusNotice {
+    let reported_failed = matches!(
+        end,
+        RunEnd::Reported {
+            outcome: RunOutcome::Failed
+        }
+    );
+    match (reported_failed, worked_on(team, member)) {
+        (true, Some((item, branch))) => BusNotice::MemberFailedItem {
+            member: who,
+            message,
+            item,
+            branch,
+        },
+        (true, None) => BusNotice::MemberFailed { member: who, message },
+        (false, Some((item, branch))) => BusNotice::MemberRunFailedItem {
+            member: who,
+            end: end.clone(),
+            message,
+            item,
+            branch,
+        },
+        (false, None) => BusNotice::MemberRunFailed {
+            member: who,
+            end: end.clone(),
+            message,
+        },
+    }
+}
 
 /// The item `member` works on and its branch, if it has one.
 fn worked_on(team: &Team, member: &Member) -> Option<(ItemId, BranchName)> {
