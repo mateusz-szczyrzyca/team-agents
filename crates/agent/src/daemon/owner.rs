@@ -503,6 +503,9 @@ pub(super) struct Owner {
     /// not briefed again until the bus took it, when the state is told so. Empty after a restart, so that what is still
     /// owed is told again.
     leads_being_told: HashSet<TaskId>,
+    /// The reference of the snapshot a restart took of the worktree of each task whose run it cut and started anew: the
+    /// briefing of the task's new session names it instead of taking another. Empty after the first run of each.
+    cut_snapshots: HashMap<TaskId, String>,
     /// The newest message of the bus when each lead's run that goes on began: what the lead says to its member after it is
     /// the reason of what it returns in that run. Not kept over a restart: a run that was going is not finished by the
     /// daemon that starts. A task whose mark could not be read has none.
@@ -630,6 +633,7 @@ impl Owner {
             hangs: HashMap::new(),
             reasons: HashMap::new(),
             leads_being_told: HashSet::new(),
+            cut_snapshots: HashMap::new(),
             lead_marks: HashMap::new(),
             wake_counts: HashMap::new(),
             wake_notes: HashMap::new(),
@@ -777,6 +781,7 @@ impl Owner {
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
+        self.begin_sessions_after_cut(&recovery.interrupted).await?;
         self.load_plan_snapshots().await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;

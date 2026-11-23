@@ -5,7 +5,8 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use agent_core::config::AbsolutePath;
+use agent_core::config::{AbsolutePath, RestartSession};
+use agent_core::decide::ladder::Trouble;
 use agent_core::history::Record;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::log::LogEvent;
@@ -15,7 +16,8 @@ use agent_runtime::process::error_chain;
 use agent_runtime::snapshot::take_snapshot;
 use tracing::Instrument;
 
-use super::Owner;
+use super::{Owner, OwnerError};
+use crate::daemon::recovery::{AfterCut, after_cut};
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -70,7 +72,14 @@ impl Owner {
                 .instrument(span.clone())
                 .await
             {
-                Ok(record) => self.history.record(Record::Snapshot(Box::new(record))),
+                Ok(record) => {
+                    let reference = format!(
+                        "refs/agents/snapshots/{}/{}/{}",
+                        target.round, target.task, record.number
+                    );
+                    self.cut_snapshots.insert(target.task.clone(), reference);
+                    self.history.record(Record::Snapshot(Box::new(record)));
+                }
                 Err(error) => {
                     let _entered = span.enter();
                     tracing::warn!(
@@ -83,6 +92,36 @@ impl Owner {
                 }
             }
         }
+    }
+
+    /// Begins a new session of each task whose run a restart or a stop of the daemon cut, when `[restart] session` and
+    /// [`after_cut`] say so: its next run is briefed with the reason `daemon_down`, no session before it is resumed, and no
+    /// new session of its agent is counted. `interrupted` are the tasks whose runs [`recover`](crate::daemon::recovery::recover)
+    /// ended.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state refuses the new session.
+    pub(super) async fn begin_sessions_after_cut(&mut self, interrupted: &[TaskId]) -> Result<(), OwnerError> {
+        let setting: RestartSession = self.parts.settings.config.restart().session;
+        for target in self.cut_tasks(interrupted) {
+            let Some(found) = self.parts.state.find_task(&target.task) else {
+                continue;
+            };
+            if after_cut(setting, found.role, found.member, Some(&target.round)) != AfterCut::NewSession {
+                // The snapshot kept for a briefing that will not be written is of no use.
+                self.cut_snapshots.remove(&target.task);
+                continue;
+            }
+            let at = self.after_last_run(&target.task)?;
+            if self
+                .parts
+                .state
+                .begin_holder_session(&target.task, Trouble::DaemonDown, at)?
+            {
+                agent_runtime::history::log_decision("restart", &target.task.as_str(), &"NewSession");
+            }
+        }
+        Ok(())
     }
 
     /// Every task in the state whose last run was cut by an unclean crash (`interrupted`) or by a graceful stop

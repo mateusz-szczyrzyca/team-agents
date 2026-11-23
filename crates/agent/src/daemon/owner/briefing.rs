@@ -200,7 +200,12 @@ impl Owner {
         // The messages are those to the name the task has on its team's bus, whoever holds it now.
         let reader = (AgentName::from_str(member.bus_agent().name())?, team.id().clone());
         let git = Git::new(worktree.clone(), CommitIdentity::for_agent(config.git(), &agent));
-        let snapshot = self.snapshot(&worktree, &round, task).await?;
+        // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from; nothing has
+        // touched the worktree since.
+        let snapshot = match self.cut_snapshots.remove(task) {
+            Some(reference) if reason == Trouble::DaemonDown => reference,
+            Some(_) | None => self.snapshot(&worktree, &round, task).await?,
+        };
         let head = git.rev_parse(&Revision::Head).await?;
         let forked = git.merge_base(&Revision::Head, &Revision::Branch(base.clone())).await?;
         let commits = git.range_log(&forked, &head).await?;
