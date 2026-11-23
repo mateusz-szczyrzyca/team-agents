@@ -58,7 +58,18 @@ fn count(value: Option<u64>) -> Result<Option<i64>, WriteError> {
 /// # Errors
 /// [`ReadError::Query`] when the row cannot be read, [`ReadError::Value`] when a count in it is negative.
 pub(super) fn read(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<RunUsage>, ReadError> {
-    // A history written before migration 22 has no table: none of its runs has a usage, and so none is told.
+    if !has_table(snapshot)? {
+        return Ok(None);
+    }
+    read_row(snapshot, run)
+}
+
+/// Whether the history has the table of usage: one written before migration 22 has none, and none of its runs has a
+/// usage, so none is told.
+///
+/// # Errors
+/// [`ReadError::Query`] when the schema cannot be read.
+fn has_table(snapshot: &Transaction<'_>) -> Result<bool, ReadError> {
     let tables: i64 = snapshot
         .query_row(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'run_usage'",
@@ -69,9 +80,14 @@ pub(super) fn read(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<Run
             table: "run_usage",
             source,
         })?;
-    if tables == 0 {
-        return Ok(None);
-    }
+    Ok(tables != 0)
+}
+
+/// The row of `run` in the table of usage; `None` when it has none.
+///
+/// # Errors
+/// [`ReadError::Query`] when the row cannot be read, [`ReadError::Value`] when a count in it is negative.
+fn read_row(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<RunUsage>, ReadError> {
     let row = snapshot
         .query_row(
             "SELECT first_context, last_context, tokens_written, cost_usd FROM run_usage WHERE run = ?1",
@@ -116,4 +132,25 @@ fn read_count(run: &RunId, value: Option<i64>) -> Result<Option<u64>, ReadError>
             })
         })
         .transpose()
+}
+
+/// The usage of each of `runs` that has a row, read in the one snapshot of `snapshot`; a run without a row is not in
+/// the result, and a history without the table has none.
+///
+/// # Errors
+/// [`ReadError::Query`] when a row cannot be read, [`ReadError::Value`] when a count in it is negative.
+pub(super) fn read_many(
+    snapshot: &Transaction<'_>,
+    runs: &[RunId],
+) -> Result<std::collections::BTreeMap<RunId, RunUsage>, ReadError> {
+    let mut found = std::collections::BTreeMap::new();
+    if runs.is_empty() || !has_table(snapshot)? {
+        return Ok(found);
+    }
+    for run in runs {
+        if let Some(usage) = read_row(snapshot, run)? {
+            found.insert(run.clone(), usage);
+        }
+    }
+    Ok(found)
 }

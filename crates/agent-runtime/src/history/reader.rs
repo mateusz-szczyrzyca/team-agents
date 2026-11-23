@@ -604,8 +604,8 @@ impl Reader {
         &self,
         runs: &[RunId],
     ) -> Result<std::collections::BTreeMap<RunId, agent_core::cli::RunUsage>, ReadError> {
-        let _unused = runs;
-        Ok(std::collections::BTreeMap::new())
+        let snapshot = self.snapshot("run_usage")?;
+        super::usage::read_many(&snapshot, runs)
     }
 
     /// The latest judgement for each step of `task`.

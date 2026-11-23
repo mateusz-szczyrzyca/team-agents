@@ -244,13 +244,8 @@ pub(crate) fn read_live_run_usage(
 /// The usage rows of `runs` in the database at `copied`.
 fn usage_of(copied: &Path, runs: &[RunId]) -> Result<Vec<(RunId, RunUsage)>, HistoryCollectionError> {
     let reader = crate::history::Reader::open(copied).map_err(HistoryCollectionError::Read)?;
-    let mut found = Vec::new();
-    for run in runs {
-        if let Some(usage) = reader.run_usage(run).map_err(HistoryCollectionError::Read)? {
-            found.push((run.clone(), usage));
-        }
-    }
-    Ok(found)
+    let found = reader.run_usages(runs).map_err(HistoryCollectionError::Read)?;
+    Ok(found.into_iter().collect())
 }
 
 fn snapshot(

@@ -37,6 +37,17 @@ fn context_series(
     usage: &std::collections::BTreeMap<agent_core::ids::RunId, agent_core::cli::RunUsage>,
     bounds: &std::collections::BTreeMap<String, u64>,
 ) -> String {
+    // The session of a run is the latest one its stream reported; the one it was launched with is the fallback.
+    let mut observed: std::collections::BTreeMap<&agent_core::ids::RunId, (u32, &agent_core::state::SessionId)> =
+        std::collections::BTreeMap::new();
+    for stored in records {
+        if let agent_core::history::Record::Session(seen) = &stored.record {
+            let entry = observed.entry(&seen.run).or_insert((seen.number.get(), &seen.session));
+            if seen.number.get() >= entry.0 {
+                *entry = (seen.number.get(), &seen.session);
+            }
+        }
+    }
     let mut order: Vec<TaskId> = Vec::new();
     let mut groups: std::collections::BTreeMap<TaskId, Vec<String>> = std::collections::BTreeMap::new();
     for stored in records {
@@ -66,9 +77,10 @@ fn context_series(
         if let (Some(bound), Some(last)) = (bound, usage.last_context)
             && last > bound
         {
-            let session = start
-                .session
-                .as_ref()
+            let session = observed
+                .get(&start.run)
+                .map(|(_, id)| *id)
+                .or(start.session.as_ref())
                 .map_or_else(|| "session not known".to_owned(), |id| format!("session {id}"));
             lines.push(format!(
                 "run {} ({session}) is above its bound: last context {last} tokens > {bound} tokens (agent {})",
