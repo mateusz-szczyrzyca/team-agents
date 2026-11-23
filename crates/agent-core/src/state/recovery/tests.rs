@@ -309,3 +309,24 @@ fn recovery_rejects_uninstalled_or_changed_predecessors_without_mutation() {
         assert_eq!(state, before);
     }
 }
+
+#[test]
+fn recovery_refuses_a_new_source_reusing_another_lineages_task() {
+    let mut state = State::new();
+    state.insert_team(team(1)).unwrap();
+    state.prepare_recovery(&team_id(1), destination(2, 10), 1).unwrap();
+    state.remove_team(&team_id(1)).unwrap();
+    state.insert_team(team_of(4, 1)).unwrap();
+    let before = reload(&state);
+    assert_eq!(
+        state.prepare_recovery(&team_id(4), destination(3, 20), 1),
+        Err(RecoveryError::Insert {
+            source: InvalidState::DuplicateTask {
+                task: crate::state::fixtures::task(1),
+                first: team_id(1),
+                second: team_id(4),
+            }
+        })
+    );
+    assert_eq!(state, before);
+}
