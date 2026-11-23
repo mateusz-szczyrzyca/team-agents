@@ -277,3 +277,16 @@ fn a_judgement_of_a_step_the_plan_no_longer_has_is_left_out() {
 
     assert_eq!(standing(current, WRITTEN, judged), []);
 }
+
+#[test]
+fn a_run_the_daemon_cut_is_not_told_as_an_agent_that_ended_without_a_status() {
+    // Recovery records a run the daemon's stop or crash cut as ended with no status and no exit code.
+    assert_eq!(
+        run_end_word(Some(&RunEnd::NoStatus { exit_code: None })),
+        "cut by a stop of the daemon"
+    );
+    assert_eq!(
+        run_end_word(Some(&RunEnd::NoStatus { exit_code: Some(0) })),
+        "no status"
+    );
+}
