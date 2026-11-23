@@ -40,6 +40,8 @@ pub(super) enum NoticeKind {
     Paused,
     /// Task reported failed (`run/notice-failed`).
     Failed,
+    /// Task reported failed twice without a tool (`run/notice-failed-no-tool`).
+    FailedNoTool,
     /// Run ended without status code (`run/notice-no-status`).
     NoStatus,
     /// Run ended by signal without status (`run/notice-no-status-signal`).
@@ -82,6 +84,7 @@ impl NoticeKind {
             Self::Questions | Self::Incomplete => NoticeStatus::Questions,
             Self::Decision | Self::NotAsked | Self::Opinion => NoticeStatus::Decision,
             Self::Failed
+            | Self::FailedNoTool
             | Self::RunFailed
             | Self::StartFailed
             | Self::NoStatus
@@ -252,6 +255,8 @@ pub(super) enum Notice {
         /// The end of its final message.
         message: String,
     },
+    /// The agent reported `STATUS: FAILED` twice without calling a tool step, after its one retry of the first.
+    FailedNoTool,
     /// The run ended without a status line.
     NoStatus {
         /// The exit code; `None` when a signal ended the process.
@@ -347,6 +352,17 @@ impl Notice {
                 common.with("message", message)?,
                 NoticeKind::Failed,
             ),
+            Self::FailedNoTool => {
+                let cli = context
+                    .cli
+                    .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
+                let model = context.model.unwrap_or("configured");
+                (
+                    HarnessPrompt::NoticeFailedNoTool,
+                    common.with("cli", cli)?.with("model", model)?,
+                    NoticeKind::FailedNoTool,
+                )
+            }
             Self::NoStatus { exit: Some(code) } => (
                 HarnessPrompt::NoticeNoStatus,
                 common.with("exit", code.to_string())?,

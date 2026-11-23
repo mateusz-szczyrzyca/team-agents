@@ -720,3 +720,57 @@ async fn a_failure_that_did_not_report_failed_is_not_retried() {
     assert_eq!(status, TaskStatus::Failed);
     assert!(told.is_some(), "the human is told of a real failure");
 }
+
+/// A second run that reported `STATUS: FAILED` without calling a tool — the task was already retried once for a no-tool
+/// failure — fails the task with the diagnostic that names the no-tool runs, not the generic failure notice.
+#[tokio::test]
+async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_reason() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    // A fallen run without a tool call was already retried once: the durable "already retried" flag is that renewal.
+    owner
+        .parts
+        .state
+        .renew_task(
+            &task(1),
+            agent_core::decide::ladder::Trouble::NoToolCall,
+            crate::fixtures::at(1),
+        )
+        .unwrap();
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            false,
+            crate::fixtures::at(3),
+            notice,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert!(
+        matches!(told.as_ref(), Some(Notice::FailedNoTool)),
+        "the human is told the no-tool reason, not a generic failure: {told:?}"
+    );
+}

@@ -74,6 +74,8 @@ pub enum HarnessPrompt {
     NoticePaused,
     /// The notification that an agent reported `STATUS: FAILED`.
     NoticeFailed,
+    /// The notification that an agent reported `STATUS: FAILED` twice without calling a tool, after its one retry.
+    NoticeFailedNoTool,
     /// The notification that a run ended without a status line, with an exit code.
     NoticeNoStatus,
     /// The notification that a run a signal ended had no status line.
@@ -151,6 +153,7 @@ impl HarnessPrompt {
         Self::NoticeHung,
         Self::NoticePaused,
         Self::NoticeFailed,
+        Self::NoticeFailedNoTool,
         Self::NoticeNoStatus,
         Self::NoticeNoStatusSignal,
         Self::NoticeStartFailed,
@@ -268,6 +271,11 @@ impl HarnessPrompt {
                 "harness/run/notice-failed.md",
                 Audience::Human,
                 &["agent", "task", "message"],
+            ),
+            Self::NoticeFailedNoTool => PromptSpec::new(
+                "harness/run/notice-failed-no-tool.md",
+                Audience::Human,
+                &["agent", "task", "cli", "model"],
             ),
             Self::NoticeNoStatus => PromptSpec::new(
                 "harness/run/notice-no-status.md",
