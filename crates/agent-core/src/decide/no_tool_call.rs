@@ -31,7 +31,9 @@ pub fn after_failed_without_tool(
         RunEnd::Reported {
             outcome: crate::status::RunOutcome::Failed
         }
-    ) && !used_a_tool && first_of_session && !already_retried
+    ) && !used_a_tool
+        && first_of_session
+        && !already_retried
     {
         AfterFailedWithoutTool::Retry
     } else {

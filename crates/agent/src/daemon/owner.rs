@@ -1638,19 +1638,16 @@ impl Owner {
         let run_id = run.id().clone();
         let looked =
             tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.steps(&run_id))).await;
-        let steps = match looked {
-            Ok(Ok(steps)) => steps,
-            // A missing or unreadable history is not evidence that no tool was called: keep the task failed.
-            Ok(Err(_)) | Err(_) => return true,
+        // A missing or unreadable history is not evidence that no tool was called: keep the task failed.
+        let Ok(Ok(steps)) = looked else {
+            return true;
         };
-        steps
-            .iter()
-            .any(|stored| {
-                matches!(
-                    StepKind::of(&stored.value.event),
-                    StepKind::BusCall | StepKind::ToolCall | StepKind::Command | StepKind::FileEdit
-                )
-            })
+        steps.iter().any(|stored| {
+            matches!(
+                StepKind::of(&stored.value.event),
+                StepKind::BusCall | StepKind::ToolCall | StepKind::Command | StepKind::FileEdit
+            )
+        })
     }
 
     /// Decide continuation from the persisted suffix of the session, so a restart never resets its budget: the same

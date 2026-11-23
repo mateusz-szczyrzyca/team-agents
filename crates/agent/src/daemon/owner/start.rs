@@ -216,6 +216,30 @@ async fn compose_run_prompt(
     }
 }
 
+/// The note that tells a run retried after its session reported FAILED without a tool call why it starts again,
+/// appended before its briefing; `None` for every other run.
+fn no_tool_call_note(
+    ctx: &Context<'_>,
+    member: &Member,
+    participant: &Participant,
+) -> Result<Option<String>, StartProblem> {
+    let retried = member
+        .renewals()
+        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::NoToolCall)
+        && member.awaits_new_session();
+    if !retried {
+        return Ok(None);
+    }
+    let values = Variables::new()
+        .with("agent", participant.name())
+        .map_err(ComposeError::from)?;
+    let note = ctx
+        .texts
+        .render(HarnessPrompt::NoToolCall, &values)
+        .map_err(ComposeError::from)?;
+    Ok(Some(note))
+}
+
 /// Makes the run of `task` ready; the first run of a new session the ladder started it in is given `briefing`.
 ///
 /// # Errors
@@ -281,18 +305,10 @@ pub(super) async fn plan(
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
     let prompt = with_plan(ctx, role, member, kind, prompt)?;
     let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
-    // A run retried after its session reported FAILED without a tool call is told why, before its briefing: it is a
-    // fresh session of the same task, and the run before it never used the tools of the bus.
-    let prompt = if member
-        .renewals()
-        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::NoToolCall)
-        && member.awaits_new_session()
-    {
-        let values = Variables::new().with("agent", participant.name()).map_err(ComposeError::from)?;
-        let note = ctx.texts.render(HarnessPrompt::NoToolCall, &values).map_err(ComposeError::from)?;
-        format!("{}\n\n{note}", prompt.trim_end())
-    } else {
-        prompt
+    // A run retried after its session reported FAILED without a tool call is told why, before its briefing.
+    let prompt = match no_tool_call_note(ctx, member, participant)? {
+        Some(note) => format!("{}\n\n{note}", prompt.trim_end()),
+        None => prompt,
     };
     let prompt = match briefing {
         Some(facts) => facts.render(ctx.texts, task, &prompt)?,

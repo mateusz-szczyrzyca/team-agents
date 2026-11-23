@@ -1135,8 +1135,12 @@ impl Owner {
             // to the lead in the state, and the briefing is gathered at the next turn of the loop.
             let told = if found.member.owes_lead() {
                 None
-            } else if matches!(end, &RunEnd::Reported { outcome: RunOutcome::Failed })
-                && found.member.status() != TaskStatus::Failed
+            } else if matches!(
+                end,
+                &RunEnd::Reported {
+                    outcome: RunOutcome::Failed
+                }
+            ) && found.member.status() != TaskStatus::Failed
             {
                 // A failed run that the daemon retried for "no tool call" is not a failure of the task: the task is
                 // queued again in a new session, and the coordinator is told only if the retried run fails too.
