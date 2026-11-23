@@ -444,6 +444,7 @@ The daemon records teams, rounds, runs and their steps and changes in `history.d
 pull requests, review and fix passes, questions, answers, controls and notifications. See
 [`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in
 `agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
+On its first start, version 0.74.0 migrates `history.db` to schema 20 to record team removals, preserving existing records. An older daemon refuses schema 20 as an unsupported newer database; keep a backup before upgrading if you need to return to an older daemon.
 Known values from `secrets.toml` are replaced with `[REDACTED]` before history persistence, including echoed CLI output;
 secret-bearing structured identities cause counted omissions. Raw CLI output files are separate from this protection; Rust tasks no longer write `activity.jsonl`.
 Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
