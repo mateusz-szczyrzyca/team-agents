@@ -176,11 +176,11 @@ enum Job {
     },
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
-    /// The usage of runs to write, with awaited confirmation.
+    /// The usage of runs to write. The caller does not wait for the answer: the writer reports a refused write itself.
     PersistUsage {
         /// The usage records to write.
         records: Vec<super::usage::RunUsageRecord>,
-        /// Channel to confirm the write outcome.
+        /// Channel for the write outcome; its receiver is dropped at once by the caller of the engine.
         ack: tokio::sync::oneshot::Sender<Result<(), WriteError>>,
     },
     /// Judgements of a task's plan steps to write, with awaited confirmation.

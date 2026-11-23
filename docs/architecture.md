@@ -1607,7 +1607,10 @@ Each CLI adapter reads, per model call, what the stream tells of the context siz
 ([`OutputParser::usage`](../crates/agent-core/src/cli.rs)); a part the CLI does not tell is "not told", never an estimate.
 The engine writes a run's usage to the history's `run_usage` table once the process is gone, through a fire-and-forget
 job of the history writer (a full queue or a refused write is reported, and the run goes on). The table is outside the
-ledger, like judgements. `agent status`, `agent log` and `agent debug` read it through `Reader::run_usage`; a run with no
-row is "not told". The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
+ledger, like judgements. `agent status` reads the last run's row through `Reader::run_usage`, off the async runtime;
+`agent log` and `agent debug` read the rows of all their runs at once through `Reader::run_usages`; a run with no row
+is "not told". A result line that reports the run's output total (Claude Code, Antigravity) gives the tokens written in
+place of the sum of the calls, and a Claude message that tells no usage is a call that tells nothing, so the call before
+it is not told as the last one. The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
 `max_context`). Nothing resumes or stops a session by it yet.
 
