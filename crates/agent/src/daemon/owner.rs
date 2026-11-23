@@ -28,7 +28,6 @@ mod wakes;
 mod worker_result;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
-use std::future::{Ready, ready};
 use std::num::NonZeroUsize;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -1565,8 +1564,7 @@ impl Owner {
             }
             Settled::Failed(notice) => {
                 self.hangs.remove(task);
-                self.settle_failed_without_tool(task, &end, used_tool, now, notice)
-                    .await?
+                self.settle_failed_without_tool(task, &end, used_tool, now, notice)?
             }
             Settled::Questions => {
                 self.hangs.remove(task);
@@ -1604,10 +1602,6 @@ impl Owner {
     /// tool step, opened its session, and was not already retried for a failed run without a tool call is sent to a new
     /// session (queued, nobody told); any other failed run fails the task and the human is told, as before. `end` is the
     /// run's real end as the classifier reported it, so a failure that did not report `STATUS: FAILED` is never retried.
-    ///
-    /// The settling is synchronous; the method still returns a future — the decision is `Ready` rather than `async` — so
-    /// that the callers' `.await` reads the same way, and a state access that later becomes a request to another task
-    /// stops needing the `.await` removed here.
     fn settle_failed_without_tool(
         &mut self,
         task: &TaskId,
@@ -1615,7 +1609,7 @@ impl Owner {
         used_tool: bool,
         at: Timestamp,
         notice: Notice,
-    ) -> Ready<Result<(TaskStatus, Option<Notice>), OwnerError>> {
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
         let (first_of_session, already_retried) = match self.parts.state.find_task(task) {
             Some(found) => {
                 let first = found.member.first_of_session();
@@ -1630,14 +1624,14 @@ impl Owner {
         if after_failed_without_tool(end, used_tool, first_of_session, already_retried) == AfterFailedWithoutTool::Retry
         {
             if let Err(source) = self.parts.state.renew_task(task, Trouble::NoToolCall, at) {
-                return ready(Err(source.into()));
+                return Err(source.into());
             }
             log_decision(
                 "retry",
                 &format!("task={task}, reason=no_tool_call"),
                 "queued in a new session",
             );
-            ready(Ok((TaskStatus::Queued, None)))
+            Ok((TaskStatus::Queued, None))
         } else if already_retried
             && first_of_session
             && matches!(
@@ -1649,14 +1643,14 @@ impl Owner {
             && !used_tool
         {
             // A second run that reported FAILED without calling a tool has used the one retry: the human is told the
-            // named reason — the CLI or the model did not offer or use the tools — beside what the run said last.
-            let message = match notice {
-                Notice::Failed { message } => message,
-                _ => String::new(),
+            // named reason — the CLI or the model did not offer or use the tools — beside what the run said last. The
+            // reason is drawn only from a reported failure; any other notice is told as itself.
+            let Notice::Failed { message } = notice else {
+                return Ok((TaskStatus::Failed, Some(notice)));
             };
-            ready(Ok((TaskStatus::Failed, Some(Notice::FailedNoTool { message }))))
+            Ok((TaskStatus::Failed, Some(Notice::FailedNoTool { message })))
         } else {
-            ready(Ok((TaskStatus::Failed, Some(notice))))
+            Ok((TaskStatus::Failed, Some(notice)))
         }
     }
 

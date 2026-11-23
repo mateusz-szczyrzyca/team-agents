@@ -714,7 +714,6 @@ async fn a_failure_that_did_not_report_failed_is_not_retried() {
             crate::fixtures::at(0),
             notice,
         )
-        .await
         .unwrap();
 
     assert_eq!(status, TaskStatus::Failed);
@@ -765,7 +764,6 @@ async fn a_failed_run_without_a_tool_that_was_already_retried_tells_the_named_re
             crate::fixtures::at(3),
             notice,
         )
-        .await
         .unwrap();
 
     assert_eq!(status, TaskStatus::Failed);
@@ -849,7 +847,6 @@ async fn a_first_no_tool_failure_of_a_later_independent_session_is_retried_once(
             crate::fixtures::at(7),
             notice,
         )
-        .await
         .unwrap();
 
     assert_eq!(status, TaskStatus::Queued);
@@ -909,7 +906,6 @@ async fn a_notice_that_is_not_failed_is_told_as_itself_when_the_no_tool_retry_wa
             crate::fixtures::at(3),
             notice,
         )
-        .await
         .unwrap();
 
     assert_eq!(status, TaskStatus::Failed);
@@ -992,7 +988,6 @@ async fn a_no_tool_failure_after_a_successful_retry_fails_plainly() {
             crate::fixtures::at(6),
             notice,
         )
-        .await
         .unwrap();
 
     assert_eq!(status, TaskStatus::Failed);
