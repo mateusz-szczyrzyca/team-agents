@@ -58,7 +58,7 @@ fn count(value: Option<u64>) -> Result<Option<i64>, WriteError> {
 /// # Errors
 /// [`ReadError::Query`] when the row cannot be read, [`ReadError::Value`] when a count in it is negative.
 pub(super) fn read(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<RunUsage>, ReadError> {
-    // A history written before migration 21 has no table: none of its runs has a usage, and so none is told.
+    // A history written before migration 22 has no table: none of its runs has a usage, and so none is told.
     let tables: i64 = snapshot
         .query_row(
             "SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = 'run_usage'",

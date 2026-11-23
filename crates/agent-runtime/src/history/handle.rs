@@ -369,7 +369,8 @@ impl History {
         rx.await?.map_err(PersistJudgementsError::Write)
     }
 
-    /// Hands the usage of runs to the history and awaits confirmation of commit.
+    /// Hands the usage of runs to the history's writer without waiting for the commit: the usage is informational, so
+    /// a write the database refuses is reported by the writer, not to the caller.
     ///
     /// # Errors
     /// Returns [`PersistUsageError`] if the history writer is unavailable or its queue is full.

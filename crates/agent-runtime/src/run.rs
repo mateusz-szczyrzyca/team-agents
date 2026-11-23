@@ -630,8 +630,6 @@ impl RunEngine {
         })));
     }
 
-    /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
-    /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
     /// What a run leaves in the history once its process is gone, also for a run that was cancelled: what it changed,
     /// and what its stream told of its usage.
     async fn record_process_end(&self, job: &RunJob, head_before: Option<CommitId>, usage: RunUsage) {
@@ -660,6 +658,8 @@ impl RunEngine {
         }
     }
 
+    /// Records what the run changed in its worktree, now that its process is gone: the commits and files between the commit
+    /// it started at and the one it ended at, and what it left uncommitted. A worktree git cannot read has none.
     async fn record_changes(&self, job: &RunJob, head_before: Option<CommitId>) {
         self.history
             .record_captured(&job.run, CaptureKind::Changes, &self.parts.clock, async {
