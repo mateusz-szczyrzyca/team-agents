@@ -733,10 +733,18 @@ fn standing_judgements(
 ) -> Vec<(String, JudgementState)> {
     let mut standing: Vec<(String, JudgementState)> = judged
         .iter()
+        .filter(|(id, record)| {
+            let judged_step = record
+                .run
+                .as_ref()
+                .and_then(|run| plans_by_run.get(run))
+                .and_then(|plan_then| plan_then.step(id));
+            // The harness itself judges a step again when its text is not what it was at the last judgement.
+            judged_step.is_some_and(|before| plan.step(id) == Some(before))
+        })
         .map(|(step, record)| (step.to_string(), record.state))
         .collect();
     standing.sort_by(|a, b| a.0.cmp(&b.0));
-    let _ = (plan, plans_by_run);
     standing
 }
 
