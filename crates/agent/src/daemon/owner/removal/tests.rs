@@ -874,3 +874,37 @@ async fn removal_refuses_corrupt_git_metadata_without_deleting_state_or_files() 
     }
     assert_eq!(git(checkout.path(), &["rev-parse", branch.as_str()]), tip);
 }
+
+#[tokio::test]
+async fn removal_discards_task_caches_and_preserves_the_other_teams_entries() {
+    let state = two_teams();
+    let daemon = Daemon::new(&state, None);
+    let checkout = checkout();
+    make_team_files(&daemon, checkout.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    for number in 1..=4 {
+        owner.task_plans.insert(task(number), Vec::new());
+        owner
+            .deferred_targets
+            .insert(task(number), daemon.home.task_dir(&task(number)).join("target"));
+    }
+
+    owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+
+    let retained = BTreeSet::from([task(3), task(4)]);
+    assert_eq!(owner.task_plans.keys().cloned().collect::<BTreeSet<_>>(), retained);
+    assert_eq!(
+        owner.deferred_targets.keys().cloned().collect::<BTreeSet<_>>(),
+        retained
+    );
+}
