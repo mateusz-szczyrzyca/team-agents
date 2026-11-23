@@ -1616,7 +1616,8 @@ impl Owner {
                 let already = found
                     .member
                     .renewals()
-                    .is_some_and(|renewals| renewals.reason() == Trouble::NoToolCall);
+                    .is_some_and(|renewals| renewals.reason() == Trouble::NoToolCall)
+                    && found.member.is_the_renewed_run();
                 (first, already)
             }
             None => (false, false),

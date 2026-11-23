@@ -887,6 +887,16 @@ impl Member {
             .is_some_and(|renewals| renewals.awaits_run(self.runs.len()))
     }
 
+    /// Whether the last run is the immediate run of the last renewal: the only run since the task was last started
+    /// anew. It is the run the one retry of a no-tool renewal applies to; a later run of the same or of a later
+    /// session is a fresh start, not the run the renewal was recorded for.
+    #[must_use]
+    pub fn is_the_renewed_run(&self) -> bool {
+        self.renewals
+            .as_ref()
+            .is_some_and(|renewals| renewal::runs_since(&self.runs, Some(renewals)).len() == 1)
+    }
+
     /// How many of the latest runs went bad in a row since the task was started anew.
     #[must_use]
     pub fn bad_runs_since_renewal(&self) -> u32 {

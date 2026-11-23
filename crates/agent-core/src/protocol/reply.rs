@@ -445,14 +445,14 @@ impl MemberSummary {
 /// Why `member`'s task lies failed, when its last trouble is one worth telling on the status line: a failed task
 /// already retried once for a no-tool run names that, because it is a configuration problem, not ordinary work. The
 /// status column already says `failed`; the reason says of what. It is told only of the run that used the retry: the
-/// retried run that reported FAILED without a tool, the first of its session; a retry that called a tool, a failure
-/// after the retry succeeded, or a later run of the same session is a different trouble.
+/// immediate run of the last renewal that reported FAILED without a tool; a retry that called a tool, a failure after
+/// the retry succeeded, or a later run — of the same or of a later session — is a different trouble.
 fn failed_reason_of(member: &Member) -> Option<String> {
     if member.status() == TaskStatus::Failed
         && member
             .renewals()
             .is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
-        && member.first_of_session()
+        && member.is_the_renewed_run()
         && member.runs().last().is_some_and(|run| {
             matches!(
                 run.state(),
