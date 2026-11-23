@@ -443,11 +443,21 @@ impl Reader {
     /// # Errors
     /// [`ReadError`].
     pub fn newest_runs_of_task(&self, task: &TaskId, limit: NonZeroUsize) -> Result<NewestRuns, ReadError> {
-        let all = self.runs_of_task(task)?;
-        let _ = limit;
+        let snapshot = self.snapshot("runs")?;
+        // One more than the limit tells whether older runs exist; only the keys of the rows are read for it.
+        let wanted = limit.get().saturating_add(1);
+        let mut ids = keys(
+            &snapshot,
+            "runs",
+            &format!("SELECT run FROM runs WHERE task = ?1 ORDER BY at DESC, rowid DESC LIMIT {wanted}"),
+            task.as_str(),
+        )?;
+        let left_out = ids.len() > limit.get();
+        ids.truncate(limit.get());
+        ids.reverse();
         Ok(NewestRuns {
-            runs: all,
-            left_out: false,
+            runs: read_runs(&snapshot, &ids)?,
+            left_out,
         })
     }
 
