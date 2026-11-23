@@ -591,9 +591,9 @@ impl Reader {
     ///
     /// # Errors
     /// [`ReadError`].
-    pub fn run_usage(&self, _run: &RunId) -> Result<Option<agent_core::cli::RunUsage>, ReadError> {
-        // RED stub: the usage is not read yet.
-        Ok(None)
+    pub fn run_usage(&self, run: &RunId) -> Result<Option<agent_core::cli::RunUsage>, ReadError> {
+        let snapshot = self.snapshot("run_usage")?;
+        super::usage::read(&snapshot, run)
     }
 
     /// The latest judgement for each step of `task`.

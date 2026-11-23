@@ -2,9 +2,9 @@
 
 use agent_core::cli::RunUsage;
 use agent_core::ids::RunId;
-use rusqlite::{Transaction, params};
+use rusqlite::{OptionalExtension, Transaction, params};
 
-use super::error::{RecordKind, WriteError};
+use super::error::{ReadError, RecordKind, ValueProblem, WriteError};
 
 /// One run's usage as the history keeps it. Each part of `usage` is `None` where the CLI did not tell it.
 #[derive(Debug, Clone, PartialEq)]
@@ -50,5 +50,56 @@ pub(super) fn insert(tx: &Transaction<'_>, records: &[RunUsageRecord]) -> Result
 fn count(value: Option<u64>) -> Result<Option<i64>, WriteError> {
     value
         .map(|value| i64::try_from(value).map_err(|source| WriteError::Number { record: RECORD, source }))
+        .transpose()
+}
+
+/// The usage of `run` as the table keeps it; `None` when there is no row for it, which is "not told".
+///
+/// # Errors
+/// [`ReadError::Query`] when the row cannot be read, [`ReadError::Value`] when a count in it is negative.
+pub(super) fn read(snapshot: &Transaction<'_>, run: &RunId) -> Result<Option<RunUsage>, ReadError> {
+    let row = snapshot
+        .query_row(
+            "SELECT first_context, last_context, tokens_written, cost_usd FROM run_usage WHERE run = ?1",
+            params![run.as_str()],
+            |row| {
+                Ok((
+                    row.get::<_, Option<i64>>(0)?,
+                    row.get::<_, Option<i64>>(1)?,
+                    row.get::<_, Option<i64>>(2)?,
+                    row.get::<_, Option<f64>>(3)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|source| ReadError::Query {
+            table: "run_usage",
+            source,
+        })?;
+    let Some((first, last, written, cost)) = row else {
+        return Ok(None);
+    };
+    Ok(Some(RunUsage {
+        first_context: read_count(run, first)?,
+        last_context: read_count(run, last)?,
+        tokens_written: read_count(run, written)?,
+        cost_usd: cost,
+    }))
+}
+
+/// A count read from the table: `None` stays `None`, and a negative count is refused, since the table never holds one.
+///
+/// # Errors
+/// [`ReadError::Value`] for a negative count.
+fn read_count(run: &RunId, value: Option<i64>) -> Result<Option<u64>, ReadError> {
+    value
+        .map(|value| {
+            u64::try_from(value).map_err(|source| ReadError::Value {
+                table: "run_usage",
+                column: "count",
+                key: run.to_string(),
+                source: ValueProblem::Count(source),
+            })
+        })
         .transpose()
 }
