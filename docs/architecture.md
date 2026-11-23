@@ -288,6 +288,16 @@ briefing says so). Every word of it is in the catalog: the values are facts (the
 plan's marks, the end of each run). `State::renew_task` records the renewal and refuses a worker and a reviewer. Each decision is logged as `decision_taken` with `decision` `ladder`. A worker and a
 reviewer are not started anew; when the new session goes bad too, the task fails as before.
 
+**A run cut by the daemon going down** (`daemon/recovery.rs` `after_cut`, `Owner::begin_sessions_after_cut`,
+`[restart] session`): a run that a stop or a crash of the daemon ended with no exit code is not resumed in its old
+session. `recover` ends the run, `snapshot_interrupted` snapshots the worktree, and for a solo agent, a coordinator or a
+member whose task is queued and whose run worked for an open round, `State::begin_holder_session` records a new session
+with the reason `daemon_down` — a session boundary as for a hand-over, so no retry and no new session of the agent is
+counted and the round, its pull request and its passes are untouched. The briefing of the task's next run names the
+snapshot the restart took. A worker, a reviewer, a task with no open round and a task that already awaits a new session
+resume as before, and so does every task when `[restart] session = "same"` (`resume-restart.md`). A task with no session
+id has none to leave: it is started in a new session, briefed, all the same.
+
 **The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,
 `replacements`): when the ladder has no step left, the daemon offers the task to the agents of `[replacement] agents`, in
 their order, leaving out the agent that holds it and every agent of its team (crew and reviewers: a place in the team is
