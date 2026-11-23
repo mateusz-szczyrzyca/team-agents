@@ -339,3 +339,35 @@ fn a_new_session_after_the_daemon_went_down_counts_no_renewal_and_survives_a_res
     assert!(member.awaits_new_session());
     assert_eq!(member.last_session(), None, "no session before the cut is resumed");
 }
+
+#[test]
+fn a_session_above_its_bound_begins_anew_for_every_role_and_counts_no_renewal() {
+    let mut state = old_state();
+    let worker: TaskId = "task-20261111-193003-k3x9".parse().unwrap();
+    let reviewer: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+    let late: Timestamp = "2026-11-21T00:00:00Z".parse().unwrap();
+    // A worker and a reviewer of the fixture have no run yet: each starts one, so that there is a session to begin.
+    for (index, task) in [&worker, &reviewer].into_iter().enumerate() {
+        let (_, mut member) = state.find_task_mut(task).expect("the task");
+        let run = format!("run-20261120-20030{index}-w{index}w{index}");
+        member
+            .begin_run(run.parse().unwrap(), started(), None)
+            .expect("a run starts");
+    }
+
+    for task in [task(), worker.clone(), reviewer.clone()] {
+        let begun = state.begin_context_session(&task, late);
+        assert!(matches!(begun, Ok(true)), "{task}: {begun:?}");
+    }
+    let saved = state.to_json().expect("the state saves");
+    let loaded = State::from_json(&saved).expect("a restart reads it");
+
+    for task in [task(), worker, reviewer] {
+        let member = loaded.find_task(&task).expect("the task").member;
+        let renewals = member.renewals().expect("the new session was recorded");
+        assert_eq!(renewals.reason(), Trouble::ContextBound, "{task}");
+        assert_eq!(renewals.used(), 0, "{task}: a size above the bound counts no renewal");
+        assert!(member.awaits_new_session(), "{task}");
+        assert_eq!(member.last_session(), None, "{task}: no session before it is resumed");
+    }
+}

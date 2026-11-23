@@ -526,6 +526,17 @@ impl State {
         })
     }
 
+    /// Starts `task` anew in a new session because its session outgrew its agent's bound, at `at`: the runs after now
+    /// are the new session's, and no session before it is resumed. Every role is started anew for it, and no renewal is
+    /// counted. Returns whether the task was started anew: `false` for a task with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
+    pub fn begin_context_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
+        let _ = (task, at);
+        Ok(false)
+    }
+
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
     /// session of the agent before it is resumed, its bad runs are not counted against the new one, and the next run is
     /// briefed. Unlike [`State::renew_task`] it counts no new session of the task's agent. Returns whether a session was

@@ -772,6 +772,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::NoToolCall => "no_tool_call",
         Trouble::Busy => "busy",
         Trouble::DaemonDown => "daemon_down",
+        Trouble::ContextBound => "context_bound",
     }
 }
 
