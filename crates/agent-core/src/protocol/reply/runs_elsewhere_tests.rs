@@ -116,3 +116,18 @@ fn a_member_without_a_mark_has_no_waits_for_on_the_wire() {
     let value = serde_json::to_value(&marked).expect("a member is JSON");
     assert_eq!(value["waits_for"], json!({"team": TEAM_A, "task": TASK_A}), "{value}");
 }
+
+/// A member whose task failed with a named reason carries it on the wire — the opposite value of the helper's `None`:
+/// the reason is there for a client that can read it, and the strict old members that cannot are the protocol-eight
+/// tests' concern.
+#[test]
+fn a_member_with_a_named_failed_reason_shows_it_on_the_wire() {
+    let mut failed = member("codex-1", TASK_C, TaskStatus::Failed);
+    failed.failed_reason = Some("two runs ended without calling a tool".to_owned());
+    let value = serde_json::to_value(&failed).expect("a member is JSON");
+    assert_eq!(
+        value["failed_reason"],
+        json!("two runs ended without calling a tool"),
+        "{value}"
+    );
+}

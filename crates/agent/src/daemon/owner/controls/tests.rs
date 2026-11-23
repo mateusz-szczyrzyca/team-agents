@@ -694,6 +694,60 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
     assert!(owner.reasons.is_empty());
 }
 
+/// A run that reported `STATUS: FAILED` without calling a tool step — the opposite value of the used-tool initializer,
+/// `false` — is retried once in a new session at the owner boundary: the task is queued, nobody is told, and the
+/// renewal marks the run that follows as already retried.
+#[tokio::test]
+async fn a_run_that_reported_failed_without_a_tool_is_retried() {
+    use agent_core::decide::outcome::{Classified, ExitStatus, RunFinish, StoppedBy};
+    use agent_runtime::run::{FinishedRun, Progress};
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .transition(TaskStatus::Running)
+        .unwrap();
+    owner
+        .member_mut(&task(1))
+        .unwrap()
+        .1
+        .begin_run(crate::fixtures::run(1), crate::fixtures::at(0), None)
+        .unwrap();
+    let run = FinishedRun {
+        classified: Classified {
+            end: RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Failed,
+            },
+            pause: None,
+        },
+        finish: RunFinish {
+            exit: ExitStatus::Code(0),
+            stopped_by: StoppedBy::Nobody,
+        },
+        session: None,
+        final_message: None,
+        progress: Progress::Made,
+        used_tool: false,
+    };
+
+    owner.finished(&task(1), run).await.unwrap();
+
+    assert_eq!(status(&owner.parts.state, 1), TaskStatus::Queued);
+    assert!(owner.reasons.is_empty(), "a retry tells nobody: {:?}", owner.reasons);
+    let renewals = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .renewals()
+        .unwrap();
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
 /// A failure that did not report `STATUS: FAILED` is never retried at the owner boundary, even when the run called no
 /// tool on a fresh, not-yet-retried session: the decision gets the run's real end, not a fabricated one.
 #[tokio::test]
