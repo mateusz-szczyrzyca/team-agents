@@ -39,7 +39,7 @@ use crate::clock::SharedClock;
 use crate::git::{CommitIdentity, GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, log_decision};
-use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
+use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
 use crate::store::StateStore;
@@ -454,7 +454,7 @@ impl RunEngine {
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
         let head_before = self.head_of_worktree(&job).await;
-        let mut process = self
+        let process = self
             .parts
             .supervisor
             .spawn(&launch.process)
@@ -480,42 +480,9 @@ impl RunEngine {
             used_tool: false,
             unreadable: Unreadable::default(),
         };
-        let supervise = |source| RunError::Supervise {
-            task: job.task.clone(),
-            source,
-        };
-        let mut tick = tokio::time::interval(self.parts.timings.poll.max(MIN_POLL));
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let stopped_by = loop {
-            let event = tokio::select! {
-                exit = process.wait() => Watched::Exited(exit),
-                () = cancel.cancelled() => Watched::Cancelled,
-                _ = tick.tick() => Watched::Tick,
-            };
-            match event {
-                Watched::Exited(exit) => {
-                    let exit = exit.map_err(supervise)?;
-                    // What the leader started may outlive it; the run is over, so the rest of its group goes too.
-                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                    break Ended::By(StoppedBy::Nobody, exit);
-                }
-                Watched::Cancelled => {
-                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                    break Ended::Cancelled;
-                }
-                Watched::Tick => {
-                    follow.read_new().await?;
-                    let last = process.last_activity().await.map_err(supervise)?;
-                    // A run that waits for something the daemon does for it is not silent: its limit counts from
-                    // the later of its last output and the last time it was held.
-                    let last = hold.last_held().map_or(last, |held| last.max(held));
-                    if self.is_silent(last) {
-                        let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                        break Ended::By(StoppedBy::Watchdog, report.exit);
-                    }
-                }
-            }
-        };
+        let stopped_by = self
+            .supervise(&job, process, &mut follow, cancel, hold)
+            .await?;
         follow.drain().await?;
         self.record_changes(&job, head_before).await;
         let stderr = read_end(&stderr).await?;
@@ -553,6 +520,54 @@ impl RunEngine {
             progress: follow.progress,
             used_tool: follow.used_tool,
         })))
+    }
+
+    /// Waits for the run of `job` to end — it goes silent, is cancelled, or exits — feeding its output to `follow`,
+    /// and returns how it ended. The rest of the leader's process group is stopped once the run is over, consuming
+    /// the process.
+    async fn supervise(
+        &self,
+        job: &RunJob,
+        mut process: RunningProcess,
+        follow: &mut Follow<'_>,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<Ended, RunError> {
+        let supervise = |source| RunError::Supervise {
+            task: job.task.clone(),
+            source,
+        };
+        let mut tick = tokio::time::interval(self.parts.timings.poll.max(MIN_POLL));
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            let event = tokio::select! {
+                exit = process.wait() => Watched::Exited(exit),
+                () = cancel.cancelled() => Watched::Cancelled,
+                _ = tick.tick() => Watched::Tick,
+            };
+            match event {
+                Watched::Exited(exit) => {
+                    let exit = exit.map_err(supervise)?;
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                    return Ok(Ended::By(StoppedBy::Nobody, exit));
+                }
+                Watched::Cancelled => {
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                    return Ok(Ended::Cancelled);
+                }
+                Watched::Tick => {
+                    follow.read_new().await?;
+                    let last = process.last_activity().await.map_err(supervise)?;
+                    // A run that waits for something the daemon does for it is not silent: its limit counts from
+                    // the later of its last output and the last time it was held.
+                    let last = hold.last_held().map_or(last, |held| last.max(held));
+                    if self.is_silent(last) {
+                        let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                        return Ok(Ended::By(StoppedBy::Watchdog, report.exit));
+                    }
+                }
+            }
+        }
     }
 
     /// The commit the worktree of `job` is at, for the history; `None` when it is off or git cannot say.
