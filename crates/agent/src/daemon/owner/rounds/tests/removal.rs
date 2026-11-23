@@ -126,3 +126,91 @@ async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losi
         .unwrap();
     assert_eq!(after, before);
 }
+
+/// Proves the removal event through the owner, for the complete event-cause inventory too.
+pub(super) async fn record_team_removed(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    use std::sync::Arc;
+
+    use agent_core::config::Secrets;
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::LogLevel;
+    use agent_runtime::clock::SharedClock;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Problem, Reporter, Setup};
+    use tracing::instrument::WithSubscriber;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    use crate::daemon::owner::fixture::Daemon;
+    use crate::fixtures::{repo, solo_state, task, team_id};
+
+    /// A reporter for this isolated history writer, whose failure must fail the test.
+    #[derive(Debug)]
+    struct TestReporter;
+    impl Reporter for TestReporter {
+        fn report(&self, problem: &Problem) {
+            panic!("history failure: {problem:?}");
+        }
+    }
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let path = daemon.home.root().join("removal-history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(TestReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+    std::fs::create_dir_all(daemon.home.worktree_dir(&repo(), &task(1))).unwrap();
+    let task_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&task_dir).unwrap();
+    std::fs::write(task_dir.join("notes.txt"), "history stays").unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let removal = owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .with_subscriber(dispatch)
+        .await
+        .unwrap()
+        .unwrap();
+    started.writer.close().unwrap();
+    let rows = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    let matching: Vec<_> = rows
+        .iter()
+        .filter(|row| row.event().as_str() == "team_removed")
+        .collect();
+    assert_eq!(matching.len(), 1, "removal must have its own event: {rows:?}");
+    let row = matching[0];
+    assert_eq!(row.level(), LogLevel::Info);
+    assert_eq!(row.team(), Some(&team_id(0)));
+    assert_eq!(
+        row.fields().get("reason").and_then(|v| v.as_str()),
+        Some("requested by the human")
+    );
+    assert_eq!(
+        row.fields().get("freed_bytes").and_then(|v| v.as_u64()),
+        Some(removal.freed_bytes)
+    );
+    assert_eq!(row.fields().get("tasks").and_then(|v| v.as_u64()), Some(1));
+    assert_eq!(row.fields().get("bundle").and_then(|v| v.as_str()), Some("none"));
+    observed.insert(row.event());
+}
+
+#[tokio::test]
+async fn removal_records_its_own_event_with_reason_team_bundle_and_bytes() {
+    let mut observed = std::collections::BTreeSet::new();
+    record_team_removed(&mut observed).await;
+    assert_eq!(observed.len(), 1);
+}
