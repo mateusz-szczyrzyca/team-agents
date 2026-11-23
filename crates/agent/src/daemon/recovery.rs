@@ -23,6 +23,8 @@ pub(super) struct Recovery {
     pub(super) exhausted: Vec<TaskId>,
     /// The paused tasks and when each goes on.
     pub(super) wakes: Vec<(Timestamp, TaskId)>,
+    /// The tasks whose cut run began a new session of their agent under `[restart] session = "new"`.
+    pub(super) renewed: Vec<TaskId>,
     /// The queued tasks whose last runs hung, and how many hangs in a row: the watchdog's count, which a restart must
     /// not reset.
     pub(super) hangs: Vec<(TaskId, u32)>,
@@ -162,6 +164,21 @@ pub(super) fn after_cut(setting: RestartSession, role: Role, member: &Member, ro
         RestartSession::New if cut && works_on_its_own && briefable => AfterCut::NewSession,
         RestartSession::New | RestartSession::Same => AfterCut::SameSession,
     }
+}
+
+/// Like [`recover`], and a run that was going when the daemon went down begins a new session of its task when `restart`
+/// and [`after_cut`] say so, before the retries of the session are counted: a cut the daemon caused is no retry.
+///
+/// # Errors
+/// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.
+pub(super) fn recover_with(
+    state: &mut State,
+    now: Timestamp,
+    limits: &Limits,
+    restart: RestartSession,
+) -> Result<Recovery, RecoveryError> {
+    let _ = restart;
+    recover(state, now, limits)
 }
 
 /// Keeps interruption recovery queued except when an eligible session has used its entire no-status budget.

@@ -434,3 +434,111 @@ fn a_task_that_already_awaits_a_new_session_is_not_started_anew_twice() {
         AfterCut::SameSession
     );
 }
+
+// ---- a restart that begins a new session ---------------------------------------------------------------------------
+
+/// A state in which task `n` ran in an open round: `ended` runs ended with `end_of_run`, and one more is going, as when
+/// the daemon died.
+fn dying_in_a_round(n: u32, ended: u32, end_of_run: &RunEnd) -> State {
+    let mut state = team_state();
+    state
+        .team_mut(&crate::fixtures::team_id(0))
+        .unwrap()
+        .open_round(round(), Some("1.1".parse().unwrap()), at(1))
+        .unwrap();
+    for number in 1..=ended + 1 {
+        let (_, mut member) = state.find_task_mut(&task(n)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        drop(member);
+        state
+            .team_mut(&crate::fixtures::team_id(0))
+            .unwrap()
+            .begin_run(
+                &task(n),
+                agent_core::state::NewRun {
+                    id: run(number),
+                    at: at(10 * number),
+                    session: Some("ses-1".parse().unwrap()),
+                    rounds: vec![round()],
+                },
+            )
+            .unwrap();
+        if number <= ended {
+            let (_, mut member) = state.find_task_mut(&task(n)).unwrap();
+            member.end_run(at(10 * number + 5), end_of_run.clone()).unwrap();
+            member.transition(TaskStatus::Queued).unwrap();
+        }
+    }
+    state
+}
+
+#[test]
+fn a_run_the_daemon_cut_begins_a_new_session_that_counts_no_retry() {
+    let mut state = dying_in_a_round(2, 0, &RunEnd::Hung);
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New).unwrap();
+
+    let member = state.find_task(&task(2)).unwrap().member;
+    assert_eq!(recovery.renewed, [task(2)]);
+    assert_eq!(member.status(), TaskStatus::Queued);
+    assert!(member.awaits_new_session());
+    let renewals = member.renewals().expect("the new session is recorded");
+    assert_eq!(renewals.reason(), Trouble::DaemonDown);
+    assert_eq!(renewals.used(), 0);
+}
+
+#[test]
+fn two_endings_without_status_and_a_cut_by_the_daemon_do_not_fail_the_task() {
+    let no_status = RunEnd::NoStatus { exit_code: Some(0) };
+    let mut state = dying_in_a_round(2, 2, &no_status);
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New).unwrap();
+
+    assert_eq!(recovery.exhausted, Vec::<TaskId>::new());
+    assert_eq!(recovery.renewed, [task(2)]);
+    assert_eq!(status(&state, 2), TaskStatus::Queued);
+}
+
+#[test]
+fn with_the_same_session_the_cut_still_counts_as_the_third_ending_without_status() {
+    let no_status = RunEnd::NoStatus { exit_code: Some(0) };
+    let mut state = dying_in_a_round(2, 2, &no_status);
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::Same).unwrap();
+
+    assert_eq!(recovery.exhausted, [task(2)]);
+    assert_eq!(recovery.renewed, Vec::<TaskId>::new());
+    assert_eq!(status(&state, 2), TaskStatus::Failed);
+}
+
+#[test]
+fn a_run_a_signal_ended_earlier_is_not_a_cut_by_this_restart() {
+    // Recorded as ended with no exit code, as the daemon's own cut is; but nothing was going when this daemon started.
+    let mut state = dying_in_a_round(2, 1, &RunEnd::NoStatus { exit_code: None });
+
+    let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New);
+
+    let recovery = recovery.unwrap();
+    // The one going run is the cut; the earlier signal-ended run is only history.
+    assert_eq!(recovery.renewed, [task(2)]);
+    let mut quiet = dying_in_a_round(2, 1, &RunEnd::NoStatus { exit_code: None });
+    let (_, mut member) = quiet.find_task_mut(&task(2)).unwrap();
+    member.end_run(at(60), RunEnd::NoStatus { exit_code: None }).unwrap();
+    member.transition(TaskStatus::Queued).unwrap();
+
+    let recovery = recover_with(&mut quiet, at(500), &limits(), RestartSession::New).unwrap();
+
+    assert_eq!(recovery.renewed, Vec::<TaskId>::new());
+    assert_eq!(quiet.find_task(&task(2)).unwrap().member.renewals(), None);
+}
+
+#[test]
+fn a_cut_run_of_a_reviewer_or_a_worker_begins_no_new_session() {
+    for n in [3, 4] {
+        let mut state = dying_in_a_round(n, 0, &RunEnd::Hung);
+
+        let recovery = recover_with(&mut state, at(500), &limits(), RestartSession::New).unwrap();
+
+        assert_eq!(recovery.renewed, Vec::<TaskId>::new(), "task {n}");
+    }
+}
