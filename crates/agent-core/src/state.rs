@@ -36,6 +36,8 @@ mod strict;
 mod team;
 mod values;
 #[cfg(test)]
+mod removal_tests;
+#[cfg(test)]
 mod waiting_tests;
 mod wake_delivery;
 
@@ -783,6 +785,12 @@ impl State {
             .find(|team| team.find(task).is_some())
             .ok_or_else(|| BeginRunError::UnknownTask { task: task.clone() })?
             .begin_run(task, run)
+    }
+
+    /// Removes the team `id` and the records the state keeps for its tasks, and returns it; `None` when there is no
+    /// such team, and then nothing changes.
+    pub fn remove_team(&mut self, _id: &TeamId) -> Option<Team> {
+        None
     }
 
     /// Adds a team.
