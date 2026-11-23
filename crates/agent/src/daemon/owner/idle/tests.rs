@@ -288,3 +288,75 @@ async fn accepted_external_delivery_preserves_an_idle_team() {
     assert!(daemon.home.worktree_dir(&repo(), &task(1)).exists());
     assert_eq!(daemon.notifications(), Vec::<String>::new());
 }
+
+#[tokio::test]
+async fn idle_history_records_activity_and_refusal_once() {
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reader, Setup, TracingReporter};
+    use std::sync::Arc;
+    for removable in [true, false] {
+        let daemon = Daemon::new(&pair_state(), None);
+        if removable {
+            files(&daemon);
+        }
+        let started = History::start(
+            HistoryDb::open(
+                &daemon.home.history_file(),
+                agent_core::history::MaxTextBytes::default(),
+            )
+            .unwrap(),
+            Setup {
+                capacity: DEFAULT_QUEUE,
+                reporter: Arc::new(TracingReporter),
+            },
+        )
+        .unwrap();
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        owner.history = started.history.clone();
+        daemon.clock.advance(time::Duration::seconds(7200));
+        owner.check_idle_teams().await.unwrap();
+        owner.check_idle_teams().await.unwrap();
+        let records = Reader::open(&daemon.home.history_file())
+            .unwrap()
+            .daemon_logs()
+            .unwrap();
+        let decisions: Vec<_> = records
+            .iter()
+            .filter(|entry| {
+                entry
+                    .fields()
+                    .get("decision")
+                    .is_some_and(|value| value == "idle_removal")
+            })
+            .collect();
+        assert_eq!(decisions.len(), if removable { 1 } else { 2 });
+        assert_eq!(decisions[0].fields()["last_activity"], at(0).to_string());
+        assert_eq!(decisions[0].fields()["outcome"], "attempt");
+        assert_eq!(decisions[0].fields()["items"], serde_json::json!([]));
+        assert_eq!(decisions[0].fields()["rounds"], serde_json::json!([]));
+        assert!(decisions[0].fields()["branches"].is_array());
+        if !removable {
+            assert_eq!(decisions[1].fields()["outcome"], "refused");
+            assert_eq!(daemon.notifications().len(), 1);
+        }
+        started.writer.close().unwrap();
+    }
+}
+
+#[tokio::test]
+async fn unavailable_history_refuses_idle_deletion_without_losing_files() {
+    let daemon = Daemon::new(&pair_state(), None);
+    files(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.history = agent_runtime::history::History::unavailable(
+        &std::io::Error::other("fixture history unavailable"),
+        std::sync::Arc::new(agent_runtime::history::TracingReporter),
+    );
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert!(daemon.home.worktree_dir(&repo(), &task(1)).exists());
+    assert_eq!(daemon.notifications().len(), 1);
+    assert!(daemon.notifications()[0].contains("history"));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(daemon.notifications().len(), 1);
+}
