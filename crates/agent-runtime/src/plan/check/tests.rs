@@ -1045,7 +1045,12 @@ fn process_stat_group_and_ticks_in_keeps_the_ticks_parse_error_source() {
         .expect_err("a start time that is not a number of ticks must fail");
     assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
     assert!(
-        error.source().is_some() && error.source().unwrap().downcast_ref::<std::num::ParseIntError>().is_some(),
+        error.source().is_some()
+            && error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::num::ParseIntError>()
+                .is_some(),
         "the parse error must stay reachable through the io error chain, not only in its message"
     );
 }
