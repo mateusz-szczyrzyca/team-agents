@@ -342,24 +342,20 @@ impl Owner {
         }
     }
 
-    /// The last message of the session before, for a briefed session only (`briefed`); one that cannot be read is logged
-    /// with its cause and left out, so the briefing has none.
-    pub(super) async fn briefed_last_message(&self, task: &TaskId, briefed: bool) -> Option<String> {
+    /// The last message of the session before, for a briefed session only (`briefed`). A message that cannot be read is an
+    /// error: a briefed session is not started without the message it is owed.
+    ///
+    /// # Errors
+    /// [`BriefingProblem`] when the message cannot be read.
+    pub(super) async fn briefed_last_message(
+        &self,
+        task: &TaskId,
+        briefed: bool,
+    ) -> Result<Option<String>, BriefingProblem> {
         if !briefed {
-            return None;
+            return Ok(None);
         }
-        match self.last_final_message(task).await {
-            Ok(message) => message,
-            Err(problem) => {
-                tracing::warn!(
-                    event = LogEvent::HistoryRecordIncomplete.as_str(),
-                    task = %task,
-                    error = %error_chain(&problem),
-                    "the last message of the session before cannot be read: the briefing has none"
-                );
-                None
-            }
-        }
+        self.last_final_message(task).await
     }
 
     /// What the history and the question files of `task` say for its briefing: the newest runs, the judgements of its

@@ -953,7 +953,10 @@ impl Owner {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
-        let last_message = self.briefed_last_message(&task, briefing.is_some()).await;
+        let last_message = match self.briefed_last_message(&task, briefing.is_some()).await {
+            Ok(message) => message,
+            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
+        };
         let planned = {
             let context = Context {
                 state: &self.parts.state,
