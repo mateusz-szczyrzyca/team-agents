@@ -45,6 +45,15 @@ pub(super) fn context_paragraph(texts: &HarnessPrompts, tokens: u64) -> Result<S
     Ok(texts.render(HarnessPrompt::BriefingContext, &values)?)
 }
 
+/// The section that ends a briefing: the last message of the session before, whole.
+///
+/// # Errors
+/// [`ComposeError`] when the section cannot be filled.
+pub(super) fn last_message_paragraph(texts: &HarnessPrompts, message: &str) -> Result<String, ComposeError> {
+    let values = Variables::new().with("message", message)?;
+    Ok(texts.render(HarnessPrompt::BriefingLastMessage, &values)?)
+}
+
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
 
@@ -274,6 +283,53 @@ impl Owner {
             },
             history,
         }))
+    }
+
+    /// The agent's final message of the task's last run, whole, as the history recorded it; `None` when that run ended
+    /// without one or the history has no run of the task.
+    ///
+    /// # Errors
+    /// [`BriefingProblem`] when the history cannot be read.
+    pub(super) async fn last_final_message(&self, task: &TaskId) -> Result<Option<String>, BriefingProblem> {
+        let path = self.parts.store.home().history_file();
+        if !path.exists() {
+            return Ok(None);
+        }
+        let task_id = task.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            Reader::open(&path).and_then(|reader| reader.newest_runs_of_task(&task_id, NonZeroUsize::MIN))
+        })
+        .await
+        .map_err(BriefingProblem::RunsJoin)?;
+        match read {
+            Ok(newest) => Ok(newest
+                .runs
+                .last()
+                .and_then(|row| row.end.as_ref())
+                .and_then(|end| end.value.final_message.clone())),
+            Err(ReadError::Empty { .. }) => Ok(None),
+            Err(source) => Err(BriefingProblem::Runs(Box::new(source))),
+        }
+    }
+
+    /// The last message of the session before, for a briefed session only (`briefed`); one that cannot be read is logged
+    /// with its cause and left out, so the briefing has none.
+    pub(super) async fn briefed_last_message(&self, task: &TaskId, briefed: bool) -> Option<String> {
+        if !briefed {
+            return None;
+        }
+        match self.last_final_message(task).await {
+            Ok(message) => message,
+            Err(problem) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&problem),
+                    "the last message of the session before cannot be read: the briefing has none"
+                );
+                None
+            }
+        }
     }
 
     /// What the history and the question files of `task` say for its briefing: the newest runs, the judgements of its

@@ -216,6 +216,17 @@ async fn compose_run_prompt(
     }
 }
 
+/// The prompt with the last message of the session before at its end, when the session is briefed with one.
+fn with_last_message(ctx: &Context<'_>, prompt: String, last_message: Option<&str>) -> Result<String, StartProblem> {
+    Ok(match last_message {
+        Some(message) => format!(
+            "{prompt}\n\n{}",
+            super::briefing::last_message_paragraph(ctx.texts, message)?
+        ),
+        None => prompt,
+    })
+}
+
 /// The note that tells a run retried after its session reported FAILED without a tool call why it starts again,
 /// appended before its briefing; `None` for every other run.
 fn no_tool_call_note(
@@ -251,6 +262,7 @@ pub(super) async fn plan(
     task: &TaskId,
     briefing: Option<&BriefingDraft>,
     outgrown: Option<u64>,
+    last_message: Option<&str>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
@@ -320,6 +332,7 @@ pub(super) async fn plan(
         Some(tokens) => format!("{}\n\n{prompt}", super::briefing::context_paragraph(ctx.texts, tokens)?),
         None => prompt,
     };
+    let prompt = with_last_message(ctx, prompt, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())

@@ -954,6 +954,7 @@ impl Owner {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
+        let last_message = self.briefed_last_message(&task, briefing.is_some()).await;
         let planned = {
             let context = Context {
                 state: &self.parts.state,
@@ -975,6 +976,7 @@ impl Owner {
                 &task,
                 briefing.as_ref(),
                 outgrown,
+                last_message.as_deref(),
             )
             .await
         };
