@@ -220,13 +220,24 @@ impl Owner {
                 .into_iter()
                 .find(|round| team.round(round).is_some_and(agent_core::state::Round::is_open)),
         };
+        // A round that closed while the task waited still holds the record of its work: the newest round of the task's
+        // runs is the checkpoint of a task with no open round.
+        let round = round.or_else(|| {
+            member
+                .runs()
+                .iter()
+                .rev()
+                .flat_map(|run| run.rounds().iter().rev())
+                .next()
+                .cloned()
+        });
         let Some(round) = round else {
-            // A snapshot is kept under a round: a task that works for none (a state of an older version) starts its new
-            // session with its whole prompt, unbriefed, rather than not at all.
+            // A snapshot is kept under a round: a task that never worked for one starts its new session with its whole
+            // prompt, unbriefed, rather than not at all.
             tracing::warn!(
                 event = LogEvent::HistoryRecordIncomplete.as_str(),
                 task = %task,
-                "a task started anew works for no open round: its new session is not briefed"
+                "a task started anew works for no round at all: its new session is not briefed"
             );
             return Ok(None);
         };
