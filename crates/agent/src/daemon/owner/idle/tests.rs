@@ -424,3 +424,35 @@ async fn provider_retry_queued_after_reset_survives_idle_scan_and_restart() {
         assert_eq!(daemon.notifications(), Vec::<String>::new());
     }
 }
+
+#[tokio::test]
+async fn old_team_is_kept_until_the_current_daemon_has_run_for_the_idle_bound() {
+    let daemon = Daemon::new(&pair_state(), None);
+    files(&daemon);
+    daemon.clock.advance(time::Duration::seconds(86400));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1, "downtime is not idleness");
+    assert_eq!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .unwrap()
+            .idle_watch()
+            .unwrap()
+            .last_activity,
+        at(0),
+        "startup does not rewrite recorded activity"
+    );
+    daemon.clock.advance(time::Duration::seconds(7199));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    daemon.clock.advance(time::Duration::seconds(1));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 0);
+    for n in [1, 2] {
+        assert!(!daemon.home.worktree_dir(&repo(), &task(n)).exists());
+    }
+    assert_eq!(daemon.notifications().len(), 1);
+}
