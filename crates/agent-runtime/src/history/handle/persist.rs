@@ -1,5 +1,5 @@
 //! Acknowledged log writes for decisions that must survive before destructive work.
-use super::History;
+use super::{History, Job, QueueOutcome};
 use agent_core::log::LogRecord;
 
 /// Why a required history entry could not be persisted.
@@ -27,8 +27,18 @@ impl History {
     /// # Errors
     /// Returns [`PersistLogError`] if no writer exists, redaction refuses an identity,
     /// the write fails, or the writer stops before acknowledging it.
-    pub async fn persist_log(&self, _record: LogRecord) -> Result<(), PersistLogError> {
-        Ok(())
+    pub async fn persist_log(&self, record: LogRecord) -> Result<(), PersistLogError> {
+        let queue = self.queue.clone().ok_or(PersistLogError::Unavailable)?;
+        let (ack, rx) = tokio::sync::oneshot::channel();
+        let outcome = tokio::task::spawn_blocking(move || match queue.send(Job::PersistLog { record, ack }) {
+            Ok(()) => QueueOutcome::Enqueued,
+            Err(_) => QueueOutcome::Closed,
+        })
+        .await?;
+        if outcome == QueueOutcome::Closed {
+            return Err(PersistLogError::Unavailable);
+        }
+        rx.await?
     }
 }
 #[cfg(test)]
