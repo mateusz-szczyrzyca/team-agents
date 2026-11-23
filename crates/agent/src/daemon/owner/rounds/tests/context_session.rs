@@ -383,3 +383,87 @@ async fn the_last_message_of_the_session_before_is_whole_when_the_history_cuts_t
         "the last message is cut: {briefing}"
     );
 }
+
+// Rule: a session above its agent's bound is replaced even when the history is disabled: the run's outcome file is the
+// record of its size, and the history writes nothing.
+#[tokio::test]
+async fn a_session_above_the_bound_is_replaced_with_the_history_disabled() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        format!("{config}\n[history]\nenabled = false\n"),
+    )
+    .unwrap();
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(briefing.contains("grown to 200000 tokens"), "{briefing}");
+    assert!(!args.contains("--resume"), "the old session was resumed: {args}");
+}
+
+// Rule: a corrupt outcome file of the run above the bound resumes its session, logged as a warning with its cause: the size
+// cannot be judged, and the harness does not replace a session on a guess.
+#[tokio::test]
+async fn a_corrupt_outcome_file_resumes_the_session_it_cannot_judge() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
+    std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Questions)
+        .await;
+    let run_dir = rig.home.run_dir(
+        &tasks[0],
+        &rig.state()
+            .find_task(&tasks[0])
+            .unwrap()
+            .member
+            .runs()
+            .last()
+            .unwrap()
+            .id()
+            .clone(),
+    );
+    std::fs::write(run_dir.join("outcome.json"), "not an outcome").unwrap();
+    answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    let prompt = rig.prompt(&tasks[0], 3).await;
+    let args = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(
+        !prompt.contains(BRIEFING),
+        "a size that cannot be judged replaces nothing: {prompt}"
+    );
+    assert!(args.contains("--resume"), "the session is resumed: {args}");
+}
