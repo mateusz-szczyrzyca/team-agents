@@ -691,7 +691,7 @@ async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, B
                 .await
                 .map_err(|source| BriefingProblem::Answers {
                     task: task.clone(),
-                    path: folder.to_path_buf(),
+                    path: path.clone(),
                     source,
                 })?
         else {
