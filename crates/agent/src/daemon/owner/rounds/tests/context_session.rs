@@ -115,7 +115,7 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
         &[
             normal(
                 "claude-1",
-                "work-stream:first,ask-stream:second,work-if-briefed:grown to 200000 tokens|- draft.txt|Work of run 1 of claude-1|Do the second thing in the repository.",
+                "work-stream:first,ask-stream:second,work-if-briefed:grown to 200000 tokens|- draft.txt|Work of run 1 of claude-1|Do the second thing in the repository.|PRIOR-FINAL-MARKER|Continue the part?",
             ),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
@@ -128,6 +128,11 @@ async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_t
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
     std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    std::fs::write(
+        scripts.join("second.final.txt"),
+        "The session before ends here: PRIOR-FINAL-MARKER\n",
+    )
+    .unwrap();
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let worktree = rig.worktree(&tasks[0]);
