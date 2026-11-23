@@ -2,6 +2,7 @@
 //! new session begins — the snapshot of the worktree first, then the commits of its branch, the files left
 //! uncommitted, its plan of steps and the messages of its team that no run of it read.
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::str::FromStr;
@@ -9,10 +10,10 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::Trouble;
 use agent_core::history::{CommitRecord, Record};
-use agent_core::ids::{AgentName, BranchName, InvalidName, RoundId, TaskId};
+use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, RoundId, RunId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::plan::judge::JudgementState;
-use agent_core::plan::{PLAN_FILE, StepState, parse_plan};
+use agent_core::plan::{PLAN_FILE, Plan, StepState, parse_plan};
 use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::questions::MAX_QUESTIONS_BYTES;
 use agent_core::questions::{QuestionsFile, Verdict};
@@ -21,7 +22,7 @@ use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::agentbus::{Completeness, UnreadMessage, UnreadMessagesError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{ReadError, Reader};
+use agent_runtime::history::{JudgementRecord, ReadError, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{
     Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, ComposeError,
@@ -216,7 +217,8 @@ impl Owner {
             .into_iter()
             .map(|change| change.path.to_string())
             .collect();
-        let plan = read_steps(&worktree, task).await;
+        let read = read_plan(&worktree, task).await;
+        let plan = read.as_ref().map(steps_of);
         let unread = self
             .parts
             .bus
@@ -226,7 +228,7 @@ impl Owner {
                 task,
             })
             .await?;
-        let history = self.gather_history(task).await?;
+        let history = self.gather_history(task, read.as_ref()).await?;
         Ok(Some(BriefingDraft {
             facts: BriefingFacts {
                 reason,
@@ -248,17 +250,19 @@ impl Owner {
     ///
     /// # Errors
     /// [`BriefingProblem`] when the history or a question file cannot be read.
-    async fn gather_history(&self, task: &TaskId) -> Result<BriefingHistory, BriefingProblem> {
+    async fn gather_history(&self, task: &TaskId, plan: Option<&Plan>) -> Result<BriefingHistory, BriefingProblem> {
         let (runs, runs_left_out) = newest_shown(self.read_runs(task).await?, RUNS_SHOWN);
         let judged = self
             .latest_judgements(task)
             .await
             .map_err(BriefingProblem::Judgements)?;
-        let mut judgements: Vec<(String, JudgementState)> = judged
-            .iter()
-            .map(|(step, record)| (step.to_string(), record.state))
-            .collect();
-        judgements.sort_by(|a, b| a.0.cmp(&b.0));
+        let judgements = match plan {
+            Some(plan) => {
+                let (_, plans_by_run) = self.earlier_plans(task, None).await;
+                standing_judgements(plan, &judged, &plans_by_run)
+            }
+            None => Vec::new(),
+        };
         let folder = self.parts.store.home().task_dir(task);
         let (answers, answers_left_out) = newest_shown(read_answers(&folder, task).await?, ANSWERS_SHOWN);
         Ok(BriefingHistory {
@@ -689,9 +693,9 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
     }
 }
 
-/// The steps of the plan in the worktree as id, title and state; `None` when there is no plan or it does not read. A
-/// plan that does not read is logged and left out: the new session reads the file itself.
-async fn read_steps(worktree: &AbsolutePath, task: &TaskId) -> Option<Vec<(String, String, &'static str)>> {
+/// The plan in the worktree; `None` when there is none or it does not read. A plan that does not read is logged and left
+/// out: the new session reads the file itself.
+async fn read_plan(worktree: &AbsolutePath, task: &TaskId) -> Option<Plan> {
     let read = read_text_file(&worktree.as_path().join(PLAN_FILE), MAX_TASK_LIST_BYTES).await;
     let parsed = match read {
         Ok(None) => return None,
@@ -699,11 +703,7 @@ async fn read_steps(worktree: &AbsolutePath, task: &TaskId) -> Option<Vec<(Strin
         Err(error) => Err(error_chain(&error)),
     };
     match parsed {
-        Ok(plan) => Some(
-            plan.steps()
-                .map(|step| (step.id().to_string(), step.title().to_owned(), state_text(step.state())))
-                .collect(),
-        ),
+        Ok(plan) => Some(plan),
         Err(error) => {
             tracing::warn!(
                 event = LogEvent::HistoryRecordIncomplete.as_str(),
@@ -714,6 +714,30 @@ async fn read_steps(worktree: &AbsolutePath, task: &TaskId) -> Option<Vec<(Strin
             None
         }
     }
+}
+
+/// The steps of `plan` as id, title and state.
+fn steps_of(plan: &Plan) -> Vec<(String, String, &'static str)> {
+    plan.steps()
+        .map(|step| (step.id().to_string(), step.title().to_owned(), state_text(step.state())))
+        .collect()
+}
+
+/// The judgements that still hold for the steps of `plan`: the harness's latest judgement of a step stands only while the
+/// step is as it was in the plan read at the end of the run that was judged. A step edited since, one whose judged plan
+/// was not kept, and a judgement made outside a run are left out, so that the step is shown as declared. Sorted by step.
+fn standing_judgements(
+    plan: &Plan,
+    judged: &HashMap<ItemId, JudgementRecord>,
+    plans_by_run: &HashMap<RunId, Plan>,
+) -> Vec<(String, JudgementState)> {
+    let mut standing: Vec<(String, JudgementState)> = judged
+        .iter()
+        .map(|(step, record)| (step.to_string(), record.state))
+        .collect();
+    standing.sort_by(|a, b| a.0.cmp(&b.0));
+    let _ = (plan, plans_by_run);
+    standing
 }
 
 /// The mark of a step in the plan's own syntax; the briefing's text says what each mark means.

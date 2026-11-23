@@ -187,3 +187,93 @@ async fn a_briefing_after_the_daemon_went_down_says_so_and_that_it_was_not_the_a
         "{text}"
     );
 }
+
+// ---- the judgements that still hold ------------------------------------------------------------------------------
+
+/// The plan of `text`.
+fn plan_of(text: &str) -> Plan {
+    parse_plan(text).unwrap()
+}
+
+/// The run `n` of these tests.
+fn run_n(n: u32) -> RunId {
+    format!("run-20261120-14410{n}-aaaa").parse().unwrap()
+}
+
+/// The judgement of step `step`, made at the end of run `run` (outside a run for `None`).
+fn judgement(step: &str, state: JudgementState, run: Option<u32>) -> (ItemId, JudgementRecord) {
+    let step: ItemId = step.parse().unwrap();
+    let record = JudgementRecord {
+        task: "task-20261120-144101-r7q2".parse().unwrap(),
+        team: "team-20261120-144101-rjna".parse().unwrap(),
+        run: run.map(run_n),
+        at: "2026-11-20T20:00:00Z".parse().unwrap(),
+        step,
+        state,
+        check: None,
+        reason: None,
+        duration_ms: 0,
+        output_path: None,
+    };
+    (step, record)
+}
+
+/// What stands of `judged` for `current`, when the plan of run 1 was `at_run_1`.
+fn standing(current: &str, at_run_1: &str, judged: Vec<(ItemId, JudgementRecord)>) -> Vec<(String, JudgementState)> {
+    let plans = HashMap::from([(run_n(1), plan_of(at_run_1))]);
+    standing_judgements(&plan_of(current), &judged.into_iter().collect(), &plans)
+}
+
+const WRITTEN: &str =
+    "Do it.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists a.txt\n[x] 1.2 Test it\n    Check: cargo test\n";
+
+#[test]
+fn a_judgement_stands_while_its_step_is_as_it_was_when_judged() {
+    let judged = vec![
+        judgement("1.1", JudgementState::Confirmed, Some(1)),
+        judgement("1.2", JudgementState::Mismatch, Some(1)),
+    ];
+
+    assert_eq!(
+        standing(WRITTEN, WRITTEN, judged),
+        [
+            ("1.1".to_owned(), JudgementState::Confirmed),
+            ("1.2".to_owned(), JudgementState::Mismatch)
+        ]
+    );
+}
+
+#[test]
+fn a_judgement_of_a_step_whose_check_or_title_changed_since_is_left_out() {
+    let edited_check = WRITTEN.replace("cargo test", "cargo test -p agent");
+    let edited_title = WRITTEN.replace("Write it", "Write it again");
+    for current in [edited_check, edited_title] {
+        let judged = vec![
+            judgement("1.1", JudgementState::Confirmed, Some(1)),
+            judgement("1.2", JudgementState::Confirmed, Some(1)),
+        ];
+
+        let kept = standing(&current, WRITTEN, judged);
+
+        // Only the step that was not edited keeps its judgement.
+        assert_eq!(kept.len(), 1, "{current}: {kept:?}");
+    }
+}
+
+#[test]
+fn a_judgement_whose_plan_was_not_kept_or_was_made_outside_a_run_is_left_out() {
+    let judged = vec![
+        judgement("1.1", JudgementState::Confirmed, Some(2)),
+        judgement("1.2", JudgementState::Confirmed, None),
+    ];
+
+    assert_eq!(standing(WRITTEN, WRITTEN, judged), []);
+}
+
+#[test]
+fn a_judgement_of_a_step_the_plan_no_longer_has_is_left_out() {
+    let current = "Do it.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists a.txt\n";
+    let judged = vec![judgement("1.2", JudgementState::Confirmed, Some(1))];
+
+    assert_eq!(standing(current, WRITTEN, judged), []);
+}
