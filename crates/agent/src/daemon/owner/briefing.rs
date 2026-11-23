@@ -668,7 +668,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::NoStatus => "no_status",
         Trouble::Hang => "hang",
         Trouble::TurnLimit => "turn_limit",
-        Trouble::Busy => "busy",
+        Trouble::Busy | Trouble::DaemonDown => "busy",
     }
 }
 

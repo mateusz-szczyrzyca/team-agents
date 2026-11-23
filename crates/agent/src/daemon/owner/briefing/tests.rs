@@ -160,3 +160,30 @@ async fn a_task_without_a_folder_has_no_answers() {
 
     assert_eq!(answers, Vec::new());
 }
+
+#[test]
+fn every_reason_has_its_own_word_in_the_briefing() {
+    for (reason, word) in [
+        (Trouble::NoStatus, "no_status"),
+        (Trouble::Hang, "hang"),
+        (Trouble::TurnLimit, "turn_limit"),
+        (Trouble::Busy, "busy"),
+        (Trouble::DaemonDown, "daemon_down"),
+    ] {
+        assert_eq!(reason_word(reason), word);
+    }
+}
+
+#[tokio::test]
+async fn a_briefing_after_the_daemon_went_down_says_so_and_that_it_was_not_the_agents_fault() {
+    let mut cut = facts(Completeness::All);
+    cut.reason = Trouble::DaemonDown;
+
+    let text = render(&cut).await;
+
+    assert!(text.contains("`daemon_down`"), "{text}");
+    assert!(
+        text.contains("the daemon went down while the run was going. The run was cut from outside"),
+        "{text}"
+    );
+}
