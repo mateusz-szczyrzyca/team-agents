@@ -812,3 +812,32 @@ async fn removal_refuses_parked_checks_or_joins_them_before_forced_cleanup() {
         }
     }
 }
+
+#[tokio::test]
+async fn removal_joins_pending_disk_cleanup_before_measuring_and_deleting() {
+    let state = pair_state();
+    let daemon = Daemon::new(&state, None);
+    let dir = checkout();
+    make_team_files(&daemon, dir.path(), &state, 1);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let job = owner.disk_jobs.spawn(async {
+        super::super::disk::DiskJob::Target {
+            task: task(1),
+            outcome: super::super::disk::BuildDirOutcome::Released { bytes: 0 },
+        }
+    });
+    owner.pending_removals.start(job.id(), &task(1));
+    owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(!owner.pending_removals.contains(&task(1)));
+    assert!(owner.disk_jobs.is_empty());
+}
