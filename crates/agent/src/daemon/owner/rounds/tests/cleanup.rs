@@ -8,7 +8,7 @@ use agent_core::state::Completion;
 use agent_core::state::{ItemPhase, MergeMode, State};
 use agent_runtime::history::{HistoryLayer, Reader};
 
-use super::rig::{CHAIN, ONE, Rig, git, investigator, normal};
+use super::rig::{CHAIN, ONE, Rig, git, investigator, normal, open_store};
 use crate::client::Connection;
 
 /// A published lead and two approving reviewers; fixture bookkeeping is ignored by Git.
@@ -317,7 +317,6 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::Settings;
-use agent_runtime::store::StateStore;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::sync::{broadcast, mpsc};
@@ -339,7 +338,7 @@ struct Stepped {
 
 /// Open a production owner without its scheduling loop, so the crash boundary requires no timing race.
 async fn stepped(rig: &Rig) -> Stepped {
-    let store = Arc::new(StateStore::open(rig.home.clone()).await.unwrap());
+    let store = open_store(rig).await;
     let settings = Arc::new(Settings::load(&rig.home).await.unwrap());
     let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
     let language = settings.config.language();

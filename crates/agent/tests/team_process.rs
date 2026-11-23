@@ -913,8 +913,23 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     /// Stops the daemon, sets the recorded `waiting_since` in `state.json` to an earlier moment so the wait exceeds
-    /// `busy_after` without a wall-clock sleep, and starts the daemon again.
+    /// `busy_after` without a wall-clock sleep, and starts the daemon again. With a distant `busy_after` (tests 6 and
+    /// 12's configuration) the daemon cannot hand the task over before this deliberate expiry.
     fn expire_recorded_wait(world: &mut World) {
+        // The timestamp is written when the daemon first decides the task waits, before it ever serves a status that
+        // says so: wait for the persist on disk while the daemon still runs, so the expiry below always happens after
+        // it, never racing it.
+        eventually("waiting_since to be persisted in state.json", || {
+            let file = world.home.join("state.json");
+            match std::fs::read_to_string(&file) {
+                Ok(text) => {
+                    agent_core::state::State::from_json(&text).unwrap();
+                    text.contains("\"waiting_since\": \"")
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => panic!("cannot read saved state {}: {error}", file.display()),
+            }
+        });
         if let Some(mut daemon) = world.daemon.take() {
             let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
             rustix::process::kill_process(pid, Signal::TERM).unwrap();
@@ -1210,7 +1225,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             ("claude-1", "agent", "hold"),
             ("claude-2", "agent", "done"),
         ]));
-        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        // Only `expire_recorded_wait` may expire the waits here: a short busy_after would let the daemon hand the
+        // waiting task over before the test kills it, racing the deliberate expiry below.
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 3600\n");
         world.start();
         let running = solo_task(&world.agent(&["run", "claude-1", "Its own work."]));
         world.status_where("the running task to go", |status| {
@@ -1238,7 +1255,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             ("claude-2", "agent", "done"),
             ("claude-3", "agent", "ask-or-hold"),
         ]));
-        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        // Only `expire_recorded_wait` may expire the waits here: a short busy_after would let the daemon hand the
+        // waiting task over before the test kills it, racing the deliberate expiry below.
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 3600\n");
         world.start();
         let asking = solo_task(&world.agent(&["run", "claude-3", "Asks the human."]));
         world.status_where("the task to ask the human", |status| {

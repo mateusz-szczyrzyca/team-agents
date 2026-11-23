@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.81.0 — 23.11.2026 — PR #232
+
+### Bug fixes
+- [agent] [agent-runtime] The harness tests wait for complete records and saved state, so a loaded build no longer makes them read unfinished fake CLI files or miss a round transition.
+- [agent-runtime] Restarting a daemon with a pending command check no longer fails when an unrelated process exits during recovery; malformed process records still report their cause.
+
 ## 0.80.0 — 23.11.2026 — PR #227
 
 ### New features
