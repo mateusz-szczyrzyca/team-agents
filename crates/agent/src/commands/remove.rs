@@ -50,9 +50,11 @@ pub(crate) async fn remove(
     for number in &removal.closed_pull_requests {
         write(format!("  closed pull request #{number}"))?;
     }
+    // The dirty state is named for every worktree with tracked changes; whether it went with its worktree is the
+    // outcome of the removal, which the lines `left behind` name for each worktree that stayed.
     for path in &removal.dirty_worktrees {
         write(format!(
-            "  worktree with uncommitted changes removed: {}",
+            "  uncommitted tracked changes in {} (the worktree goes with them unless it is left behind)",
             path.as_path().display()
         ))?;
     }

@@ -621,13 +621,9 @@ impl Owner {
                 };
                 match outcome {
                     Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
-                    Err(cause) => {
-                        // Not removed, so not named as removed with its changes.
-                        removal.dirty_worktrees.retain(|path| path != dir);
-                        removal
-                            .left_behind
-                            .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display()));
-                    }
+                    Err(cause) => removal
+                        .left_behind
+                        .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display())),
                 }
             }
             for branch in &plan.existing {
