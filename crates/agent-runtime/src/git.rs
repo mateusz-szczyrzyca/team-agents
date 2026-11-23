@@ -183,6 +183,9 @@ pub enum GitOperation {
     /// `git bundle create`.
     #[strum(serialize = "bundle create")]
     BundleCreate,
+    /// `git bundle verify`.
+    #[strum(serialize = "bundle verify")]
+    BundleVerify,
     /// `git worktree add`.
     #[strum(serialize = "worktree add")]
     WorktreeAdd,
@@ -833,16 +836,67 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when git refuses, for example a branch that does not exist; [`GitError::Run`].
     pub async fn bundle_create(&self, file: &AbsolutePath, branches: &[BranchName]) -> Result<(), GitError> {
-        let file = file.as_path().as_os_str();
         let refs: Vec<String> = branches
             .iter()
             .map(|branch| format!("refs/heads/{}", branch.as_str()))
             .collect();
+        self.bundle_refs(file, &refs).await
+    }
+
+    /// Writes the commits that the full reference names in `refs` point at into one bundle file at `file`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses, for example a reference that does not exist; [`GitError::Run`].
+    pub async fn bundle_refs(&self, file: &AbsolutePath, refs: &[String]) -> Result<(), GitError> {
+        let file = file.as_path().as_os_str();
         let mut args: Vec<&OsStr> = vec![arg("bundle"), arg("create"), file];
-        args.extend(refs.iter().map(|text| arg(text)));
+        args.extend(refs.iter().map(|reference| arg(reference)));
         self.run_ok(GitOperation::BundleCreate, Reach::Local, &args)
             .await
             .map(drop)
+    }
+
+    /// Checks that the bundle at `file` is whole and can be fetched from: git verifies its objects and its prerequisites.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git says the bundle is not valid; [`GitError::Run`].
+    pub async fn bundle_verify(&self, file: &AbsolutePath) -> Result<(), GitError> {
+        let file = file.as_path().as_os_str();
+        self.run_ok(
+            GitOperation::BundleVerify,
+            Reach::Local,
+            &[arg("bundle"), arg("verify"), file],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Makes the full reference `name` point at `commit`; the removal keeps a commit that no branch holds this way.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses the name; [`GitError::Run`].
+    pub async fn set_ref(&self, name: &str, commit: &CommitId) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg(name), arg(commit.as_str())],
+        )
+        .await
+        .map(drop)
+    }
+
+    /// Removes the full reference `name`.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses; [`GitError::Run`].
+    pub async fn delete_ref(&self, name: &str) -> Result<(), GitError> {
+        self.run_ok(
+            GitOperation::UpdateRef,
+            Reach::Local,
+            &[arg("update-ref"), arg("-d"), arg(name)],
+        )
+        .await
+        .map(drop)
     }
 
     /// Adds a worktree at `path` with `branch` out.

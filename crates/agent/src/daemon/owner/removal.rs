@@ -11,6 +11,7 @@ use std::str::FromStr;
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
 use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Reply, Target};
+use agent_core::state::CommitId;
 use agent_core::state::{ItemPhase, Team};
 use agent_runtime::disk::directory_size;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, RemoveMode, Revision, TreeState};
@@ -40,6 +41,9 @@ struct Plan {
     bundled: Vec<BranchName>,
     /// The worktrees with uncommitted tracked changes, which their removal takes with the changes.
     dirty: Vec<AbsolutePath>,
+    /// The commit each worktree's HEAD points at, for the worktrees whose HEAD no branch of the team or the base holds:
+    /// the commit is kept under `refs/agent-removed/<task>` in the bundle, since the removal takes the worktree away.
+    heads: Vec<(TaskId, CommitId)>,
     /// The bytes of the worktrees and of the task directories, as measured before the removal.
     bytes: u64,
     /// What the measuring found that the reply must name, such as a worktree that is not a git checkout.
@@ -70,6 +74,11 @@ fn not_found(team: &TeamId) -> Failure {
         kind: FailureKind::NotFound,
         message: format!("there is no team {team}"),
     }
+}
+
+/// The reference under which the bundle keeps the HEAD commit of a worktree of `task`.
+fn head_ref(task: &TaskId) -> String {
+    format!("refs/agent-removed/{task}")
 }
 
 /// Whether `path` exists. Only "not found" is an answer; any other failure to look is a failure of the removal.
@@ -278,6 +287,7 @@ impl Owner {
         let mut existing = Vec::new();
         let mut bundled = Vec::new();
         let mut dirty = Vec::new();
+        let mut heads = Vec::new();
         // The checkout is the one of the first worktree that git can read; a directory that is not a checkout holds no
         // commits, and it is named in the reply rather than failing the removal.
         let mut checkout = None;
@@ -324,15 +334,26 @@ impl Owner {
                     bundled.push(branch.clone());
                 }
             }
-            for (_, dir) in &worktrees {
-                match self
-                    .git_at(dir, &agent)
+            for (task, dir) in &worktrees {
+                let handle = self.git_at(dir, &agent);
+                match handle
                     .tree_state()
                     .await
                     .map_err(|error| internal("cannot read a worktree", &error))?
                 {
                     TreeState::Dirty(_) => dirty.push(dir.clone()),
                     TreeState::Clean => {}
+                }
+                let head = handle
+                    .rev_parse(&Revision::Head)
+                    .await
+                    .map_err(|error| internal("cannot read the HEAD of a worktree", &error))?;
+                let in_base = git
+                    .is_ancestor(&Revision::Commit(head.clone()), &Revision::Branch(base.clone()))
+                    .await
+                    .map_err(|error| internal("cannot compare a HEAD with the base branch", &error))?;
+                if !in_base {
+                    heads.push((task.clone(), head));
                 }
             }
         }
@@ -345,6 +366,7 @@ impl Owner {
             existing,
             bundled,
             dirty,
+            heads,
             bytes,
             notes,
         })
@@ -390,7 +412,7 @@ impl Owner {
     /// # Errors
     /// [`Failure`] when the bundle cannot be written; the state and the files are then unchanged.
     async fn write_bundle(&self, team: &TeamId, plan: &Plan, removal: &mut Removal) -> Result<(), Failure> {
-        if plan.bundled.is_empty() {
+        if plan.bundled.is_empty() && plan.heads.is_empty() {
             return Ok(());
         }
         let Some(checkout) = &plan.checkout else {
@@ -404,10 +426,25 @@ impl Owner {
             std::fs::create_dir_all(parent).map_err(|error| internal("cannot make the bundles directory", &error))?;
         }
         let bundle = absolute(&file)?;
-        self.git_at(checkout, &plan.agent)
-            .bundle_create(&bundle, &plan.bundled)
+        let git = self.git_at(checkout, &plan.agent);
+        let mut refs: Vec<String> = plan
+            .bundled
+            .iter()
+            .map(|branch| format!("refs/heads/{}", branch.as_str()))
+            .collect();
+        for (task, head) in &plan.heads {
+            let name = head_ref(task);
+            git.set_ref(&name, head)
+                .await
+                .map_err(|error| internal("cannot keep the HEAD of a worktree", &error))?;
+            refs.push(name);
+        }
+        git.bundle_refs(&bundle, &refs)
             .await
             .map_err(|error| internal("cannot write the bundle of the team", &error))?;
+        git.bundle_verify(&bundle)
+            .await
+            .map_err(|error| internal("the bundle of the team does not verify, nothing was removed", &error))?;
         removal.bundle = Some(bundle);
         Ok(())
     }
@@ -529,6 +566,13 @@ impl Owner {
     async fn delete_local(&self, plan: &Plan, removal: &mut Removal) {
         if let Some(checkout) = &plan.checkout {
             let git = self.git_at(checkout, &plan.agent);
+            for (task, _) in &plan.heads {
+                if let Err(error) = git.delete_ref(&head_ref(task)).await {
+                    removal
+                        .left_behind
+                        .push(format!("kept HEAD of {task}: {}", error_chain(&error)));
+                }
+            }
             for (task, dir) in &plan.worktrees {
                 if let Err(error) = git.worktree_remove(dir, RemoveMode::Force).await {
                     removal.left_behind.push(format!(
