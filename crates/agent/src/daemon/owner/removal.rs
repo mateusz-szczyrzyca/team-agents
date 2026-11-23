@@ -235,9 +235,14 @@ impl Owner {
             return Ok(Err(not_found(&request.team)));
         };
         let tasks = tasks_of(team);
+        while let Some(joined) = self.gate_answers.try_join_next_with_id() {
+            self.gate_answer_done(joined)?;
+        }
         let running: Vec<TaskId> = tasks
             .iter()
-            .filter(|task| self.in_flight.contains(*task))
+            .filter(|task| {
+                self.in_flight.contains(*task) || self.gate_answer_tasks.values().any(|owner| owner == *task)
+            })
             .cloned()
             .collect();
         let mut stopped = Vec::new();
@@ -254,11 +259,21 @@ impl Owner {
                     ),
                 }));
             }
-            if let Err(failure) = self
-                .control_request(client, Steer::Stop, &Target::Team(request.team.clone()))
-                .await?
-            {
-                return Ok(Err(failure));
+            for task in &tasks {
+                self.stop_gates(task);
+            }
+            if tasks.iter().any(|task| self.in_flight.contains(task)) {
+                if let Err(failure) = self
+                    .control_request(client, Steer::Stop, &Target::Team(request.team.clone()))
+                    .await?
+                {
+                    return Ok(Err(failure));
+                }
+            }
+            while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
+                if let Some(joined) = self.gate_answers.join_next_with_id().await {
+                    self.gate_answer_done(joined)?;
+                }
             }
             if tasks.iter().any(|task| self.in_flight.contains(task)) {
                 return Ok(Err(Failure {
