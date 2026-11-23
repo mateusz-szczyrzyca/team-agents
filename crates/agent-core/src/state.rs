@@ -789,8 +789,13 @@ impl State {
 
     /// Removes the team `id` and the records the state keeps for its tasks, and returns it; `None` when there is no
     /// such team, and then nothing changes.
-    pub fn remove_team(&mut self, _id: &TeamId) -> Option<Team> {
-        None
+    pub fn remove_team(&mut self, id: &TeamId) -> Option<Team> {
+        let index = self.teams.iter().position(|team| team.id() == id)?;
+        let team = self.teams.remove(index);
+        let tasks: HashSet<TaskId> = team_members(&team).map(|member| member.task().clone()).collect();
+        self.wake_deliveries.retain(|task, _| !tasks.contains(task));
+        self.queued.retain(|task| !tasks.contains(task));
+        Some(team)
     }
 
     /// Adds a team.
