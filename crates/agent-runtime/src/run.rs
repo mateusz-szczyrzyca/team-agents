@@ -25,7 +25,7 @@ use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValu
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
 };
-use agent_core::history::{Launch, Record, RunChanges};
+use agent_core::history::{Launch, Record, RunChanges, StepKind};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
@@ -773,6 +773,12 @@ impl Follow<'_> {
             for event in events {
                 if !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_)) {
                     self.progress = Progress::Made;
+                }
+                if matches!(
+                    StepKind::of(&event),
+                    StepKind::BusCall | StepKind::ToolCall | StepKind::Command | StepKind::FileEdit
+                ) {
+                    self.used_tool = true;
                 }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
                 self.engine.history.step(self.run, at, event);
