@@ -1618,7 +1618,7 @@ impl Owner {
     ) -> Ready<Result<(TaskStatus, Option<Notice>), OwnerError>> {
         let (first_of_session, already_retried) = match self.parts.state.find_task(task) {
             Some(found) => {
-                let first = found.member.session_runs().len() == 1;
+                let first = found.member.first_of_session();
                 let already = found
                     .member
                     .renewals()
@@ -1639,6 +1639,7 @@ impl Owner {
             );
             ready(Ok((TaskStatus::Queued, None)))
         } else if already_retried
+            && first_of_session
             && matches!(
                 end,
                 RunEnd::Reported {

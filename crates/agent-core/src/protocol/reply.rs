@@ -13,10 +13,10 @@ use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::plan::judge::JudgementState;
 use crate::state::{
-    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Renewals,
-    Review, Round, Run, Team, Timestamp,
+    GateRecord, GateResult, ItemPhase, ItemProgress, Member, MergeMode, Participant, PullRequest, Question, Review,
+    Round, Run, RunEnd, RunState, Team, Timestamp,
 };
-use crate::status::{ItemStatus, TaskStatus};
+use crate::status::{ItemStatus, RunOutcome, TaskStatus};
 
 /// The answer to one [`Request`](super::Request): the same [`RequestId`] and a result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -444,10 +444,26 @@ impl MemberSummary {
 
 /// Why `member`'s task lies failed, when its last trouble is one worth telling on the status line: a failed task
 /// already retried once for a no-tool run names that, because it is a configuration problem, not ordinary work. The
-/// status column already says `failed`; the reason says of what.
+/// status column already says `failed`; the reason says of what. It is told only of the run that used the retry: the
+/// retried run that reported FAILED without a tool, the first of its session; a retry that called a tool, a failure
+/// after the retry succeeded, or a later run of the same session is a different trouble.
 fn failed_reason_of(member: &Member) -> Option<String> {
     if member.status() == TaskStatus::Failed
-        && member.renewals().is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
+        && member
+            .renewals()
+            .is_some_and(|renewals| renewals.reason() == crate::decide::ladder::Trouble::NoToolCall)
+        && member.first_of_session()
+        && member.runs().last().is_some_and(|run| {
+            matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::Reported {
+                        outcome: RunOutcome::Failed
+                    },
+                    ..
+                }
+            ) && !run.used_tool()
+        })
     {
         Some("two runs ended without calling a tool".to_owned())
     } else {
@@ -1119,7 +1135,12 @@ mod tests {
         member.begin_run(run(1), at(0), None).unwrap();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(1), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(1),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.renew(Trouble::NoToolCall, at(2)).unwrap();
         member.begin_run(run(2), at(3), None).unwrap();
@@ -1141,7 +1162,12 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
 
@@ -1157,7 +1183,12 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(true).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
 
@@ -1171,12 +1202,22 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Done })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done,
+                },
+            )
             .unwrap();
         member.begin_run(run(3), at(5), None).unwrap();
         member.note_used_tool(true).unwrap();
         member
-            .end_run(at(6), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(6),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
 
@@ -1190,12 +1231,22 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Done })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done,
+                },
+            )
             .unwrap();
         member.begin_run(run(3), at(5), None).unwrap();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(6), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(6),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
 
@@ -1208,7 +1259,12 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(false).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
         let state = solo_state_of(member);
@@ -1227,7 +1283,12 @@ mod tests {
         let mut member = retried_no_tool_member();
         member.note_used_tool(true).unwrap();
         member
-            .end_run(at(4), RunEnd::Reported { outcome: RunOutcome::Failed })
+            .end_run(
+                at(4),
+                RunEnd::Reported {
+                    outcome: RunOutcome::Failed,
+                },
+            )
             .unwrap();
         member.transition(TaskStatus::Failed).unwrap();
         let state = solo_state_of(member);

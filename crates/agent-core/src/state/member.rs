@@ -857,6 +857,13 @@ impl Member {
         runs
     }
 
+    /// Whether the last run opened the session it is in: the first run of the session, or the first run ever of the
+    /// task. A run that used a new session is a fresh start — the retries before it do not apply to it.
+    #[must_use]
+    pub fn first_of_session(&self) -> bool {
+        self.runs.len() == 1 || self.session_runs().len() == 1
+    }
+
     /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
     #[must_use]
     pub fn awaits_new_session(&self) -> bool {
