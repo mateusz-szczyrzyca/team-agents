@@ -1239,3 +1239,56 @@ fn a_growing_session_is_told_in_the_debug_summary_the_log_and_the_status_with_it
         "context: first 42000 tokens, last 438000 tokens (last run)\n"
     );
 }
+
+#[test]
+fn debug_names_the_session_the_stream_reported_when_the_run_started_without_one() {
+    use agent_runtime::history::Store;
+
+    let usage = agent_core::cli::RunUsage {
+        first_context: Some(800),
+        last_context: Some(1_500),
+        tokens_written: None,
+        cost_usd: None,
+    };
+    let (_dir, home, team) = team_with_usage(1_000, usage);
+    let mut database =
+        agent_runtime::history::HistoryDb::open(&home.history_file(), agent_core::history::MaxTextBytes::default())
+            .unwrap();
+    database
+        .write(&[agent_core::history::Record::Session(Box::new(
+            agent_core::history::RunSession {
+                run: "run-20261118-060000-a1b2".parse().unwrap(),
+                number: std::num::NonZeroU32::MIN,
+                at: "2026-11-18T06:00:01Z".parse().unwrap(),
+                session: "session-observed-in-stream".parse().unwrap(),
+            },
+        ))])
+        .unwrap();
+    drop(database);
+
+    let output = tempfile::tempdir().unwrap();
+    let parent = output.path().join("diagnostics");
+    let (code, _out, err) = agent(
+        &environment(home.root()),
+        &["debug", "--team", team.as_str(), "--out", parent.to_str().unwrap()],
+    );
+    assert_eq!(code, ExitCode::from(0), "{err}");
+    let summary = std::fs::read_to_string(
+        parent
+            .read_dir()
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path()
+            .join("SUMMARY.md"),
+    )
+    .unwrap();
+
+    assert!(
+        summary.contains(
+            "run run-20261118-060000-a1b2 (session session-observed-in-stream) is above its bound: last context 1500 tokens > 1000 tokens (agent codex-1)"
+        ),
+        "{summary}"
+    );
+}
