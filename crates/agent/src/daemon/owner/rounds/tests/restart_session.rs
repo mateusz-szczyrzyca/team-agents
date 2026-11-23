@@ -275,3 +275,34 @@ async fn a_review_cut_by_the_daemon_stopping_starts_again_with_no_briefing() {
         .unwrap();
     assert!(member.renewals().is_none(), "a reviewer is not started anew");
 }
+
+// Rule: the briefing of the new session lists the runs of the task from the history, oldest first, each with how it
+// ended: the agent's own missing status is told as such, and the run the daemon cut as cut.
+#[tokio::test]
+async fn the_briefing_of_the_new_session_tells_how_each_earlier_run_ended() {
+    let mut rig = rig_with("nostatus,script:cut,script:finish", "").await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the second run to leave its files", || {
+        worktree.join("blob.bin").exists()
+    })
+    .await;
+
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let briefing = rig.prompt(&tasks[0], 3).await;
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+    rig.item_where("1.1", "merged after the new session", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    assert!(briefing.starts_with(BRIEFING), "{briefing}");
+    let missing = briefing.find("claude-1: no status").expect("the first run is listed");
+    let cut = briefing
+        .find("claude-1: cut by a stop of the daemon")
+        .expect("the cut run is listed");
+    assert!(missing < cut, "oldest first: {briefing}");
+}
