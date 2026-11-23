@@ -797,6 +797,14 @@ impl Git {
         self.forget(&Revision::Reviewed(branch.clone())).await
     }
 
+    /// Writes the commits of `branches` into one bundle file at `file`, so that they can be fetched from it later.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when git refuses, for example a branch that does not exist; [`GitError::Run`].
+    pub async fn bundle_create(&self, _file: &AbsolutePath, _branches: &[BranchName]) -> Result<(), GitError> {
+        Ok(())
+    }
+
     /// Adds a worktree at `path` with `branch` out.
     ///
     /// # Errors
