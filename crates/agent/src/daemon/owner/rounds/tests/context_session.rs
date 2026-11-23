@@ -113,7 +113,10 @@ const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 async fn the_new_session_is_briefed_with_the_uncommitted_file_of_the_run_above_the_bound_and_finishes_the_item() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work-stream:first,ask-stream:second,work"),
+            normal(
+                "claude-1",
+                "work-stream:first,ask-stream:second,work-if-briefed:grown to 200000 tokens|- draft.txt|Work of run 1 of claude-1|Do the second thing in the repository.",
+            ),
             investigator("inv-r1", APPROVING),
             investigator("inv-r2", APPROVING),
         ],
