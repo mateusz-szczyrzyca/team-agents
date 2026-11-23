@@ -839,3 +839,29 @@ fn layout_notification_formats_time_header_with_the_offset_of_the_event_in_zone(
         notification.body()
     );
 }
+
+#[tokio::test]
+async fn the_failed_no_tool_notice_matches_its_complete_golden() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(CliKind::Claude),
+        model: Some("o3-mini"),
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let texts = texts().await;
+    let rendered = Notice::FailedNoTool {
+        message: "I could not do it.".to_owned(),
+    }
+    .render(&texts, &context)
+    .unwrap();
+
+    assert_eq!(rendered.title(), "❌ team-agents");
+    assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
+}

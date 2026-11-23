@@ -178,6 +178,44 @@ fn every_failed_member_path_tells_the_coordinator_who_and_what() {
     let notice = told(&team, 2, &RunEnd::TurnLimit, None).unwrap();
     assert_eq!(notice.to, agent("inv-opus"));
     assert!(matches!(notice.notice, BusNotice::MemberNoStatus { ref member } if member == &agent("claude-1")));
+
+    for end in [
+        RunEnd::Hung,
+        RunEnd::QuotaExhausted { resets_at: None },
+        RunEnd::RateLimited,
+        RunEnd::Stopped,
+        reported(RunOutcome::Questions),
+        reported(RunOutcome::Sleeping),
+        reported(RunOutcome::Excluded),
+        reported(RunOutcome::Done),
+    ] {
+        for (has_item, mut team) in [(false, crew_of(PLAIN, 1, 0)), (true, working())] {
+            ran(&mut team, 2, 1, end.clone(), &[TaskStatus::Failed]);
+            let notice = told(&team, 2, &end, Some("The run could not continue."))
+                .unwrap_or_else(|| panic!("failed member not told for {end:?}"));
+            assert_eq!(notice.to, agent("inv-opus"));
+            match notice.notice {
+                BusNotice::MemberFailed { member, message } => {
+                    assert!(!has_item);
+                    assert_eq!(member, agent("claude-1"));
+                    assert_eq!(message, "The run could not continue.");
+                }
+                BusNotice::MemberFailedItem {
+                    member,
+                    message,
+                    item,
+                    branch,
+                } => {
+                    assert!(has_item);
+                    assert_eq!(member, agent("claude-1"));
+                    assert_eq!(message, "The run could not continue.");
+                    assert_eq!(item, "1.1".parse().unwrap());
+                    assert_eq!(branch, "agents/claude-1/task-20261111-153002-k3x9-1.1".parse().unwrap());
+                }
+                other => panic!("wrong failure notice for {end:?}: {other:?}"),
+            }
+        }
+    }
 }
 
 #[test]
