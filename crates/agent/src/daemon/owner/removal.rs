@@ -77,6 +77,45 @@ fn is_untracked(entry: &StatusEntry) -> bool {
     entry.index == '?' && entry.worktree == '?'
 }
 
+/// Reads each worktree of a team: whether git tracks a change in it (untracked files alone are not one), and the
+/// commit its HEAD points at when no branch of the team or the base holds that commit.
+async fn inspect_worktrees(
+    owner: &Owner,
+    worktrees: &[(TaskId, AbsolutePath, u64)],
+    git: &Git,
+    base: &BranchName,
+    agent: &AgentName,
+) -> Result<(Vec<AbsolutePath>, Vec<(TaskId, CommitId)>), Failure> {
+    let mut dirty = Vec::new();
+    let mut heads = Vec::new();
+    for (task, dir, _) in worktrees {
+        let handle = owner.git_at(dir, agent);
+        match handle
+            .tree_state()
+            .await
+            .map_err(|error| internal("cannot read a worktree", &error))?
+        {
+            TreeState::Dirty(entries) if entries.iter().any(|entry| !is_untracked(entry)) => {
+                dirty.push(dir.clone());
+            }
+            // Untracked files alone are not changes of the work: git keeps no record of them.
+            TreeState::Dirty(_) | TreeState::Clean => {}
+        }
+        let head = handle
+            .rev_parse(&Revision::Head)
+            .await
+            .map_err(|error| internal("cannot read the HEAD of a worktree", &error))?;
+        let in_base = git
+            .is_ancestor(&Revision::Commit(head.clone()), &Revision::Branch(base.clone()))
+            .await
+            .map_err(|error| internal("cannot compare a HEAD with the base branch", &error))?;
+        if !in_base {
+            heads.push((task.clone(), head));
+        }
+    }
+    Ok((dirty, heads))
+}
+
 /// The reference under which the bundle keeps the HEAD commit of a worktree of `task`.
 fn head_ref(task: &TaskId) -> String {
     format!("refs/agent-removed/{task}")
@@ -347,31 +386,9 @@ impl Owner {
                     bundled.push(branch.clone());
                 }
             }
-            for (task, dir, _) in &worktrees {
-                let handle = self.git_at(dir, &agent);
-                match handle
-                    .tree_state()
-                    .await
-                    .map_err(|error| internal("cannot read a worktree", &error))?
-                {
-                    TreeState::Dirty(entries) if entries.iter().any(|entry| !is_untracked(entry)) => {
-                        dirty.push(dir.clone());
-                    }
-                    // Untracked files alone are not changes of the work: git keeps no record of them.
-                    TreeState::Dirty(_) | TreeState::Clean => {}
-                }
-                let head = handle
-                    .rev_parse(&Revision::Head)
-                    .await
-                    .map_err(|error| internal("cannot read the HEAD of a worktree", &error))?;
-                let in_base = git
-                    .is_ancestor(&Revision::Commit(head.clone()), &Revision::Branch(base.clone()))
-                    .await
-                    .map_err(|error| internal("cannot compare a HEAD with the base branch", &error))?;
-                if !in_base {
-                    heads.push((task.clone(), head));
-                }
-            }
+            let (inspected_dirty, inspected_heads) = inspect_worktrees(self, &worktrees, &git, &base, &agent).await?;
+            dirty = inspected_dirty;
+            heads = inspected_heads;
         }
         Ok(Plan {
             agent,
