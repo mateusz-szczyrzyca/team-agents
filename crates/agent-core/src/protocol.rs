@@ -45,6 +45,9 @@ pub const EXECUTOR_PROTOCOL_VERSION: u32 = 6;
 /// The negotiated version carrying the daemon's crate versions on status replies.
 pub const VERSIONS_PROTOCOL_VERSION: u32 = 7;
 
+/// The negotiated version carrying the reason a member's task failed, on status replies and team updated events.
+pub const FAILED_REASON_PROTOCOL_VERSION: u32 = 8;
+
 /// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -58,6 +61,8 @@ pub enum ReplyFormat {
     Executor,
     /// Version seven, including the daemon's crate versions on status replies.
     Versions,
+    /// Version eight, including the reason a member's task failed.
+    FailedReason,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -180,11 +185,21 @@ fn encode_executor<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     encode(&value)
 }
 
-/// Serializes version-seven messages without downgrading their metadata.
+/// Serializes version-seven messages without downgrading their metadata, except the failed reason of protocol eight.
 fn encode_versions<T: Serialize>(message: &T) -> Result<String, EncodeError> {
     let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    strip_failed_reason_fields(&mut value);
     if let Some(protocol) = value.get_mut("protocol") {
         *protocol = serde_json::Value::from(VERSIONS_PROTOCOL_VERSION);
+    }
+    encode(&value)
+}
+
+/// Serializes protocol-eight messages carrying the failed reason of a member's task.
+fn encode_failed_reason<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(FAILED_REASON_PROTOCOL_VERSION);
     }
     encode(&value)
 }
@@ -239,6 +254,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
                 .map(|message| (message, ReplyFormat::Versions))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
+        version if version == u64::from(FAILED_REASON_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::FailedReason))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
         found => Err(UnsupportedVersion { found }.into()),
     }
 }
@@ -258,6 +283,7 @@ fn strip_split_fields(value: &mut serde_json::Value) -> bool {
                 "tier_waits",
                 "tier_questions",
                 "task_plans",
+                "failed_reason",
             ] {
                 changed |= object.remove(key).is_some();
             }
@@ -315,6 +341,7 @@ fn strip_executor_fields(value: &mut serde_json::Value) {
                     && key != "tier_questions"
                     && key != "short_desc"
                     && key != "daemon_versions"
+                    && key != "failed_reason"
             });
             for nested in object.values_mut() {
                 strip_executor_fields(nested);
@@ -337,6 +364,7 @@ fn strip_versions_fields(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(object) => {
             object.remove("daemon_versions");
+            object.remove("failed_reason");
             for nested in object.values_mut() {
                 strip_versions_fields(nested);
             }
@@ -344,6 +372,27 @@ fn strip_versions_fields(value: &mut serde_json::Value) {
         serde_json::Value::Array(values) => {
             for nested in values {
                 strip_versions_fields(nested);
+            }
+        }
+        serde_json::Value::Null
+        | serde_json::Value::Bool(_)
+        | serde_json::Value::Number(_)
+        | serde_json::Value::String(_) => {}
+    }
+}
+
+/// Removes the failed reason of protocol eight from replies to older clients.
+fn strip_failed_reason_fields(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.remove("failed_reason");
+            for nested in object.values_mut() {
+                strip_failed_reason_fields(nested);
+            }
+        }
+        serde_json::Value::Array(values) => {
+            for nested in values {
+                strip_failed_reason_fields(nested);
             }
         }
         serde_json::Value::Null
@@ -395,6 +444,7 @@ impl Frame {
             ReplyFormat::Plan => encode_plan(self),
             ReplyFormat::Executor => encode_executor(self),
             ReplyFormat::Versions => encode_versions(self),
+            ReplyFormat::FailedReason => encode_failed_reason(self),
         }
     }
 

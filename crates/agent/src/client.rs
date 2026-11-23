@@ -227,11 +227,16 @@ impl Connection {
             .await
     }
 
-    /// Probes version-seven, executor and plan formats before falling back to split or legacy replies.
+    /// Probes version-eight, version-seven, executor and plan formats before falling back to split or legacy replies.
     async fn negotiate_versions(&mut self, client: &Client) -> Result<(ReplyFormat, Option<Reply>), ClientError> {
         self.negotiate_formats(
             client,
-            &[ReplyFormat::Versions, ReplyFormat::Executor, ReplyFormat::Plan],
+            &[
+                ReplyFormat::FailedReason,
+                ReplyFormat::Versions,
+                ReplyFormat::Executor,
+                ReplyFormat::Plan,
+            ],
         )
         .await
     }
@@ -371,9 +376,11 @@ impl Connection {
                 .ok_or(ClientError::Closed)?;
             let frame = match format {
                 ReplyFormat::Legacy => Frame::from_line(&line)?,
-                ReplyFormat::Split | ReplyFormat::Plan | ReplyFormat::Executor | ReplyFormat::Versions => {
-                    Frame::from_line_negotiated(&line)?
-                }
+                ReplyFormat::Split
+                | ReplyFormat::Plan
+                | ReplyFormat::Executor
+                | ReplyFormat::Versions
+                | ReplyFormat::FailedReason => Frame::from_line_negotiated(&line)?,
             };
             match frame {
                 Frame::Response(response) if response.id == id => return Ok(response),

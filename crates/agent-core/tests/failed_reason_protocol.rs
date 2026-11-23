@@ -10,8 +10,9 @@ use agent_core::config::RepoName;
 use agent_core::ids::{AgentName, ItemId, RoundId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::protocol::{
-    Event, EventKind, Frame, ItemCounts, MemberSummary, PlanStepSummary, Reply, ReplyFormat, RequestId, Response,
-    Returned, RunElsewhere, TeamSummary,
+    Client, Command, Event, EventKind, FAILED_REASON_PROTOCOL_VERSION, Frame, ItemCounts, MemberSummary,
+    PlanStepSummary, Reply, ReplyFormat, Request, RequestId, Response, Returned, RunElsewhere, StatusRequest,
+    TeamSummary,
 };
 use agent_core::state::split::SplitPlan;
 use agent_core::state::{Activity, MergeMode, Participant, Round, Timestamp};
@@ -136,6 +137,7 @@ const FORMATS: &[(ReplyFormat, u32)] = &[
 ];
 
 /// A member whose task failed with the named reason, as the daemon writes it on the status line.
+#[expect(clippy::unwrap_used, reason = "fixture values that must parse in a test")]
 fn member() -> MemberSummary {
     MemberSummary {
         task: "task-20261111-193002-a1b2".parse().unwrap(),
@@ -152,6 +154,7 @@ fn member() -> MemberSummary {
 }
 
 /// A team summary with one failed member; its split executor and plan metadata exercise every strip.
+#[expect(clippy::unwrap_used, reason = "fixture values that must parse in a test")]
 fn summary() -> TeamSummary {
     TeamSummary {
         id: "team-20261111-193000-a1b2".parse().unwrap(),
@@ -183,9 +186,8 @@ fn old_member_summaries_decode_status_replies_of_every_format_before_eight() {
             !wire.contains("failed_reason"),
             "{format:?} must not leak the failed reason: {wire}"
         );
-        let decoded: OldFrame = serde_json::from_str(&wire).unwrap_or_else(|error| {
-            panic!("{format:?} must decode with a strict old member summary: {error}: {wire}")
-        });
+        let decoded: OldFrame = serde_json::from_str(&wire)
+            .unwrap_or_else(|error| panic!("{format:?} must decode with a strict old member summary: {error}: {wire}"));
         let OldFrame::Response(OldResponse {
             protocol: read,
             result: OldOutcome::Ok(OldReply::Teams { teams }),
@@ -226,4 +228,32 @@ fn old_member_summaries_decode_team_updated_events_of_every_format_before_eight(
         assert_eq!(summary.members.len(), 1);
         assert_eq!(summary.members[0].status, TaskStatus::Failed);
     }
+}
+
+#[test]
+fn protocol_eight_carries_the_failed_reason_and_round_trips() {
+    let request = Request::new(
+        RequestId(1),
+        Client::Cli,
+        Command::Status(StatusRequest { target: None }),
+    );
+    let request_wire = request.to_line_for(ReplyFormat::FailedReason).unwrap();
+    let request_json: serde_json::Value = serde_json::from_str(&request_wire).unwrap();
+    assert_eq!(request_json["protocol"], FAILED_REASON_PROTOCOL_VERSION);
+    assert_eq!(
+        Request::from_line_negotiated(&request_wire).unwrap(),
+        (request, ReplyFormat::FailedReason)
+    );
+
+    let frame = Frame::Response(Response::ok(RequestId(1), Reply::Teams { teams: vec![summary()] }));
+    let frame_wire = frame.to_line_for(ReplyFormat::FailedReason).unwrap();
+    let frame_json: serde_json::Value = serde_json::from_str(&frame_wire).unwrap();
+    assert_eq!(frame_json["protocol"], FAILED_REASON_PROTOCOL_VERSION);
+    assert_eq!(
+        frame_json
+            .pointer("/result/reply/teams/0/members/0/failed_reason")
+            .and_then(serde_json::Value::as_str),
+        Some("two runs ended without calling a tool")
+    );
+    assert_eq!(Frame::from_line_negotiated(&frame_wire).unwrap(), frame);
 }
