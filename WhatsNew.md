@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.77.0 — 23.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] `agent status` names a task that failed twice without using tools. The human notice names the agent, CLI and model and asks that its configuration be checked before it receives more work.
+
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] When the first run of a task or new session reports `STATUS: FAILED` without a tool call, the daemon tries once in a fresh session and explains where to find the bus tools. This applies to every role and survives a daemon restart.
+- [agent] A failed member wakes its coordinator with the item and its last words. The coordinator may wait for the human and may take over only when its role permits it; a successful startup retry sends no failure notice.
+
+### Enhancements
+- [agent-core] **Action:** Saved state migrates from schema 14 to 15 to remember tool use and the startup retry. Keep a backup before upgrading if you need to return to an older daemon. Older status clients retain their negotiated format.
+
 ## 0.76.0 — 23.11.2026 — PR #222
 
 ### Enhancements
