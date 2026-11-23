@@ -6,7 +6,19 @@ mod harness_briefing_prompts {
     use std::path::Path;
 
     use agent_core::prompt::{HarnessPrompt, PROMPTS_DIR};
-    use agent_runtime::run::compose::{Briefing, BriefingCommit, BriefingMessage, BriefingStep, briefing_variables};
+    use agent_runtime::run::compose::{
+        Briefing, BriefingCommit, BriefingMessage, BriefingNotes, BriefingStep, PlanHeadings, briefing_variables_with,
+    };
+
+    /// The text of the catalog entry `prompt`, as the briefing's group headings are.
+    fn catalog(prompt: HarnessPrompt) -> String {
+        let spec = prompt.spec();
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../")
+            .join(PROMPTS_DIR)
+            .join(spec.path());
+        std::fs::read_to_string(path).unwrap()
+    }
 
     /// The briefing of `facts`, rendered through the real text of `prompts/harness/run/briefing.md`.
     fn render(facts: &Briefing<'_>) -> String {
@@ -16,7 +28,23 @@ mod harness_briefing_prompts {
             .join(PROMPTS_DIR)
             .join(spec.path());
         let text = std::fs::read_to_string(path).unwrap();
-        spec.render(&text, &briefing_variables(facts).unwrap()).unwrap()
+        let (confirmed, declared, mismatch, not_done) = (
+            catalog(HarnessPrompt::BriefingPlanConfirmed),
+            catalog(HarnessPrompt::BriefingPlanDeclared),
+            catalog(HarnessPrompt::BriefingPlanMismatch),
+            catalog(HarnessPrompt::BriefingPlanNotDone),
+        );
+        let notes = BriefingNotes {
+            headings: PlanHeadings {
+                confirmed: &confirmed,
+                declared: &declared,
+                mismatch: &mismatch,
+                not_done: &not_done,
+            },
+            ..BriefingNotes::default()
+        };
+        spec.render(&text, &briefing_variables_with(facts, &notes).unwrap())
+            .unwrap()
     }
 
     /// The golden text `name` of the briefing.
