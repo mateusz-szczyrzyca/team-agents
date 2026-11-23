@@ -269,11 +269,10 @@ async fn the_new_session_after_an_answer_is_briefed_with_the_item_still_in_progr
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
 
-// Rule: a session above its agent's bound that waits for a message, its round closed, is started anew as it is: the new
-// session's prompt holds the size paragraph and the task's whole prompt, and no briefing, because a briefing is gathered
-// from the snapshot of an open round. This is the known gap of the briefing (snapshots are stored per round).
+// Rule: a session above its agent's bound that waits for a message, its round closed, is started anew briefed from the
+// task's newest round: the new session's prompt holds the size paragraph, the briefing and the task's whole prompt.
 #[tokio::test]
-async fn a_renewed_session_of_a_task_with_no_open_round_starts_with_its_whole_prompt_and_no_briefing() {
+async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newest_round() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work-stream:first,sleep-stream:second,work"),
@@ -299,6 +298,9 @@ async fn a_renewed_session_of_a_task_with_no_open_round_starts_with_its_whole_pr
 
     assert!(prompt.contains("grown to 200000 tokens"), "{prompt}");
     assert!(prompt.contains("# Working context"), "{prompt}");
-    assert!(!prompt.contains(BRIEFING), "a briefing without an open round: {prompt}");
+    assert!(
+        prompt.contains(BRIEFING),
+        "the briefing of a task with no open round: {prompt}"
+    );
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
 }
