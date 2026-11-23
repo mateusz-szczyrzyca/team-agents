@@ -220,7 +220,11 @@ async fn a_restart_after_a_takeover_goes_on_with_the_agent_that_took_it_over() {
         false,
     )
     .await;
-    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    // The run the restart cuts goes on in its own session: this test is about who holds the task, not about the briefing.
+    configure(
+        &rig,
+        "[replacement]\nagents = [\"claude-2\"]\n\n[restart]\nsession = \"same\"\n",
+    );
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
