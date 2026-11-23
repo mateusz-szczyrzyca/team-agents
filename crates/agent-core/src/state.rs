@@ -245,6 +245,18 @@ pub enum InvalidState {
     },
 }
 
+/// Why the start of a task's busy wait could not be recorded.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum StartWaitingError {
+    /// The requested task is not in the state.
+    #[error("cannot start waiting: task {task} is not in the state")]
+    NoTask {
+        /// The task whose busy wait was requested.
+        task: TaskId,
+    },
+}
+
 /// Why a round could not be opened in a state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum StateOpenRoundError {
@@ -642,10 +654,14 @@ impl State {
     }
 
     /// Records that `task` waits for its busy agent from `at`, and returns the moment the wait began: an earlier one is kept.
-    /// `None` when the task is not in the state.
-    pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Option<Timestamp> {
-        let (_, mut member) = self.find_task_mut(task)?;
-        Some(member.start_waiting(at))
+    ///
+    /// # Errors
+    /// [`StartWaitingError::NoTask`] when the task is not in the state.
+    pub fn start_waiting(&mut self, task: &TaskId, at: Timestamp) -> Result<Timestamp, StartWaitingError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| StartWaitingError::NoTask { task: task.clone() })?;
+        Ok(member.start_waiting(at))
     }
 
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo

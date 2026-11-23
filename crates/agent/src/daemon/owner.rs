@@ -155,6 +155,9 @@ pub(crate) enum OwnerError {
     /// A team notice of a busy hand-over cannot be constructed.
     #[error(transparent)]
     BusyNotice(#[from] takeover::BusyNoticeError),
+    /// The start of a task's busy wait cannot be recorded.
+    #[error("cannot record the start of a busy wait")]
+    StartWaiting(#[from] agent_core::state::StartWaitingError),
     /// The state refuses to give a task whose runs went bad to the agent `[replacement]` chose.
     #[error("task {task} cannot be handed to another agent")]
     HandOver {

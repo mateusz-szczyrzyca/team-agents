@@ -311,11 +311,7 @@ impl Owner {
             .member
             .waiting_since()
             .is_some();
-        let since = self
-            .parts
-            .state
-            .start_waiting(task, now)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let since = self.parts.state.start_waiting(task, now)?;
         if !was_waiting {
             self.save().await?;
         }
