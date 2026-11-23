@@ -8,6 +8,7 @@ You work on task task-20261120-144101-r7q2 again, in a new session. The session 
 - `turn_limit`: its last runs used up their turn budget.
 - `busy`: no run of it went bad: its agent was busy in another team for longer than `[replacement] busy_after`, and a
   free agent took the task over while it waited.
+- `daemon_down`: the daemon went down while the run was going. The run was cut from outside, not by the agent's fault.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 
@@ -17,6 +18,17 @@ branch is the work of the runs before yours and is yours to finish.
 ## The task you were given
 
 Fix the parser.
+
+## Who worked on this task
+
+The runs of this task before yours, oldest first, each with the agent that ran it and how it ended (none when the list
+is empty). `DONE` and `QUESTIONS`: the run reported its outcome; `no status`: it ended without a `STATUS:` line; `hang`:
+the watchdog stopped it; `turn limit`: it used up its turn budget; `stopped`: a human stopped it; `failed`: the agent
+could not do the work or the account or the provider stopped it:
+
+
+
+
 
 ## The branch
 
@@ -35,9 +47,21 @@ when the list is empty):
 
 ## The plan of steps
 
-The steps of `.agent/plan.md` as the runs before yours left them — `[ ]` to do, `[>]` in hand, `[x]` done, `[-]` given
-up. They are what the agent declared, not evidence: check them. An empty list: the task keeps no plan, or it does not
-read.
+The steps of `.agent/plan.md` as the runs before yours left them, in four groups. `Confirmed`: the harness ran the
+step's check and it passed. `Declared`: the agent marked the step done, and no check ran, or the check waits for a
+reviewer. `Mismatch`: the agent marked the step done, and its check failed. `Not done`: `[ ]` to do, `[>]` in hand,
+`[-]` given up. Declared steps are what the agent says, not evidence: check them. An empty list: the task keeps no
+plan, or it does not read.
+
+
+
+## The human's answers
+
+The answers of the human to the questions of this task, oldest first, each with its verdict: `ok` accepts the
+recommendation, any other text is the human's own answer, which binds you as the task's instruction (none when the
+list is empty):
+
+
 
 
 
@@ -51,7 +75,8 @@ The messages of your team that no run of this task read, oldest first (none when
 ## What to do now
 
 1. Read the messages of your team first, if you have the tools of the bus (`read_messages`).
-2. Find where the work stands: the files above, the end of the branch's history and the task's own prompt.
+2. Find the real state first: the commits above, the uncommitted files listed above, and the gate of the task. Trust
+   the steps listed as confirmed, check the declared ones, and repair the mismatched ones before anything else.
 3. Go on with what is left of the task, in the same worktree, the same branch and the same task; follow the rules of
    the task's prompt and do only the work of this task.
 4. End your turn with a `STATUS:` line, as the task's prompt says.
