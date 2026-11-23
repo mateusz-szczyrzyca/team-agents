@@ -447,9 +447,12 @@ fn dying_in_a_round(n: u32, ended: u32, end_of_run: &RunEnd) -> State {
         .open_round(round(), Some("1.1".parse().unwrap()), at(1))
         .unwrap();
     for number in 1..=ended + 1 {
-        let (_, mut member) = state.find_task_mut(&task(n)).unwrap();
-        member.transition(TaskStatus::Running).unwrap();
-        drop(member);
+        state
+            .find_task_mut(&task(n))
+            .unwrap()
+            .1
+            .transition(TaskStatus::Running)
+            .unwrap();
         state
             .team_mut(&crate::fixtures::team_id(0))
             .unwrap()
