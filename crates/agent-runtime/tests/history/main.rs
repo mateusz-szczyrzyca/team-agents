@@ -74,3 +74,6 @@ mod wait_events;
 mod worker_request_damaged;
 #[cfg(test)]
 mod writer_plans;
+
+#[cfg(test)]
+mod team_removal;
