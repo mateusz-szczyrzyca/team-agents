@@ -305,7 +305,14 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
         })
     })
     .await;
-    rig.resume(&tasks[0]).await;
+    // A waiting task may have been started by the daemon already under load: the resume is then unnecessary.
+    if rig
+        .state()
+        .find_task(&tasks[0])
+        .is_some_and(|found| found.member.status() != agent_core::status::TaskStatus::Running)
+    {
+        rig.resume(&tasks[0]).await;
+    }
     let prompt = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
     rig.stop().await.unwrap();
@@ -711,10 +718,10 @@ async fn an_older_run_whose_history_cannot_be_read_fails_the_start_with_the_hist
     std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
     std::fs::write(rig.home.history_file(), "this is not a history database").unwrap();
     answer_first_question(&rig, &tasks[0], 1, "ok").await;
+    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Failed).await;
     let notice = rig
         .notification_with("cannot read the runs of the task from the history")
         .await;
-    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Failed).await;
     let started_third = rig.worktree(&tasks[0]).join(".fake-prompt-3").exists();
     rig.stop().await.unwrap();
 
