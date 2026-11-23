@@ -144,6 +144,14 @@ impl State {
         let source = self
             .team(source)
             .ok_or_else(|| RecoveryError::Unknown { team: source.clone() })?;
+        check_destination(
+            source,
+            self.recoveries
+                .iter()
+                .flat_map(|record| [&record.source, &record.replacement])
+                .filter(|other| other.id() != source.id()),
+        )
+        .map_err(|source| RecoveryError::Insert { source })?;
         let predecessor = self
             .recoveries
             .iter()
