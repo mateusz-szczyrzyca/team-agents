@@ -29,6 +29,20 @@ use super::error::{CloseError, StartError, WriteError, WriteKind};
 use super::redact::Redactor;
 use crate::process::error_chain;
 
+/// What can go wrong when persisting the usage of runs to history.
+#[derive(Debug, thiserror::Error)]
+pub enum PersistUsageError {
+    /// The database writer is unavailable or stopped.
+    #[error("history writer is unavailable")]
+    Unavailable,
+    /// The blocking task that hands the records over stopped.
+    #[error(transparent)]
+    Join(#[from] tokio::task::JoinError),
+    /// Writing to the database failed.
+    #[error(transparent)]
+    Write(#[from] WriteError),
+}
+
 /// What can go wrong when persisting judgements to history.
 #[derive(Debug, thiserror::Error)]
 pub enum PersistJudgementsError {
@@ -165,6 +179,13 @@ enum Job {
     },
     /// Reads of a task's plan to write.
     Plans(Vec<super::plans::PlanRecord>),
+    /// The usage of runs to write, with awaited confirmation.
+    PersistUsage {
+        /// The usage records to write.
+        records: Vec<super::usage::RunUsageRecord>,
+        /// Channel to confirm the write outcome.
+        ack: tokio::sync::oneshot::Sender<Result<(), WriteError>>,
+    },
     /// Judgements of a task's plan steps to write, with awaited confirmation.
     PersistJudgements {
         /// The judgement records to write.
@@ -349,6 +370,31 @@ impl History {
             return Err(PersistJudgementsError::Unavailable);
         }
         rx.await?.map_err(PersistJudgementsError::Write)
+    }
+
+    /// Hands the usage of runs to the history and awaits confirmation of commit.
+    ///
+    /// # Errors
+    /// Returns [`PersistUsageError`] if the history writer is unavailable or the write fails.
+    pub async fn persist_usage(&self, records: Vec<super::usage::RunUsageRecord>) -> Result<(), PersistUsageError> {
+        if records.is_empty() {
+            return Ok(());
+        }
+        let Some(queue) = self.queue.clone() else {
+            return Err(PersistUsageError::Unavailable);
+        };
+        let (ack, rx) = tokio::sync::oneshot::channel();
+        let outcome = tokio::task::spawn_blocking(move || match queue.send(Job::PersistUsage { records, ack }) {
+            Ok(()) => QueueOutcome::Enqueued,
+            Err(_) => QueueOutcome::Closed,
+        })
+        .await?;
+        if outcome == QueueOutcome::Closed {
+            return Err(PersistUsageError::Unavailable);
+        }
+        rx.await
+            .map_err(|_| PersistUsageError::Unavailable)?
+            .map_err(PersistUsageError::Write)
     }
 
     /// A handle that records nothing and loses nothing: `[history] enabled = false`.
@@ -689,6 +735,7 @@ impl History {
                 let lost = match job {
                     Job::Plans(plans) => count(plans.len()),
                     Job::PersistJudgements { records, .. } => count(records.len()),
+                    Job::PersistUsage { records, .. } => count(records.len()),
                     Job::Record(_)
                     | Job::Flush(_)
                     | Job::Retain(_)
@@ -785,6 +832,19 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
                     write_plans(&mut store, shared, &plans);
                     continue;
                 }
+                Job::PersistUsage { records, ack } => {
+                    write_batch(&mut store, shared, std::mem::take(&mut batch));
+                    write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
+                    let res = store.write_usage(&records);
+                    if let Err(error) = &res {
+                        shared.lose(count(records.len()));
+                        shared.report(Cause::Write(error.kind()), || error_chain(error));
+                    }
+                    if ack.send(res).is_err() {
+                        tracing::debug!("caller dropped persistence receiver");
+                    }
+                    continue;
+                }
                 Job::PersistJudgements { records, ack } => {
                     write_batch(&mut store, shared, std::mem::take(&mut batch));
                     write_log_batch(&mut store, shared, std::mem::take(&mut log_batch));
@@ -842,6 +902,10 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
             Job::Retain(_) => shared.report(Cause::Retention, || "writer stopped before retention".to_owned()),
             Job::Plans(plans) => shared.lose(count(plans.len())),
             Job::PersistJudgements { records, ack } => {
+                shared.lose(count(records.len()));
+                drop(ack);
+            }
+            Job::PersistUsage { records, ack } => {
                 shared.lose(count(records.len()));
                 drop(ack);
             }

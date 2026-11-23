@@ -118,3 +118,48 @@ fn a_part_the_cli_did_not_tell_is_kept_as_not_told() {
         .unwrap();
     assert_eq!(row, (None, None, Some(500), None));
 }
+
+#[tokio::test]
+async fn the_usage_handed_to_the_writer_is_written_before_the_writer_answers() {
+    use agent_runtime::history::{DEFAULT_QUEUE, History, Setup, TracingReporter};
+    use std::sync::Arc;
+
+    let (_dir, path, mut db) = database();
+    let world = complete(1);
+    db.write(&world.records()).unwrap();
+    let run = world.runs[0].start.run.clone();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let usage = RunUsage {
+        first_context: Some(7),
+        last_context: Some(9),
+        tokens_written: Some(3),
+        cost_usd: None,
+    };
+
+    started
+        .history
+        .persist_usage(vec![RunUsageRecord {
+            run: run.clone(),
+            usage,
+        }])
+        .await
+        .unwrap();
+
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    let row: (Option<i64>, Option<i64>, Option<i64>, Option<f64>) = raw
+        .query_row(
+            "SELECT first_context, last_context, tokens_written, cost_usd FROM run_usage WHERE run = ?1",
+            [run.as_str()],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap();
+    assert_eq!(row, (Some(7), Some(9), Some(3), None));
+    started.writer.close().unwrap();
+}
