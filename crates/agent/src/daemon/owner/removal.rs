@@ -14,7 +14,7 @@ use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest,
 use agent_core::state::CommitId;
 use agent_core::state::{ItemPhase, Team};
 use agent_runtime::disk::directory_size;
-use agent_runtime::git::{CommitIdentity, DeleteMode, Git, RemoveMode, Revision, TreeState};
+use agent_runtime::git::{CommitIdentity, DeleteMode, Git, RemoveMode, Revision, StatusEntry, TreeState};
 use agent_runtime::github::{PullRequestUpdate, RepoSlug, StateChange};
 use agent_runtime::process::error_chain;
 
@@ -70,6 +70,11 @@ fn not_found(team: &TeamId) -> Failure {
         kind: FailureKind::NotFound,
         message: format!("there is no team {team}"),
     }
+}
+
+/// Whether a changed path of a worktree is one git does not track: `??` in the status.
+fn is_untracked(entry: &StatusEntry) -> bool {
+    entry.index == '?' && entry.worktree == '?'
 }
 
 /// The reference under which the bundle keeps the HEAD commit of a worktree of `task`.
@@ -349,8 +354,11 @@ impl Owner {
                     .await
                     .map_err(|error| internal("cannot read a worktree", &error))?
                 {
-                    TreeState::Dirty(_) => dirty.push(dir.clone()),
-                    TreeState::Clean => {}
+                    TreeState::Dirty(entries) if entries.iter().any(|entry| !is_untracked(entry)) => {
+                        dirty.push(dir.clone());
+                    }
+                    // Untracked files alone are not changes of the work: git keeps no record of them.
+                    TreeState::Dirty(_) | TreeState::Clean => {}
                 }
                 let head = handle
                     .rev_parse(&Revision::Head)
@@ -596,9 +604,13 @@ impl Owner {
                 };
                 match outcome {
                     Ok(()) => removal.freed_bytes = removal.freed_bytes.saturating_add(*bytes),
-                    Err(cause) => removal
-                        .left_behind
-                        .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display())),
+                    Err(cause) => {
+                        // Not removed, so not named as removed with its changes.
+                        removal.dirty_worktrees.retain(|path| path != dir);
+                        removal
+                            .left_behind
+                            .push(format!("worktree of {task} at {}: {cause}", dir.as_path().display()));
+                    }
                 }
             }
             for branch in &plan.existing {
