@@ -843,6 +843,10 @@ mod new_session_tests;
 mod restart_session_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/context_session.rs"]
+mod context_session_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/takeover.rs"]
 mod takeover_tests;
 
