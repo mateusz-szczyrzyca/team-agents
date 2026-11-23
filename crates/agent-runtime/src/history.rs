@@ -18,6 +18,7 @@ mod reader;
 mod redact;
 mod retention;
 pub mod schema;
+mod usage;
 mod write;
 
 pub use db::{HistoryDb, Store};
@@ -32,6 +33,7 @@ pub use migrate::Migration;
 pub use notes::Noting;
 pub use plans::{PlanRead, PlanRecord};
 pub use reader::{NewestRuns, Reader, RoundPrompt, RunRow, Stored};
+pub use usage::RunUsageRecord;
 
 pub use reader::query::{LogFilter, LogWindow};
 
