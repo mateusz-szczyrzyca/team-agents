@@ -283,7 +283,14 @@ pub(super) async fn plan(
         .last_session()
         .map(|session| SessionId::from_str(session.as_str()))
         .transpose()?;
-    let kind = if ctx.why == Some(&Why::NoStatus) {
+    // A session above its agent's bound is replaced: its next run is a whole new session, whatever the run before ended as.
+    let replaced = member
+        .renewals()
+        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::ContextBound)
+        && member.awaits_new_session();
+    let kind = if replaced {
+        PromptKind::First
+    } else if ctx.why == Some(&Why::NoStatus) {
         PromptKind::Resume(ResumeReason::NoStatus)
     } else {
         prompt_kind_for_role(role, member, session.as_ref(), config)
