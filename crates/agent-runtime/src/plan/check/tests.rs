@@ -937,6 +937,69 @@ async fn replace_running_record_and_proc_scan_propagate_errors() {
     assert_eq!(scan_err.kind(), std::io::ErrorKind::InvalidData);
 }
 
+/// Builds the after-the-name fields of a `/proc/<pid>/stat` line. The kernel's field numbers are the split indices
+/// plus 3, so the group ID (field 5) sits at index 2 and the start time (field 22) at index 19.
+fn stat_fields(pgrp: &str, starttime: &str) -> String {
+    [
+        "Z", // (3) state
+        "0", // (4) ppid
+        pgrp,
+        "0", // (6) session
+        "0", // (7) tty_nr
+        "0", // (8) tpgid
+        "0", // (9) flags
+        "0", // (10) minflt
+        "0", // (11) cminflt
+        "0", // (12) majflt
+        "0", // (13) cmajflt
+        "0", // (14) utime
+        "0", // (15) stime
+        "0", // (16) cutime
+        "0", // (17) cstime
+        "0", // (18) priority
+        "0", // (19) nice
+        "0", // (20) num_threads
+        "0", // (21) itrealvalue
+        starttime,
+        "0", // (23) vsize
+        "0", // (24) rss
+        "0", // (25) rsslim
+        "0", // (26) start_code
+        "0", // (27) end_code
+        "0", // (28) start_stack
+        "0", // (29) kstkesp
+    ]
+    .join(" ")
+}
+
+#[test]
+fn proc_scan_skips_an_exiting_process_that_names_its_group_minus_one() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-scan-exiting");
+    let pid_dir = fake_proc.join("7778");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7778 (sh) {}\n", stat_fields("-1", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let member = super::process_group_has_member_since_in(&fake_proc, 7778, 90)
+        .expect("the recovery scan must not fail on an exiting process that names its group -1");
+    assert!(!member, "a -1 group ID must not be mistaken for a member of the recorded group 7778");
+}
+
+#[test]
+fn proc_scan_matches_a_live_member_by_group_and_start_ticks() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-live");
+    let pid_dir = fake_proc.join("4242");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("4242 (sh) {}\n", stat_fields("4242", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let member = super::process_group_has_member_since_in(&fake_proc, 4242, 90)
+        .expect("the recovery scan succeeds for a readable stat");
+    assert!(member, "a live member of the recorded group started at or after the recorded ticks must match");
+}
+
 #[test]
 fn prepare_process_spec_in_returns_daemon_start_time_error_when_proc_stat_is_missing_or_corrupt() {
     let env = TestEnv::new();
