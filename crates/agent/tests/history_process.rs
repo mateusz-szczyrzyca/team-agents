@@ -187,8 +187,12 @@ mod history_process {
             // The stand-in counts a run with `echo $n > .fake-runs`, which truncates the file before the counter is
             // in it: an empty file means the count has not been written yet, the same as no file. A counter that is
             // there but not a number is a real break and still fails the test.
-            let counter = std::fs::read_to_string(self.home.join("worktrees/example").join(task).join(".fake-runs"))
-                .unwrap_or_default();
+            let file = self.home.join("worktrees/example").join(task).join(".fake-runs");
+            let counter = match std::fs::read_to_string(&file) {
+                Ok(counter) => counter,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
+                Err(error) => panic!("cannot read run counter {}: {error}", file.display()),
+            };
             if counter.trim().is_empty() {
                 return 0;
             }

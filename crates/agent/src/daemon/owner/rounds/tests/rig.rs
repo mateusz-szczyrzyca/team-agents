@@ -27,7 +27,7 @@ use super::fake_github::{ACCOUNT, FakeGitHub};
 use crate::client::Connection;
 use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in, run_with_log_layer};
 
-/// The longest any wait of these tests lasts.
+/// The failure bound for waits on a single run or file.
 pub(super) const PATIENCE: Duration = Duration::from_secs(60);
 
 /// The bound of `state_where`, three times `PATIENCE`: it waits for a state the whole team reaches through several
@@ -570,16 +570,19 @@ impl Rig {
         let file = self.worktree(task).join(format!(".fake-prompt-{n}"));
         let deadline = Instant::now() + PATIENCE;
         loop {
-            if let Ok(text) = std::fs::read_to_string(&file)
-                && !text.trim().is_empty()
-            {
-                return text;
+            match std::fs::read_to_string(&file) {
+                Ok(text) if !text.trim().is_empty() => return text,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("cannot read prompt {}: {error}", file.display()),
             }
             assert!(
                 Instant::now() < deadline,
                 "timed out waiting for run {n} of {task} to write its prompt\nruns: {}\nlog:\n{}",
-                std::fs::read_to_string(self.worktree(task).join(".fake-runs")).unwrap_or_default(),
-                std::fs::read_to_string(self.worktree(task).join(".fake-log")).unwrap_or_default(),
+                std::fs::read_to_string(self.worktree(task).join(".fake-runs"))
+                    .unwrap_or_else(|error| format!("cannot read run counter: {error}")),
+                std::fs::read_to_string(self.worktree(task).join(".fake-log"))
+                    .unwrap_or_else(|error| format!("cannot read run log: {error}")),
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }

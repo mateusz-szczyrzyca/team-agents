@@ -186,7 +186,15 @@ mod daemon_process {
         // The child pid is written with `echo $! > .fake-child`, which creates the file before the pid is in it:
         // wait until it reads as a pid, not until it exists.
         eventually("the run to write its child pid", || {
-            std::fs::read_to_string(&marker).is_ok_and(|text| text.trim().parse::<i32>().is_ok())
+            match std::fs::read_to_string(&marker) {
+                Ok(text) if text.trim().is_empty() => false,
+                Ok(text) => {
+                    text.trim().parse::<i32>().unwrap();
+                    true
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => panic!("cannot read child marker {}: {error}", marker.display()),
+            }
         });
         let child: i32 = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
 

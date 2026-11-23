@@ -920,9 +920,15 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         // says so: wait for the persist on disk while the daemon still runs, so the expiry below always happens after
         // it, never racing it.
         eventually("waiting_since to be persisted in state.json", || {
-            std::fs::read_to_string(world.home.join("state.json"))
-                .unwrap_or_default()
-                .contains("\"waiting_since\": \"")
+            let file = world.home.join("state.json");
+            match std::fs::read_to_string(&file) {
+                Ok(text) => {
+                    agent_core::state::State::from_json(&text).unwrap();
+                    text.contains("\"waiting_since\": \"")
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => panic!("cannot read saved state {}: {error}", file.display()),
+            }
         });
         if let Some(mut daemon) = world.daemon.take() {
             let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
