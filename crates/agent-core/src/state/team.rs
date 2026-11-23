@@ -22,6 +22,7 @@ mod delivery;
 pub use delivery::{CompleteDeliveryError, DeliverRoundError, EndDeliveryError};
 mod legacy;
 pub use activities::{Activity, ActivityEnd, ActivityOutcome, ActivityRequest};
+mod recovery;
 mod rounds;
 mod splits;
 mod tier_waits;
