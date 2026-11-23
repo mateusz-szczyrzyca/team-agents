@@ -433,8 +433,8 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            idle_team_minutes: IdleMinutes::from(0),
-            idle_team_restarts: 0,
+            idle_team_minutes: IdleMinutes::from(120),
+            idle_team_restarts: 1,
             max_turns: DEFAULT_MAX_TURNS,
             turn_limit_resumes: DEFAULT_TURN_LIMIT_RESUMES,
             quota_pause_minutes: Minutes::literal(DEFAULT_QUOTA_PAUSE_MINUTES),

@@ -17,7 +17,8 @@ impl IdleMinutes {
     /// The idle interval, with zero representing disabled removal.
     #[must_use]
     pub fn as_duration(self) -> Duration {
-        Duration::ZERO
+        // Every u32 minute count fits in u64 seconds.
+        Duration::from_secs(u64::from(self.0) * 60)
     }
 }
 
