@@ -178,10 +178,12 @@ impl<'a> Timeline<'a> {
             .and_then(|team| team.run_of(row.run()));
         let mut line = format!("{}\n", record_line_in(row, run, &self.zone));
         if row.event() == LogEvent::RunEnded {
+            // Once the history keeps usage for any run of the text, a run without a row is told as not told; a history
+            // with none at all tells no usage line, as before usage was kept.
             if let Some(run) = row.run()
-                && let Some(usage) = self.usage.get(run)
+                && !self.usage.is_empty()
             {
-                line.push_str(&usage_line(run, Some(usage)));
+                line.push_str(&usage_line(run, self.usage.get(run)));
                 line.push('\n');
             }
             for round in row.rounds() {
