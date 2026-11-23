@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use agent_core::config::AbsolutePath;
 use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
-use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Target};
+use agent_core::protocol::{Client, Failure, FailureKind, Removal, RemoveRequest, Reply, Target};
 use agent_core::state::{ItemPhase, Team};
 use agent_runtime::disk::directory_size;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, RemoveMode, Revision, TreeState};
@@ -42,6 +42,8 @@ struct Plan {
     dirty: Vec<AbsolutePath>,
     /// The bytes of the worktrees and of the task directories, as measured before the removal.
     bytes: u64,
+    /// What the measuring found that the reply must name, such as a worktree that is not a git checkout.
+    notes: Vec<String>,
 }
 
 /// A failure of a removal step, with the cause in words for the human.
@@ -103,6 +105,23 @@ async fn checkout_of(git: &Git) -> Result<AbsolutePath, Failure> {
 }
 
 impl Owner {
+    /// The answer to `remove`: what the removal took away, or the refusal.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) async fn remove_reply(
+        &mut self,
+        client: &Client,
+        request: RemoveRequest,
+    ) -> Result<Result<Reply, Failure>, OwnerError> {
+        Ok(self
+            .remove_request(client, request)
+            .await?
+            .map(|removal| Reply::Removed {
+                removal: Box::new(removal),
+            }))
+    }
+
     /// Removes the team `request.team` and reports what it took away, bundled, closed and kept.
     ///
     /// # Errors
@@ -166,7 +185,7 @@ impl Owner {
             closed_pull_requests: Vec::new(),
             dirty_worktrees: plan.dirty.clone(),
             freed_bytes: plan.bytes,
-            left_behind: Vec::new(),
+            left_behind: plan.notes.clone(),
         };
         if let Err(failure) = self.write_bundle(&request.team, &plan, &mut removal).await {
             return Ok(Err(failure));
@@ -181,6 +200,7 @@ impl Owner {
         }
         self.forget_team(&request.team, &tasks);
         self.save().await?;
+        self.release_on_bus(&request.team, &tasks, &mut removal).await;
         self.delete_local(&plan, &mut removal).await;
         tracing::info!(
             event = agent_core::log::LogEvent::TeamChanged.as_str(),
@@ -256,10 +276,19 @@ impl Owner {
         let mut existing = Vec::new();
         let mut bundled = Vec::new();
         let mut dirty = Vec::new();
-        let checkout = match worktrees.first() {
-            Some((_, dir)) => Some(checkout_of(&self.git_at(dir, &agent)).await?),
-            None => None,
-        };
+        // The checkout is the one of the first worktree that git can read; a directory that is not a checkout holds no
+        // commits, and it is named in the reply rather than failing the removal.
+        let mut checkout = None;
+        let mut notes = Vec::new();
+        for (task, dir) in &worktrees {
+            match checkout_of(&self.git_at(dir, &agent)).await {
+                Ok(found) => {
+                    checkout = Some(found);
+                    break;
+                }
+                Err(failure) => notes.push(format!("worktree of {task} is not a git checkout: {}", failure.message)),
+            }
+        }
         if let Some(checkout) = &checkout {
             let git = self.git_at(checkout, &agent);
             // A branch of the team is one whose name carries one of its task IDs, also a branch the state no longer names
@@ -315,6 +344,7 @@ impl Owner {
             bundled,
             dirty,
             bytes,
+            notes,
         })
     }
 
@@ -414,6 +444,32 @@ impl Owner {
             removal.closed_pull_requests.push(pr.number);
         }
         Ok(())
+    }
+
+    /// Marks the team done on the bus and names what the bus keeps of its tasks, which the harness cannot release: the
+    /// reservations stay until they expire or someone releases them, and the wake-ups of the bus are not removed.
+    async fn release_on_bus(&self, team: &TeamId, tasks: &[TaskId], removal: &mut Removal) {
+        if let Err(error) = self.parts.bus.team_done(team).await {
+            removal.left_behind.push(format!(
+                "the team is not marked done on the bus: {}",
+                error_chain(&error)
+            ));
+        }
+        match self.parts.bus.status().await {
+            Ok(status) => {
+                for line in status.reservations {
+                    if tasks.iter().any(|task| line.contains(task.as_str())) {
+                        removal.left_behind.push(format!(
+                            "reservation on the bus, kept until it expires or is released: {line}"
+                        ));
+                    }
+                }
+            }
+            Err(error) => removal.left_behind.push(format!(
+                "the reservations of the team on the bus cannot be read: {}",
+                error_chain(&error)
+            )),
+        }
     }
 
     /// Forgets what the owner keeps for the team and its tasks: their wake-ups, their holds, their queued messages.

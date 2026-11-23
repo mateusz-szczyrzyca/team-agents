@@ -3,13 +3,15 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::process::Command;
+use std::process::Command as Process;
 use std::str::FromStr;
 
+use crate::client::ClientError;
 use agent_core::config::AbsolutePath;
 use agent_core::ids::BranchName;
-use agent_core::protocol::{Client, FailureKind, RemoveRequest};
+use agent_core::protocol::{Client, Command, FailureKind, RemoveRequest, Reply};
 use agent_core::state::{Crew, Member, MergeMode, State, TaskListText, TaskRef, Team, TeamMembers};
+use agent_core::status::TaskStatus;
 
 use super::super::fixture::{Daemon, pair_state};
 use super::super::start::work_branch;
@@ -17,7 +19,7 @@ use crate::fixtures::{at, member, normal, repo, task, team_id};
 
 /// Runs git in `dir` with a fixed identity and returns its standard output.
 fn git(dir: &Path, args: &[&str]) -> String {
-    let output = Command::new("git")
+    let output = Process::new("git")
         .current_dir(dir)
         .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
         .args(args)
@@ -295,4 +297,75 @@ async fn a_branch_of_the_team_that_the_state_no_longer_names_is_bundled_and_dele
             .trim()
             .is_empty()
     );
+}
+
+/// A daemon whose two tasks, a coordinator and a member of team 0, run CLIs that never end by themselves.
+async fn running_pair() -> Daemon {
+    let mut daemon = Daemon::new(&pair_state(), None);
+    daemon.scenario(1, "busy");
+    daemon.scenario(2, "busy");
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Running).await;
+    daemon.status_is(2, TaskStatus::Running).await;
+    daemon
+}
+
+#[tokio::test]
+async fn a_team_with_a_run_going_is_refused_without_force_and_keeps_its_runs() {
+    let mut daemon = running_pair().await;
+
+    let refused = daemon
+        .ask(Command::Remove(RemoveRequest {
+            team: team_id(0),
+            force: false,
+        }))
+        .await;
+
+    match refused {
+        Err(ClientError::Refused(failure)) => assert_eq!(failure.kind, FailureKind::Conflict),
+        other => panic!("a refusal was expected: {other:?}"),
+    }
+    daemon.status_is(1, TaskStatus::Running).await;
+    assert!(daemon.state().team(&team_id(0)).is_some());
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_team_with_a_run_going_is_removed_with_force_after_its_runs_ended() {
+    let mut daemon = running_pair().await;
+
+    let reply = daemon
+        .ask(Command::Remove(RemoveRequest {
+            team: team_id(0),
+            force: true,
+        }))
+        .await
+        .unwrap();
+
+    let Reply::Removed { removal } = reply else {
+        panic!("a removal was expected: {reply:?}");
+    };
+    assert_eq!(removal.stopped.len(), 2);
+    assert!(daemon.state().team(&team_id(0)).is_none());
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_removal_over_the_socket_of_an_unknown_team_is_refused() {
+    let state = pair_state();
+    let mut daemon = Daemon::new(&state, None);
+    daemon.start().await;
+
+    let refused = daemon
+        .ask(Command::Remove(RemoveRequest {
+            team: team_id(7),
+            force: false,
+        }))
+        .await;
+
+    match refused {
+        Err(ClientError::Refused(failure)) => assert_eq!(failure.kind, FailureKind::NotFound),
+        other => panic!("a refusal was expected: {other:?}"),
+    }
+    daemon.stop().await.unwrap();
 }

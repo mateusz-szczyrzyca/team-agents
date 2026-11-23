@@ -556,6 +556,7 @@ of a task (`answer`, `question_asked`, `question_answered`) to `number`.
 | `answer` | `task`, `number`, `answers` (1–256 × `{question, verdict}`, none for a question twice) | `applied` |
 | `stop`, `pause`, `unpause`, `resume` | `target` | `applied` |
 | `say` | `target`, `text` (not blank, at most 64 KiB, no NUL) | `applied` |
+| `remove` | `team`, `force?` (absent means false) | `removed` (`team`, `stopped`, `tasks`, `bundle?`, `bundled`, `branches`, `closed_pull_requests`, `dirty_worktrees`, `freed_bytes`, `left_behind`) |
 | `gate` | `task` | `gate_recorded` |
 | `subscribe` | `team?` | `subscribed`, then events |
 

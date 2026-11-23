@@ -106,6 +106,8 @@ pub enum Command {
     Gate(GateRequest),
     /// Receive the events of the state until the connection closes.
     Subscribe(SubscribeRequest),
+    /// Take a team out of the daemon with what is only its own, after its unmerged work is bundled.
+    Remove(RemoveRequest),
 }
 
 /// The task, the team or the round a command is about.

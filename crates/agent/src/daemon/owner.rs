@@ -1939,6 +1939,7 @@ impl Owner {
                             }
                         }
                         Command::Say(request) => self.say_request(&client, request).await?,
+                        Command::Remove(request) => self.remove_reply(&client, request).await?,
                         other => self.answer(&other),
                     };
                     if let Err(ref failure) = answer {
@@ -2032,6 +2033,10 @@ impl Owner {
             Command::Subscribe(_) => Err(Failure {
                 kind: FailureKind::Internal,
                 message: "a subscription is made by the connection, not asked of the owner".to_owned(),
+            }),
+            Command::Remove(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a removal is carried out by the owner, not answered from the state".to_owned(),
             }),
         }
     }

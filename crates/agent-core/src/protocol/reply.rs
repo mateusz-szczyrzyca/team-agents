@@ -82,6 +82,11 @@ pub enum Reply {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         shared: Vec<SharedAgent>,
     },
+    /// `remove`: what was taken away with the team, and what stayed with the reason.
+    Removed {
+        /// The removal, in full.
+        removal: Box<Removal>,
+    },
     /// `status`: the teams in short.
     Teams {
         /// One summary for each team asked for.
