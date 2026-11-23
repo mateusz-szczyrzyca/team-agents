@@ -117,8 +117,10 @@ prompt=${args[${#args[@]}-1]}
 n=1
 if [[ -f .fake-runs ]]; then n=$(( $(< .fake-runs) + 1 )); fi
 whole .fake-runs "$n"
-whole ".fake-prompt-$n" "$prompt"
+# Args first, prompt last: the rig's prompt() waits on the prompt file, so a reader that waits on the prompt must see
+# the whole record of the same run's arguments already — not a window in which the prompt exists and the args do not.
 whole ".fake-args-$n" "${args[@]}"
+whole ".fake-prompt-$n" "$prompt"
 branch=$(git rev-parse --abbrev-ref HEAD 2>&1) || branch="git failed: $branch"
 echo "$n $session $branch" >> .fake-log
 
