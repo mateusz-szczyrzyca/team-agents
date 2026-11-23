@@ -1,8 +1,8 @@
 //! Removing a team from the state: the team and the wake-up records its tasks keep go with it; the other teams stay,
 //! and removing a team that is not there changes nothing.
 
-use super::*;
 use super::fixtures::{task, team_id, team_of};
+use super::*;
 
 /// A state with two teams: team 1 with tasks 1 to 3 and team 2 with tasks 4 to 6.
 fn two_teams() -> State {

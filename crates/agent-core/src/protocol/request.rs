@@ -182,6 +182,17 @@ pub struct ControlRequest {
     pub target: Target,
 }
 
+/// `remove`: takes a team out of the daemon with what is only its own, after its unmerged work is bundled.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveRequest {
+    /// The team to remove.
+    pub team: TeamId,
+    /// Whether the runs going in the team are ended first (`--force`); without it a team with a run going is refused.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub force: bool,
+}
+
 /// `say`: a message from the human to a task or a team.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

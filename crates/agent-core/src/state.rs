@@ -26,6 +26,8 @@ mod member;
 mod migrate;
 mod plan;
 mod question;
+#[cfg(test)]
+mod removal_tests;
 mod renewal;
 #[cfg(test)]
 mod renewal_tests;
@@ -35,8 +37,6 @@ pub mod split;
 mod strict;
 mod team;
 mod values;
-#[cfg(test)]
-mod removal_tests;
 #[cfg(test)]
 mod waiting_tests;
 mod wake_delivery;

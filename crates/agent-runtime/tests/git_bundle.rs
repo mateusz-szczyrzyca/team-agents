@@ -67,13 +67,21 @@ mod git_bundle {
 
         assert!(bundle_dir.path().join("team.bundle").is_file());
         git(dir.path(), &["bundle", "verify", bundle.as_path().to_str().unwrap()]);
-        let heads = git(dir.path(), &["bundle", "list-heads", bundle.as_path().to_str().unwrap()]);
+        let heads = git(
+            dir.path(),
+            &["bundle", "list-heads", bundle.as_path().to_str().unwrap()],
+        );
         assert!(heads.contains(&format!("{tip} refs/heads/work/unmerged")), "{heads}");
         let other = tempfile::tempdir().unwrap();
         git(other.path(), &["init", "-q", "-b", "main"]);
         git(
             other.path(),
-            &["fetch", "-q", bundle.as_path().to_str().unwrap(), "refs/heads/work/unmerged:refs/heads/back"],
+            &[
+                "fetch",
+                "-q",
+                bundle.as_path().to_str().unwrap(),
+                "refs/heads/work/unmerged:refs/heads/back",
+            ],
         );
         assert_eq!(git(other.path(), &["rev-parse", "back"]).trim(), tip);
     }

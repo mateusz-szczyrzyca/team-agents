@@ -15,6 +15,7 @@ mod gate;
 mod history;
 mod last_step;
 mod plan;
+mod removal;
 mod returned;
 mod round_state;
 mod rounds;
