@@ -101,6 +101,27 @@ async fn an_agents_own_bound_replaces_the_session_bound_in_both_directions() {
     );
 }
 
+/// Asks the daemon to resume `task`, accepting that it is already going: a waiting task can be started by the daemon itself
+/// between the test's read of its status and the request, under load.
+async fn resume_unless_already_going(rig: &Rig, task: &agent_core::ids::TaskId) {
+    use agent_core::protocol::{ControlRequest, Reply, Target};
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            agent_core::protocol::Client::Cli,
+            agent_core::protocol::Command::Resume(ControlRequest {
+                target: Target::Task(task.clone()),
+            }),
+        )
+        .await;
+    match reply {
+        Ok(Reply::Applied { .. }) => {}
+        Err(crate::client::ClientError::Refused(failure)) if failure.message.contains("it is already going") => {}
+        other => panic!("unexpected reply: {other:?}"),
+    }
+}
+
 /// A reviewer that asks for a change the first time and approves afterwards: the fix pass the restart tests use.
 const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
@@ -305,14 +326,7 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
         })
     })
     .await;
-    // A waiting task may have been started by the daemon already under load: the resume is then unnecessary.
-    if rig
-        .state()
-        .find_task(&tasks[0])
-        .is_some_and(|found| found.member.status() != agent_core::status::TaskStatus::Running)
-    {
-        rig.resume(&tasks[0]).await;
-    }
+    resume_unless_already_going(&rig, &tasks[0]).await;
     let prompt = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
     rig.stop().await.unwrap();
@@ -716,7 +730,9 @@ async fn an_older_run_whose_history_cannot_be_read_fails_the_start_with_the_hist
         .id()
         .clone();
     std::fs::remove_file(rig.home.run_dir(&tasks[0], &last).join("outcome.json")).unwrap();
-    std::fs::write(rig.home.history_file(), "this is not a history database").unwrap();
+    // A directory of the history's name: the reader cannot open it, and the writer's open file is unaffected.
+    std::fs::remove_file(rig.home.history_file()).unwrap();
+    std::fs::create_dir(rig.home.history_file()).unwrap();
     answer_first_question(&rig, &tasks[0], 1, "ok").await;
     rig.status_is(&tasks[0], agent_core::status::TaskStatus::Failed).await;
     let notice = rig
