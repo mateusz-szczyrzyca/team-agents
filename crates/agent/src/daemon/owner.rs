@@ -1253,18 +1253,18 @@ impl Owner {
                 None,
                 &mut events,
             )?;
+            // The stop is the daemon's own cut: a new session begins before the endings without a status are counted, so
+            // the cut is no retry of the session it ends.
+            self.begin_session_after_stop(task, &located)?;
             let found = self
                 .parts
                 .state
                 .find_task(task)
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
             let mut status = interrupted_status(located.role, found.member);
-            // The retries of the session are used up: the ladder may still start the task in a new session, or another
-            // agent or the lead take it over.
+            // The retries of the session are used up (with `[restart] session = "same"`, or for a worker): the ladder may
+            // still start the task in a new session, or another agent or the lead take it over.
             let failed = status == TaskStatus::Failed;
-            if !failed {
-                self.begin_session_after_stop(task, &located)?;
-            }
             if failed {
                 match self.restart_anew(task, &located)? {
                     Step::NewSession | Step::HandedOver => status = TaskStatus::Queued,
