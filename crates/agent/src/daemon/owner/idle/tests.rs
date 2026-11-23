@@ -501,3 +501,94 @@ async fn queued_crew_and_reviewers_keep_the_team_alive_until_scheduled() {
         assert_eq!(daemon.notifications(), Vec::<String>::new());
     }
 }
+
+#[tokio::test]
+async fn refused_idle_removal_recovers_without_new_activity_on_a_later_scan() {
+    for unavailable_history in [false, true] {
+        let daemon = Daemon::new(&idle_pair_state(), None);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let history = owner.history.clone();
+        if unavailable_history {
+            files(&daemon);
+            owner.history = agent_runtime::history::History::unavailable(
+                &std::io::Error::other("fixture history unavailable"),
+                std::sync::Arc::new(agent_runtime::history::TracingReporter),
+            );
+        }
+        daemon.clock.advance(time::Duration::seconds(7200));
+        owner.check_idle_teams().await.unwrap();
+        let refused = daemon.state();
+        assert!(
+            refused
+                .team(&team_id(0))
+                .unwrap()
+                .idle_watch()
+                .unwrap()
+                .refusal
+                .is_some()
+        );
+        let notices = daemon.notifications();
+        assert_eq!(notices.len(), 1);
+        // Repeated failures remain safe and do not send another notification.
+        daemon.clock.advance(time::Duration::seconds(60));
+        owner.check_idle_teams().await.unwrap();
+        assert_eq!(owner.parts.state.teams().len(), 1);
+        assert_eq!(daemon.notifications(), notices);
+        if unavailable_history {
+            owner.history = history;
+        } else {
+            files(&daemon);
+        }
+        // Retry attempts are bounded by the ordinary one-minute scan interval.
+        daemon.clock.advance(time::Duration::seconds(59));
+        owner.check_idle_teams().await.unwrap();
+        assert_eq!(owner.parts.state.teams().len(), 1);
+        daemon.clock.advance(time::Duration::seconds(1));
+        owner.check_idle_teams().await.unwrap();
+        assert_eq!(
+            owner.parts.state.teams().len(),
+            0,
+            "history unavailable: {unavailable_history}"
+        );
+        assert_eq!(daemon.state().teams().len(), 0);
+        assert_eq!(daemon.notifications().len(), 2);
+        assert_eq!(daemon.notifications()[0], notices[0]);
+        for n in [1, 2] {
+            assert!(!daemon.home.worktree_dir(&repo(), &task(n)).exists());
+        }
+    }
+}
+
+#[tokio::test]
+async fn persisted_idle_refusal_does_not_prevent_removal_after_restart() {
+    let daemon = Daemon::new(&idle_pair_state(), None);
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    let notices = daemon.notifications();
+    assert_eq!(notices.len(), 1);
+    drop(owner);
+    drop(sinks);
+    files(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    assert!(
+        owner
+            .parts
+            .state
+            .team(&team_id(0))
+            .unwrap()
+            .idle_watch()
+            .unwrap()
+            .refusal
+            .is_some()
+    );
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 1);
+    assert_eq!(daemon.notifications(), notices);
+    daemon.clock.advance(time::Duration::seconds(7200));
+    owner.check_idle_teams().await.unwrap();
+    assert_eq!(owner.parts.state.teams().len(), 0);
+    assert_eq!(daemon.state().teams().len(), 0);
+    assert_eq!(daemon.notifications().len(), 2);
+    assert_eq!(daemon.notifications()[0], notices[0]);
+}
