@@ -187,3 +187,41 @@ fn recovery_reservations_protect_identities_after_source_removal() {
     );
     assert_eq!(state, before);
 }
+
+#[test]
+fn loading_refuses_forged_recovery_plans_and_restart_lineages() {
+    let mut state = State::new();
+    state.insert_team(team(1)).unwrap();
+    state.prepare_recovery(&team_id(1), destination(2, 10), 2).unwrap();
+    state.remove_team(&team_id(1)).unwrap();
+    state.install_recovery(&team_id(1)).unwrap();
+    state.prepare_recovery(&team_id(2), destination(3, 20), 2).unwrap();
+    let valid = serde_json::to_value(&state).unwrap();
+    for case in 0..9 {
+        let mut value = valid.clone();
+        match case {
+            0 => value["recoveries"][0]["ordinal"] = 2.into(),
+            1 => value["recoveries"][1]["ordinal"] = 1.into(),
+            2 => value["recoveries"][0]["phase"] = "pending".into(),
+            3 => value["recoveries"][0]["replacement"]["repo"] = "different-repo".into(),
+            4 => value["recoveries"][0]["replacement"]["id"] = serde_json::to_value(team_id(1)).unwrap(),
+            5 => value["recoveries"][1]["replacement"]["id"] = serde_json::to_value(team_id(1)).unwrap(),
+            6 => value["recoveries"][1]["replacement"]["crew"] = value["recoveries"][0]["source"]["crew"].clone(),
+            7 => {
+                let duplicate = value["recoveries"][0].clone();
+                value["recoveries"].as_array_mut().unwrap().push(duplicate);
+            }
+            8 => value["recoveries"][0]["replacement"]["crew"] = value["recoveries"][0]["source"]["crew"].clone(),
+            _ => unreachable!(),
+        }
+        let result = State::from_json(&serde_json::to_string(&value).unwrap());
+        assert!(
+            matches!(result, Err(super::super::StateError::Malformed { .. })),
+            "case {case}: {result:?}"
+        );
+    }
+    assert_eq!(
+        State::from_json(&serde_json::to_string(&valid).unwrap()).unwrap(),
+        state
+    );
+}
