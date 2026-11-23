@@ -103,8 +103,9 @@ impl Owner {
                 && let RunState::Ended { at, end } = run.state()
                 && super::super::settle::wake_time(end, *at, self.parts.settings.config.limits())
                     .map_err(|error| super::removal::internal("cannot reconstruct provider wait", &error))?
-                    .is_some_and(|wake| wake > now)
+                    .is_some_and(|wake| wake > now || member.status() == TaskStatus::Queued)
             {
+                // A due provider retry stays protected until the scheduler begins its next run.
                 return Ok(Hold::Provider);
             }
             if self.wakes.get(task).is_some_and(|wake| *wake > now) {

@@ -147,7 +147,8 @@ Provider quota exhaustion takes precedence over a turn limit and uses the quota 
 Idle teams are checked at startup and once per minute. Activity comes from saved run starts and ends, and local
 branch/worktree commits; a daemon restart does not grant an idle team another interval. Runs and active checks,
 human pause/stop, provider quota/rate-limit reset waits and accepted delivery claims awaiting another team's
-pull-request merge prevent removal. An unanswered human question does not. A removed team is **not restarted
+pull-request merge prevent removal. A queued provider retry remains protected until its next run starts,
+including after a daemon restart. An unanswered human question does not. A removed team is **not restarted
 in this release**; automatic replacement follows in a separate part.
 
 Automatic removal uses the safeguards of `agent remove`: unmerged work is bundled before deletion, and the
