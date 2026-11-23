@@ -290,7 +290,13 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let worktree = rig.worktree(&tasks[0]);
-    rig.status_is(&tasks[0], agent_core::status::TaskStatus::Waiting).await;
+    rig.state_where("the task to wait with its run ended", |state| {
+        state.find_task(&tasks[0]).is_some_and(|found| {
+            found.member.status() == agent_core::status::TaskStatus::Waiting
+                && found.member.runs().last().is_some_and(|run| !run.is_running())
+        })
+    })
+    .await;
     rig.resume(&tasks[0]).await;
     let prompt = rig.prompt(&tasks[0], 3).await;
     let args = std::fs::read_to_string(worktree.join(".fake-args-3")).unwrap();
