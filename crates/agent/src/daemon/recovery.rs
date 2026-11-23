@@ -74,18 +74,10 @@ pub(crate) enum RecoveryError {
     },
 }
 
-/// Ends interrupted runs, queues or fails their tasks within the retry budget, and finds the pauses to wake.
-///
-/// # Errors
-/// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.
-#[cfg(test)]
-pub(super) fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
-    recover_with(state, now, limits, RestartSession::Same)
-}
-
-/// Ends interrupted runs as `recover` of the tests does, and a run that was going when the daemon went down begins a new session of its task when `restart`
-/// and [`after_cut`] say so, before the retries of the session are counted: a cut the daemon caused is no retry. Only a
-/// run that recovery itself ends is a cut by the daemon: an earlier end with no exit code may be a signal's.
+/// Ends the runs a restart left going, queues or fails their tasks within the retry budget and finds the pauses to wake. A
+/// run that was going when the daemon went down begins a new session of its task when `restart` and [`after_cut`] say
+/// so, before the retries of the session are counted: a cut the daemon caused is no retry. Only a run that recovery itself
+/// ends is a cut by the daemon: an earlier end with no exit code may be a signal's.
 ///
 /// # Errors
 /// [`RecoveryError`] when the state refuses a change or a pause cannot be timed.

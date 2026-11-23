@@ -545,3 +545,8 @@ fn a_cut_run_of_a_reviewer_or_a_worker_begins_no_new_session() {
         assert_eq!(recovery.renewed, Vec::<TaskId>::new(), "task {n}");
     }
 }
+
+/// Recovery as the tests of a restart that keeps the session of a cut run know it: with `[restart] session = "same"`.
+fn recover(state: &mut State, now: Timestamp, limits: &Limits) -> Result<Recovery, RecoveryError> {
+    recover_with(state, now, limits, RestartSession::Same)
+}

@@ -295,12 +295,14 @@ have been killed by a signal: `recover` ends a run that was going when the daemo
 runs it stops. At that point, for a solo agent, a coordinator or a member whose run worked for an open round,
 `State::begin_holder_session` records a new session with the reason `daemon_down` — a session boundary as for a
 hand-over, made before the no-status retries are counted, so the cut neither fails the task nor charges a retry or a new
-session of the agent, and the round, its pull request and its passes are untouched. (A stop that finds the retries of the
-session already used up leaves the task to the ladder, as before.) `snapshot_interrupted` snapshots the worktree, and the
-briefing of the task's next run names that snapshot; it tells the last run of the history as cut by the daemon when its
-reason is `daemon_down`, and as ended with no status otherwise. A worker, a reviewer, a task with no open round and a task
-that already awaits a new session resume as before, and so does every task when `[restart] session = "same"`
-(`resume-restart.md`). A task with no session id has none to leave: it is started in a new session, briefed, all the same.
+session of the agent, whether the daemon was stopped or crashed, and the round, its pull request and its passes are
+untouched. `snapshot_interrupted` snapshots the worktree, and the briefing of the task's next run names that snapshot.
+The record of a run says only "ended with no exit code" for a signal and for a cut alike, so the briefing tells the last
+run before a `daemon_down` session as cut by the daemon and every other such run as ended with no status; a run cut
+by an earlier stop is therefore told "no status" in a later briefing (the state and the history keep no mark for it). A
+worker, a reviewer, a task with no open round and a task that already awaits a new session resume as before, and so does
+every task when `[restart] session = "same"` (`resume-restart.md`): the stop then counts its cut among the retries and may
+climb the ladder. A task with no session id has none to leave: it is started in a new session, briefed, all the same.
 
 **The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,
 `replacements`): when the ladder has no step left, the daemon offers the task to the agents of `[replacement] agents`, in
