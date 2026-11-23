@@ -401,6 +401,9 @@ pub(crate) struct CallUsage {
 pub(crate) struct UsageTally {
     /// Each call by its ID, with the order in which the stream first named it.
     calls: BTreeMap<String, (usize, CallUsage)>,
+    /// The output tokens of the whole run as the CLI's result reports them; they replace the sum of the calls, which
+    /// is told only when every call tells its part.
+    reported_written: Option<u64>,
 }
 
 impl UsageTally {
@@ -413,8 +416,19 @@ impl UsageTally {
             .or_insert((order, call));
     }
 
+    /// How many calls the stream has named so far.
+    pub(crate) fn calls(&self) -> usize {
+        self.calls.len()
+    }
+
+    /// Records the output tokens of the whole run as the CLI's result reports them.
+    pub(crate) fn report_written(&mut self, total: Option<u64>) {
+        self.reported_written = total;
+    }
+
     /// What the calls tell of the run. The context is that of the first and of the last call; the output and the cost
     /// are summed over the calls, and a sum is told only when every call tells its part and the sum does not overflow.
+    /// The output total the result reports, when there is one, is told instead of the sum.
     pub(crate) fn usage(&self) -> RunUsage {
         let mut ordered: Vec<(usize, CallUsage)> = self.calls.values().copied().collect();
         ordered.sort_by_key(|(order, _)| *order);
@@ -422,7 +436,9 @@ impl UsageTally {
         RunUsage {
             first_context: calls.first().and_then(|call| call.context),
             last_context: calls.last().and_then(|call| call.context),
-            tokens_written: sum_tokens(&calls, |call| call.written),
+            tokens_written: self
+                .reported_written
+                .or_else(|| sum_tokens(&calls, |call| call.written)),
             cost_usd: sum_costs(&calls),
         }
     }

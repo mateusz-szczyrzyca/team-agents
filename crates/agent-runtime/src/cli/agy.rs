@@ -226,6 +226,8 @@ struct Finish {
     error: Option<String>,
     /// The conversation of the run.
     conversation_id: Option<String>,
+    /// What the whole run used; only its output tokens are read.
+    usage: Option<StepUsage>,
 }
 
 /// The call of an MCP tool through `call_mcp_tool`, as a step: a call of agentbus, or of another server's tool.
@@ -327,6 +329,8 @@ impl AgyParser {
             StreamOutcome::Failed
         };
         self.progress.final_message = result.response.filter(|text| !text.trim().is_empty());
+        // The result's usage is the total of the run, never a context: only its output tokens are read.
+        self.usage.report_written(result.usage.and_then(|usage| usage.output));
         Ok(events)
     }
 }

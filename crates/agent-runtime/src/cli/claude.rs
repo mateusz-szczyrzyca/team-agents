@@ -46,6 +46,10 @@ const SUCCESS_SUBTYPE: &str = "success";
 /// The subtype of a `result` that used up the run's `--max-turns`.
 const MAX_TURNS_SUBTYPE: &str = "error_max_turns";
 
+/// The start of the key of a model call whose message the stream gives no ID: such a call is counted once, under its
+/// own number.
+const ANONYMOUS_CALL: &str = "anonymous-call-";
+
 /// The adapter of Claude Code.
 #[derive(Debug, Clone, Copy)]
 pub struct ClaudeAdapter;
@@ -298,6 +302,8 @@ struct Finish {
     num_turns: Option<u64>,
     /// The cost of the whole run in US dollars, as the CLI reports it.
     total_cost_usd: Option<f64>,
+    /// What the whole run used; only its output tokens are read.
+    usage: Option<ClaudeUsage>,
 }
 
 impl Finish {
@@ -396,10 +402,13 @@ impl OutputParser for ClaudeParser {
                 Ok(vec![ActivityEvent::Info(format!("session started, model {model}"))])
             }
             Event::Assistant(Turn { message }) => {
-                // A turn without an ID or without usage is no model call the stream tells of: it counts as not told.
-                if let (Some(id), Some(usage)) = (message.id, message.usage) {
-                    self.usage.record(id, usage.call());
-                }
+                // A model call that tells no usage is kept as a call that tells nothing, so that the call before it is
+                // not told as the last one. A message without an ID is its own call.
+                let id = message
+                    .id
+                    .unwrap_or_else(|| format!("{ANONYMOUS_CALL}{}", self.usage.calls()));
+                self.usage
+                    .record(id, message.usage.map_or_else(CallUsage::default, ClaudeUsage::call));
                 Ok(blocks(line, message.content)?
                     .into_iter()
                     .filter_map(Self::block)
@@ -428,7 +437,9 @@ impl OutputParser for ClaudeParser {
                 }
                 events.push(ActivityEvent::Info(finish.summary()));
                 self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
-                // The result's usage is the total of the run, never a context: only its cost is taken from it.
+                // The result's usage is the total of the run, never a context: only its output tokens and its cost are
+                // taken from it.
+                self.usage.report_written(finish.usage.and_then(|usage| usage.output));
                 self.total_cost_usd = finish.total_cost_usd;
                 Ok(events)
             }
