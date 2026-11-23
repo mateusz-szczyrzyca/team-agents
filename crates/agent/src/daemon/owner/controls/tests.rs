@@ -693,3 +693,30 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
     assert_eq!(status(&owner.parts.state, 1), TaskStatus::Stopped);
     assert!(owner.reasons.is_empty());
 }
+
+/// A failure that did not report `STATUS: FAILED` is never retried at the owner boundary, even when the run called no
+/// tool on a fresh, not-yet-retried session: the decision gets the run's real end, not a fabricated one.
+#[tokio::test]
+async fn a_failure_that_did_not_report_failed_is_not_retried() {
+    use crate::daemon::notice::Notice;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let notice = Notice::Failed {
+        message: "I could not do it.".to_owned(),
+    };
+
+    let (status, told) = owner
+        .settle_failed_without_tool(
+            &task(1),
+            &RunEnd::NoStatus { exit_code: Some(1) },
+            false,
+            crate::fixtures::at(0),
+            notice,
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(status, TaskStatus::Failed);
+    assert!(told.is_some(), "the human is told of a real failure");
+}
