@@ -68,6 +68,7 @@ fn the_pinned_file_is_the_version_of_the_last_migration_and_every_table_of_it_is
             "run_ends",
             "run_rounds",
             "run_sessions",
+            "run_usage",
             "runs",
             "snapshots",
             "step_judgements",
@@ -252,7 +253,7 @@ fn a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was() {
     let path = dir.path().join("newer.db");
     {
         let raw = Connection::open(&path).unwrap();
-        raw.execute_batch("create table from_the_future (x TEXT); PRAGMA user_version = 21;")
+        raw.execute_batch("create table from_the_future (x TEXT); PRAGMA user_version = 22;")
             .unwrap();
     }
     let before = std::fs::read(&path).unwrap();
@@ -261,7 +262,7 @@ fn a_database_of_a_newer_version_is_refused_and_left_byte_for_byte_as_it_was() {
 
     let latest = MIGRATIONS.last().unwrap().version;
     assert!(
-        matches!(error, OpenError::Newer { found: 21, supported, .. } if supported == latest),
+        matches!(error, OpenError::Newer { found: 22, supported, .. } if supported == latest),
         "{error:?}"
     );
     assert_eq!(std::fs::read(&path).unwrap(), before);
@@ -282,7 +283,7 @@ fn a_reader_refuses_a_newer_database_and_one_no_daemon_has_written_to() {
     let newer = dir.path().join("newer.db");
     Connection::open(&newer)
         .unwrap()
-        .execute_batch("PRAGMA user_version = 21;")
+        .execute_batch("PRAGMA user_version = 22;")
         .unwrap();
     let empty = dir.path().join("empty.db");
     Connection::open(&empty)
@@ -294,7 +295,7 @@ fn a_reader_refuses_a_newer_database_and_one_no_daemon_has_written_to() {
     let refused_empty = Reader::open(&empty).unwrap_err();
 
     assert!(
-        matches!(refused_newer, ReadError::Newer { found: 21, .. }),
+        matches!(refused_newer, ReadError::Newer { found: 22, .. }),
         "{refused_newer:?}"
     );
     assert!(matches!(refused_empty, ReadError::Empty { .. }), "{refused_empty:?}");
