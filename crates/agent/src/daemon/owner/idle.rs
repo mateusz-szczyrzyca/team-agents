@@ -57,6 +57,9 @@ impl Owner {
 
     /// Activity and intentional holds prevent an automatic removal attempt.
     fn idle_hold(&self, team: &Team, now: Timestamp) -> Result<Hold, Failure> {
+        if team.delivery_waits().next().is_some() {
+            return Ok(Hold::ExternalMerge);
+        }
         for member in team
             .crew()
             .roster()
