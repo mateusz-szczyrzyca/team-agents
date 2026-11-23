@@ -177,8 +177,8 @@ always UTC. A `--since` or `--until` without a zone is read in the zone of this 
   Once the history keeps usage, the story of a round or a team tells each run's usage at its own end, in one line that
   names the run: `run <id> usage: context first N, last M; output K; cost C USD`. The context is what the CLI's stream
   told: the input of the run's first and last model call with what came from its cache. A part the CLI did not tell
-  reads `not told`, and so does a whole run without a row. `agent log --task <task>` and `--run <run>` end with the same
-  lines for their runs, and `--show usage --json` gives a row of numbers (`null` for a part not told) for each run that
+  reads `not told`, and so does a whole run without a row. `agent log --task <task>` and `--run <run>` tell the same
+  line right after the `run_ended` row of each run (after the text, for a run whose end row is not in it), and `--show usage --json` gives a row of numbers (`null` for a part not told) for each run that
   has usage. A history written before usage was kept prints no usage line, and `--json` stories carry none.
 - **Context of a session.** Each run records the context size, the output tokens and the cost its CLI reports
   (Claude Code, opencode and Antigravity tell the context of each model call; Codex tells output tokens only, so its
