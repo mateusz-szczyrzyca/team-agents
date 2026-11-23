@@ -12,6 +12,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] Bus wake-ups are neither read nor cleaned, and reservations remain until released or expired; removal reports the available wake-budget records and known reservations. A team without a surviving worktree is refused with recovery instructions.
 
 ### Enhancements
+- [agent] Removal also cleans up document and artwork directories when the team has no Git worktrees, including their sizes in the freed-byte total.
 - [agent-runtime] **Action:** On the first start, the daemon migrates `history.db` to schema 20 to record team removals, preserving existing history. Older daemons refuse this newer schema; keep a backup before upgrading if you need to return to an older daemon.
 
 ## 0.73.0 — 23.11.2026 — PR #217 (continues #190)
