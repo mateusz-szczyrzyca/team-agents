@@ -700,14 +700,8 @@ async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, B
         else {
             continue;
         };
-        match QuestionsFile::parse(&file.text) {
-            Ok(questions) => answers.extend(questions.entries().iter().filter_map(|entry| {
-                entry.verdict().map(|verdict| AnswerLine {
-                    number: entry.number().to_string(),
-                    title: entry.title().to_owned(),
-                    verdict: verdict_word(verdict).to_owned(),
-                })
-            })),
+        match answers_in(&file.text) {
+            Ok(found) => answers.extend(found),
             Err(error) => tracing::warn!(
                 event = LogEvent::HistoryRecordIncomplete.as_str(),
                 task = %task,
@@ -725,8 +719,18 @@ async fn read_answers(folder: &Path, task: &TaskId) -> Result<Vec<AnswerLine>, B
 /// # Errors
 /// [`agent_core::questions::ParseError`] when the text is not a questions file.
 fn answers_in(text: &str) -> Result<Vec<AnswerLine>, agent_core::questions::ParseError> {
-    QuestionsFile::parse(text)?;
-    Ok(Vec::new())
+    let questions = QuestionsFile::parse(text)?;
+    Ok(questions
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            entry.verdict().map(|verdict| AnswerLine {
+                number: entry.number().to_string(),
+                title: entry.title().to_owned(),
+                verdict: verdict_word(verdict).to_owned(),
+            })
+        })
+        .collect())
 }
 
 /// The number of a question file named `questions-<number>.md`; `None` for any other name.
