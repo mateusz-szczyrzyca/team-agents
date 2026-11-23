@@ -147,6 +147,15 @@ impl State {
         let replacement = source
             .recovery_team(destination.id, destination.created_at, destination.crew)
             .map_err(|source| RecoveryError::Team { source })?;
+        check_destination(
+            &replacement,
+            self.teams.iter().chain(
+                self.recoveries
+                    .iter()
+                    .flat_map(|record| [&record.source, &record.replacement]),
+            ),
+        )
+        .map_err(|source| RecoveryError::Insert { source })?;
         let id = replacement.id().clone();
         self.recoveries.push(Recovery {
             source: source.clone(),
@@ -182,6 +191,28 @@ impl State {
         }
         Ok(RecoveryInstallation::Installed)
     }
+}
+
+/// Checks fresh team and task identities against active and historically reserved teams.
+fn check_destination<'a>(replacement: &Team, occupied: impl Iterator<Item = &'a Team>) -> Result<(), InvalidState> {
+    let tasks: std::collections::HashSet<_> = super::team_members(replacement).map(super::Member::task).collect();
+    for other in occupied {
+        if other.id() == replacement.id() {
+            return Err(InvalidState::DuplicateTeam {
+                team: replacement.id().clone(),
+            });
+        }
+        for member in super::team_members(other) {
+            if tasks.contains(member.task()) {
+                return Err(InvalidState::DuplicateTask {
+                    task: member.task().clone(),
+                    first: other.id().clone(),
+                    second: replacement.id().clone(),
+                });
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
