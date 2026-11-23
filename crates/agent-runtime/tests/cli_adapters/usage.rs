@@ -105,3 +105,69 @@ fn agy_sums_the_output_of_its_steps_and_takes_the_context_from_input_and_cache()
     );
     Ok(())
 }
+
+#[test]
+fn claude_reads_the_output_total_of_its_result() -> TestResult {
+    let usage = usage_of(&ClaudeAdapter, &fixture("claude", "done.jsonl")?);
+
+    assert_eq!(usage.tokens_written, Some(2_053));
+    Ok(())
+}
+
+#[test]
+fn claude_tells_no_last_context_when_the_last_call_tells_no_usage() {
+    let stdout = [
+        r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Reading."}],"usage":{"input_tokens":3,"cache_creation_input_tokens":50,"cache_read_input_tokens":100,"output_tokens":20}},"session_id":"s-1"}"#,
+        r#"{"type":"assistant","message":{"id":"msg_2","role":"assistant","content":[{"type":"text","text":"Done."}]},"session_id":"s-1"}"#,
+    ]
+    .join("\n");
+
+    let usage = usage_of(&ClaudeAdapter, &stdout);
+
+    assert_eq!(
+        usage,
+        RunUsage {
+            first_context: Some(153),
+            last_context: None,
+            tokens_written: None,
+            cost_usd: None,
+        }
+    );
+}
+
+#[test]
+fn claude_takes_the_output_total_of_its_result_also_when_a_call_tells_no_usage() {
+    let stdout = [
+        r#"{"type":"assistant","message":{"id":"msg_1","role":"assistant","content":[{"type":"text","text":"Reading."}]},"session_id":"s-1"}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"STATUS: DONE","session_id":"s-1","usage":{"input_tokens":4,"output_tokens":77}}"#,
+    ]
+    .join("\n");
+
+    let usage = usage_of(&ClaudeAdapter, &stdout);
+
+    assert_eq!(
+        usage,
+        RunUsage {
+            first_context: None,
+            last_context: None,
+            tokens_written: Some(77),
+            cost_usd: None,
+        }
+    );
+}
+
+#[test]
+fn agy_reads_the_output_total_of_its_result_when_no_step_tells_usage() -> TestResult {
+    let usage = usage_of(&AgyAdapter, &fixture("agy", "error.jsonl")?);
+
+    assert_eq!(
+        usage,
+        RunUsage {
+            first_context: None,
+            last_context: None,
+            tokens_written: Some(32_984),
+            cost_usd: None,
+        }
+    );
+    Ok(())
+}
