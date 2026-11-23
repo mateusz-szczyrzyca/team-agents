@@ -297,6 +297,11 @@ impl Owner {
             }
             stopped = running;
         }
+        while tasks.iter().any(|task| self.pending_removals.contains(task)) {
+            if let Some(joined) = self.disk_jobs.join_next_with_id().await {
+                self.disk_job_done(joined).await;
+            }
+        }
         let plan = match self.removal_plan(&request.team).await {
             Ok(plan) => plan,
             Err(failure) => return Ok(Err(failure)),
