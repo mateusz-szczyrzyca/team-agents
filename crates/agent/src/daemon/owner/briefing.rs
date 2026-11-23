@@ -51,6 +51,8 @@ pub(super) fn context_paragraph(texts: &HarnessPrompts, tokens: u64) -> Result<S
 pub(super) struct LastMessage {
     /// The message's text.
     pub(super) text: String,
+    /// Whether the outcome file kept the message whole; a message read from the history is not said to be whole.
+    pub(super) whole: bool,
     /// The limit in bytes the history cut the text at, when it did: the message is then not whole.
     pub(super) cut_at: Option<u32>,
 }
@@ -58,7 +60,11 @@ pub(super) struct LastMessage {
 impl LastMessage {
     /// A message that is whole: the outcome file kept it.
     fn whole(text: String) -> Self {
-        Self { text, cut_at: None }
+        Self {
+            text,
+            whole: true,
+            cut_at: None,
+        }
     }
 }
 
@@ -75,9 +81,13 @@ pub(super) fn message_cut_paragraph(texts: &HarnessPrompts, limit: u32) -> Resul
 ///
 /// # Errors
 /// [`ComposeError`] when the section cannot be filled.
-pub(super) fn last_message_paragraph(texts: &HarnessPrompts, message: &str) -> Result<String, ComposeError> {
+pub(super) fn last_message_paragraph(
+    texts: &HarnessPrompts,
+    heading: HarnessPrompt,
+    message: &str,
+) -> Result<String, ComposeError> {
     let values = Variables::new().with("message", message)?;
-    Ok(texts.render(HarnessPrompt::BriefingLastMessage, &values)?)
+    Ok(texts.render(heading, &values)?)
 }
 
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
@@ -362,6 +372,7 @@ impl Owner {
                 let text = end.value.final_message.clone()?;
                 Some(LastMessage {
                     text,
+                    whole: false,
                     cut_at: end.cut.has("final_message").then_some(limit),
                 })
             })),

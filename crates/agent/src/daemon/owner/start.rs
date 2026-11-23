@@ -246,9 +246,14 @@ fn with_last_message(
     let Some(message) = last_message else {
         return Ok(prompt);
     };
+    let heading = if message.whole {
+        HarnessPrompt::BriefingLastMessage
+    } else {
+        HarnessPrompt::BriefingLastMessageHistory
+    };
     let mut text = format!(
         "{prompt}\n\n{}",
-        super::briefing::last_message_paragraph(ctx.texts, &message.text)?
+        super::briefing::last_message_paragraph(ctx.texts, heading, &message.text)?
     );
     if let Some(limit) = message.cut_at {
         text.push_str("\n\n");

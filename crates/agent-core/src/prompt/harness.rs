@@ -56,8 +56,11 @@ pub enum HarnessPrompt {
     /// The paragraph a briefing opens with when its session outgrew its agent's bound: why the session is new, with the
     /// context in tokens that ended the old one.
     BriefingContext,
-    /// The section a briefing of a new session ends with: the agent's last final message of the session before, whole.
+    /// The section a briefing of a new session ends with: the agent's last final message of the session before, whole (read
+    /// from the run's outcome file).
     BriefingLastMessage,
+    /// The same section for a message read from the history, which may be cut: its heading does not say whole.
+    BriefingLastMessageHistory,
     /// The note after the last message of the session before when the history cut it at its limit: the run wrote no outcome
     /// file that holds it whole.
     BriefingMessageCut,
@@ -169,6 +172,7 @@ impl HarnessPrompt {
         Self::LeadBriefing,
         Self::BriefingContext,
         Self::BriefingLastMessage,
+        Self::BriefingLastMessageHistory,
         Self::BriefingMessageCut,
         Self::BriefingMessagesLeftOut,
         Self::BriefingRunsLeftOut,
@@ -277,6 +281,11 @@ impl HarnessPrompt {
             Self::BriefingLastMessage => {
                 PromptSpec::new("harness/run/briefing-last-message.md", Audience::Model, &["message"])
             }
+            Self::BriefingLastMessageHistory => PromptSpec::new(
+                "harness/run/briefing-last-message-history.md",
+                Audience::Model,
+                &["message"],
+            ),
             Self::BriefingMessageCut => {
                 PromptSpec::new("harness/run/briefing-message-cut.md", Audience::Model, &["limit"])
             }
