@@ -31,6 +31,7 @@ fn files(daemon: &Daemon) {
 #[tokio::test]
 async fn team_is_removed_at_the_bound_when_activity_and_startup_coincide() {
     let daemon = Daemon::new(&idle_pair_state(), None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     files(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(7199));
@@ -141,6 +142,7 @@ fn git(path: &std::path::Path, seconds: u32, args: &[&str]) {
 #[tokio::test]
 async fn git_dates_survive_startup_and_changed_tips_reset_activity() {
     let daemon = Daemon::new(&idle_pair_state(), None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     files(&daemon);
     let path = daemon.home.worktree_dir(&repo(), &task(1));
     let repository = tempfile::tempdir().unwrap();
@@ -249,6 +251,7 @@ async fn persisted_quota_hold_is_honored_until_its_recorded_reset() {
         member.transition(TaskStatus::Waiting).unwrap();
     }
     let daemon = Daemon::new(&state, None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     files(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(8059));
@@ -312,6 +315,7 @@ async fn idle_history_records_activity_and_refusal_once() {
     use std::sync::Arc;
     for removable in [true, false] {
         let daemon = Daemon::new(&idle_pair_state(), None);
+        daemon.configure("[limits]\nidle_team_restarts = 0\n");
         if removable {
             files(&daemon);
         }
@@ -446,6 +450,7 @@ async fn provider_retry_queued_after_reset_survives_idle_scan_and_restart() {
 #[tokio::test]
 async fn old_team_is_kept_until_the_current_daemon_has_run_for_the_idle_bound() {
     let daemon = Daemon::new(&idle_pair_state(), None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     files(&daemon);
     daemon.clock.advance(time::Duration::seconds(86400));
     let (mut owner, _sinks) = daemon.bare_owner().await;
@@ -506,6 +511,7 @@ async fn queued_crew_and_reviewers_keep_the_team_alive_until_scheduled() {
 async fn refused_idle_removal_recovers_without_new_activity_on_a_later_scan() {
     for unavailable_history in [false, true] {
         let daemon = Daemon::new(&idle_pair_state(), None);
+        daemon.configure("[limits]\nidle_team_restarts = 0\n");
         let (mut owner, _sinks) = daemon.bare_owner().await;
         let history = owner.history.clone();
         if unavailable_history {
@@ -562,6 +568,7 @@ async fn refused_idle_removal_recovers_without_new_activity_on_a_later_scan() {
 #[tokio::test]
 async fn persisted_idle_refusal_does_not_prevent_removal_after_restart() {
     let daemon = Daemon::new(&idle_pair_state(), None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     let (mut owner, sinks) = daemon.bare_owner().await;
     daemon.clock.advance(time::Duration::seconds(7200));
     owner.check_idle_teams().await.unwrap();

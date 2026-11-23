@@ -55,6 +55,7 @@ async fn startup_keeps_the_stalled_split_until_the_daemon_idle_window_passes() {
     let state = stalled_split();
     let expected = state.team(&team_id(0)).unwrap();
     let mut daemon = Daemon::new(&state, None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     let path = daemon.scenario(1, "done");
     daemon.clock.advance(time::Duration::seconds(7200));
     daemon.start().await;
@@ -113,6 +114,7 @@ async fn startup_keeps_the_stalled_split_until_the_daemon_idle_window_passes() {
 #[tokio::test]
 async fn periodic_rule_removes_a_team_waiting_for_human_questions() {
     let mut daemon = Daemon::new(&crate::fixtures::solo_state(), None);
+    daemon.configure("[limits]\nidle_team_restarts = 0\n");
     let question = daemon.questions_file(1, 1);
     let path = daemon.scenario(1, &format!("questions {}", question.display()));
     daemon.start().await;
