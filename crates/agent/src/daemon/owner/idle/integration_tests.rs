@@ -51,13 +51,21 @@ fn stalled_split() -> State {
 }
 
 #[tokio::test]
-async fn startup_removes_the_stalled_split_without_granting_a_new_idle_window() {
+async fn startup_keeps_the_stalled_split_until_the_daemon_idle_window_passes() {
     let state = stalled_split();
     let expected = state.team(&team_id(0)).unwrap();
     let mut daemon = Daemon::new(&state, None);
     let path = daemon.scenario(1, "done");
     daemon.clock.advance(time::Duration::seconds(7200));
     daemon.start().await;
+    let observed = daemon
+        .state_where("startup activity observation", |state| {
+            state.team(&team_id(0)).is_some_and(|team| team.idle_watch().is_some())
+        })
+        .await;
+    assert_eq!(observed.teams().len(), 1);
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
+    daemon.clock.advance(time::Duration::seconds(7200));
     // Wait for a state change, with a bounded failure that still joins the daemon.
     let observed = tokio::time::timeout(
         Duration::from_secs(20),
@@ -134,6 +142,14 @@ async fn daemon_refusal_keeps_a_stalled_split_and_notifies_once_after_restart() 
     let mut daemon = Daemon::new(&stalled_split(), None);
     daemon.clock.advance(time::Duration::seconds(7200));
     daemon.start().await;
+    let observed = daemon
+        .state_where("startup activity observation", |state| {
+            state.team(&team_id(0)).is_some_and(|team| team.idle_watch().is_some())
+        })
+        .await;
+    assert_eq!(observed.teams().len(), 1);
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
+    daemon.clock.advance(time::Duration::seconds(7200));
     let observed = tokio::time::timeout(
         Duration::from_secs(20),
         daemon.state_where("idle refusal", |state| {

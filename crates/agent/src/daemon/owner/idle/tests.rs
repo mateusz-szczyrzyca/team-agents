@@ -13,7 +13,7 @@ fn files(daemon: &Daemon) {
 }
 
 #[tokio::test]
-async fn old_state_is_removed_at_the_bound_and_not_given_a_new_startup_window() {
+async fn team_is_removed_at_the_bound_when_activity_and_startup_coincide() {
     let daemon = Daemon::new(&pair_state(), None);
     files(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
@@ -84,8 +84,8 @@ async fn disabled_running_human_and_provider_holds_preserve_files() {
 #[tokio::test]
 async fn refusal_retains_team_and_notifies_once_across_restart() {
     let daemon = Daemon::new(&pair_state(), None);
-    daemon.clock.advance(time::Duration::seconds(7200));
     let (mut owner, sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(7200));
     owner.check_idle_teams().await.unwrap();
     assert_eq!(owner.parts.state.teams().len(), 1);
     assert!(
