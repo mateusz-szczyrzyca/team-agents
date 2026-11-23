@@ -11,17 +11,7 @@ use crate::daemon::owner::start::work_branch;
 
 #[tokio::test]
 async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losing_history_or_remote_work() {
-    let mut rig = Rig::new(
-        &[
-            normal("claude-1", "clean-sleep"),
-            investigator("inv-r1", "done"),
-            investigator("inv-r2", "done"),
-        ],
-        0,
-        false,
-    )
-    .await;
-    rig.start().await;
+    let mut rig = removal_rig().await;
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
     let task = tasks.first().unwrap();
     rig.status_is(task, TaskStatus::Waiting).await;
@@ -112,6 +102,22 @@ async fn removal_notifies_once_closes_the_pull_and_survives_restart_without_losi
         .runs_of_team(&team)
         .unwrap();
     assert_eq!(after, before);
+}
+
+/// Starts the isolated fake-agent environment used by the removal scenario.
+async fn removal_rig() -> Rig {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "clean-sleep"),
+            investigator("inv-r1", "done"),
+            investigator("inv-r2", "done"),
+        ],
+        0,
+        false,
+    )
+    .await;
+    rig.start().await;
+    rig
 }
 
 /// Checks that removal stays absent from status and state across a daemon restart.
