@@ -84,6 +84,8 @@ pub enum HarnessPrompt {
     NoticeLowDisk,
     /// The removal of a team, its backup and released bytes.
     NoticeTeamRemoved,
+    /// An idle team could not safely be removed.
+    NoticeIdleRefused,
     /// The notification that open rounds wait for disk space.
     NoticeDiskWait,
     /// How a solo agent, a member or a coordinator keeps the plan of its task in `.agent/plan.md`, and its form.
@@ -156,6 +158,7 @@ impl HarnessPrompt {
         Self::NoticeRunFailed,
         Self::NoticeLowDisk,
         Self::NoticeTeamRemoved,
+        Self::NoticeIdleRefused,
         Self::NoticeDiskWait,
         Self::Plan,
         Self::PlanMissing,
@@ -287,6 +290,11 @@ impl HarnessPrompt {
                 "harness/run/notice-run-failed.md",
                 Audience::Human,
                 &["agent", "task", "reason"],
+            ),
+            Self::NoticeIdleRefused => PromptSpec::new(
+                "harness/run/notice-idle-refused.md",
+                Audience::Human,
+                &["team", "reason"],
             ),
             Self::NoticeTeamRemoved => PromptSpec::new(
                 "harness/run/notice-removed.md",

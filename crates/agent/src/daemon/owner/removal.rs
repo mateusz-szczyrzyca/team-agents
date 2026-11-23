@@ -58,7 +58,7 @@ struct Measure {
 }
 
 /// A failure of a removal step, with the cause in words for the human.
-fn internal(what: &str, error: &dyn std::error::Error) -> Failure {
+pub(super) fn internal(what: &str, error: &dyn std::error::Error) -> Failure {
     Failure {
         kind: FailureKind::Internal,
         message: format!("{what}: {}", error_chain(error)),
@@ -235,6 +235,16 @@ impl Owner {
         client: &Client,
         request: RemoveRequest,
     ) -> Result<Result<Removal, Failure>, OwnerError> {
+        self.remove_for(client, request, "requested by the human").await
+    }
+
+    /// Uses the command safeguards while recording the caller's reason.
+    pub(super) async fn remove_for(
+        &mut self,
+        client: &Client,
+        request: RemoveRequest,
+        reason: &str,
+    ) -> Result<Result<Removal, Failure>, OwnerError> {
         let Some(team) = self.parts.state.team(&request.team) else {
             return Ok(Err(not_found(&request.team)));
         };
@@ -309,7 +319,7 @@ impl Owner {
         self.delete_local(&plan, &mut removal).await;
         tracing::info!(
             event = agent_core::log::LogEvent::TeamRemoved.as_str(),
-            reason = "requested by the human",
+            reason,
             bundle = %removal.bundle.as_ref().map_or_else(|| "none".to_owned(), |path| path.as_path().display().to_string()),
             freed_bytes = removal.freed_bytes,
             team = %request.team,
@@ -318,7 +328,7 @@ impl Owner {
             left_behind = removal.left_behind.len(),
             "team removed"
         );
-        self.removal_notice(&removal).await;
+        self.removal_notice(&removal, reason).await;
         Ok(Ok(removal))
     }
 
@@ -389,7 +399,7 @@ impl Owner {
     }
 
     /// Reports a completed removal; notification failure cannot undo deleted files and is logged.
-    async fn removal_notice(&mut self, removal: &Removal) {
+    async fn removal_notice(&mut self, removal: &Removal, reason: &str) {
         let rendered = (|| -> Result<String, Failure> {
             let bundle = removal.bundle.as_ref().map_or_else(
                 || "none (all commits are in the base branch)".to_owned(),
@@ -397,7 +407,7 @@ impl Owner {
             );
             let values = Variables::new()
                 .with("team", removal.team.to_string())
-                .and_then(|v| v.with("reason", "requested by the human"))
+                .and_then(|v| v.with("reason", reason))
                 .and_then(|v| v.with("bundle", bundle))
                 .and_then(|v| v.with("bytes", removal.freed_bytes.to_string()))
                 .map_err(|error| internal("cannot build removal notice variables", &error))?;
