@@ -289,7 +289,7 @@ impl HarnessPrompt {
                 &["agent", "task", "reason"],
             ),
             Self::NoticeTeamRemoved => PromptSpec::new(
-                "harness/team/notice-removed.md",
+                "harness/run/notice-removed.md",
                 Audience::Human,
                 &["team", "reason", "bundle", "bytes"],
             ),
