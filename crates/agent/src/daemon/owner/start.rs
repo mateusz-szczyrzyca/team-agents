@@ -250,6 +250,7 @@ pub(super) async fn plan(
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingDraft>,
+    outgrown: Option<u64>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
@@ -312,6 +313,11 @@ pub(super) async fn plan(
     };
     let prompt = match briefing {
         Some(draft) => draft.render(ctx.texts, task, &prompt)?,
+        None => prompt,
+    };
+    // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
+    let prompt = match outgrown {
+        Some(tokens) => format!("{}\n\n{prompt}", super::briefing::context_paragraph(ctx.texts, tokens)?),
         None => prompt,
     };
     let run = RunId::generate(ctx.clock, rng)?;

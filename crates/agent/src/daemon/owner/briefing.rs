@@ -36,6 +36,15 @@ use super::start::{StartProblem, work_branch};
 use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, lead_takes_work};
 
+/// The paragraph a briefing opens with when its session outgrew its agent's bound: the size in tokens that ended it.
+///
+/// # Errors
+/// [`ComposeError`] when the paragraph cannot be filled.
+pub(super) fn context_paragraph(texts: &HarnessPrompts, tokens: u64) -> Result<String, ComposeError> {
+    let values = Variables::new().with("context", tokens.to_string())?;
+    Ok(texts.render(HarnessPrompt::BriefingContext, &values)?)
+}
+
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
 

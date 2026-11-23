@@ -53,6 +53,9 @@ pub enum HarnessPrompt {
     /// What the runs of a member's task left, as its lead is told when the work is its own: the briefing without the
     /// task's prompt.
     LeadBriefing,
+    /// The paragraph a briefing opens with when its session outgrew its agent's bound: why the session is new, with the
+    /// context in tokens that ended the old one.
+    BriefingContext,
     /// The note of a briefing whose list of unread messages leaves older ones out.
     BriefingMessagesLeftOut,
     /// The note that older runs of the task are left out of the briefing's list of runs.
@@ -159,6 +162,7 @@ impl HarnessPrompt {
         Self::NoToolCall,
         Self::Briefing,
         Self::LeadBriefing,
+        Self::BriefingContext,
         Self::BriefingMessagesLeftOut,
         Self::BriefingRunsLeftOut,
         Self::BriefingAnswersLeftOut,
@@ -262,6 +266,7 @@ impl HarnessPrompt {
             Self::BriefingMessagesLeftOut => {
                 PromptSpec::new("harness/run/briefing-messages-left-out.md", Audience::Model, &[])
             }
+            Self::BriefingContext => PromptSpec::new("harness/run/briefing-context.md", Audience::Model, &["context"]),
             Self::BriefingRunsLeftOut => PromptSpec::new("harness/run/briefing-runs-left-out.md", Audience::Model, &[]),
             Self::BriefingAnswersLeftOut => {
                 PromptSpec::new("harness/run/briefing-answers-left-out.md", Audience::Model, &[])
