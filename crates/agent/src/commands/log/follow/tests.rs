@@ -693,3 +693,49 @@ fn a_page_tells_the_usage_of_a_run_after_its_end_row() {
     assert_eq!(lines[1], usage_text(1, 100, 200), "{page}");
     assert!(lines[2].starts_with("round "), "{page}");
 }
+
+#[test]
+fn a_run_without_usage_is_told_as_not_told_at_its_end_when_another_run_of_the_task_has_usage() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let _db = two_runs_with_usage(&path);
+    rusqlite::Connection::open(&path)
+        .expect("the history opens")
+        .execute("DELETE FROM run_usage WHERE run = ?1", [run(2).as_str()])
+        .expect("the usage row of the second run is deleted");
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    let at = |needle: &str| {
+        text.find(needle)
+            .unwrap_or_else(|| panic!("{needle:?} is in the text: {text}"))
+    };
+    let second_ended = at("2026-11-21T12:50:07Z info run_ended");
+    let not_told = at(&format!(
+        "run {} usage: context first not told, last not told; output not told; cost not told USD",
+        run(2)
+    ));
+    assert!(second_ended < not_told, "{text}");
+    assert!(
+        at(&usage_text(1, 100, 200)) < at(" run run-20261121-132909-0002 started by claude-1"),
+        "{text}"
+    );
+}
+
+#[test]
+fn a_history_with_no_usage_at_all_tells_no_usage_line_at_a_run_end() {
+    let dir = tempfile::tempdir().expect("a temporary directory");
+    let path = dir.path().join("history.db");
+    let mut db = database(&path);
+    db.write(&[
+        Record::Run(Box::new(start(1, "claude-1", 1, 1))),
+        step(1, 1, 2, "cargo build"),
+    ])
+    .expect("the run is written");
+    db.write_logs(&[row(LogEvent::RunEnded, 1, 1, 3)])
+        .expect("the row is written");
+
+    let (_feed, text) = open(&path, of_task(1), 100);
+
+    assert!(!text.contains("usage:"), "{text}");
+}
