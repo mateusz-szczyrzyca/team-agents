@@ -7,8 +7,8 @@ use super::values::{SessionId, Timestamp};
 use crate::ids::{RoundId, RunId};
 use crate::status::RunOutcome;
 
-/// One run of a model CLI for a task: when it started, the session the CLI gave it, the rounds it works for, and how
-/// it ended.
+/// One run of a model CLI for a task: when it started, the session the CLI gave it, the rounds it works for, whether it
+/// called a tool step, and how it ended.
 ///
 /// Made by [`Member::begin_run`](super::Member::begin_run) or [`Team::begin_run`](super::Team::begin_run) and ended by
 /// [`Member::end_run`](super::Member::end_run), so a run never ends before it started; reading a state checks that
@@ -25,8 +25,21 @@ pub struct Run {
     /// The rounds the run works for, oldest first; none for a run that works for no item.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     rounds: Vec<RoundId>,
+    /// Whether the run recorded a step that calls a tool; written only when it did, so a run written before the field
+    /// is read as having called none.
+    #[serde(skip_serializing_if = "is_false")]
+    used_tool: bool,
     /// Whether it is still going, or how it ended.
     state: RunState,
+}
+
+/// Whether `value` is `false`, for `skip_serializing_if`.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde skip_serializing_if callbacks require a shared reference"
+)]
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// How a [`Run`] is read; see [`checked!`].
@@ -42,6 +55,9 @@ struct RunWire {
     /// See [`Run`]; a run written without rounds names none.
     #[serde(default)]
     rounds: Vec<RoundId>,
+    /// See [`Run`]; a run written before the field recorded no tool call.
+    #[serde(default)]
+    used_tool: bool,
     /// See [`Run`].
     state: RunState,
 }
@@ -204,6 +220,7 @@ impl Run {
             started_at,
             session,
             rounds: Vec::new(),
+            used_tool: false,
             state: RunState::Running,
         }
     }
@@ -233,6 +250,11 @@ impl Run {
 
     getter!("The rounds the run works for, oldest first.", pub fn rounds(&self) -> &[RoundId] = &self.rounds);
 
+    getter!(
+        "Whether the run recorded a step that calls a tool.",
+        pub const fn used_tool(&self) -> bool = self.used_tool
+    );
+
     getter!("Whether the run is going or how it ended.", pub const fn state(&self) -> &RunState = &self.state);
 
     /// Whether the run is going.
@@ -244,6 +266,11 @@ impl Run {
     /// Records the session the CLI reported.
     pub(super) fn attach_session(&mut self, session: SessionId) {
         self.session = Some(session);
+    }
+
+    /// Records whether the run called a tool step.
+    pub(super) fn note_used_tool(&mut self, used_tool: bool) {
+        self.used_tool = used_tool;
     }
 
     /// Ends the run.

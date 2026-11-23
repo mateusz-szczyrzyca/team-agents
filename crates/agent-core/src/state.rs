@@ -83,7 +83,7 @@ use crate::ids::{ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
 
 /// The schema version this build writes, with investigator activities reconstructed from versions 1 through 10.
-pub const SCHEMA_VERSION: u32 = 14;
+pub const SCHEMA_VERSION: u32 = 15;
 
 /// Largest state text accepted, in bytes: a bound on untrusted input, far above any real state.
 pub const MAX_STATE_BYTES: usize = 64 << 20;
@@ -100,7 +100,7 @@ version_type!(SchemaVersion, SCHEMA_VERSION, UnsupportedSchema);
 /// A state of a schema version this build does not read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12 and {SCHEMA_VERSION}"
+    "the state has schema version {found}; this build reads versions 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14 and {SCHEMA_VERSION}"
 )]
 pub struct UnsupportedSchema {
     /// The version the state declares.
@@ -494,12 +494,13 @@ impl State {
     }
 
     /// Starts `task` anew in a new session after `trouble`, at `at`: the runs after now are the new session's, and no
-    /// session before it is resumed. Only a task of a solo agent, a coordinator or a member is started anew, and only
-    /// after a run of it. Returns whether the task was started anew.
+    /// session before it is resumed. Only a task of a solo agent, a coordinator or a member is started anew — and a
+    /// worker's or a reviewer's task is, exactly when `trouble` is the retry of a run that reported `STATUS: FAILED`
+    /// without a tool call — and only after a run of it. Returns whether the task was started anew.
     ///
     /// # Errors
-    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the renewal does not fit
-    /// its runs.
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer for any other trouble, or the
+    /// renewal does not fit its runs.
     pub fn renew_task(
         &mut self,
         task: &TaskId,
@@ -509,14 +510,15 @@ impl State {
         let (role, mut member) = self
             .find_task_mut(task)
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
-        match role {
-            Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => {
-                return Err(RenewTaskError::Role {
-                    task: task.clone(),
-                    role,
-                });
-            }
+        // The ladder never starts a worker or a reviewer anew; the retry of a failed run without a tool call applies to
+        // every role, so it is the one trouble their task may be renewed for.
+        if matches!(role, Role::Worker | Role::Reviewer)
+            && !matches!(trouble, crate::decide::ladder::Trouble::NoToolCall)
+        {
+            return Err(RenewTaskError::Role {
+                task: task.clone(),
+                role,
+            });
         }
         member.renew(trouble, at).map_err(|source| RenewTaskError::Renewal {
             task: task.clone(),
@@ -875,7 +877,7 @@ impl State {
     ///
     /// # Errors
     /// [`StateError`]: the text is too large, declares an unsupported schema (checked first), is malformed,
-    /// or has clashing teams, tasks or rounds. Versions 11 and 12 preserve activity history and default split plans to absent.
+    /// or has clashing teams, tasks or rounds. Versions 11, 12 and 13 preserve activity history and default split plans to absent.
     /// Versions 1 through 10 migrate to [`SCHEMA_VERSION`], rebuilding
     /// investigator activity history deterministically from the evidence they retain.
     pub fn from_json(text: &str) -> Result<Self, StateError> {
@@ -894,6 +896,9 @@ impl State {
         }
         if matches!(probe.schema_version, 11..=13) {
             return migrate::from_v11(text);
+        }
+        if probe.schema_version == 14 {
+            return migrate::from_v14(text);
         }
         if probe.schema_version != u64::from(SCHEMA_VERSION) {
             return Err(UnsupportedSchema {
@@ -1142,13 +1147,13 @@ mod tests {
 
     #[test]
     fn the_schema_version_is_one() {
-        assert_eq!(SCHEMA_VERSION, 14);
-        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(14));
+        assert_eq!(SCHEMA_VERSION, 15);
+        assert_eq!(serde_json::to_value(SchemaVersion).unwrap(), json!(15));
     }
 
     #[test]
     fn only_the_schema_version_of_this_build_is_read() {
-        serde_json::from_value::<SchemaVersion>(json!(14)).unwrap();
+        serde_json::from_value::<SchemaVersion>(json!(15)).unwrap();
         for bad in [
             json!(0),
             json!(1),
@@ -1184,7 +1189,7 @@ mod tests {
     fn an_empty_state_is_written_with_its_schema_version_first() {
         let text = State::new().to_json().unwrap();
 
-        assert_eq!(text, "{\n  \"schema_version\": 14,\n  \"teams\": []\n}\n");
+        assert_eq!(text, "{\n  \"schema_version\": 15,\n  \"teams\": []\n}\n");
         assert_eq!(State::from_json(&text).unwrap(), State::new());
     }
 
@@ -1192,14 +1197,14 @@ mod tests {
     fn a_state_is_written_indented_and_ends_with_a_newline_and_the_schema_version_comes_first() {
         let text = two_teams().to_json().unwrap();
 
-        assert!(text.starts_with("{\n  \"schema_version\": 14,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
+        assert!(text.starts_with("{\n  \"schema_version\": 15,\n  \"teams\": [\n    {\n      \"id\": \"team-"));
         assert!(text.ends_with("}\n"));
         assert!(!text.ends_with("\n\n"));
     }
 
     #[test]
     fn a_state_of_another_schema_version_is_refused_with_that_version() {
-        for found in [0_u64, 15, 99, u64::MAX] {
+        for found in [0_u64, 16, 99, u64::MAX] {
             let text = format!("{{\"schema_version\": {found}, \"teams\": []}}");
 
             let err = State::from_json(&text).unwrap_err();
@@ -1214,9 +1219,9 @@ mod tests {
     #[test]
     fn the_version_is_checked_before_the_rest_so_a_newer_state_is_not_called_malformed() {
         for text in [
-            "{\"schema_version\": 15, \"teams\": {\"by_id\": 5}}",
-            "{\"teams\": [], \"schema_version\": 15, \"future\": true}",
-            "{\"schema_version\": 15}",
+            "{\"schema_version\": 16, \"teams\": {\"by_id\": 5}}",
+            "{\"teams\": [], \"schema_version\": 16, \"future\": true}",
+            "{\"schema_version\": 16}",
         ] {
             let err = State::from_json(text).unwrap_err();
 
@@ -1312,7 +1317,7 @@ mod tests {
     #[test]
     fn serde_reads_a_state_through_the_same_checks() {
         let good = State::new().to_json().unwrap();
-        let other_version = "{\"schema_version\": 15, \"teams\": []}";
+        let other_version = "{\"schema_version\": 16, \"teams\": []}";
         let one = serde_json::to_value(team_of(1, 1)).unwrap();
         let duplicate = json!({"schema_version": 1, "teams": [one, one]}).to_string();
 

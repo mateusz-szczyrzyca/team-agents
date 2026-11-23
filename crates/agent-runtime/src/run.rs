@@ -25,7 +25,7 @@ use agent_core::config::{AbsolutePath, CliArgs, CommandLine, Config, InvalidValu
 use agent_core::decide::outcome::{
     Classified, ClassifyError, ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome,
 };
-use agent_core::history::{Launch, Record, RunChanges};
+use agent_core::history::{Launch, Record, RunChanges, StepKind};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
@@ -39,7 +39,7 @@ use crate::clock::SharedClock;
 use crate::git::{CommitIdentity, GitError, Revision};
 use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, log_decision};
-use crate::process::{ExitReport, ProcessError, Supervisor, error_chain};
+use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
 
 use crate::store::StateStore;
@@ -146,6 +146,9 @@ pub struct FinishedRun {
     pub final_message: Option<String>,
     /// Whether the run did anything but start.
     pub progress: Progress,
+    /// Whether the run recorded a step that calls a tool: a bus call, a tool call, a command or a change of a file.
+    /// A `STATUS: FAILED` run that called no tool is started once in a new session before its task fails.
+    pub used_tool: bool,
 }
 
 /// Whether a run did anything but start: what tells a run that hangs after some work from one that hangs at once.
@@ -451,7 +454,7 @@ impl RunEngine {
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
         let head_before = self.head_of_worktree(&job).await;
-        let mut process = self
+        let process = self
             .parts
             .supervisor
             .spawn(&launch.process)
@@ -474,44 +477,10 @@ impl RunEngine {
                 RunMode::New { .. } => None,
             },
             progress: Progress::Nothing,
+            used_tool: false,
             unreadable: Unreadable::default(),
         };
-        let supervise = |source| RunError::Supervise {
-            task: job.task.clone(),
-            source,
-        };
-        let mut tick = tokio::time::interval(self.parts.timings.poll.max(MIN_POLL));
-        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
-        let stopped_by = loop {
-            let event = tokio::select! {
-                exit = process.wait() => Watched::Exited(exit),
-                () = cancel.cancelled() => Watched::Cancelled,
-                _ = tick.tick() => Watched::Tick,
-            };
-            match event {
-                Watched::Exited(exit) => {
-                    let exit = exit.map_err(supervise)?;
-                    // What the leader started may outlive it; the run is over, so the rest of its group goes too.
-                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                    break Ended::By(StoppedBy::Nobody, exit);
-                }
-                Watched::Cancelled => {
-                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                    break Ended::Cancelled;
-                }
-                Watched::Tick => {
-                    follow.read_new().await?;
-                    let last = process.last_activity().await.map_err(supervise)?;
-                    // A run that waits for something the daemon does for it is not silent: its limit counts from
-                    // the later of its last output and the last time it was held.
-                    let last = hold.last_held().map_or(last, |held| last.max(held));
-                    if self.is_silent(last) {
-                        let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
-                        break Ended::By(StoppedBy::Watchdog, report.exit);
-                    }
-                }
-            }
-        };
+        let stopped_by = self.supervise(&job, process, &mut follow, cancel, hold).await?;
         follow.drain().await?;
         self.record_changes(&job, head_before).await;
         let stderr = read_end(&stderr).await?;
@@ -547,7 +516,56 @@ impl RunEngine {
             session: output.session_id,
             final_message: output.final_message,
             progress: follow.progress,
+            used_tool: follow.used_tool,
         })))
+    }
+
+    /// Waits for the run of `job` to end — it goes silent, is cancelled, or exits — feeding its output to `follow`,
+    /// and returns how it ended. The rest of the leader's process group is stopped once the run is over, consuming
+    /// the process.
+    async fn supervise(
+        &self,
+        job: &RunJob,
+        mut process: RunningProcess,
+        follow: &mut Follow<'_>,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<Ended, RunError> {
+        let supervise = |source| RunError::Supervise {
+            task: job.task.clone(),
+            source,
+        };
+        let mut tick = tokio::time::interval(self.parts.timings.poll.max(MIN_POLL));
+        tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        loop {
+            let event = tokio::select! {
+                exit = process.wait() => Watched::Exited(exit),
+                () = cancel.cancelled() => Watched::Cancelled,
+                _ = tick.tick() => Watched::Tick,
+            };
+            match event {
+                Watched::Exited(exit) => {
+                    let exit = exit.map_err(supervise)?;
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                    return Ok(Ended::By(StoppedBy::Nobody, exit));
+                }
+                Watched::Cancelled => {
+                    process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                    return Ok(Ended::Cancelled);
+                }
+                Watched::Tick => {
+                    follow.read_new().await?;
+                    let last = process.last_activity().await.map_err(supervise)?;
+                    // A run that waits for something the daemon does for it is not silent: its limit counts from
+                    // the later of its last output and the last time it was held.
+                    let last = hold.last_held().map_or(last, |held| last.max(held));
+                    if self.is_silent(last) {
+                        let report = process.stop(self.parts.timings.stop_grace).await.map_err(supervise)?;
+                        return Ok(Ended::By(StoppedBy::Watchdog, report.exit));
+                    }
+                }
+            }
+        }
     }
 
     /// The commit the worktree of `job` is at, for the history; `None` when it is off or git cannot say.
@@ -708,6 +726,8 @@ struct Follow<'a> {
     known_session: Option<SessionId>,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
+    /// Whether a step that calls a tool was recorded in this run.
+    used_tool: bool,
     /// What the parser refused.
     unreadable: Unreadable,
 }
@@ -766,6 +786,12 @@ impl Follow<'_> {
             for event in events {
                 if !matches!(event, ActivityEvent::Info(_) | ActivityEvent::Error(_)) {
                     self.progress = Progress::Made;
+                }
+                if matches!(
+                    StepKind::of(&event),
+                    StepKind::BusCall | StepKind::ToolCall | StepKind::Command | StepKind::FileEdit
+                ) {
+                    self.used_tool = true;
                 }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
                 self.engine.history.step(self.run, at, event);

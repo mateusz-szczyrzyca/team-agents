@@ -20,7 +20,7 @@ use agent_core::log::LogEvent;
 use agent_core::plan::PLAN_FILE;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
-use agent_core::status::{ItemStatus, TaskStatus};
+use agent_core::status::{ItemStatus, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::{
     AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Outgoing, Recipient, RequestId, Woken,
 };
@@ -1215,6 +1215,16 @@ impl Owner {
             // A member's work that is its lead's now is told as such, with its briefing, not as a failure: the work is owed
             // to the lead in the state, and the briefing is gathered at the next turn of the loop.
             let told = if found.member.owes_lead() {
+                None
+            } else if matches!(
+                end,
+                &RunEnd::Reported {
+                    outcome: RunOutcome::Failed
+                }
+            ) && found.member.status() != TaskStatus::Failed
+            {
+                // A failed run that the daemon retried for "no tool call" is not a failure of the task: the task is
+                // queued again in a new session, and the coordinator is told only if the retried run fails too.
                 None
             } else {
                 notice_for(found.team, located.role, found.member, end, message)?

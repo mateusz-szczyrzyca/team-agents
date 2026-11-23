@@ -80,3 +80,6 @@ mod writer_plans;
 
 #[cfg(test)]
 mod team_removal;
+
+#[cfg(test)]
+mod no_tool_events;

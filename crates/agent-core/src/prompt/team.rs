@@ -70,6 +70,24 @@ pub enum TeamPrompt {
     MemberFailed,
     /// The message to the coordinator that a member failed while holding an item.
     MemberFailedItem,
+    /// A failed member whose run did not report FAILED.
+    MemberRunFailed,
+    /// A failed item holder whose run did not report FAILED.
+    MemberRunFailedItem,
+    /// The watchdog ended an inactive member run.
+    MemberRunHung,
+    /// The account quota ended a member run.
+    MemberRunQuota,
+    /// The provider rate-limited a member run.
+    MemberRunRateLimited,
+    /// The human stopped a member run.
+    MemberRunStopped,
+    /// The status actually reported by a failed member.
+    MemberRunReported,
+    /// A member run ended without a status.
+    MemberRunNoStatus,
+    /// A member run exhausted its turn budget.
+    MemberRunTurnLimit,
     /// The message to the coordinator that a member ended its turn without a status line.
     MemberNoStatus,
     /// The message to the coordinator that a member ended its turn without a status line while holding an item.
@@ -144,6 +162,15 @@ impl TeamPrompt {
         Self::MemberFailed,
         Self::MemberFailedItem,
         Self::MemberNoStatus,
+        Self::MemberRunFailed,
+        Self::MemberRunFailedItem,
+        Self::MemberRunHung,
+        Self::MemberRunQuota,
+        Self::MemberRunRateLimited,
+        Self::MemberRunStopped,
+        Self::MemberRunReported,
+        Self::MemberRunNoStatus,
+        Self::MemberRunTurnLimit,
         Self::MemberNoStatusItem,
         Self::LeadTakesWork,
         Self::HelperResult,
@@ -254,6 +281,27 @@ impl TeamPrompt {
                 Audience::Model,
                 &["member", "item", "branch", "message"],
             ),
+            Self::MemberRunFailed => PromptSpec::new(
+                "harness/team/bus-member-run-failed.md",
+                Audience::Model,
+                &["member", "reason", "message"],
+            ),
+            Self::MemberRunFailedItem => PromptSpec::new(
+                "harness/team/bus-member-run-failed-item.md",
+                Audience::Model,
+                &["member", "item", "branch", "reason", "message"],
+            ),
+            Self::MemberRunHung => PromptSpec::new("harness/team/member-run-hung.md", Audience::Model, &[]),
+            Self::MemberRunQuota => PromptSpec::new("harness/team/member-run-quota.md", Audience::Model, &[]),
+            Self::MemberRunRateLimited => {
+                PromptSpec::new("harness/team/member-run-rate-limited.md", Audience::Model, &[])
+            }
+            Self::MemberRunStopped => PromptSpec::new("harness/team/member-run-stopped.md", Audience::Model, &[]),
+            Self::MemberRunReported => {
+                PromptSpec::new("harness/team/member-run-reported.md", Audience::Model, &["outcome"])
+            }
+            Self::MemberRunNoStatus => PromptSpec::new("harness/team/member-run-no-status.md", Audience::Model, &[]),
+            Self::MemberRunTurnLimit => PromptSpec::new("harness/team/member-run-turn-limit.md", Audience::Model, &[]),
             Self::MemberNoStatus => {
                 PromptSpec::new("harness/team/bus-member-no-status.md", Audience::Model, &["member"])
             }

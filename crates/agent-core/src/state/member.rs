@@ -276,6 +276,14 @@ impl CheckedMut<'_, Member> {
         self.value.attach_session(session)
     }
 
+    /// See [`Member::note_used_tool`].
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going.
+    pub fn note_used_tool(&mut self, used_tool: bool) -> Result<(), RunError> {
+        self.value.note_used_tool(used_tool)
+    }
+
     /// See [`Member::end_run`].
     ///
     /// # Errors
@@ -865,6 +873,15 @@ impl Member {
         Ok(())
     }
 
+    /// Records whether the run that is going called a tool step.
+    ///
+    /// # Errors
+    /// [`RunError::NotRunning`] when no run is going.
+    pub fn note_used_tool(&mut self, used_tool: bool) -> Result<(), RunError> {
+        self.current_run_mut()?.note_used_tool(used_tool);
+        Ok(())
+    }
+
     /// Records how the run that is going ended.
     ///
     /// # Errors
@@ -892,12 +909,50 @@ impl Member {
         runs
     }
 
+    /// Whether the last run opened the session it is in: the first run of the session, or the first run ever of the
+    /// task. A run that used a new session is a fresh start — the retries before it do not apply to it. The session a
+    /// run is in follows the identity the CLI reports, not the count since the last renewal: a run whose CLI named a
+    /// session different from the one before it opened its own session, even when the task has runs since the last
+    /// renewal (a CLI change).
+    #[must_use]
+    pub fn first_of_session(&self) -> bool {
+        self.runs.len() == 1 || self.session_runs().len() == 1 || self.opened_a_new_session()
+    }
+
+    /// Whether the last run named a session different from the one before it. A last run that named no session does
+    /// not count: without a reported identity there is no evidence that the CLI opened a different session.
+    fn opened_a_new_session(&self) -> bool {
+        let Some(last) = self.runs.last().and_then(Run::session) else {
+            return false;
+        };
+        let Some(previous) = self
+            .runs
+            .len()
+            .checked_sub(2)
+            .and_then(|index| self.runs.get(index))
+            .and_then(Run::session)
+        else {
+            return false;
+        };
+        last != previous
+    }
+
     /// Whether the task was started anew and the run of its new session has not begun: that run is briefed.
     #[must_use]
     pub fn awaits_new_session(&self) -> bool {
         self.renewals
             .as_ref()
             .is_some_and(|renewals| renewals.awaits_run(self.runs.len()))
+    }
+
+    /// Whether the last run is the immediate run of the last renewal: the only run since the task was last started
+    /// anew. It is the run the one retry of a no-tool renewal applies to; a later run of the same or of a later
+    /// session is a fresh start, not the run the renewal was recorded for.
+    #[must_use]
+    pub fn is_the_renewed_run(&self) -> bool {
+        self.renewals
+            .as_ref()
+            .is_some_and(|renewals| renewal::runs_since(&self.runs, Some(renewals)).len() == 1)
     }
 
     /// How many of the latest runs went bad in a row since the task was started anew.

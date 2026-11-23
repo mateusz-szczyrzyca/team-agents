@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 
 use agent_core::ids::{AgentName, BranchName, ItemId, TaskId};
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
-use agent_core::state::Team;
+use agent_core::state::{RunEnd, Team};
 use agent_runtime::agentbus::{DelegationUpdate, FieldName, InvalidFieldName, NoticeKind, Outgoing, RequestId};
 use agent_runtime::notify::{InvalidNotification, Notification};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
@@ -106,6 +106,14 @@ pub(in crate::daemon) fn render_notice(texts: &TeamPrompts, notice: &BusNotice) 
                     .with("message", message)?,
             )?,
         ),
+        BusNotice::MemberRunFailed { member, end, message } => member_run_failed(texts, member, end, message, None)?,
+        BusNotice::MemberRunFailedItem {
+            member,
+            end,
+            message,
+            item,
+            branch,
+        } => member_run_failed(texts, member, end, message, Some((*item, branch)))?,
         BusNotice::MemberNoStatus { member } => (
             NoticeKind::MemberNoStatus,
             vec![("member", member.to_string())],
@@ -407,6 +415,52 @@ const HELPER_DONE: &str = "done";
 
 /// The `status` detail of the notice of a request a worker could not do.
 const HELPER_FAILED: &str = "failed";
+
+/// Render a failed member's actual ending while retaining the stable bus fields.
+fn member_run_failed(
+    texts: &TeamPrompts,
+    member: &AgentName,
+    end: &RunEnd,
+    message: &str,
+    item: Option<(ItemId, &BranchName)>,
+) -> Result<Rendered, NoticeRenderError> {
+    let (reason_prompt, reason_variables) = match end {
+        RunEnd::Reported { outcome } => (
+            TeamPrompt::MemberRunReported,
+            Variables::new().with("outcome", outcome.as_str())?,
+        ),
+        RunEnd::Hung => (TeamPrompt::MemberRunHung, Variables::new()),
+        RunEnd::QuotaExhausted { .. } => (TeamPrompt::MemberRunQuota, Variables::new()),
+        RunEnd::RateLimited => (TeamPrompt::MemberRunRateLimited, Variables::new()),
+        RunEnd::Stopped => (TeamPrompt::MemberRunStopped, Variables::new()),
+        RunEnd::NoStatus { .. } => (TeamPrompt::MemberRunNoStatus, Variables::new()),
+        RunEnd::TurnLimit => (TeamPrompt::MemberRunTurnLimit, Variables::new()),
+    };
+    let reason = texts.render(reason_prompt, &reason_variables)?;
+    let variables = Variables::new()
+        .with("member", member.as_str())?
+        .with("message", message)?
+        .with("reason", reason.trim())?;
+    let (prompt, details, variables) = match item {
+        Some((item, branch)) => (
+            TeamPrompt::MemberRunFailedItem,
+            vec![
+                ("branch", branch.to_string()),
+                ("item", item.to_string()),
+                ("member", member.to_string()),
+            ],
+            variables
+                .with("item", item.to_string())?
+                .with("branch", branch.as_str())?,
+        ),
+        None => (
+            TeamPrompt::MemberRunFailed,
+            vec![("member", member.to_string())],
+            variables,
+        ),
+    };
+    Ok((NoticeKind::MemberFailed, details, texts.render(prompt, &variables)?))
+}
 
 #[cfg(test)]
 mod tests;

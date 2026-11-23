@@ -19,6 +19,7 @@ pub mod idle;
 pub mod ladder;
 pub mod last_step;
 pub mod merge_refusal;
+pub mod no_tool_call;
 pub mod opinion;
 pub mod outcome;
 pub mod part;

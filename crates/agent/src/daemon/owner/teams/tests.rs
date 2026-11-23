@@ -20,6 +20,7 @@ use agent_runtime::agentbus::{
     AgentBus, Delegation, DelegationRequest, DelegationStatus, MemberState, Outgoing, Recipient, RequestId,
 };
 use agent_runtime::clock::SharedClock;
+use agent_runtime::disk::{FakeFreeSpace, GIBIBYTE, SharedFreeSpace};
 use agent_runtime::history::Reader;
 use agent_runtime::run::RunTimings;
 use agent_runtime::store::Home;
@@ -27,7 +28,7 @@ use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 use crate::client::{ClientError, Connection};
-use crate::daemon::{DaemonError, DaemonSetup, Timings, run};
+use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run, run_in};
 use crate::testing::ManualClock;
 
 /// The longest any wait of these tests lasts.
@@ -498,6 +499,98 @@ impl Fixture {
     }
 }
 
+/// A fixture for the restart test: the shared fixture, but the daemon runs on a fake measure of the free space of the
+/// home's disk that the test controls, so a retried run can be held on the disk gate while the daemon is stopped and
+/// started again.
+struct RestartFixture {
+    /// The shared fixture.
+    fixture: Fixture,
+    /// The fake measure of the free space of the home's disk.
+    free_space: FakeFreeSpace,
+}
+
+impl RestartFixture {
+    /// A fixture with these agents, on a free space of 200 GiB.
+    fn new(agents: &[Agent]) -> Self {
+        Self {
+            fixture: Fixture::new(agents),
+            free_space: FakeFreeSpace::new(200 * GIBIBYTE),
+        }
+    }
+
+    /// The surroundings of the daemon: those of the process, with this fixture's measure of the free space.
+    fn surroundings(&self) -> Surroundings {
+        Surroundings {
+            free_space: SharedFreeSpace::new(self.free_space.clone()),
+            ..Surroundings::from_process()
+        }
+    }
+
+    /// Starts the daemon and waits until its socket is there, as [`Fixture::start`], on this fixture's free space.
+    async fn start(&mut self) {
+        self.fixture.shutdown = CancellationToken::new();
+        let socket = self.fixture.home.socket_file();
+        let deadline = Instant::now() + PATIENCE;
+        'attempts: loop {
+            let daemon = tokio::spawn(run_in(
+                self.fixture.setup(),
+                self.surroundings(),
+                self.fixture.shutdown.clone(),
+            ));
+            while !socket.exists() {
+                if daemon.is_finished() {
+                    match daemon.await.unwrap() {
+                        Err(DaemonError::AlreadyRunning { .. }) if Instant::now() < deadline => {
+                            tokio::time::sleep(Duration::from_millis(10)).await;
+                            continue 'attempts;
+                        }
+                        ended => panic!("the daemon ended at its start: {ended:?}"),
+                    }
+                }
+                assert!(Instant::now() < deadline, "timed out waiting for the socket");
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            self.fixture.daemon = Some(daemon);
+            return;
+        }
+    }
+
+    /// Stops the daemon and returns how it ended.
+    async fn stop(&mut self) -> Result<(), DaemonError> {
+        self.fixture.stop().await
+    }
+
+    /// Starts the team of `agents` with the item list `list`, as [`Fixture::start_team`].
+    async fn start_team(&self, agents: &[&str], list: &str) -> (TeamId, Vec<TaskId>) {
+        self.fixture.start_team(agents, list).await
+    }
+
+    /// Waits until `task` has `status`, as [`Fixture::status_is`].
+    async fn status_is(&self, task: &TaskId, status: TaskStatus) -> State {
+        self.fixture.status_is(task, status).await
+    }
+
+    /// The prompt of the `n`-th run of `task`, as [`Fixture::prompt`].
+    async fn prompt(&self, task: &TaskId, n: u32) -> String {
+        self.fixture.prompt(task, n).await
+    }
+
+    /// How many runs `task` had, as [`Fixture::runs`].
+    fn runs(&self, task: &TaskId) -> u32 {
+        self.fixture.runs(task)
+    }
+
+    /// What the bus holds as messages, as [`Fixture::messages`].
+    fn messages(&self) -> String {
+        self.fixture.messages()
+    }
+
+    /// The worktree of `task`, as [`Fixture::worktree`].
+    fn worktree(&self, task: &TaskId) -> PathBuf {
+        self.fixture.worktree(task)
+    }
+}
+
 fn task_status(state: &State, task: &TaskId) -> TaskStatus {
     state.find_task(task).unwrap().member.status()
 }
@@ -939,6 +1032,532 @@ async fn a_member_that_failed_tells_the_coordinator_so() {
     let messages = f.messages();
     assert!(messages.contains("member_failed"), "{messages}");
     assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+#[tokio::test]
+async fn a_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run reported FAILED without calling a tool: it is retried once. The second run (a new session, briefed)
+    // is told the reason and does the work.
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let prompt = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[0]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    assert!(
+        prompt.contains("did not offer or did not use the tools of the bus"),
+        "{prompt}"
+    );
+    assert!(
+        !f.messages().contains("member_failed"),
+        "nobody is told the coordinator's run failed: {}",
+        f.messages()
+    );
+}
+
+/// The retried run of a coordinator that reported `STATUS: FAILED` without a tool is launched in a fresh session — a
+/// changed session identity, a `--session-id` and no `--resume` — not merely told it starts again: the renewal is the
+/// CLI change the briefing promises, and its retry accounting is the state's new session, not the old one.
+#[tokio::test]
+async fn a_coordinator_retried_without_a_tool_is_launched_in_a_fresh_session() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run reported FAILED without calling a tool and was retried once; the second run (a new session) is
+    // doing the work.
+    let state = f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the retried run is a new session of the CLI"
+    );
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+    let log = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-log")).unwrap();
+    let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
+    assert_ne!(sessions[0], sessions[1], "the CLI reports a changed session: {log}");
+    let args = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-args-2")).unwrap();
+    assert!(args.contains("--session-id"), "{args}");
+    assert!(!args.contains("--resume"), "{args}");
+}
+
+#[tokio::test]
+async fn a_first_run_of_a_changed_cli_session_failing_without_a_tool_is_retried_once() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep,changed-session-fail,work"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run slept in session A. A message wakes the coordinator; its CLI changed, so the woken run reports a
+    // different session and ends with STATUS: FAILED without calling a tool. Because the run opened the new session, it
+    // is retried once, and the retried run (a new session) does the work.
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.bus()
+        .send(
+            &agent("claude-1"),
+            &Recipient::Agent(agent("inv-opus")),
+            &Outgoing::Chat {
+                text: "The CLI changed; please continue.".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let state = f
+        .state_where("the retried run of the changed CLI to end", |state| {
+            let coordinator = state.find_task(&tasks[0]).unwrap().member;
+            coordinator.runs().len() == 3 && coordinator.status() == TaskStatus::Waiting
+        })
+        .await;
+    f.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the CLI change is a new session identity"
+    );
+    let renewals = member.renewals().unwrap();
+    assert_eq!(renewals.used(), 1);
+    assert_eq!(renewals.reason(), agent_core::decide::ladder::Trouble::NoToolCall);
+}
+
+#[tokio::test]
+async fn a_member_run_that_failed_without_a_tool_is_retried_in_a_new_session_and_told_so() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,work"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of the member reported FAILED without calling a tool: it is retried once. The second run (a new
+    // session, briefed) is told the reason and does the work.
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    let prompt = f.prompt(&tasks[1], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    assert!(
+        prompt.contains("did not offer or did not use the tools of the bus"),
+        "{prompt}"
+    );
+    assert!(
+        !f.messages().contains("member_failed"),
+        "nobody is told the member's first run failed: {}",
+        f.messages()
+    );
+}
+
+#[tokio::test]
+async fn a_member_that_fails_again_without_a_tool_is_failed_after_its_given_retry() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The two runs report FAILED without calling a tool: the first is the task's one retry, the second proves the
+    // retry is bounded to a single run, so the member is failed and the coordinator is told and woken.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    // The coordinator is told and runs again: it takes over the item of the failed member.
+    f.prompt(&tasks[0], 2).await;
+    let mut shown = Vec::new();
+    crate::commands::status::status(&mut f.connect().await, None, &mut shown)
+        .await
+        .unwrap();
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "the single retry ran the second failing run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+    let shown = String::from_utf8(shown).unwrap();
+    assert!(shown.contains("failed"), "{shown}");
+    assert!(shown.contains("claude-1"), "{shown}");
+}
+
+#[tokio::test]
+async fn the_second_no_tool_failure_is_named_on_the_status_line_of_the_team() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // Two runs report FAILED without calling a tool: after its one retry the member is failed, and the reason of it —
+    // two runs that did not use the bus's tools — is what the team's status line names, not a bare "failed".
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    let mut shown = Vec::new();
+    let activity = crate::commands::status::Activity::new(
+        f.home.clone(),
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+    );
+    crate::commands::status::status_shown(
+        &mut f.connect().await,
+        None,
+        &activity,
+        crate::commands::status::Detail::Short,
+        &mut shown,
+    )
+    .await
+    .unwrap();
+    f.stop().await.unwrap();
+
+    let shown = String::from_utf8(shown).unwrap();
+    assert!(
+        shown.contains("two runs ended without calling a tool"),
+        "the status names the reason of the failure: {shown}"
+    );
+}
+
+#[tokio::test]
+async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail-first-tool:the member failed"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of this home that streams the marker tool call failed with it used: the run is not retried for
+    // "no tool call", the member is failed, and the coordinator is told and runs again.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "a run that used a tool is not retried: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+/// The script-notice messages of `notice` on the bus for `to`, as (fields, text) pairs, in order.
+fn notices(notice: &str, to: &str, messages: &str) -> Vec<(Vec<(String, String)>, String)> {
+    messages
+        .lines()
+        .filter_map(|line| {
+            let value: serde_json::Value = serde_json::from_str(line).ok()?;
+            if value["data"]["notice"].as_str() != Some(notice) || value["to"].as_str() != Some(to) {
+                return None;
+            }
+            let fields = value["data"]["fields"]
+                .as_object()
+                .map(|map| {
+                    map.iter()
+                        .filter_map(|(name, value)| Some((name.clone(), value.as_str()?.to_owned())))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let text = value["text"].as_str().unwrap_or_default().to_owned();
+            Some((fields, text))
+        })
+        .collect()
+}
+
+/// The one script-notice message of `notice` on the bus for `to`.
+fn single_notice(notice: &str, to: &str, messages: &str) -> (Vec<(String, String)>, String) {
+    let mut found = notices(notice, to, messages);
+    assert_eq!(found.len(), 1, "one {notice} for {to}: {messages}");
+    found.pop().unwrap()
+}
+
+/// The coordinator's next run after a member failed on an item reads the `member_failed` notice whose text names the
+/// member, the item, the branch, what the member said last — the words before its `STATUS:` line — and only the
+/// choices its role allows: take over the item and report `STATUS: DONE`, or ask the human. No choice to give the
+/// item to another member: the harness publishes an item only while its assignee task waits.
+#[tokio::test]
+async fn a_double_no_tool_failure_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The two runs report FAILED without calling a tool: the first is the task's one retry, the second fails the
+    // member, and the coordinator is told and runs again, reading the notice with its next run.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(
+        fields,
+        [
+            ("branch".to_owned(), format!("agents/claude-1/{}-1.1", tasks[1])),
+            ("item".to_owned(), "1.1".to_owned()),
+            ("member".to_owned(), "claude-1".to_owned()),
+        ]
+    );
+    assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
+    assert!(
+        text.contains(
+            "What it said:\n\nI could not do it.\n\nThe harness publishes an item only while its assignee task waits."
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("If you take over the work, still report `STATUS: DONE`"),
+        "{text}"
+    );
+    assert!(
+        text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"),
+        "{text}"
+    );
+    assert!(!text.contains("give its work to another member"), "{text}");
+    let notifications = f.notifications();
+    assert!(
+        notifications
+            .iter()
+            .any(|notice| notice.contains("failed twice without calling a tool")),
+        "{notifications:?}"
+    );
+}
+
+/// A run that used a tool when it failed is not retried; the member fails and the coordinator's next run reads the same
+/// notice, with the member, the item and the last words.
+#[tokio::test]
+async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run_the_member_the_item_and_its_last_words()
+ {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail-first-tool:the member failed"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run of this home that streams the marker tool call failed with it used: the run is not retried for
+    // "no tool call", the member is failed, and the coordinator is told and runs again.
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "a run that used a tool is not retried: {}",
+        f.messages()
+    );
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(
+        fields,
+        [
+            ("branch".to_owned(), format!("agents/claude-1/{}-1.1", tasks[1])),
+            ("item".to_owned(), "1.1".to_owned()),
+            ("member".to_owned(), "claude-1".to_owned()),
+        ]
+    );
+    assert!(text.contains("claude-1 failed on item 1.1"), "{text}");
+    assert!(text.contains("What it said:\n\nI could not do it.\n\n"), "{text}");
+    assert!(
+        text.contains("Or ask the human (a questions file, `STATUS: QUESTIONS`)"),
+        "{text}"
+    );
+}
+
+/// A member that failed without an item is told with all three choices, the give-away one included, and no item detail.
+#[tokio::test]
+async fn a_failed_member_without_an_item_is_told_with_the_choice_to_give_its_work_away() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    let prompt = f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert!(prompt.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{prompt}");
+    let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
+    assert_eq!(fields, [("member".to_owned(), "claude-1".to_owned())]);
+    assert!(text.contains("claude-1 failed"), "{text}");
+    assert!(
+        text.contains(
+            "What it said:\n\nI could not do it.\n\nDecide: give its work to another member, do it yourself, or ask \
+             the human (a questions file, `STATUS: QUESTIONS`)"
+        ),
+        "{text}"
+    );
+}
+
+/// A first no-tool failure that the retry repairs is invisible to the human and to the coordinator as a failure: no
+/// `member_failed` notice and no notification are written for it.
+#[tokio::test]
+async fn a_no_tool_failure_that_is_retried_tells_neither_the_coordinator_nor_the_human() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,work"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    // The first run reported FAILED without calling a tool and was retried once; the retried run did the work, so the
+    // task is not failed and nobody is told of a failure.
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one working run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(!messages.contains("member_failed"), "{messages}");
+    assert!(
+        f.notifications().is_empty(),
+        "a retried run that then did the work tells the human nothing: {:?}",
+        f.notifications()
+    );
+}
+
+#[tokio::test]
+async fn the_retry_of_a_failed_run_without_a_tool_does_not_repeat_after_a_restart_of_the_daemon() {
+    let mut f = RestartFixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowfail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run (slowfail) is running when the free space drops below what a new run needs: it fails without a
+    // tool, is retried once, and the retried run stays queued on the disk gate, a deterministic point to stop.
+    f.status_is(&tasks[1], TaskStatus::Running).await;
+    f.free_space.set(10 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "the retried run waits for the disk: {}",
+        f.messages()
+    );
+    f.stop().await.unwrap();
+
+    // After a restart the retry is still a single one: the task is still queued for its second run, held by the gate.
+    f.start().await;
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    assert_eq!(
+        f.runs(&tasks[1]),
+        1,
+        "the retry is not repeated after a restart: {}",
+        f.messages()
+    );
+
+    // With the space back the second run (fail) fails without a tool, and the task is not retried again.
+    f.free_space.set(200 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.prompt(&tasks[0], 2).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "one retried run and one failing run: {}",
+        f.messages()
+    );
+    let messages = f.messages();
+    assert!(messages.contains("member_failed"), "{messages}");
+    assert!(messages.contains("claude-1 failed"), "{messages}");
+}
+
+/// The run of a no-tool retry that was still queued when the daemon was restarted starts in a fresh session after the
+/// restart too: the renewal is durable, the retry stays one, and the retried run is not resumed from the session
+/// before it.
+#[tokio::test]
+async fn a_no_tool_retry_still_starts_fresh_after_a_restart_of_the_daemon() {
+    let mut f = RestartFixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "slowfail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // The first run (slowfail) is running when the free space drops below what a new run needs: it fails without a tool,
+    // is retried once, and the retried run stays queued on the disk gate, a deterministic point to stop.
+    f.status_is(&tasks[1], TaskStatus::Running).await;
+    f.free_space.set(10 * GIBIBYTE);
+    f.status_is(&tasks[1], TaskStatus::Queued).await;
+    f.stop().await.unwrap();
+
+    // After the restart the retry is still one, and with the space back the retried run starts in a fresh session.
+    f.start().await;
+    f.free_space.set(200 * GIBIBYTE);
+    let state = f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        f.runs(&tasks[1]),
+        2,
+        "the retry is still a single one: {}",
+        f.messages()
+    );
+    let log = std::fs::read_to_string(f.worktree(&tasks[1]).join(".fake-log")).unwrap();
+    let sessions: Vec<&str> = log.lines().map(|line| line.split(' ').nth(1).unwrap()).collect();
+    assert_ne!(sessions[0], sessions[1], "the retried run is a fresh session: {log}");
+    let args = std::fs::read_to_string(f.worktree(&tasks[1]).join(".fake-args-2")).unwrap();
+    assert!(args.contains("--session-id"), "{args}");
+    assert!(!args.contains("--resume"), "{args}");
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.runs().len(), 2);
+    assert_ne!(
+        member.runs()[1].session(),
+        member.runs()[0].session(),
+        "the state keeps the fresh session of the retried run"
+    );
 }
 
 #[tokio::test]
@@ -2532,4 +3151,101 @@ async fn a_plan_the_base_branch_tracks_is_left_on_the_branch() {
         ".agent/plan.md"
     );
     assert_eq!(git(&worktree, &["log", "-1", "--format=%s"]), "Edit the tracked plan");
+}
+
+/// An actual configuration switch exercises the `OpenCode` adapter after a Claude session.
+#[tokio::test]
+async fn a_coordinator_switched_to_opencode_retries_its_first_failed_run_without_tools() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[0], TaskStatus::Waiting).await;
+    f.status_is(&tasks[1], TaskStatus::Waiting).await;
+    f.stop().await.unwrap();
+    let before = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let changed = before
+        .replace(
+            "[investigators.inv-opus]\ncli = \"claude\"",
+            "[investigators.inv-opus]\ncli = \"opencode\"",
+        )
+        .replacen(r#""sleep""#, r#""opencode-startup""#, 1)
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    assert_ne!(changed, before);
+    std::fs::write(f.home.config_file(), changed).unwrap();
+    f.start().await;
+    f.bus()
+        .send(
+            &agent("claude-1"),
+            &Recipient::Agent(agent("inv-opus")),
+            &Outgoing::Chat {
+                text: "Continue after the CLI change.".into(),
+            },
+        )
+        .await
+        .unwrap();
+    let state = f
+        .state_where("changed CLI to settle", |state| {
+            let member = state.find_task(&tasks[0]).unwrap().member;
+            member.runs().len() >= 2 && member.status() == TaskStatus::Waiting
+        })
+        .await;
+    f.stop().await.unwrap();
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.runs().len(), 3, "exactly one fresh-session retry");
+    assert_ne!(member.runs()[0].session(), member.runs()[1].session());
+    assert_ne!(member.runs()[1].session(), member.runs()[2].session());
+    assert!(f.prompt(&tasks[0], 3).await.contains("agentbus"));
+    let args = std::fs::read_to_string(f.worktree(&tasks[0]).join(".fake-args-3")).unwrap();
+    assert!(!args.contains("--session"), "the retry starts fresh: {args}");
+    assert_eq!(f.notifications(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn no_tool_retry_and_final_failure_have_named_logs_with_the_agent_configuration() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config.replace("[agents.claude-1]", "[agents.claude-1]\nmodel = \"example-model\"");
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    f.stop().await.unwrap();
+
+    let logs = Reader::open(&f.home.history_file()).unwrap().daemon_logs().unwrap();
+    let selected: Vec<_> = logs
+        .iter()
+        .filter(|row| matches!(row.event().as_str(), "run_no_tool_retry" | "run_no_tool_failed"))
+        .collect();
+    assert_eq!(selected.len(), 2, "one retry and one final failure: {selected:?}");
+    for (row, (event, level)) in selected.iter().zip([
+        ("run_no_tool_retry", agent_core::log::LogLevel::Info),
+        ("run_no_tool_failed", agent_core::log::LogLevel::Warn),
+    ]) {
+        assert_eq!(row.event().as_str(), event);
+        assert_eq!(row.level(), level);
+        assert_eq!(row.task(), Some(&tasks[1]));
+        for (field, expected) in [("agent", "claude-1"), ("cli", "claude"), ("model", "example-model")] {
+            assert_eq!(
+                row.fields().get(field).and_then(serde_json::Value::as_str),
+                Some(expected),
+                "{row:?}"
+            );
+        }
+    }
 }

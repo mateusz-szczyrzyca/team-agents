@@ -1,0 +1,7 @@
+claude-1 failed on item 1.1 (branch `agents/claude-1/task-x-1.1`): its run ended with `STATUS: FAILED`. What it said:
+
+I could not do it.
+
+The harness publishes an item only while its assignee task waits. If you take over the work, still report `STATUS: DONE`: the harness will tell the human, the human will resume claude-1, and claude-1 must end with a status. Or ask the human (a questions file, `STATUS: QUESTIONS`).
+
+You may wait for the human. Take the work yourself only if your role rules allow it.

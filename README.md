@@ -311,7 +311,18 @@ commits of its branch, the files it left uncommitted (kept in a snapshot first),
 the newest ten runs ended, its plan of steps grouped as the harness judged them (confirmed, declared, mismatch, not done;
 a step edited since it was judged, or never judged, is declared), the newest ten answers you gave to its questions and
 the messages of its team it had not read (`[replacement] new_sessions = 1`; `0` turns it off). The same happens after the watchdog's last
-strike for a hung run and after the last turn-limit resume. When the new session goes bad too, the task is given — with
+strike for a hung run and after the last turn-limit resume. A run that is the first of a session and ends `STATUS:
+FAILED` without calling any tool is retried once in a new session with a note telling it the bus tools are listed in
+its CLI's tool catalog under the MCP server `agentbus`. This applies to every role, including coordinators and reviewers.
+A second such failure names the agent, CLI and model in the human notice and shows the reason in `agent status`.
+This one startup retry always runs, including with `[replacement] new_sessions = 0`, and counts against that session
+budget. With the default `1`, a later hang, missing status or turn limit has no further ladder session available.
+The named log events `run_no_tool_retry` (`info`) and `run_no_tool_failed` (`warn`) record both transitions with the
+task, agent, CLI and model, so they can be monitored independently. History schema 21 admits these events through a
+forward migration that preserves old logs, round links, search text and the log cursor; back up the history before
+upgrading if you need to return to an older daemon.
+Every failed team member also wakes its coordinator with the member, item and last words, whether or not it used tools.
+The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
 not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
 none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
@@ -334,7 +345,7 @@ during startup or execution. Runs ending without a status line upon daemon shutd
 count toward the consecutive limit; an interruption that exhausts the budget fails the task before another run starts.
 When a member fails or ends without status while
 holding an item, the coordinator receives a notice naming the item and the member's branch
-(`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). When the lead has reported
+(`prompts/harness/team/bus-member-failed-item.md` or `bus-member-no-status-item.md`). For a member that fails after a hang, quota limit, rate limit, stop or unusable reported result, the notice preserves how its run actually ended and includes its last words or the end reason. When the lead has reported
 `STATUS: DONE` and waits while an item remains blocked behind a failed member, the human is told immediately once per
 item (`prompts/harness/pr/notice-standing-item.md`) with the member's last-run details and commands to speak to the
 member and resume it (`agent say <task>`, `agent resume <task>`). Resuming a task clears the notification deduplication
@@ -559,8 +570,10 @@ does not call it yet; automatic replacement will be activated by a separate task
 Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
 and the current daemon startup, so downtime never counts and an old team gets a full interval after restart. The optional
 `idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
-new field: keep a state backup before upgrading if you need to downgrade. The state schema remains 14 and the
-history schema remains 20.
+new field: keep a state backup before upgrading if you need to downgrade. State schema 15 migrates schema 14 while preserving its tasks, runs and renewals. It adds optional tool-use evidence
+and the durable no-tool retry reason. Older daemons cannot read the new fields: back up state before upgrading if you
+need to downgrade. History schema 21 preserves existing records while admitting the named no-tool retry and failure events. Socket protocol 8 adds the failure reason; older negotiated replies retain
+all runs but omit the new tool-use and no-tool renewal metadata.
 
 Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
 rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its

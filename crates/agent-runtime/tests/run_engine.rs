@@ -238,6 +238,24 @@ mod run_engine {
     }
 
     #[tokio::test]
+    async fn a_run_that_called_a_tool_records_that_it_used_one() {
+        let env = env().await;
+
+        let run = env.finished("fail-tool").await;
+
+        assert!(run.used_tool, "a run that streamed a tool call must record used_tool");
+    }
+
+    #[tokio::test]
+    async fn a_run_that_only_spoke_does_not_record_a_tool_call() {
+        let env = env().await;
+
+        let run = env.finished("done").await;
+
+        assert!(!run.used_tool, "a run with only text must not record used_tool");
+    }
+
+    #[tokio::test]
     async fn a_new_run_gives_the_cli_its_session_and_its_prompt() {
         let env = env().await;
 

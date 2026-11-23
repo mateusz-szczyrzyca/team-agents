@@ -120,7 +120,7 @@ async fn activity_history_records_a_queued_review_and_its_human_stop() {
 
 #[tokio::test]
 async fn activity_history_keeps_the_failed_reviewer_after_replacement() {
-    let fail = "fail-first:VERDICT: APPROVE\\nSUMMARY: fine";
+    let fail = "fail-first-tool:VERDICT: APPROVE\\nSUMMARY: fine";
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),

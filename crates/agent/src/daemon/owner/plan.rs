@@ -1094,6 +1094,7 @@ impl Owner {
             &parked.located.team,
             now,
             RunEnd::Stopped,
+            false,
             parked.run.final_message.as_deref(),
             &mut events,
         )?;
@@ -1393,6 +1394,7 @@ impl Owner {
                     stopped_by: agent_core::decide::outcome::StoppedBy::Nobody,
                 },
                 progress,
+                used_tool: true,
                 session: None,
                 final_message: check.final_message,
             };

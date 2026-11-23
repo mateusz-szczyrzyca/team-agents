@@ -46,6 +46,8 @@ pub enum HarnessPrompt {
     ResumeTurnLimit,
     /// Continue a session after the run ended without a STATUS: line.
     ResumeNoStatus,
+    /// The note a run that was retried after it reported `STATUS: FAILED` without calling a tool is told.
+    NoToolCall,
     /// The briefing of a task started in a new session after its runs went bad.
     Briefing,
     /// What the runs of a member's task left, as its lead is told when the work is its own: the briefing without the
@@ -84,6 +86,8 @@ pub enum HarnessPrompt {
     NoticePaused,
     /// The notification that an agent reported `STATUS: FAILED`.
     NoticeFailed,
+    /// The notification that an agent reported `STATUS: FAILED` twice without calling a tool, after its one retry.
+    NoticeFailedNoTool,
     /// The notification that a run ended without a status line, with an exit code.
     NoticeNoStatus,
     /// The notification that a run a signal ended had no status line.
@@ -152,6 +156,7 @@ impl HarnessPrompt {
         Self::ResumeLimit,
         Self::ResumeTurnLimit,
         Self::ResumeNoStatus,
+        Self::NoToolCall,
         Self::Briefing,
         Self::LeadBriefing,
         Self::BriefingMessagesLeftOut,
@@ -170,6 +175,7 @@ impl HarnessPrompt {
         Self::NoticeHung,
         Self::NoticePaused,
         Self::NoticeFailed,
+        Self::NoticeFailedNoTool,
         Self::NoticeNoStatus,
         Self::NoticeNoStatusSignal,
         Self::NoticeStartFailed,
@@ -230,6 +236,7 @@ impl HarnessPrompt {
             Self::ResumeRestart => PromptSpec::new("harness/run/resume-restart.md", Audience::Model, &[]),
             Self::ResumeTurnLimit => PromptSpec::new("harness/run/resume-turn-limit.md", Audience::Model, &[]),
             Self::ResumeNoStatus => PromptSpec::new("harness/run/resume-no-status.md", Audience::Model, &[]),
+            Self::NoToolCall => PromptSpec::new("harness/run/no-tool-call.md", Audience::Model, &["agent"]),
             Self::Briefing => PromptSpec::new(
                 "harness/run/briefing.md",
                 Audience::Model,
@@ -306,6 +313,11 @@ impl HarnessPrompt {
                 "harness/run/notice-failed.md",
                 Audience::Human,
                 &["agent", "task", "message"],
+            ),
+            Self::NoticeFailedNoTool => PromptSpec::new(
+                "harness/run/notice-failed-no-tool.md",
+                Audience::Human,
+                &["agent", "task", "cli", "model", "message"],
             ),
             Self::NoticeNoStatus => PromptSpec::new(
                 "harness/run/notice-no-status.md",

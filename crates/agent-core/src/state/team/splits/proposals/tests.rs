@@ -93,7 +93,8 @@ fn stored_plan_before_proposals_loads_with_no_estimate_and_normal_tier() {
     let text = include_str!("../../../../../tests/fixtures/state-v0-36-before-proposals.json");
     let restored = crate::state::State::from_json(text).expect("old state");
     let saved: serde_json::Value = serde_json::from_str(&restored.to_json().expect("save")).expect("json");
-    let original: serde_json::Value = serde_json::from_str(text).expect("fixture");
+    let original: serde_json::Value =
+        serde_json::from_str(&text.replace("\"schema_version\": 14", "\"schema_version\": 15")).expect("fixture");
     assert_eq!(saved, original);
     let old_plan: SplitPlan = serde_json::from_value(saved["teams"][0]["splits"][0].clone()).expect("legacy split");
     for (id, _) in old_plan.entries() {
