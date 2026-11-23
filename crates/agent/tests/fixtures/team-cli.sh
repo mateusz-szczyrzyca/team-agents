@@ -48,6 +48,8 @@
 #                   whatever the run is to have done
 #   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
 #                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
+#   work-if-briefed:N1|N2|...  like `work`, when the prompt holds each needle N1, N2, ... (each a line of text the test names); else ends
+#                   with STATUS: FAILED, so that a briefing without one of its parts cannot finish the item
 #   nostatus-stream:NAME  like `stream:NAME`, and ends without a STATUS line
 #   sleep-stream:NAME  like `stream:NAME`, and ends with STATUS: SLEEPING
 #   ask-stream:NAME  like `ask-here` after the stream of `stream:NAME`: asks in questions-1.md, leaves the file `draft.txt`
@@ -760,6 +762,22 @@ case $action in
       result "$text\nSTATUS: QUESTIONS"
     else
       result 'I have to ask.\nSTATUS: QUESTIONS'
+    fi
+    ;;
+  work-if-briefed:*)
+    # Like `work`, only when the prompt holds every needle of the list `|`-separated in the action; otherwise it ends FAILED,
+    # so that a briefing without one of its parts cannot finish the item.
+    IFS='|' read -r -a needles <<< "${action#work-if-briefed:}"
+    missing=0
+    for needle in "${needles[@]}"; do
+      grep -qF -- "$needle" <<< "$prompt" || missing=1
+    done
+    if (( missing )); then
+      result 'The briefing does not say what I need.\nSTATUS: FAILED'
+    else
+      commit_work
+      record_gate
+      result 'Finished the item.\nSTATUS: DONE'
     fi
     ;;
   nostatus-stream:*)
