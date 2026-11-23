@@ -30,7 +30,7 @@ fn recovery_reservation_survives_removal_and_installs_exactly_once() {
     assert_eq!(plan.source(), &old);
     assert_eq!(plan.ordinal().get(), 1);
     assert_eq!(plan.phase(), RecoveryPhase::Pending);
-    assert_eq!(state.teams(), &[old.clone()]);
+    assert_eq!(state.teams(), std::slice::from_ref(&old));
     assert_eq!(
         state.prepare_recovery(&team_id(1), destination(3, 20), 0),
         Ok(RecoveryPreparation::Reserved(team_id(2)))
@@ -212,7 +212,7 @@ fn loading_refuses_forged_recovery_plans_and_restart_lineages() {
                 value["recoveries"].as_array_mut().unwrap().push(duplicate);
             }
             8 => value["recoveries"][0]["replacement"]["crew"] = value["recoveries"][0]["source"]["crew"].clone(),
-            _ => unreachable!(),
+            _ => panic!("unknown mutation case {case}"),
         }
         let result = State::from_json(&serde_json::to_string(&value).unwrap());
         assert!(
