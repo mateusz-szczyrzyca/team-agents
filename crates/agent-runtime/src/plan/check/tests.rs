@@ -1298,3 +1298,37 @@ async fn a_request_check_that_is_the_gate_is_refused_and_a_reviewers_is_only_dec
     assert_eq!(gate.state, JudgementState::Declared);
     assert_eq!(reviewer.state, JudgementState::Declared);
 }
+
+#[test]
+fn process_stat_group_and_ticks_in_rejects_negative_groups_other_than_exact_minus_one() {
+    for group in ["-2", "-1x"] {
+        let env = TestEnv::new();
+        let fake_proc = env.task_dir.join("fake-proc-invalid-negative-group");
+        let pid_dir = fake_proc.join("7783");
+        std::fs::create_dir_all(&pid_dir).unwrap();
+        let line = format!("7783 (sh) {}\n", stat_fields(group, "42"));
+        std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+        let error = super::process_stat_group_and_ticks_in(&fake_proc, 7783)
+            .expect_err("only the exact -1 group field may mean no group");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "group {group}");
+    }
+}
+
+#[test]
+fn proc_scan_rejects_negative_groups_other_than_exact_minus_one() {
+    for group in ["-2", "-1x"] {
+        let env = TestEnv::new();
+        let fake_proc = env.task_dir.join("fake-proc-scan-invalid-negative-group");
+        let pid_dir = fake_proc.join("7784");
+        std::fs::create_dir_all(&pid_dir).unwrap();
+        let line = format!("7784 (sh) {}\n", stat_fields(group, "100"));
+        std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+        let error = super::process_group_has_member_since_in(&fake_proc, 7784, 90)
+            .expect_err("a malformed negative group must fail the scan, not be skipped");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "group {group}");
+    }
+}
