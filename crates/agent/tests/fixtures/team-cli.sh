@@ -88,7 +88,17 @@ whole() {
   file=$1
   shift
   temporary=$(mktemp "$file.XXXXXXXXXX")
-  printf '%s\n' "$@" > "$temporary"
+  {
+    if [[ ${held_record:-} == "$file" ]]; then
+      : > ".fake-held-$n"
+      for _ in $(seq 1 3600); do
+        [[ -f ".fake-release-$n" ]] && break
+        sleep 0.05
+      done
+      [[ -f ".fake-release-$n" ]] || { echo "the test never released run $n" >&2; exit 65; }
+    fi
+    printf '%s\n' "$@"
+  } > "$temporary"
   mv -- "$temporary" "$file"
 }
 
@@ -642,19 +652,10 @@ case $action in
     result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
     ;;
   held-write)
-    # Holds the record of the run's own prompt (`.fake-prompt-N`) in a write window the test opens (`.fake-held-N`) and
-    # closes (`.fake-release-N`): the content is staged in a same-directory temporary before the window opens and
-    # renamed over the record when it closes, so a reader that reads the record while the window is open sees the
-    # whole record or no file, never a torn one.
-    temporary=$(mktemp ".fake-prompt-$n.XXXXXXXXXX")
-    printf '%s\n' "$prompt" > "$temporary"
-    : > ".fake-held-$n"
-    for _ in $(seq 1 600); do
-      [[ -f ".fake-release-$n" ]] && break
-      sleep 0.05
-    done
-    [[ -f ".fake-release-$n" ]] || { echo "the test never released run $n" >&2; exit 65; }
-    mv -- "$temporary" ".fake-prompt-$n"
+    # Exercise the same writer as every prompt and marker: hold it after opening its output, before printing.
+    # Direct writes expose an empty record here; staging keeps the previous prompt visible until the rename.
+    held_record=".fake-prompt-$n"
+    whole "$held_record" "$prompt"
     commit_work
     record_gate
     result 'Finished the item.\nFINDING 1: FIXED\nSTATUS: DONE'
