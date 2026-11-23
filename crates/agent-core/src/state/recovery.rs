@@ -99,6 +99,12 @@ pub enum RecoveryError {
         /// Source still in the active state.
         team: TeamId,
     },
+    /// A reused identity does not continue an installed replacement's task list.
+    #[error("recovery source {team} does not continue its installed predecessor")]
+    InvalidPredecessor {
+        /// Source whose prior installation or task list is inconsistent.
+        team: TeamId,
+    },
     /// Reconstruction failed the team's existing invariant checks.
     #[error("cannot reconstruct recovery team")]
     Team {

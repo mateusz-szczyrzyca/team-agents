@@ -277,3 +277,35 @@ fn recovery_unknown_sources_and_installation_conflicts_leave_state_unchanged() {
     state.remove_team(&team_id(4)).unwrap();
     assert_eq!(state.install_recovery(&team_id(1)), Ok(RecoveryInstallation::Installed));
 }
+
+#[test]
+fn recovery_rejects_uninstalled_or_changed_predecessors_without_mutation() {
+    for case in 0..3 {
+        let mut state = State::new();
+        state.insert_team(team(1)).unwrap();
+        state.prepare_recovery(&team_id(1), destination(2, 10), 2).unwrap();
+        state.remove_team(&team_id(1)).unwrap();
+        if case != 0 {
+            state.install_recovery(&team_id(1)).unwrap();
+            state.remove_team(&team_id(2)).unwrap();
+        }
+        let mut value = serde_json::to_value(state.recovery(&team_id(1)).unwrap().replacement()).unwrap();
+        match case {
+            0 => {}
+            1 => value["repo"] = "different-repo".into(),
+            2 => {
+                let list = value["task_list"].as_str().unwrap().to_owned();
+                value["task_list"] = format!("{list}\n").into();
+            }
+            _ => panic!("unknown case {case}"),
+        }
+        state.insert_team(serde_json::from_value(value).unwrap()).unwrap();
+        let before = reload(&state);
+        assert_eq!(
+            state.prepare_recovery(&team_id(2), destination(3, 20), 2),
+            Err(RecoveryError::InvalidPredecessor { team: team_id(2) }),
+            "case {case}"
+        );
+        assert_eq!(state, before);
+    }
+}
