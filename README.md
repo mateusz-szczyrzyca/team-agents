@@ -315,6 +315,8 @@ strike for a hung run and after the last turn-limit resume. A run that is the fi
 FAILED` without calling any tool is retried once in a new session with a note telling it the bus tools are listed in
 its CLI's tool catalog under the MCP server `agentbus`. This applies to every role, including coordinators and reviewers.
 A second such failure names the agent, CLI and model in the human notice and shows the reason in `agent status`.
+This one startup retry always runs, including with `[replacement] new_sessions = 0`, and counts against that session
+budget. With the default `1`, a later hang, missing status or turn limit has no further ladder session available.
 The named log events `run_no_tool_retry` (`info`) and `run_no_tool_failed` (`warn`) record both transitions with the
 task, agent, CLI and model, so they can be monitored independently. History schema 21 admits these events through a
 forward migration that preserves old logs, round links, search text and the log cursor; back up the history before

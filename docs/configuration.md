@@ -266,6 +266,11 @@ and a member are started anew; a worker and a reviewer are not.
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
 | `busy_after` | `300` | seconds a queued task waits for its agent, which runs another task at its `[limits] runs_per_agent` limit, before a free agent of `agents` (of the same or a higher tier) takes it over; `0` never hands a task over for this reason. Only the agents listed in `agents` are candidates: an empty `agents` list means no hand-over for a busy agent, and the task waits on. The moment the wait began is kept in the state, so a restart of the daemon keeps the time waited |
 
+A first run of a session that reports `STATUS: FAILED` without calling any tool gets one startup retry for every role.
+This retry is unconditional, including when `new_sessions = 0`, and consumes one of the counted new sessions. With the
+default `new_sessions = 1`, a later hang, missing status or turn limit cannot obtain another ladder session. A second
+qualifying startup failure fails the task and names the agent, CLI and model in the notice.
+
 A busy hand-over uses only the candidates listed in `agents`, the tier rules and the `replacements` count as above: the agent taken must be of the same or a higher
 place than the one it replaces, not in the task's team, not in a run, not with a queued task of its own and not paused for a
 quota. With an empty `agents` list, or when no agent of `agents` fits, no busy hand-over takes place and the task keeps waiting for its own agent. Of the agents that fit, the one whose CLI runs the fewest runs now is taken, and among equals the first of `agents`.
