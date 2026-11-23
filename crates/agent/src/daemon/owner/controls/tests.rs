@@ -684,6 +684,7 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
         session: None,
         final_message: None,
         progress: Progress::Made,
+        used_tool: true,
     };
 
     owner.finished(&task(1), run).await.unwrap();

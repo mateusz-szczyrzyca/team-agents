@@ -1393,6 +1393,7 @@ impl Owner {
                     stopped_by: agent_core::decide::outcome::StoppedBy::Nobody,
                 },
                 progress,
+                used_tool: true,
                 session: None,
                 final_message: check.final_message,
             };

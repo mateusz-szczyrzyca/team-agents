@@ -146,6 +146,9 @@ pub struct FinishedRun {
     pub final_message: Option<String>,
     /// Whether the run did anything but start.
     pub progress: Progress,
+    /// Whether the run recorded a step that calls a tool: a bus call, a tool call, a command or a change of a file.
+    /// A `STATUS: FAILED` run that called no tool is started once in a new session before its task fails.
+    pub used_tool: bool,
 }
 
 /// Whether a run did anything but start: what tells a run that hangs after some work from one that hangs at once.
@@ -474,6 +477,7 @@ impl RunEngine {
                 RunMode::New { .. } => None,
             },
             progress: Progress::Nothing,
+            used_tool: false,
             unreadable: Unreadable::default(),
         };
         let supervise = |source| RunError::Supervise {
@@ -547,6 +551,7 @@ impl RunEngine {
             session: output.session_id,
             final_message: output.final_message,
             progress: follow.progress,
+            used_tool: follow.used_tool,
         })))
     }
 
@@ -708,6 +713,8 @@ struct Follow<'a> {
     known_session: Option<SessionId>,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
+    /// Whether a step that calls a tool was recorded in this run.
+    used_tool: bool,
     /// What the parser refused.
     unreadable: Unreadable,
 }
