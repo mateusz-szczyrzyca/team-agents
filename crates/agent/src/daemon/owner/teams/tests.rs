@@ -1127,6 +1127,32 @@ async fn a_member_that_fails_again_without_a_tool_is_failed_after_its_given_retr
 }
 
 #[tokio::test]
+async fn the_second_no_tool_failure_is_named_on_the_status_line_of_the_team() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "fail,fail"),
+    ]);
+    f.start().await;
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    // Two runs report FAILED without calling a tool: after its one retry the member is failed, and the reason of it —
+    // two runs that did not use the bus's tools — is what the team's status line names, not a bare "failed".
+    f.status_is(&tasks[1], TaskStatus::Failed).await;
+    let mut shown = Vec::new();
+    crate::commands::status::status(&mut f.connect().await, None, &mut shown)
+        .await
+        .unwrap();
+    f.stop().await.unwrap();
+
+    let shown = String::from_utf8(shown).unwrap();
+    assert!(
+        shown.contains("two runs ended without calling a tool"),
+        "the status names the reason of the failure: {shown}"
+    );
+}
+
+#[tokio::test]
 async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
     let mut f = Fixture::new(&[
         investigator("inv-opus", "sleep"),
