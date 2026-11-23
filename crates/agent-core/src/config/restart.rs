@@ -7,9 +7,9 @@ use serde::Deserialize;
 #[serde(rename_all = "snake_case")]
 pub enum RestartSession {
     /// A new session of the same agent, whose first prompt is a briefing of what the cut run left.
+    #[default]
     New,
     /// The session the run was cut in, resumed with a short note that the harness restarted.
-    #[default]
     Same,
 }
 
