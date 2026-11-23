@@ -1612,5 +1612,8 @@ ledger, like judgements. `agent status` reads the last run's row through `Reader
 is "not told". A result line that reports the run's output total (Claude Code, Antigravity) gives the tokens written in
 place of the sum of the calls, and a Claude message that tells no usage is a call that tells nothing, so the call before
 it is not told as the last one. The bound of a session comes from `config::context_bound` (`[session] max_context` and each agent's
-`max_context`). Nothing resumes or stops a session by it yet.
+`max_context`). A session above its agent's bound is not resumed: `owner::bound::renew_for_context` reads the last model
+call's context of the task's last run before the run starts (`Reader::run_usage`), `agent_core::decide::context::starts_anew`
+decides, and `State::begin_context_session` begins the session anew with the trouble `context_bound` and no renewal counted;
+the briefing of the new session is `briefing-context.md` followed by the briefing of the checkpoint.
 

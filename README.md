@@ -185,7 +185,10 @@ always UTC. A `--since` or `--until` without a zone is read in the zone of this 
   context is `not told`). `agent status <task>` ends with the context of the task's last run, or `context: not told`.
   `agent debug --team <team>` puts the context of each run into its summary and names every run whose last context is
   above its agent's bound: `[session] max_context` (default 150000 tokens; `0` switches it off), or the agent's own
-  `max_context`. The bound is only reported; no session is stopped or started differently by it yet.
+  `max_context`. A session whose last run reached more tokens than the bound is not resumed: the task's next run starts
+  a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what
+  was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before, and so does
+  a bound of `0`. The new session is not counted against `[replacement] new_sessions`.
 - Logs and the files of a task can contain secrets printed by commands: restrict who can read them.
 - `agent stop <team>` stops a team; stopping the daemon (`systemctl --user stop agent-daemon`) ends every run at
   once, and nothing starts until it runs again.
