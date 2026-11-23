@@ -363,9 +363,10 @@ configured with, `prompt.md` for a prompt too long for a command line) and `task
 
 At startup and once per minute, `owner/idle` observes each team's saved runs, local task branches and worktree
 HEADs, including reviewer work. `decide::idle` is a pure timestamp/interval decision with explicit holds: running
-work, human pause/stop, provider reset waits and accepted external delivery claims. A queued retry whose last
-run ended on a provider limit remains protected until the scheduler starts it, including after recovery. This
-closes the gap between queuing a due retry and starting it. Questions do not hold the team.
+work, queued tasks, human pause/stop, provider reset waits and accepted external delivery claims. Queued
+crew and reviewer tasks remain protected until the scheduler starts them, including after recovery. Open
+rounds awaiting a free investigator are protected through the existing round-obligation projection even
+before a reviewer task exists. Questions do not hold the team.
 `idle_team_minutes = 0` disables the scan. Plain document/art directories need no Git inspection.
 
 The optional persisted `idle_watch` stores the last activity and observed tips. Its first observation uses saved

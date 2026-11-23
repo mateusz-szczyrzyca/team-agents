@@ -148,8 +148,8 @@ Idle teams are checked at startup and once per minute. Activity comes from saved
 branch/worktree commits. The interval starts at the later of recorded activity and current daemon startup:
 time while the daemon was stopped does not count, and old teams get a full interval after restart. Runs and active checks,
 human pause/stop, provider quota/rate-limit reset waits and accepted delivery claims awaiting another team's
-pull-request merge prevent removal. A queued provider retry remains protected until its next run starts,
-including after a daemon restart. An unanswered human question does not. A removed team is **not restarted
+pull-request merge prevent removal. Tasks queued for an agent and rounds awaiting a free investigator also
+prevent removal, including queued provider retries after a daemon restart. An unanswered human question does not. A removed team is **not restarted
 in this release**; automatic replacement follows in a separate part.
 
 Automatic removal uses the safeguards of `agent remove`: unmerged work is bundled before deletion, and the

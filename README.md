@@ -544,7 +544,7 @@ search entries and cursors; it does not change the live state's format.
 after two hours without a run or new commit. It uses the same bundle, cleanup and notification safeguards as
 `agent remove`, including for document and artwork teams. Running work and checks, human pause/stop, quota or
 rate-limit reset waits, and accepted claims waiting for another team's pull request to merge protect the team.
-A provider retry queued after its reset stays protected until its next run starts.
+Work queued for an agent, including provider retries and rounds awaiting a free investigator, also protects the team.
 An unanswered question does not protect it. This release removes idle teams **without starting replacements**;
 the approved next part adds restart. `[limits] idle_team_restarts = 1` is reserved and has no effect yet.
 
