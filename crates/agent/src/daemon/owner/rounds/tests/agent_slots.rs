@@ -327,7 +327,9 @@ fn state_with_another_item_in_review() -> (agent_core::state::State, agent_core:
             )
             .unwrap();
     }
-    state.start_waiting(&task, crate::fixtures::at(0));
+    state
+        .start_waiting(&task, crate::fixtures::at(0))
+        .expect("the task is there");
     (state, team, task)
 }
 
@@ -411,7 +413,9 @@ async fn a_waiting_members_own_review_is_not_handed_over() {
 fn waiting_team_state() -> (agent_core::state::State, agent_core::ids::TeamId, TaskId) {
     let mut state = crate::fixtures::team_state();
     let task = crate::fixtures::task(2);
-    state.start_waiting(&task, crate::fixtures::at(0));
+    state
+        .start_waiting(&task, crate::fixtures::at(0))
+        .expect("the task is there");
     (state, crate::fixtures::team_id(0), task)
 }
 
@@ -470,7 +474,9 @@ async fn a_lower_tier_candidate_is_not_given_the_waiting_task() {
     state
         .hand_over_task(&task, crate::fixtures::investigator("inv-1"), crate::fixtures::at(0))
         .unwrap();
-    state.start_waiting(&task, crate::fixtures::at(0));
+    state
+        .start_waiting(&task, crate::fixtures::at(0))
+        .expect("the task is there");
     let daemon = Daemon::new(&state, None);
     configure_candidate(&daemon, "claude-2");
     daemon.clock.advance(time::Duration::seconds(2));
