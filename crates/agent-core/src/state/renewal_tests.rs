@@ -274,3 +274,28 @@ fn a_renewal_before_the_last_run_started_is_refused_with_the_task_and_its_cause(
     let found = state.find_task(&task()).expect("the task");
     assert_eq!(found.member.renewals(), None, "nothing is recorded");
 }
+
+/// A `Renewals` block written before `Trouble::NoToolCall` existed, with the older reasons, still loads: the persisted
+/// form keeps its four original reasons, so an old state never becomes unreadable.
+#[test]
+fn renewals_written_before_no_tool_call_still_load_its_original_reasons() {
+    let cases = [
+        (
+            r#"{"used":1,"at":"2026-11-20T14:40:30Z","after_runs":4,"reason":"no_status"}"#,
+            Trouble::NoStatus,
+        ),
+        (
+            r#"{"used":1,"at":"2026-11-20T14:40:30Z","after_runs":4,"reason":"hang"}"#,
+            Trouble::Hang,
+        ),
+        (
+            r#"{"used":1,"at":"2026-11-20T14:40:30Z","after_runs":4,"reason":"turn_limit"}"#,
+            Trouble::TurnLimit,
+        ),
+    ];
+    for (text, reason) in cases {
+        let renewals: Renewals = serde_json::from_str(text).expect("a pre-NoToolCall renewals block loads");
+        assert_eq!(renewals.reason(), reason, "{text}");
+        assert_eq!(renewals.used(), 1);
+    }
+}
