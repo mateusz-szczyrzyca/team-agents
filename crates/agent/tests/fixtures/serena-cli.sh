@@ -34,7 +34,10 @@ if ((${#tools[@]})); then
   printf 'the work\n' > work.txt
   git add work.txt
   for tool in "${tools[@]}"; do
-    printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"%s","input":{}}]}}\n' "$tool"
+    # A Bash call carries the command it runs, as Claude Code streams it; the other tools carry no input.
+    input='{}'
+    if [ "$tool" = Bash ]; then input='{"command":"ls"}'; fi
+    printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"%s","input":%s}]}}\n' "$tool" "$input"
   done
   git -c user.name=Stand-in -c user.email=standin@example.invalid -c commit.gpgsign=false \
     commit -q -m "Do the work"

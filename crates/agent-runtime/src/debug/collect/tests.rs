@@ -1373,3 +1373,40 @@ async fn the_summary_says_no_tool_when_the_steps_of_a_tasks_last_run_name_none()
     .unwrap();
     assert!(summary.contains("- Tool calls: none recorded"), "{summary}");
 }
+
+#[test]
+fn a_streamed_shell_command_counts_as_shell_and_a_file_edit_as_other() {
+    use agent_core::cli::ActivityEvent;
+    use agent_core::history::Step;
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    let step = |number: u32, event: ActivityEvent| Step {
+        run: run.clone(),
+        number: std::num::NonZeroU32::new(number).unwrap(),
+        at,
+        event,
+    };
+    let steps = [
+        step(
+            1,
+            crate::cli::tool_activity("Bash", &serde_json::json!({"command": "ls"})),
+        ),
+        step(
+            2,
+            crate::cli::tool_activity("Edit", &serde_json::json!({"file_path": "src/lib.rs"})),
+        ),
+        step(
+            3,
+            crate::cli::tool_activity("mcp__serena__find_symbol", &serde_json::json!({"name_path": "run"})),
+        ),
+    ];
+
+    assert_eq!(
+        tool_calls_of(&steps),
+        agent_core::debug_summary::ToolCalls {
+            serena: 1,
+            shell: 1,
+            other: 1,
+        }
+    );
+}

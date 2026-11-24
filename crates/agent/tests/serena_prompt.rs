@@ -312,6 +312,32 @@ mod serena_prompt {
         );
     }
 
+    #[test]
+    fn agent_debug_counts_a_shell_command_of_a_run_with_serena_as_shell() {
+        let mut world = World::new(true, &["mcp__serena__find_symbol", "Bash"]);
+        world.start();
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let task = first_task(&output);
+        world.task_ended(&task);
+        let bundle = tempfile::tempdir().unwrap();
+
+        let output = world.agent(&[
+            "debug",
+            "--task",
+            task.as_ref(),
+            "--out",
+            bundle.path().to_str().unwrap(),
+        ]);
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let summary = read_summary(bundle.path());
+        assert!(
+            summary.contains("- Tool calls: 2 (serena 1, shell 1, other 0)\n"),
+            "{summary}"
+        );
+    }
+
     /// The summaries of the bundle `dir` wrote, joined, which is one directory deep.
     fn read_summary(dir: &Path) -> String {
         let mut found = String::new();
