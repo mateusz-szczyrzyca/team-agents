@@ -3819,4 +3819,78 @@ git commit -qm 'Complete retained work'
         assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
         assert_eq!(events.iter().filter(|e| e["event"] == "started").count(), 1);
     }
+    #[test]
+    fn provider_quota_hands_the_same_workspace_to_another_provider_without_a_wrong_try() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:quota",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:finish",
+                    cli: "opencode",
+                    model: Some("openrouter/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "quota",
+            "git symbolic-ref HEAD > .fake-original-branch\nprintf 'quota exhausted\\n' >&2\nexit 1",
+        );
+        world.script(
+            "finish",
+            &format!(
+                "test \"$(git symbolic-ref HEAD)\" = \"$(cat .fake-original-branch)\"\n{}",
+                commit_script("the walkthrough", &[])
+            ),
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        assert_eq!(world.count_told("claude-1", "w-or"), 1);
+        let journal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(world.home.join("tasks").join(member).join("worker-recovery-1.json")).unwrap(),
+        )
+        .unwrap();
+        let events = journal["events"].as_array().unwrap();
+        assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["event"] == "started")
+                .map(|e| e["worker"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["w-or"]
+        );
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["event"] == "interrupted")
+                .map(|e| e["cause"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["quota"]
+        );
+    }
 }
