@@ -168,7 +168,7 @@ impl Owner {
             .ok_or(OwnerError::RequestOwnership)?;
         let round = &journal.current_workspace().record().requester_round;
         let snapshot = git.snapshot(round, task).await.map_err(OwnerError::RequestSnapshot)?;
-        recovery::advance(
+        let updated = recovery::advance(
             &self.parts.store.home().task_dir(&served.requester_task),
             served.request,
             Transition::Interrupted {
@@ -184,7 +184,63 @@ impl Owner {
             },
         )
         .await?;
-        self.parts
+        let causes;
+        let notice;
+        let change = if updated.phase() == &Phase::Exhausted {
+            causes = updated
+                .events()
+                .iter()
+                .filter_map(|event| match event {
+                    Transition::Interrupted { cause, .. } => Some(match cause {
+                        agent_core::decide::worker_recovery::Cause::Died => "died",
+                        agent_core::decide::worker_recovery::Cause::Refused => "refused",
+                        agent_core::decide::worker_recovery::Cause::Quota => "quota",
+                        agent_core::decide::worker_recovery::Cause::NoStatus => "no_status",
+                        agent_core::decide::worker_recovery::Cause::RestartQueued => "restart_queued",
+                        agent_core::decide::worker_recovery::Cause::RestartRunning => "restart_running",
+                    }),
+                    Transition::Started { .. }
+                    | Transition::Assigned { .. }
+                    | Transition::RestartedQueued { .. }
+                    | Transition::Rejected { .. }
+                    | Transition::Observed { .. }
+                    | Transition::Settled { .. } => None,
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let entries = self.parts.bus.helper_list(false).await?;
+            let entry = entries
+                .iter()
+                .find(|entry| entry.id == served.request)
+                .ok_or(OwnerError::RequestOwnership)?;
+            let step = match &entry.step {
+                Some(step) => step.as_str(),
+                None => "unlabelled",
+            };
+            let values = agent_core::prompt::Variables::new()
+                .with("request_id", served.request.number().to_string())
+                .map_err(super::NoticeRenderError::from)?
+                .with("worker", served.worker.to_string())
+                .map_err(super::NoticeRenderError::from)?
+                .with("step", step)
+                .map_err(super::NoticeRenderError::from)?
+                .with("causes", &causes)
+                .map_err(super::NoticeRenderError::from)?;
+            notice = self
+                .parts
+                .team_texts
+                .render(agent_core::prompt::TeamPrompt::WorkerInterruptedReturned, &values)
+                .map_err(super::NoticeRenderError::from)?;
+            OwnedChange::Settle {
+                result: RequestResult::Failed,
+                summary: &causes,
+                notice: &notice,
+            }
+        } else {
+            OwnedChange::Retry
+        };
+        let outcome = self
+            .parts
             .bus
             .helper_owned(
                 served.request,
@@ -193,9 +249,12 @@ impl Owner {
                     task,
                     run,
                 },
-                OwnedChange::Retry,
+                change,
             )
             .await?;
+        if outcome == OwnedOutcome::Stale {
+            tracing::warn!(event = "worker_result_dropped", request = %served.request, %run, "interruption lost request ownership");
+        }
         self.serving.remove(task);
         self.look_at(&team);
         tracing::info!(event = "worker_request_requeued", request = %served.request, %run, ?cause, "worker request retained for another execution");
