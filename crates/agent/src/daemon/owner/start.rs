@@ -178,13 +178,13 @@ fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup>
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
-            context: None,
+            context: agent.context,
         }),
         Participant::Investigator(name) => config.investigator(name).map(|agent| AgentSetup {
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
-            context: None,
+            context: agent.context,
         }),
     }
 }
@@ -408,7 +408,7 @@ pub(super) async fn plan(
             working_dir,
             identity,
             mcp_servers,
-            context: None,
+            context: setup.context,
         },
     })
 }
