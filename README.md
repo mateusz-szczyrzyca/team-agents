@@ -1120,7 +1120,9 @@ answered keeps it busy until its workspace is released. The lines of `agent stat
 
 **Owned settlement.** New local requests bind each execution to its worker, task and run. The final requester
 notice names the serving worker and is published once, even when settlement is replayed after a daemon restart.
-Late results are dropped and logged. Before a wrong-result retry, the daemon retains a snapshot of the failed
+Late results are dropped and logged. Failed preparation leaves a request dispatchable and never removes a
+running worker's workspace. Receipt recovery reads only newly appended messages after its first scan.
+Before a wrong-result retry, the daemon retains a snapshot of the failed
 worker's work; a pool retry starts in a fresh workspace from the original requester's commit. The journal lives
 in the requester's task directory and preserves both workspace identities and the observed ending.
 Existing open requests without the opt-in marker keep their previous handling; loading never opts them in.

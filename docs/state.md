@@ -536,6 +536,10 @@ Each is derived or lives elsewhere, so that there is one place for it:
   The original workspace identity remains immutable; a wrong-result retry can assign a new workspace and worker task.
   Final settlement uses an ownership-checked bus receipt in the message log. Loading repairs a state save interrupted
   after the receipt was appended, without publishing another notice. Stale ownership cannot settle the request.
+  The bus state optionally stores `owned_receipt_offset`, the byte count already consumed from its append-only
+  `messages.jsonl`. Older states default to zero. Recovery saves the cursor together with repaired requests,
+  even during read-only loads, so unrelated operations never rescan consumed history. A negative cursor or one
+  beyond the log end is a storage error; the message log must not be truncated independently of the bus state.
   No-result causes are `died`, `refused`, `quota`, `no_status`, `restart_queued` and `restart_running`.
   There are at most three returns without a result; the fourth interruption is retained and ends the journal as exhausted.
   These returns never increment the wrong-result try, which starts at one and increases only for `rejected` events.
