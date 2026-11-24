@@ -11,6 +11,7 @@ use std::path::Path;
 use crate::cli::ActivityEvent;
 
 mod prompt;
+mod shell;
 pub use prompt::{ReminderText, ReminderTextError};
 mod tally;
 #[cfg(test)]
@@ -26,10 +27,11 @@ const CODE_EXTENSIONS: [&str; 33] = [
     "cs", "rb", "php", "kt", "kts", "swift", "sh", "bash", "zsh", "sql", "ex", "exs", "erl", "lua", "pl",
 ];
 
-/// The names of the CLI's own tools that search a file for a pattern or read it, as Claude Code and opencode name them:
-/// `Grep` and `grep`, `Read` and `read`, `Glob` and `glob`. A glob names its files by a pattern (`src/**/*.rs`), which is
-/// searched like a path.
-const SEARCH_TOOLS: [&str; 6] = ["Grep", "Read", "Glob", "grep", "read", "glob"];
+/// The extensions, without the dot and in lower case, of the files of text a search is told apart by: what `grep` is for,
+/// and what a filter (`--glob '*.md'`, `--type md`) limits a search to.
+const TEXT_EXTENSIONS: [&str; 14] = [
+    "md", "markdown", "toml", "yaml", "yml", "json", "txt", "log", "diff", "patch", "lock", "out", "csv", "html",
+];
 
 /// The names of the directories that hold the code of a repository of these agents. A search over a directory with one of
 /// these names in its path, or over `.`, searches code; a search over `docs/` or `config` searches text.
@@ -37,34 +39,60 @@ const CODE_DIRECTORIES: [&str; 12] = [
     "src", "crates", "lib", "cmd", "pkg", "internal", "app", "tests", "test", "tools", "bin", "agentbus",
 ];
 
-/// The names of the shell commands that search or read files.
-const SEARCH_COMMANDS: [&str; 7] = ["grep", "rg", "sed", "cat", "head", "tail", "find"];
+/// What a CLI's own tool does to the files it is given, by the name Claude Code and opencode give it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CliTool {
+    /// `Read`, `read`, `Glob`, `glob`: it reads the files it names, or the files a pattern names (`src/**/*.rs`).
+    Reads,
+    /// `Grep`, `grep`: it searches a file or a directory for a pattern; with no path it searches the whole repository.
+    Searches,
+}
+
+impl CliTool {
+    /// The tool called `name`, if it searches or reads files.
+    fn named(name: &str) -> Option<Self> {
+        match name {
+            "Read" | "read" | "Glob" | "glob" => Some(Self::Reads),
+            "Grep" | "grep" => Some(Self::Searches),
+            _ => None,
+        }
+    }
+
+    /// The files and directories of code the call of the tool with the `summary` its stream gives names. A CLI gives the
+    /// path of a search, or its pattern when it has no path: a summary that names no place at all is a pattern, and a
+    /// search with no path searches the repository (`.`).
+    fn names(self, summary: &str) -> Vec<String> {
+        let words: Vec<&str> = summary.split_whitespace().flat_map(one_of_its_words).collect();
+        let mut names: Vec<String> = words
+            .iter()
+            .filter(|word| is_code_file(word) || (self == Self::Searches && is_code_directory(word)))
+            .map(|word| (*word).to_owned())
+            .collect();
+        let names_a_place = words.iter().any(|word| word.contains('/') || has_text_extension(word));
+        if self == Self::Searches && names.is_empty() && !words.is_empty() && !names_a_place {
+            names.push(".".to_owned());
+        }
+        names
+    }
+}
 
 /// The files a step searched or read, when it searched or read code without Serena; `None` for a step that is not
 /// one: Serena's own calls, agentbus, a file change, a message, and a search of text only.
 #[must_use]
 pub fn code_search(event: &ActivityEvent) -> Option<CodeSearch> {
     let names = match event {
-        ActivityEvent::Command(command) => command_filenames(command),
-        ActivityEvent::ToolCall { name, summary } if SEARCH_TOOLS.contains(&name.as_str()) => summary
-            .split_whitespace()
-            .flat_map(one_of_its_words)
-            .filter(|word| is_code_file(word) || (word.contains('/') && is_code_directory(word)))
-            .collect(),
-        ActivityEvent::ToolCall { .. }
-        | ActivityEvent::BusCall { .. }
+        ActivityEvent::Command(command) => shell::command_filenames(command),
+        ActivityEvent::ToolCall { name, summary } => {
+            CliTool::named(name).map_or_else(Vec::new, |tool| tool.names(summary))
+        }
+        ActivityEvent::BusCall { .. }
         | ActivityEvent::FileEdit { .. }
         | ActivityEvent::Text(_)
         | ActivityEvent::Error(_)
         | ActivityEvent::Info(_)
         | ActivityEvent::Control { .. } => Vec::new(),
     };
-    let paths: Vec<String> = names
-        .into_iter()
-        .map(str::to_owned)
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
+    let paths: Vec<String> = names.into_iter().collect::<BTreeSet<_>>().into_iter().collect();
     (!paths.is_empty()).then_some(CodeSearch { paths })
 }
 
@@ -73,54 +101,6 @@ pub fn code_search(event: &ActivityEvent) -> Option<CodeSearch> {
 pub struct CodeSearch {
     /// The paths it read, as the CLI named them, in order and without a path twice.
     pub paths: Vec<String>,
-}
-
-/// The file names of `command`, as the shell gives them to the commands that search or read files: of every search or
-/// read of the line, its own words. A search that reads a pipe (`git log | head`) names no file. A directory of code counts
-/// for a search of the line (`grep -rn x crates/`) unless the line is piped (a quick filter of text, `rg x src | sort`) or
-/// the command is `find`, whose directories only say where it looks.
-fn command_filenames(command: &str) -> Vec<&str> {
-    let mut names = Vec::new();
-    let piped = command.split_whitespace().any(|word| word == "|");
-    let mut directories = false;
-    let mut reading = false;
-    let mut reads_pipe = false;
-    let mut after_pipe = false;
-    for word in command.split_whitespace() {
-        if word == "|" {
-            after_pipe = true;
-            reading = false;
-            continue;
-        }
-        if word == "&&" || word == ";" {
-            continue;
-        }
-        let (word, ends) = match word.strip_suffix("&&") {
-            Some(head) => (head, true),
-            None => match word.strip_suffix(';') {
-                Some(head) => (head, true),
-                None => (word, false),
-            },
-        };
-        let name = word.rsplit_once('/').map_or(word, |(_, last)| last);
-        if SEARCH_COMMANDS.contains(&name) {
-            reading = true;
-            directories = !piped && name != "find";
-            reads_pipe = after_pipe;
-            after_pipe = false;
-        } else if reading && !reads_pipe {
-            names.extend(
-                one_of_its_words(word)
-                    .into_iter()
-                    .filter(|part| is_code_file(part) || (directories && is_code_directory(part))),
-            );
-        }
-        if ends {
-            reading = false;
-            after_pipe = false;
-        }
-    }
-    names
 }
 
 /// The text of `word` as one argument of a command or a file: its quoting and its redirection taken off.
@@ -150,4 +130,17 @@ fn is_code_file(path: &str) -> bool {
         .extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| CODE_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str()))
+}
+
+/// Whether `extension` is the extension of a file of text, in any case.
+fn is_text_extension(extension: &str) -> bool {
+    TEXT_EXTENSIONS.contains(&extension.to_ascii_lowercase().as_str())
+}
+
+/// Whether `path` is a file of text, by the extension of its name.
+fn has_text_extension(path: &str) -> bool {
+    Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(is_text_extension)
 }
