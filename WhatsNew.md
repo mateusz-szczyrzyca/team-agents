@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.92.0 — 24.11.2026 — PR #247
+
+### Bug fixes
+- [agent] [agent-runtime] [agentbus] A late or repeated worker result can no longer settle a newer attempt or send a second final notice, including after a daemon restart. The final notice names the worker that served the request.
+- [agent] [agent-runtime] Workers that declare FAILED or QUESTIONS get another try, preferring another provider. Rejected work is saved before handoff, and a pool with one eligible worker can use its second try.
+
+- [agent] Failed worker preparation leaves requests ready to dispatch again and preserves running workspaces.
+- [agentbus] Replaying worker notices reads only newly appended messages after the first scan.
+
+### Configuration
+- [agent] [agent-runtime] changed: `[workers] tries` (default `2`) — new local requests count declared FAILED and QUESTIONS endings as wrong-result tries, even without file changes. Existing open requests keep their previous handling.
+
 ## 0.91.0 — 24.11.2026 — PR #244
 
 ### Enhancements
