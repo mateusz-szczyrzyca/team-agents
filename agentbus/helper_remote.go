@@ -22,9 +22,23 @@ type remoteHelperResult struct {
 	Result string   // head of the final message or actionable failure reason
 }
 
-// takeLocalHelper claims the oldest eligible request; remote-bound requests stay with the daemon.
-func takeLocalHelper(st *State, worker string, capabilities []string) *Helper {
+// takeLocalHelper claims the oldest eligible request (or specific reqID if non-zero); remote-bound requests stay with the daemon.
+func takeLocalHelper(st *State, worker string, capabilities []string, reqID ...int64) *Helper {
+	var targetID int64
+	if len(reqID) > 0 {
+		targetID = reqID[0]
+	}
+	if targetID != 0 && worker != "" {
+		for _, h := range st.Helpers {
+			if h.Worker == worker && (h.Status == HelperStarting || h.Status == HelperRunning) {
+				return nil
+			}
+		}
+	}
 	for _, h := range sortedHelpers(st) {
+		if targetID != 0 && h.ID != targetID {
+			continue
+		}
 		if h.Status == HelperQueued && h.RemoteJob == nil && jobHasCapabilities(capabilities, h.Requires) {
 			h.Status, h.Worker = HelperStarting, worker
 			return h

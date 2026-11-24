@@ -178,7 +178,7 @@ engine relies on:
 | `decide::round` | `RoundState`, `RoundEvent` and `RoundState::transition`: member work, integration, gate green at the head, pull request published for that head, the configured reviews, merge or hand-over to the human, item done; "changes requested" starts a fix pass until `[review] fix_passes`, then the human is asked, and the answer grants one more pass. Each transition says what the daemon does next (`RoundAction`); `Checking` is the phase before the reviews are asked: what the issues of the checks come to — the reviews start, the round goes back to the team (at most `[review] check_passes` times) or the human is asked |
 | `decide::round::rounds_of_run` | `rounds_of_run`: from the role of a task, why its run starts (`RunStart`: its own work, a request for a worker, a review, a continuation) and what the state says of its team's rounds (`TaskRounds`), the rounds the run works for. See "Rounds" |
 | `decide::outcome` | `classify_outcome`: from the final message, the exit status, the error tail and who ended the run, the `RunEnd` to record — reported status, no status, quota exhausted (with the reset time when the CLI gives one), rate limited, turn limit, hung, stopped — and the `Pause` it implies; `after_hang` for the watchdog's strikes; `after_turn_limit` for bounded same-session continuation. The CLIs' outputs are fixtures in `crates/agent-core/tests/fixtures/cli-outputs/` |
-| `decide::pool` | `next_pool_worker` and `provider_of`: from the pool's workers of `[tiers] workers` (their names, providers, capabilities and busy facts — busy now, runs against `[limits] runs_per_worker`, and an unsettled finished run), a request's required capabilities and the provider of the last request the pool served, the worker that serves the request and its provider, with the providers taking turns installation-wide. Preparatory in part 1.1a: nothing on a serving path calls it yet; part c wires it in |
+| `decide::pool` | `next_pool_worker` and `provider_of`: from the pool's workers of `[tiers] workers` (their names, providers, capabilities and busy facts — busy now, runs against `[limits] runs_per_worker`, and an unsettled finished run), a request's required capabilities and the provider of the last request the pool served, the worker that serves the request and its provider, with the providers taking turns installation-wide. Wired into `serve_pool_requests` to serve worker requests across all teams and delegating solo tasks |
 
 The daemon feeds these functions what it observed and carries out what they return; none of them touches a file, a process or
 the network. The order of the checks and the rules each follows are in the documentation of its module.
@@ -869,6 +869,26 @@ and its files are not changed. The commit is kept under `refs/agents/snapshots/<
 and its parent is the head; the history records it ([`history.md`](history.md), `snapshots`). A snapshot above
 `[snapshot] warn_mb` is still taken and logged as `snapshot_large`; a failure is logged as `snapshot_failed` and the daemon
 goes on. Nothing prunes the snapshots yet, and nothing pushes them. `agent status <round>` shows the last snapshot of each task.
+
+### Prepared request recovery protocol
+
+`agent_core::decide::worker_recovery` separates an absent result from a result that needs checking.
+The pure policy allows three no-result returns, independently of `[workers] tries`: provider refusals and quota
+failures prefer another provider, with same-provider fallback; process death, missing status and queued or running
+restart take the first compatible free worker. With none free the request stays queued. A fourth missing result
+returns the retained causes. A result, including a declared failure after work, goes to the existing wrong-result
+policy; a stale answer is dropped. These decisions have no process or filesystem effects.
+
+`agent_runtime::worker_request::recovery` provides an opt-in journal beside existing request records.
+Its transitions retain the original workspace and existing snapshot identities while assigning each execution a
+fresh run and generation. Loading replays all transitions to reconstruct ownership and independent counters;
+callers cannot deserialize an arbitrary owner or counter. The daemon owner must serialize updates for a request.
+The APIs use the existing bounded UTF-8 reader and atomic file writer, and never write requester worktree files.
+See [the durable format](state.md) for events, limits and compatibility.
+
+This is preparation for recovery dispatch and fenced settlement. No daemon path calls these APIs in this version;
+existing open requests continue using their previous settlement rules. Automatic restart recovery and suppression
+of late answers in the live dispatcher are delivered by later parts of the worker recovery work.
 
 ### The history
 

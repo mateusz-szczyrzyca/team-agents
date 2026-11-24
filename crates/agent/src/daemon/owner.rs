@@ -16,6 +16,8 @@ mod gate;
 mod history;
 mod idle;
 mod last_step;
+#[cfg(test)]
+mod launch_tests;
 mod plan;
 mod reminder;
 mod removal;
@@ -68,7 +70,7 @@ use agent_runtime::history::{History, Reader, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
-use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
+use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunJob, RunVerdict, WatchdogHold};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
 use agent_runtime::team_prompts::TeamPrompts;
@@ -489,6 +491,15 @@ enum Asked {
     Unusable(Notice),
 }
 
+/// Request-run ownership and provider rotation, kept together off the owner's stack.
+#[derive(Debug, Default)]
+struct PoolDispatch {
+    /// Original teams of request-owned runs, retained until settlement after requester removal.
+    run_teams: HashMap<TaskId, TeamId>,
+    /// Provider of the last successful pool dispatch; reset on restart.
+    last_served_provider: Option<String>,
+}
+
 /// The owner.
 pub(super) struct Owner {
     /// What it is made of.
@@ -534,6 +545,8 @@ pub(super) struct Owner {
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
     serving: HashMap<TaskId, Served>,
+    /// Pool bookkeeping is boxed to keep owner lifecycle futures compact.
+    pool_dispatch: Box<PoolDispatch>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
     /// The reminders of Serena that the looks at the teams put on the bus, by the task and the run that was reminded, so
@@ -604,6 +617,8 @@ pub(super) struct Owner {
     /// The requests whose result was wrong and that wait in the bus's queue for a second try, with what their next worker
     /// and their requester are told.
     again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
+    /// Outstanding workspace cleanup obligations after dispatch failure when release failed.
+    pub(in crate::daemon::owner) cleanup_obligations: Vec<teams::CleanupObligation>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -619,7 +634,7 @@ impl Owner {
     fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
         let mut summary = TeamSummary::described(team)
             .with_rejection_limit(self.parts.settings.config.replacement().rejections().get());
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         mark_runs_elsewhere(&mut summary.members, &going, self.parts.settings.config.limits());
         summary
     }
@@ -658,6 +673,7 @@ impl Owner {
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
+            pool_dispatch: Box::default(),
             closed: HashSet::new(),
             reminded: HashSet::new(),
             looks: BTreeSet::new(),
@@ -690,6 +706,7 @@ impl Owner {
             again: HashMap::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
+            cleanup_obligations: Vec::new(),
         }
     }
 
@@ -884,14 +901,11 @@ impl Owner {
         if !self.space_allows_run().await {
             return Ok(());
         }
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         let decisions = plan_starts(&queued, &going, self.parts.settings.config.limits());
         for (task, slot) in decisions {
-            if self.runs.len() >= MAX_RUNS.get() {
-                break;
-            }
             // Each launch is measured on its own: the space may have fallen since the last one started.
-            if !self.space_allows_run().await {
+            if !self.launch_allowed().await {
                 break;
             }
             // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
@@ -908,10 +922,44 @@ impl Owner {
         Ok(())
     }
 
+    /// Keeps the run's team identity while its requester may be removed.
+    fn record_pool_run(&mut self, task: TaskId, served: Served, team: TeamId) {
+        self.pool_dispatch.run_teams.insert(task.clone(), team);
+        self.serving.insert(task, served);
+    }
+
+    /// Active team and request-owned runs, with legacy team workers counted once.
+    fn all_runs_going(&self) -> Vec<Going> {
+        let mut going = runs_going(self.parts.state.teams());
+        going.extend(
+            self.serving
+                .iter()
+                .filter(|(task, _)| self.parts.state.find_task(task).is_none())
+                .filter_map(|(task, served)| {
+                    self.pool_dispatch
+                        .run_teams
+                        .get(task)
+                        .cloned()
+                        .or_else(|| {
+                            self.parts
+                                .state
+                                .find_task(&served.requester_task)
+                                .map(|found| found.team.id().clone())
+                        })
+                        .map(|team| Going {
+                            agent: served.worker.clone(),
+                            team,
+                            task: task.clone(),
+                        })
+                }),
+        );
+        going
+    }
+
     /// The run that holds `agent` at its limit of runs over all teams, `None` when `agent` may run another task now.
     pub(super) fn run_holding(&self, agent: &Participant) -> Option<Going> {
         let limit = limit_for(self.parts.settings.config.limits(), agent.tier());
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         busy_run(&agent.agent_name(), limit, &going).cloned()
     }
 
@@ -931,6 +979,11 @@ impl Owner {
             );
         }
         Ok(())
+    }
+
+    /// Whether the shared process ceiling and disk reserve permit another launch.
+    async fn launch_allowed(&mut self) -> bool {
+        self.runs.len() < MAX_RUNS.get() && self.space_allows_run().await
     }
 
     /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
@@ -1127,22 +1180,24 @@ impl Owner {
                 );
             }
         }
+        self.spawn_job(task.clone(), plan.job, run_span);
+        Ok(())
+    }
+
+    /// Spawns `job` for `task` with `run_span`.
+    pub(super) fn spawn_job(&mut self, task: TaskId, job: RunJob, run_span: tracing::Span) {
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
         self.cancels.insert(task.clone(), cancel.clone());
         let hold = WatchdogHold::new();
         self.holds.insert(task.clone(), hold.clone());
-        let job = plan.job;
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
-        // Scoped, not only polled with the subscriber: a run that is aborted is dropped by the runtime, and its spans must
-        // close in the registry that made them.
         let handle = self.runs.spawn(Scoped::new(
             async move { engine.run_held(job, &cancel, &hold).await }.instrument(run_span),
             dispatch,
         ));
         self.running.insert(handle.id(), task.clone());
-        self.in_flight.insert(task.clone());
-        Ok(())
+        self.in_flight.insert(task);
     }
 
     /// Fails `task`, which could not be started, and tells the human why; its team learns it as of a run that ended
@@ -1195,6 +1250,12 @@ impl Owner {
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
+        if self.parts.state.find_task(&task).is_none()
+            && let Some(served) = self.serving.remove(&task)
+        {
+            self.pool_dispatch.run_teams.remove(&task);
+            return self.settle_pool_worker_run(&task, &served, outcome);
+        }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,

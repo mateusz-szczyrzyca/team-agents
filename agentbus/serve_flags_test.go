@@ -43,3 +43,17 @@ func TestServeWithoutAPlanGivesItsServerNone(t *testing.T) {
 		t.Fatalf("a run without a plan has none: plan %q, agent %q", s.plan, s.agentCmd)
 	}
 }
+
+func TestServeParsesPoolWorkers(t *testing.T) {
+	fs := newFlagSet("serve")
+	flags := defineServeFlags(fs)
+	err := fs.Parse([]string{"--agent", "m", "--workers", "glm-1, deepseek-1", "--tier", "normal"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s := flags.server(RoleAgent, TierNormal, json.NewEncoder(io.Discard))
+	if len(s.workers) != 2 || s.workers[0] != "glm-1" || s.workers[1] != "deepseek-1" {
+		t.Fatalf("unexpected workers: %+v", s.workers)
+	}
+}

@@ -85,6 +85,8 @@ pub enum BusCommand {
     HelperGet,
     /// `helper-dump`.
     HelperDump,
+    /// `helper-list`.
+    HelperList,
     /// `checkpoint-get`.
     CheckpointGet,
     /// `send`.
@@ -791,6 +793,35 @@ pub struct DelegationRequest {
     pub summary: String,
 }
 
+/// A worker request entry as listed by `helper-list --json`.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct HelperEntry {
+    /// Its number.
+    pub id: RequestId,
+    /// The member that asked.
+    pub from: AgentName,
+    /// Its task.
+    pub from_task: TaskId,
+    /// Its repository.
+    pub repo: RepoName,
+    /// Its branch.
+    pub branch: BranchName,
+    /// Where it is in its life.
+    pub status: DelegationStatus,
+    /// The worker it was given to.
+    #[serde(default)]
+    pub worker: Option<AgentName>,
+    /// What the request requires; empty when none.
+    #[serde(default)]
+    pub requires: Vec<String>,
+    /// The step of the plan it is for; empty when none.
+    #[serde(default)]
+    pub step: Option<String>,
+    /// What the worker is to do.
+    #[serde(default)]
+    pub request: String,
+}
+
 /// A request for a worker as the harness shows it among the requests of its task: its number, the step of the
 /// requester's plan it is for, its worker and its state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1011,6 +1042,17 @@ impl Args {
         }
     }
 
+    /// Adds a switch flag `--name` without a value.
+    fn switch(mut self, name: &str) -> Self {
+        self.0.push(OsString::from(name));
+        self
+    }
+
+    /// Adds a switch flag `--name` if `yes` is true.
+    fn switch_if(self, name: &str, yes: bool) -> Self {
+        if yes { self.switch(name) } else { self }
+    }
+
     /// Adds the arguments after `--`, which are no flags whatever they start with.
     fn positional(mut self, text: &str) -> Self {
         self.0.push(OsString::from("--"));
@@ -1206,14 +1248,46 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn helper_next(&self, worker: &AgentName) -> Result<Option<DelegationRequest>, AgentBusError> {
+        self.helper_next_with(worker, &[], None).await
+    }
+
+    /// Takes the next eligible queued request for `worker` matching `capabilities`, optionally targeting `id`.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn helper_next_with(
+        &self,
+        worker: &AgentName,
+        capabilities: &[String],
+        id: Option<RequestId>,
+    ) -> Result<Option<DelegationRequest>, AgentBusError> {
         let command = BusCommand::HelperNext;
-        let output = self
-            .run(command, Args::new().flag("--worker", worker.as_str()), None)
-            .await?;
+        let mut args = Args::new().flag("--worker", worker.as_str());
+        if !capabilities.is_empty() {
+            let caps_json =
+                serde_json::Value::Array(capabilities.iter().cloned().map(serde_json::Value::String).collect())
+                    .to_string();
+            args = args.flag("--capabilities", caps_json);
+        }
+        if let Some(req_id) = id {
+            args = args.flag("--id", req_id.number().to_string());
+        }
+        let output = self.run(command, args, None).await?;
         if output.trim().is_empty() {
             return Ok(None);
         }
         decode_json(command, &output).map(Some)
+    }
+
+    /// Lists worker requests. When `all` is true, includes finished requests; otherwise open requests only.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn helper_list(&self, all: bool) -> Result<Vec<HelperEntry>, AgentBusError> {
+        let command = BusCommand::HelperList;
+        let args = Args::new().switch("--json").switch_if("--all", all);
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
     }
 
     /// Changes a request for a worker.

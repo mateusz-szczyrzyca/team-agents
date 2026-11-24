@@ -1,0 +1,14 @@
+{
+  "request": 1,
+  "team": "team-20261122-120000-aaaa",
+  "requester": "claude-1",
+  "requester_task": "task-20261122-120000-bbbb",
+  "worker": "glm-1",
+  "worker_task": "task-20261122-120000-cccc",
+  "summary": "Result: done.",
+  "run_seconds": 1,
+  "base": "0123456789abcdef0123456789abcdef01234567",
+  "stage": {
+    "stage": "ended"
+  }
+}
