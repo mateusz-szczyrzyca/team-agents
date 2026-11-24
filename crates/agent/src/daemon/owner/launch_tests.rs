@@ -158,3 +158,34 @@ async fn claimed_legacy_request_does_not_hold_a_run_slot_before_its_worker_start
     assert_eq!(owner.run_holding(&worker("claude-2")), None);
     assert!(!owner.agents_in_runs().contains(&"claude-2"));
 }
+
+#[tokio::test]
+async fn pool_recovery_does_not_requeue_a_starting_request_owned_by_a_state_team() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scripts = tempfile::tempdir().unwrap();
+    let bus = scripts.path().join("bus");
+    let reset = scripts.path().join("reset");
+    let request = serde_json::json!([{
+        "id": 1, "from": "claude-1", "from_task": task(1),
+        "helper_task": task(2), "worker": "claude-2", "repo": "team-agents",
+        "branch": "main", "status": "starting"
+    }]);
+    std::fs::write(
+        &bus,
+        format!("#!/bin/sh\ncase \"$*\" in\n*helper-list*) printf '%s\\n' '{request}' ;;\n*helper-set*) touch '{}' ;;\n*) exit 1 ;;\nesac\n", reset.display()),
+    ).unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let daemon = Daemon::new(&pair_state(), Some(&bus));
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        config.replace("[tiers]", "[tiers]\nworkers = [\"claude-2\"]"),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.serve_pool_requests().await.unwrap();
+
+    assert!(!reset.exists(), "pool recovery must leave a state-team claim alone");
+}
