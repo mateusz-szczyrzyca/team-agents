@@ -1827,3 +1827,72 @@ async fn pool_scan_marks_unknown_workers_unsettled_when_tasks_cannot_be_listed()
     assert_eq!(observations[0].worker, None);
     assert!(observations[0].damaged);
 }
+
+#[tokio::test]
+async fn pool_status_retains_the_step_of_an_answered_helpers_workspace() {
+    use agent_runtime::request_workspace::{RequestWorkspace, Stage, WorkspaceRecord, branch, save};
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let bus = dir.path().join("fake-agentbus");
+    std::fs::write(&bus, r#"#!/bin/sh
+set -eu
+case " $* " in
+  *" --all "*) cat <<'JSON'
+[{"id":1,"from":"claude-1","from_task":"task-20261124-114140-lead","repo":"example","branch":"agents/claude-1/test","status":"done","worker":"glm-1","requires":[],"step":"1.7","request":"write the guide"}]
+JSON
+;;
+  *) echo '[]';;
+esac
+"#).unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        home.config_file(),
+        format!(
+            r#"
+[agents.claude-1]
+cli = "claude"
+[agents.glm-1]
+cli = "claude"
+[investigators.inv-opus]
+cli = "claude"
+[tiers]
+normal = ["claude-1"]
+workers = ["glm-1"]
+[repos.example]
+base_branch = "main"
+gate = ["true"]
+[binaries]
+agentbus = "{}"
+"#,
+            bus.display()
+        ),
+    )
+    .unwrap();
+    let worker = "glm-1".parse().unwrap();
+    let worker_task = "task-20261124-114140-work".parse().unwrap();
+    let workspace: RequestWorkspace = WorkspaceRecord {
+        request: agent_runtime::agentbus::RequestId::new(std::num::NonZeroU64::MIN),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: "task-20261124-114140-lead".parse().unwrap(),
+        requester_round: "round-20261124-114140-rnd1".parse().unwrap(),
+        requester_repo: "example".parse().unwrap(),
+        branch: branch(&worker, &worker_task).unwrap(),
+        worker,
+        worker_task,
+        base: "0000000000000000000000000000000000000000".parse().unwrap(),
+        stage: Stage::Ended,
+    }
+    .try_into()
+    .unwrap();
+    let requester_dir = home.tasks_dir().join(workspace.record().requester_task.as_str());
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    save(&requester_dir, &workspace).unwrap();
+    let activity = Activity::new(home, Zone::Fixed(UtcOffset::UTC));
+
+    assert_eq!(
+        pool_line(&activity, &[]).await.unwrap(),
+        Some("pool:\n  glm-1  task-20261124-114140-lead (step 1.7)\n".to_owned())
+    );
+}

@@ -223,3 +223,27 @@ pool:
 "
     );
 }
+
+#[test]
+fn terminal_workers_remain_assigned_to_an_active_legacy_crew() {
+    let workers = vec!["glm-1".parse().unwrap()];
+    for status in ["done", "failed", "stopped"] {
+        let team: TeamSummary = serde_json::from_value(serde_json::json!({
+            "id": "team-20261124-114140-team", "repo": "example",
+            "created_at": "2026-11-24T00:00:00Z", "merge": "autopilot",
+            "items": {"pending": 0, "in_progress": 0, "in_review": 0, "approved": 0, "done": 0},
+            "members": [
+                {"task": "task-20261124-114140-lead", "agent": {"tier": "normal", "name": "claude-1"},
+                 "role": "coordinator", "status": "running"},
+                {"task": "task-20261124-114140-work", "agent": {"tier": "worker", "name": "glm-1"},
+                 "role": "worker", "status": status}
+            ]
+        }))
+        .unwrap();
+        assert_eq!(
+            render_pool(&workers, &[team], None),
+            Some("pool:\n  glm-1  team-20261124-114140-team\n".to_owned()),
+            "{status}"
+        );
+    }
+}
