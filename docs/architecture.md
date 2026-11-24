@@ -512,7 +512,9 @@ written through a temporary file to `tasks/<requester task>/request-workspace-<n
 names, so completion, pending-settlement and second-try lookups of a request's worker task and worktree
 (`RequestWorkspace::read_each`) find it without going through the requester's crew; its form is told in
 `docs/state.md`. The stage (`working` while the worker works, `ended` once its run ended and the request waits to be
-settled) is written before each next stage.
+settled) is written before each next stage. The runtime validates both new and loaded metadata: the worker task must
+differ from the requester task, and its branch must equal the branch derived from the worker and worker task.
+`RequestWorkspace` seals that identity behind immutable metadata; invalid records are left alone and never released.
 
 **The settlement of the owner.** At every look at a team, after the crew's own pending files, the owner reads the
 workspace records from the task directories of the team's members — the requester of such a request is a member — and
@@ -531,7 +533,7 @@ abandoned request keeps its workspace so that a restart of the daemon finds wher
 is released on the durable handoff — the answer taken, or the request given again and no longer this worker's — and a
 request that was answered, or an `ended` record whose pending is gone (a leftover of a settled request), leaves only
 its record, which is released. A release that cannot finish is told once and tried again at the next look, from the
-record that stays. A pending that does not match its record on request, worker task, requester and requester task is a
+record that stays. A pending from another team or one that does not match its record on request, worker, worker task, requester and requester task is a
 damaged file: it is set aside and told once, and its workspace is never released on its behalf; a record file that
 cannot be read is told once and left alone, and one damaged file does not hide the others. The serving path that makes
 these workspaces is wired in part c; this version prepares the settlement path, `serve_requests` still serves

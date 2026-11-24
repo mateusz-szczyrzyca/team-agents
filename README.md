@@ -295,7 +295,8 @@ when that run ends. `0` restores the old behaviour, where an agent may run as ma
 > is being built up as a pure `agent-core` decision, with the runtime record of a request served in a workspace of its
 > own (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`). The daemon's owner already reads and
 > settles such a record, and releases its workspace, when it finds one; the serving path that writes them lands in a
-> later part, so none is written yet.
+> later part, so none is written yet. Loaded records must name a distinct worker task and its derived branch; invalid
+> records are retained without releasing their worktrees.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
