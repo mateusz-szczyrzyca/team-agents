@@ -80,7 +80,8 @@ agent_path = ["/home/you/.local/bin", "/home/you/.cargo/bin", "/home/you/go/bin"
 
 # --- The reminder of Serena ----------------------------------------------------------------------------------------
 # A run that has Serena and made `remind_after` searches of code without it — the shell running grep, rg, sed -n, cat,
-# head, tail or find over a file of code, or the CLI's own Grep or Read over one — is told once in its session to find
+# head, tail or find over a file or a directory of code, or the CLI's own Grep, Glob or Read over one — is told once in its
+# session to find
 # code with Serena; the message names the count. 0 turns the reminder off. A file without `[serena]` keeps the default.
 [serena]
 # remind_after = 40
