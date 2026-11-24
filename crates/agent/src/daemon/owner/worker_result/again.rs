@@ -90,7 +90,10 @@ impl Owner {
                 return Elsewhere::None;
             }
             let failed_provider = self.provider_of_agent(&pending.worker);
-            let run_limit = agent_core::decide::slot::limit_for(self.parts.settings.config.limits(), agent_core::kinds::Tier::Worker);
+            let run_limit = agent_core::decide::slot::limit_for(
+                self.parts.settings.config.limits(),
+                agent_core::kinds::Tier::Worker,
+            );
             let mut has_same = false;
 
             for name in pool {
@@ -124,14 +127,10 @@ impl Owner {
 
     /// The provider of the agent `name` computed via `provider_of`.
     pub(in crate::daemon::owner) fn provider_of_agent(&self, name: &AgentName) -> String {
-        self.parts
-            .settings
-            .config
-            .agent(name)
-            .map_or_else(
-                || name.as_str().to_owned(),
-                |agent| agent_core::decide::pool::provider_of(agent.cli, agent.model.as_ref()).to_owned(),
-            )
+        self.parts.settings.config.agent(name).map_or_else(
+            || name.as_str().to_owned(),
+            |agent| agent_core::decide::pool::provider_of(agent.cli, agent.model.as_ref()).to_owned(),
+        )
     }
 
     /// The provider of the agent `name`, when the configuration has it.

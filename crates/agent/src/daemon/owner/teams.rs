@@ -1294,11 +1294,7 @@ impl Owner {
                 RunLimit::Unlimited => true,
                 RunLimit::AtMost(limit) => worker.runs < limit.get(),
             };
-            if !worker.busy
-                && !worker.unsettled
-                && available
-                && agent_core::decide::pool::meets(worker, requires)
-            {
+            if !worker.busy && !worker.unsettled && available && agent_core::decide::pool::meets(worker, requires) {
                 return Some((worker.name.clone(), worker.provider.to_owned()));
             }
         }
@@ -1335,7 +1331,11 @@ impl Owner {
         clippy::too_many_lines,
         reason = "dispatching a pool worker prepares the dedicated workspace, derives the branch, shapes the prompt, configures MCP, and spawns the job"
     )]
-    async fn try_dispatch_pool_request(&mut self, worker_name: &AgentName, request: &DelegationRequest) -> Result<(), String> {
+    async fn try_dispatch_pool_request(
+        &mut self,
+        worker_name: &AgentName,
+        request: &DelegationRequest,
+    ) -> Result<(), String> {
         let Some(found) = self.parts.state.find_task(&request.from_task) else {
             return Err(format!("requester task {} not found in state", request.from_task));
         };
@@ -1350,7 +1350,12 @@ impl Owner {
 
         let requester_worktree = self.parts.store.home().worktree_dir(&requester_repo, &requester_task);
         let requester_git = AbsolutePath::from_str(requester_worktree.to_str().unwrap_or_default())
-            .map(|p| Git::new(p, CommitIdentity::for_agent(self.parts.settings.config.git(), &request.from)))
+            .map(|p| {
+                Git::new(
+                    p,
+                    CommitIdentity::for_agent(self.parts.settings.config.git(), &request.from),
+                )
+            })
             .map_err(|e| format!("cannot get requester worktree path: {e}"))?;
 
         let base_commit = requester_git
@@ -1385,8 +1390,9 @@ impl Owner {
             .map_err(|e| format!("cannot prepare request workspace: {e}"))?;
 
         let step_result: Result<(), String> = async {
-            let worker_worktree_path = request_workspace::worktree_of(self.parts.store.home(), &requester_repo, &worker_task)
-                .map_err(|e| format!("cannot get worktree of request workspace: {e}"))?;
+            let worker_worktree_path =
+                request_workspace::worktree_of(self.parts.store.home(), &requester_repo, &worker_task)
+                    .map_err(|e| format!("cannot get worktree of request workspace: {e}"))?;
             let working_dir = worker_worktree_path.clone();
 
             let Some(agent_conf) = self.parts.settings.config.agent(worker_name) else {
@@ -1424,8 +1430,8 @@ impl Owner {
                 harness: &self.parts.texts,
                 rules: &self.parts.rules,
             };
-            let composed = compose(&texts, &input)
-                .map_err(|e| format!("cannot compose prompt for pool worker: {e}"))?;
+            let composed =
+                compose(&texts, &input).map_err(|e| format!("cannot compose prompt for pool worker: {e}"))?;
 
             let prompt = crate::daemon::team::shape_pool_worker(&self.parts.team_texts, &composed, &given)
                 .map_err(|e| format!("cannot shape prompt for pool worker: {e}"))?;
@@ -1483,8 +1489,8 @@ impl Owner {
                 output: setup_output,
             };
 
-            let started = Timestamp::now(&self.parts.clock)
-                .map_err(|e| format!("cannot get current timestamp: {e}"))?;
+            let started =
+                Timestamp::now(&self.parts.clock).map_err(|e| format!("cannot get current timestamp: {e}"))?;
 
             self.serving.insert(
                 worker_task.clone(),
@@ -1517,7 +1523,9 @@ impl Owner {
         .await;
 
         if let Err(err) = step_result {
-            if let Err(cleanup_err) = request_workspace::release(self.parts.store.home(), &requester_git, &workspace).await {
+            if let Err(cleanup_err) =
+                request_workspace::release(self.parts.store.home(), &requester_git, &workspace).await
+            {
                 tracing::warn!(
                     event = LogEvent::WorkerRequestDamaged.as_str(),
                     request = %request.id,

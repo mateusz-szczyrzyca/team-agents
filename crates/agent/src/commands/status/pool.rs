@@ -29,11 +29,7 @@ pub(crate) fn render_pool(
     Some(text)
 }
 
-fn find_serving(
-    worker: &AgentName,
-    teams: &[TeamSummary],
-    helpers: Option<&[HelperEntry]>,
-) -> Option<String> {
+fn find_serving(worker: &AgentName, teams: &[TeamSummary], helpers: Option<&[HelperEntry]>) -> Option<String> {
     if let Some(helpers) = helpers {
         for helper in helpers {
             if !matches!(helper.status, DelegationStatus::Running | DelegationStatus::Starting) {

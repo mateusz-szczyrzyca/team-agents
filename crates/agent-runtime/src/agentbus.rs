@@ -1050,11 +1050,7 @@ impl Args {
 
     /// Adds a switch flag `--name` if `yes` is true.
     fn switch_if(self, name: &str, yes: bool) -> Self {
-        if yes {
-            self.switch(name)
-        } else {
-            self
-        }
+        if yes { self.switch(name) } else { self }
     }
 
     /// Adds the arguments after `--`, which are no flags whatever they start with.
