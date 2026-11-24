@@ -674,12 +674,7 @@ impl Owner {
                     ..
                 } => {
                     if self.give_again(&pending, reasons).await?
-                        || (workspace.is_some()
-                            && self.again.contains_key(&pending.request)
-                            && self
-                                .owned_journal(&pending.requester_task, pending.request)
-                                .await?
-                                .is_none())
+                        || (workspace.is_some() && self.again.contains_key(&pending.request))
                     {
                         return self.drop_settled(task_dir, &pending, workspace).await;
                     }

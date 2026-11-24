@@ -429,6 +429,11 @@ pub fn try_path(task_dir: &Path, request: RequestId) -> PathBuf {
 /// # Errors
 /// [`PendingError::Write`] or [`PendingError::Encode`].
 pub fn write_try(task_dir: &Path, request: RequestId, tried: &Try) -> Result<(), PendingError> {
+    // Pool dispatch records the retry before the run engine creates its task files.
+    std::fs::create_dir_all(task_dir).map_err(|source| PendingError::Write {
+        path: task_dir.to_owned(),
+        source,
+    })?;
     let path = try_path(task_dir, request);
     let text = serde_json::to_string_pretty(tried).map_err(PendingError::Encode)?;
     let temporary = path.with_extension("json.tmp");
