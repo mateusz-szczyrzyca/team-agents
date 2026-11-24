@@ -46,7 +46,7 @@ fn a_reminder_of_a_run_the_history_was_never_told_of_is_not_recorded() {
     let run = RunId::from_str(UNSTARTED).unwrap();
     started
         .history
-        .serena_reminded(&run, &task, CliKind::Claude, 40, 40, &team, &FixedClock(at));
+        .serena_reminded_with_team(&run, &task, CliKind::Claude, 40, 40, Some(&team), &FixedClock(at));
     started.history.flush();
     let lost = started.history.health().lost;
     started.writer.close().unwrap();
@@ -103,7 +103,7 @@ fn the_run_of_a_reminder_comes_after_its_own_start_in_the_history_it_is_read_fro
     })));
     started
         .history
-        .serena_reminded(&run, &task, CliKind::Claude, 40, 40, &team, &FixedClock(at));
+        .serena_reminded_with_team(&run, &task, CliKind::Claude, 40, 40, Some(&team), &FixedClock(at));
     started.history.flush();
     started.writer.close().unwrap();
     let reader = Reader::open(&path).unwrap();

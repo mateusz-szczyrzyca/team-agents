@@ -118,7 +118,7 @@ fn the_reminder_of_the_run_that_ended_is_the_count_and_the_cli_the_history_holds
     let run = RunId::from_str("run-20261124-100001-r1r1").expect("a run");
     let (_dir, reader) = history(|history| {
         run_start(history, run.clone(), team(), task(), 0);
-        history.serena_reminded(&run, &task(), CliKind::Opencode, 40, 7, &team(), &Later(10));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Opencode, 40, 7, Some(&team()), &Later(10));
     });
 
     let found = reminder_of(&reader, &run, &team());
@@ -137,7 +137,7 @@ fn a_run_the_history_never_started_is_not_reminded() {
             task(),
             0,
         );
-        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &team(), &Later(10));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
     });
 
     let found = reminder_of(&reader, &run, &team());
@@ -149,17 +149,17 @@ fn a_run_the_history_never_started_is_not_reminded() {
 fn the_reminder_of_another_run_of_the_task_is_not_this_runs() {
     let run = RunId::from_str("run-20261124-100002-r2r2").expect("a run");
     let (_dir, reader) = history(|history| {
-        history.serena_reminded(
+        history.serena_reminded_with_team(
             &RunId::from_str("run-20261124-100001-r1r1").expect("a run"),
             &task(),
             CliKind::Claude,
             12,
             7,
-            &team(),
+            Some(&team()),
             &Later(0),
         );
         run_start(history, run.clone(), team(), task(), 20);
-        history.serena_reminded(&run, &task(), CliKind::Opencode, 40, 7, &team(), &Later(30));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Opencode, 40, 7, Some(&team()), &Later(30));
     });
 
     let found = reminder_of(&reader, &run, &team());
@@ -173,7 +173,7 @@ fn the_run_of_the_reminder_may_be_written_after_the_reminder() {
     let (_dir, reader) = history(|history| {
         // The daemon cut the run, wrote its end and its reminder, and only then looked at the team that briefs the run it
         // starts again, the same run in the state.
-        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &team(), &Later(10));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
         run_start(history, run.clone(), team(), task(), 20);
     });
 
@@ -187,7 +187,7 @@ fn the_next_run_of_the_task_ends_the_reminder_of_this_one() {
     let run = RunId::from_str("run-20261124-100001-r1r1").expect("a run");
     let (_dir, reader) = history(|history| {
         run_start(history, run.clone(), team(), task(), 0);
-        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &team(), &Later(10));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
         run_start(
             history,
             RunId::from_str("run-20261124-100002-r2r2").expect("a run"),
@@ -195,7 +195,7 @@ fn the_next_run_of_the_task_ends_the_reminder_of_this_one() {
             task(),
             20,
         );
-        history.serena_reminded(&run, &task(), CliKind::Claude, 41, 7, &team(), &Later(30));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 41, 7, Some(&team()), &Later(30));
     });
 
     let found = reminder_of(&reader, &run, &team());
@@ -210,7 +210,7 @@ fn a_round_of_the_team_after_the_run_does_not_take_its_reminder_away() {
         round_opened(history, team(), "1.1", 0);
         run_start(history, run.clone(), team(), task(), 10);
         round_opened(history, team(), "1.2", 20);
-        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &team(), &Later(30));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(30));
     });
 
     let found = reminder_of(&reader, &run, &team());
@@ -223,7 +223,7 @@ fn a_run_of_another_team_after_the_run_leaves_its_reminder_alone() {
     let run = RunId::from_str("run-20261124-100001-r1r1").expect("a run");
     let (_dir, reader) = history(|history| {
         run_start(history, run.clone(), team(), task(), 0);
-        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &team(), &Later(10));
+        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
         run_start(
             history,
             RunId::from_str("run-20261124-100003-r3r3").expect("a run"),

@@ -627,12 +627,11 @@ impl History {
     /// event of a run: a history without a writer counts the loss.
     /// The team for `run`, if the run has been started.
     pub(crate) fn team_for_run(&self, run: &RunId) -> Option<TeamId> {
-        locked(&self.shared.runs)
-            .get(run)
-            .map(|(team, _, _, _)| team.clone())
+        locked(&self.shared.runs).get(run).map(|(team, _, _, _)| team.clone())
     }
 
     /// Records that a run's session searched code without Serena and was reminded at the step and count given.
+    /// If `override_team` is provided, uses it instead of looking up the team from the run.
     pub fn serena_reminded(
         &self,
         run: &RunId,
@@ -640,16 +639,39 @@ impl History {
         cli: CliKind,
         searches: u64,
         step: u32,
-        team: &TeamId,
+        clock: &impl Clock,
+    ) {
+        self.serena_reminded_with_team(run, task, cli, searches, step, None, clock);
+    }
+
+    /// Records a serena reminder with an explicit team (for testing when the run hasn't started yet).
+    #[doc(hidden)]
+    pub fn serena_reminded_with_team(
+        &self,
+        run: &RunId,
+        task: &TaskId,
+        cli: CliKind,
+        searches: u64,
+        step: u32,
+        override_team: Option<&TeamId>,
         clock: &impl Clock,
     ) {
         if self.is_disabled() {
             return;
         }
-        let rounds = locked(&self.shared.runs)
-            .get(run)
-            .map(|(_, _, rounds, _)| rounds.clone())
-            .unwrap_or_default();
+        let (team, rounds) = locked(&self.shared.runs).get(run).map_or_else(
+            || (None, Vec::new()),
+            |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
+        );
+        let team = if let Some(override_team) = override_team {
+            override_team.clone()
+        } else if let Some(team) = team {
+            team
+        } else {
+            // The run hasn't been started yet: no team to record the reminder in.
+            self.shared.lose(1);
+            return;
+        };
         let at = match Timestamp::now(clock) {
             Ok(at) => at,
             Err(error) => {
@@ -661,7 +683,7 @@ impl History {
         };
         self.record(Record::Event(Box::new(EventRecord {
             at,
-            team: team.clone(),
+            team,
             rounds,
             event: HistoryEvent::SerenaReminded {
                 task: task.clone(),
