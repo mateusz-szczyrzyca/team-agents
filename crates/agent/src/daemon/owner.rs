@@ -42,6 +42,7 @@ use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
+use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
@@ -1686,6 +1687,21 @@ impl Owner {
         at: Timestamp,
         notice: Notice,
     ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        // A FAILED a member reports after it used a tool is its own verdict on the work: the ladder carries the task on.
+        if matches!(
+            end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Failed
+            }
+        ) && used_tool
+        {
+            let role = self.locate(task)?.role;
+            // Only a member's work has a lead to take it over and a worktree the lead may use; a task of any other role
+            // that declares itself failed ends failed, as it did before.
+            if role == Role::Member {
+                return self.after_declared_failure(task, role, notice);
+            }
+        }
         let (first_of_session, already_retried) = match self.parts.state.find_task(task) {
             Some(found) => {
                 let first = found.member.first_of_session();
@@ -1742,6 +1758,36 @@ impl Owner {
         } else {
             Ok((TaskStatus::Failed, Some(notice)))
         }
+    }
+
+    /// What follows a run of `task` that reported `STATUS: FAILED` after it used a tool: a new session once, then another
+    /// agent or the lead, and the human, told with `notice`, only when the ladder has no rung left.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the task is gone or the ladder cannot record its step.
+    fn after_declared_failure(
+        &mut self,
+        task: &TaskId,
+        role: Role,
+        notice: Notice,
+    ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
+        // `[replacement] mode = "off"`: the task fails and the human decides, as before the ladder took declared failures.
+        if self.parts.settings.config.replacement().mode() == ReplacementMode::Off {
+            return Ok((TaskStatus::Failed, Some(notice)));
+        }
+        let count = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member
+            .bad_runs_since_renewal();
+        Ok(match self.climb(task, role, Trouble::Failed, count)? {
+            // A declared failure is never resumed in its session, so SameSession does not come from the ladder for it.
+            Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
+            Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Failed => (TaskStatus::Failed, Some(notice)),
+        })
     }
 
     /// Decide continuation from the persisted suffix of the session, so a restart never resets its budget: the same

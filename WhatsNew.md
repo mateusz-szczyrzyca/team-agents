@@ -5,11 +5,20 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.85.0 — 24.11.2026 — PR #
+## 0.85.0 — 24.11.2026 — PR #238
+
+### New features
+- [agent] [agent-core] A team member that reports `STATUS: FAILED` after it called a bus tool no longer ends its task at once. The task is started once more in a new session, briefed with the reason `failed` and the words its agent last wrote; if that fails too, another agent of `[replacement] agents` or the team's lead takes it over (the lead may use the member's worktree and branch), and the human is asked only when no rung is left. `[replacement] mode = "off"` keeps the failure final, as before.
+- [agent] **Action:** an installation with no `[replacement]` section now gets this too (a solo task or a coordinator that declares itself failed still ends failed) (defaults: `mode = "auto"`, `new_sessions = 1`, `agents = []`, so a new session and then the lead); add `mode = "off"` under `[replacement]` to keep a failed member failed at once.
 
 ### Enhancements
 - [agent-runtime] Prepares the record of a request served to a worker of the pool in a workspace of its own — a task and a worktree of the requester's repository at the requester's committed end, on its own branch, kept out of the requester's crew so that its uncommitted files are not touched; the record (`tasks/<requester task>/request-workspace-<n>.json`) finds the request's worker task and worktree without the crew.
 - [agent] Settles a request whose workspace record it finds: the check runs in the workspace's worktree, a good commit is brought over to the requester's committed end once, and the workspace — worktree, branch and record — is released when the result is settled, a release that could not finish being retried. Nothing on a serving path writes a record yet; a later part wires it in.
+
+### Configuration
+- [agent-core] changed: `[replacement] mode` (default `"auto"`, unchanged) — it now also decides what follows a member's `STATUS: FAILED` after it used a bus tool: `auto` and `lead` climb the ladder, `off` fails the task at once, as before.
+- [agent-core] changed: `[replacement] new_sessions` (default `1`, unchanged) — the new session after a declared failure is counted here too; `0` skips it.
+- [agent-core] changed: `[replacement] replacements` (default `1`, unchanged) and `[replacement] agents` (default `[]`, unchanged) — a member that declared itself failed is handed to the first fitting agent of `agents`, as many times as `replacements` allows, and then to the lead.
 
 ## 0.84.0 — 24.11.2026 — PR #236
 
