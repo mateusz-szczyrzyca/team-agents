@@ -1380,18 +1380,16 @@ async fn a_review_to_come() -> (
         })
         .await;
     rig.stop().await.unwrap();
-    let ItemPhase::InReview { reviews, .. } = in_review
+    let (task, requested_at) = in_review
         .team(&team)
         .unwrap()
         .items()
         .iter()
-        .map(agent_core::state::ItemProgress::phase)
-        .find(|phase| matches!(phase, ItemPhase::InReview { .. }))
-        .unwrap()
-    else {
-        unreachable!("found in review above")
-    };
-    let (task, requested_at) = (reviews[0].task.clone(), reviews[0].requested_at);
+        .find_map(|item| match item.phase() {
+            ItemPhase::InReview { reviews, .. } => Some((reviews[0].task.clone(), reviews[0].requested_at)),
+            _ => None,
+        })
+        .unwrap();
     let mut step = stepped(&rig).await;
     step.owner.parts.state = in_review;
     (rig, step, team, task, requested_at)
@@ -1467,7 +1465,10 @@ async fn a_reviewer_refused_after_it_worked_waits_the_patience_from_its_work() {
     ];
     runs_then_paused(&mut step, &task, asked, &worked);
 
-    assert!(gone_after(&step, &team, asked, 30).is_empty());
+    assert_eq!(
+        gone_after(&step, &team, asked, 30),
+        Vec::<agent_core::ids::TaskId>::new()
+    );
     assert_eq!(gone_after(&step, &team, asked, 35), vec![task]);
     crate::daemon::history::close(step.writer).await;
 }
