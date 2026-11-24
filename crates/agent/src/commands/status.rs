@@ -367,8 +367,9 @@ async fn listing_text(
     detail: Detail,
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
+    let is_targeted = target.is_some();
     // A team or a task is shown with its tasks, as it always was.
-    let detail = if target.is_some() { Detail::Tasks } else { detail };
+    let detail = if is_targeted { Detail::Tasks } else { detail };
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
@@ -382,10 +383,14 @@ async fn listing_text(
         &|task| requests.of(task).to_vec(),
         activity.zone,
     );
-    let pool = if let Ok(settings) = Settings::load(&activity.home).await {
-        let workers = settings.config.worker_agents();
-        let helpers = pool::read_helpers(&activity.home);
-        pool::render_pool(workers, &listing.teams, helpers.as_ref())
+    let pool = if !is_targeted && detail == Detail::Short && !listing.teams.is_empty() {
+        if let Ok(settings) = Settings::load(&activity.home).await {
+            let workers = settings.config.worker_agents();
+            let helpers = pool::read_helpers(&activity.home);
+            pool::render_pool(workers, &listing.teams, helpers.as_ref())
+        } else {
+            None
+        }
     } else {
         None
     };
@@ -430,10 +435,14 @@ async fn running_text(
         );
         format!("{text}{}", told.unread())
     };
-    let pool = if let Ok(settings) = Settings::load(&activity.home).await {
-        let workers = settings.config.worker_agents();
-        let helpers = pool::read_helpers(&activity.home);
-        pool::render_pool(workers, &listed, helpers.as_ref())
+    let pool = if detail == Detail::Short && !listed.is_empty() {
+        if let Ok(settings) = Settings::load(&activity.home).await {
+            let workers = settings.config.worker_agents();
+            let helpers = pool::read_helpers(&activity.home);
+            pool::render_pool(workers, &listed, helpers.as_ref())
+        } else {
+            None
+        }
     } else {
         None
     };
