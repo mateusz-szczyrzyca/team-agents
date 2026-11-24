@@ -316,9 +316,11 @@ impl Owner {
             }
             return Ok(());
         };
-        // The pending and the record must name the same request, worker task, requester and requester task before any
+        // The pending must belong to this team and name the record's worker, task and requester before any
         // record path is used or the workspace is released; a mismatch is a damaged file.
-        if pending.worker_task != record.record().worker_task
+        if pending.worker != record.record().worker
+            || pending.team != *team
+            || pending.worker_task != record.record().worker_task
             || pending.requester != record.record().requester
             || pending.requester_task != record.record().requester_task
         {
@@ -452,11 +454,16 @@ impl Owner {
     /// [`OwnerError`] when the clock or the state fails.
     async fn release_workspace(&mut self, team: &TeamId, record: &RequestWorkspace) -> Result<(), OwnerError> {
         let Some(git) = self.git_of(team, &record.record().requester_task, &record.record().requester) else {
-            tracing::warn!(
-                event = LogEvent::WorkerRequestDamaged.as_str(),
-                request = %record.record().request,
-                "the requester's worktree of a settled request cannot be reached: the workspace is left to be released again"
-            );
+            if self
+                .unreadable_requests
+                .insert(format!("release {}", record.record().request.number()))
+            {
+                tracing::warn!(
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
+                    request = %record.record().request,
+                    "the requester's worktree of a settled request cannot be reached: the workspace is left to be released again"
+                );
+            }
             return Ok(());
         };
         if let Err(error) = request_workspace::release(self.parts.store.home(), &git, record).await
