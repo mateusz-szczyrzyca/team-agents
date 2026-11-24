@@ -75,10 +75,10 @@ fn a_cli_tool_that_reads_a_file_of_code_is_a_search_of_code() {
             call("Read", "/work/tree/src/main.rs"),
             Some(vec!["/work/tree/src/main.rs"]),
         ),
-        (call("Grep", "fn main src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (call("Grep", "src/lib.rs (path)"), Some(vec!["src/lib.rs"])),
         (call("glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
         (call("read", "lib/handler.py"), Some(vec!["lib/handler.py"])),
-        (call("grep", "src"), Some(vec!["src"])),
+        (call("grep", "src (path)"), Some(vec!["src"])),
     ]);
 }
 
@@ -269,20 +269,23 @@ fn the_options_of_a_search_are_no_files_and_their_values_neither() {
 #[test]
 fn a_cli_search_over_a_directory_or_the_whole_repository_is_a_search_of_code() {
     table(vec![
-        (call("Grep", "src"), Some(vec!["src"])),
-        (call("grep", "src"), Some(vec!["src"])),
-        (call("Grep", "."), Some(vec!["."])),
+        (call("Grep", "src (path)"), Some(vec!["src"])),
+        (call("grep", "src (path)"), Some(vec!["src"])),
+        (call("Grep", ". (path)"), Some(vec!["."])),
         (call("Grep", "fn main"), Some(vec!["."])),
         (call("grep", "TODO"), Some(vec!["."])),
-        (call("Grep", "crates/agent-core"), Some(vec!["crates/agent-core"])),
+        (
+            call("Grep", "crates/agent-core (path)"),
+            Some(vec!["crates/agent-core"]),
+        ),
     ]);
 }
 
 #[test]
 fn a_cli_search_over_text_is_no_search_of_code() {
     table(vec![
-        (call("Grep", "docs/"), None),
-        (call("Grep", "TODO README.md"), None),
+        (call("Grep", "docs/ (path)"), None),
+        (call("Grep", "README.md (path)"), None),
         (call("Read", "src"), None),
         (call("Glob", "docs/**/*.md"), None),
     ]);
