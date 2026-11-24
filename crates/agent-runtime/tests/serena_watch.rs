@@ -98,3 +98,31 @@ fn a_watch_of_a_session_that_goes_on_is_not_reminded_again() {
 
     assert_eq!(told, vec![Watched::Quiet; 12]);
 }
+
+/// The start of the run `run()` in the session `session`.
+fn start_in(session: &str) -> Record {
+    let Record::Run(mut start) = start() else {
+        unreachable!("start() is the start of a run")
+    };
+    start.session = Some(session.parse().expect("a session"));
+    Record::Run(start)
+}
+
+#[test]
+fn a_session_run_under_a_higher_bound_is_reminded_when_it_reaches_a_lower_one() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let path = dir.path().join("history.db");
+    let mut database = HistoryDb::open(&path, MaxTextBytes::default()).expect("a database");
+    let mut records = vec![start_in("session-1")];
+    records.extend((1..=40).map(search));
+    database.write(&records).expect("a write");
+    drop(database);
+    let lower = RemindAfter::new(40).expect("40");
+
+    let mut watch = SessionWatch::from_history(&path, &task(), "session-1", lower).expect("the history of the session");
+
+    assert_eq!(
+        watch.note(&ActivityEvent::Command("cat src/one_more.rs".to_owned()), lower),
+        Watched::Due { searches: 41 }
+    );
+}
