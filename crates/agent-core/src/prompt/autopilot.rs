@@ -626,7 +626,7 @@ impl AutopilotPrompt {
             Self::NoticeTeamAsleep => &["team", "items", "minutes", "tasks", "woken", "lead"],
             Self::NoticeStandingItem => &["team", "item", "member", "task", "line"],
             Self::MemberWorkLacks => &["member", "branch", "worktree", "commits", "files", "snapshot"],
-            Self::NoticeMemberWorkLeft => &["team", "item", "member", "task", "commits", "files"],
+            Self::NoticeMemberWorkLeft => &["team", "item", "member", "task", "commits", "files", "outcome"],
             Self::NoticeApproved => &["team", "repo", "pr", "url"],
             Self::NoticePublishFailed => &["team", "items", "reason"],
             Self::NoticeResponseRefused | Self::NoticeReportRefused => {

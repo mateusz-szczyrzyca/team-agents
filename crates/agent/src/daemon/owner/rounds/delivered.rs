@@ -1,11 +1,14 @@
 //! A team is not held behind a failed member whose work its lead's branch already holds.
 //!
 //! When the lead of a team ended `STATUS: DONE` with a passed gate at the tip of its branch, an item in progress behind a
-//! member whose task failed is looked at once per look, before the branch is published ([`delivered_step`]): a member whose
-//! branch the lead's contains and whose worktree holds nothing the lead was not told of is closed as taken over, and the
-//! round is published; work the lead lacks is told to the lead once, with the commits and files, and when the lead ends
-//! again without it the human is told, with the same list.
+//! member whose task failed or was stopped is looked at once per look, before the branch is published
+//! ([`delivered_step`]): a failed member whose branch the lead's contains and whose worktree holds nothing the lead was not
+//! told of is closed as taken over, and the round is published; work the lead lacks is told to the lead once — in one
+//! briefing for all members of the look —, with the commits and files, and when the lead ends again without it the human
+//! is told, with the same list. What the lead was told is kept in memory and is told again after a restart of the daemon,
+//! never dropped; what the human was told is found among the saved notices, so the human is asked once.
 
+use std::path::Path;
 use std::str::FromStr;
 
 use agent_core::decide::delivered::{Delivered, Delivery, Told, delivered_step};
@@ -23,6 +26,7 @@ use agent_runtime::process::error_chain;
 use super::super::briefing::BriefingProblem;
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
+use super::asleep::{SavedNoticeError, saved_notice_where};
 use super::{AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::team::Why;
 
@@ -36,6 +40,9 @@ pub(super) struct ToldWork {
     commits: Vec<CommitId>,
     /// The uncommitted files the lead was told of.
     files: Vec<RepoPath>,
+    /// The tree the member's worktree held when the lead was told of its files: a file whose bytes changed since is not the
+    /// file the lead was told of. `None` when the worktree held no uncommitted file.
+    tree: Option<String>,
     /// Whether the human was told of what the lead left.
     asked: bool,
 }
@@ -59,11 +66,6 @@ impl ToldWorks {
     /// Remembers that the lead was told `told` of the work of the member `task`.
     fn insert(&mut self, task: TaskId, told: ToldWork) {
         self.0.insert(task, told);
-    }
-
-    /// Forgets what the lead was told of the work of the member `task`.
-    fn remove(&mut self, task: &TaskId) {
-        self.0.remove(task);
     }
 }
 
@@ -103,12 +105,14 @@ enum DeliveredError {
     },
 }
 
-/// A member whose task failed after a run that called a tool, while an item in progress is its own.
+/// A member whose task failed after a run that called a tool, or was stopped, while an item in progress is its own.
 struct FailedHolder {
     /// The member's task.
     task: TaskId,
     /// The member's agent.
     agent: AgentName,
+    /// How the member's task ended: failed, or stopped by the human.
+    status: TaskStatus,
     /// The item that stands behind it.
     item: ItemId,
     /// The round of that item, which a snapshot is kept under.
@@ -123,6 +127,8 @@ struct Lacking {
     commits: Vec<CommitId>,
     /// The files the member's worktree holds that no commit does.
     files: Vec<RepoPath>,
+    /// The tree the member's worktree holds now; `None` when no file is uncommitted.
+    tree: Option<String>,
 }
 
 impl Owner {
@@ -143,14 +149,15 @@ impl Owner {
             };
             let Some((_, member)) = roster.iter().find(|(role, member)| {
                 *role == Role::Member
-                    && member.status() == TaskStatus::Failed
+                    && matches!(member.status(), TaskStatus::Failed | TaskStatus::Stopped)
                     && member.agent().name() == assignee.as_str()
             }) else {
                 continue;
             };
-            // A member that never called a tool did no work the lead could hold: its failure is a setup defect that stays
-            // with the human, as the brief of the ladder says (`used_tool` is what the daemon recorded of its runs).
-            if !member.runs().iter().any(agent_core::state::Run::used_tool) {
+            // A member that failed without ever calling a tool did no work the lead could hold: its failure is a setup defect
+            // that stays with the human, as the brief of the ladder says (`used_tool` is what the daemon recorded of its
+            // runs). A member the human stopped is looked at whatever it did: its files are never dropped.
+            if member.status() == TaskStatus::Failed && !member.runs().iter().any(agent_core::state::Run::used_tool) {
                 continue;
             }
             let Ok(agent) = agent_name_of(member.agent().name()) else {
@@ -161,6 +168,7 @@ impl Owner {
                 None => holders.push(FailedHolder {
                     task: member.task().clone(),
                     agent,
+                    status: member.status(),
                     item: progress.id(),
                     round: round.map(|round| round.id().clone()),
                     branches: vec![branch.clone()],
@@ -209,11 +217,12 @@ impl Owner {
                 return Ok(());
             }
         };
+        let mut tell: Vec<(FailedHolder, Lacking)> = Vec::new();
         for holder in holders {
             let lacking = match self.lacking_of(&holder, &lead_git, &tip).await {
                 Ok(lacking) => lacking,
                 Err(error) => {
-                    // The member stays failed and holds the round, as before; the next look tries again.
+                    // The member stays as it is and the next look tries again.
                     tracing::warn!(
                         event = LogEvent::GitCallFailed.as_str(),
                         team = %team_id,
@@ -224,12 +233,63 @@ impl Owner {
                     continue;
                 }
             };
+            self.remember_saved_question(team_id, &holder, &lacking).await?;
             let step = self.step_for(&lead, &holder, &lacking, gate_passed);
             match step {
                 Delivered::Nothing => {}
                 Delivered::Release => self.release_member(team_id, &holder).await?,
-                Delivered::TellLead => self.tell_lead_of(team_id, &lead, &holder, lacking, look).await?,
+                Delivered::TellLead => tell.push((holder, lacking)),
                 Delivered::AskHuman => self.ask_human_of(pulls, team_id, &lead, &holder, &lacking)?,
+            }
+        }
+        self.tell_lead_of(team_id, &lead, tell, look).await
+    }
+
+    /// Finds the question to the human about `holder`'s work among the saved notices of a daemon that ran before, when this
+    /// daemon has not told the lead of it yet, and remembers that the human was asked: the human is asked once, also when
+    /// the daemon restarted and the lead ends again.
+    async fn remember_saved_question(
+        &mut self,
+        team_id: &TeamId,
+        holder: &FailedHolder,
+        lacking: &Lacking,
+    ) -> Result<(), OwnerError> {
+        if lacking.commits.is_empty() || self.watch.delivered.get(&holder.task).is_some() {
+            return Ok(());
+        }
+        let directory = self.notice_directory();
+        let asked = member_work_notice_saved(
+            &directory,
+            team_id,
+            holder.agent.as_str(),
+            &holder.task,
+            &lacking.commits,
+        )
+        .await;
+        match asked {
+            Ok(true) => {
+                let at = Timestamp::now(&self.parts.clock)?;
+                self.watch.delivered.insert(
+                    holder.task.clone(),
+                    ToldWork {
+                        at,
+                        commits: lacking.commits.clone(),
+                        files: lacking.files.clone(),
+                        tree: lacking.tree.clone(),
+                        asked: true,
+                    },
+                );
+            }
+            Ok(false) => {}
+            Err(error) => {
+                // A failed lookup must not hide work that needs the human: the lead is told, and the human asked again.
+                tracing::warn!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    team = %team_id,
+                    task = %holder.task,
+                    error = %error_chain(&error),
+                    "saved notices cannot be inspected: the human may be asked of the work of a failed member again"
+                );
             }
         }
         Ok(())
@@ -246,12 +306,10 @@ impl Owner {
 
     /// What the member of `holder` has that the lead's branch, at `tip`, lacks.
     async fn lacking_of(&self, holder: &FailedHolder, lead_git: &Git, tip: &CommitId) -> Result<Lacking, PublishError> {
-        let repo = self.repo_of(&holder.task)?;
-        let member_git = self.worktree_git(&repo, &holder.task, &holder.agent)?;
         let mut commits: Vec<CommitId> = Vec::new();
         for branch in &holder.branches {
             // A branch that is gone has no commit to lack.
-            if let Some(branch_tip) = member_git.branch_tip(branch).await? {
+            if let Some(branch_tip) = lead_git.branch_tip(branch).await? {
                 for record in lead_git.range_log(tip, &branch_tip).await? {
                     if !commits.contains(&record.id) {
                         commits.push(record.id);
@@ -259,13 +317,28 @@ impl Owner {
                 }
             }
         }
-        let files = member_git
+        let repo = self.repo_of(&holder.task)?;
+        // A worktree that was removed holds no uncommitted file.
+        if !self.parts.store.home().worktree_dir(&repo, &holder.task).is_dir() {
+            return Ok(Lacking {
+                commits,
+                files: Vec::new(),
+                tree: None,
+            });
+        }
+        let member_git = self.worktree_git(&repo, &holder.task, &holder.agent)?;
+        let files: Vec<RepoPath> = member_git
             .uncommitted_changes()
             .await?
             .into_iter()
             .map(|change| change.path)
             .collect();
-        Ok(Lacking { commits, files })
+        let tree = if files.is_empty() {
+            None
+        } else {
+            Some(member_git.worktree_tree().await?)
+        };
+        Ok(Lacking { commits, files, tree })
     }
 
     /// What [`delivered_step`] says of `holder`'s work.
@@ -279,14 +352,15 @@ impl Owner {
                 .is_some_and(|started| started.as_utc() > told.at.as_utc())
         });
         delivered_step(&Delivery {
-            member: TaskStatus::Failed,
+            member: holder.status,
             lead_done: lead.done,
             gate_passed,
             commits: &lacking.commits,
             files: &lacking.files,
             told: told.map(|told| Told {
                 commits: &told.commits,
-                files: &told.files,
+                // A file whose bytes changed since the lead was told of it is not the file it was told of.
+                files: if told.tree == lacking.tree { &told.files } else { &[] },
                 answered,
             }),
             asked: told.is_some_and(|told| told.asked),
@@ -313,7 +387,6 @@ impl Owner {
         for kind in events {
             self.publish(at, kind);
         }
-        self.watch.delivered.remove(&holder.task);
         log_decision(
             "takeover",
             &format!("task={}, from={}", holder.task, holder.agent),
@@ -330,67 +403,93 @@ impl Owner {
         Ok(())
     }
 
-    /// Tells the lead what the failed member has that its branch lacks, once, and remembers it.
+    /// Tells the lead what the members of `pending` have that its branch lacks: one briefing for all of them, so that no
+    /// member's list replaces another's, and each is remembered as told only when the briefing is the lead's reason for
+    /// its next run.
     async fn tell_lead_of(
         &mut self,
         team_id: &TeamId,
         lead: &Lead,
-        holder: &FailedHolder,
-        lacking: Lacking,
+        pending: Vec<(FailedHolder, Lacking)>,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         let Some(pulls) = self.pulls.clone() else {
             return Ok(());
         };
-        let snapshot = if lacking.files.is_empty() {
-            "none: nothing is uncommitted".to_owned()
-        } else {
-            match self.keep_snapshot(holder).await {
-                Ok(reference) => format!("`{reference}`"),
-                Err(error) => {
-                    tracing::warn!(
-                        event = LogEvent::SnapshotFailed.as_str(),
-                        team = %team_id,
-                        task = %holder.task,
-                        error = %error_chain(&error),
-                        "the worktree of a failed member cannot be snapshotted: its lead is not told yet"
-                    );
-                    return Ok(());
+        let mut texts: Vec<String> = Vec::new();
+        let mut included: Vec<(FailedHolder, Lacking)> = Vec::new();
+        for (holder, lacking) in pending {
+            let snapshot = if lacking.files.is_empty() {
+                "none: nothing is uncommitted".to_owned()
+            } else {
+                match self.keep_snapshot(&holder).await {
+                    Ok(reference) => format!("`{reference}`"),
+                    Err(error) => {
+                        tracing::warn!(
+                            event = LogEvent::SnapshotFailed.as_str(),
+                            team = %team_id,
+                            task = %holder.task,
+                            error = %error_chain(&error),
+                            "the worktree of a failed member cannot be snapshotted: its lead is not told yet"
+                        );
+                        continue;
+                    }
                 }
+            };
+            match self.lacks_text(&pulls, &holder, &lacking, &snapshot) {
+                Ok(text) => {
+                    texts.push(text.trim_end().to_owned());
+                    included.push((holder, lacking));
+                }
+                Err(error) => tracing::error!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    team = %team_id,
+                    error = %error_chain(&error),
+                    "what a lead is told about a failed member's work cannot be made"
+                ),
             }
-        };
-        let text = self.lacks_text(&pulls, holder, &lacking, &snapshot).map_err(|error| {
-            tracing::error!(
-                event = LogEvent::NotificationFailed.as_str(),
-                team = %team_id,
-                error = %error_chain(&error),
-                "what a lead is told about a failed member's work cannot be made"
-            );
-        });
-        let Ok(text) = text else {
+        }
+        if included.is_empty() {
             return Ok(());
-        };
-        tracing::info!(
-            event = LogEvent::ChecksDecided.as_str(),
-            outcome = "failed_member_work_lacks",
-            team = %team_id,
-            task = %lead.task,
-            member = %holder.task,
-            commits = lacking.commits.len(),
-            files = lacking.files.len(),
-            "a failed member has work its lead's branch lacks: the lead is told, once"
-        );
+        }
+        let text = texts.join("\n\n");
         let at = Timestamp::now(&self.parts.clock)?;
-        self.watch.delivered.insert(
-            holder.task.clone(),
-            ToldWork {
-                at,
-                commits: lacking.commits,
-                files: lacking.files,
-                asked: false,
-            },
-        );
-        self.release(&lead.task, Why::Gate(text.trim_end().to_owned()), look)
+        self.release(&lead.task, Why::Gate(text.clone()), look)?;
+        // The lead waits, so the briefing is now what its next run starts with; a lead that was not queued by it is told
+        // again at the next look.
+        if !matches!(self.reasons.get(&lead.task), Some(Why::Gate(queued)) if *queued == text) {
+            tracing::warn!(
+                event = LogEvent::ChecksDecided.as_str(),
+                outcome = "failed_member_work_not_told",
+                team = %team_id,
+                task = %lead.task,
+                "the lead could not be given what a failed member has that its branch lacks: it is told at the next look"
+            );
+            return Ok(());
+        }
+        for (holder, lacking) in included {
+            tracing::info!(
+                event = LogEvent::ChecksDecided.as_str(),
+                outcome = "failed_member_work_lacks",
+                team = %team_id,
+                task = %lead.task,
+                member = %holder.task,
+                commits = lacking.commits.len(),
+                files = lacking.files.len(),
+                "a failed member has work its lead's branch lacks: the lead is told, once"
+            );
+            self.watch.delivered.insert(
+                holder.task.clone(),
+                ToldWork {
+                    at,
+                    commits: lacking.commits,
+                    files: lacking.files,
+                    tree: lacking.tree,
+                    asked: false,
+                },
+            );
+        }
+        Ok(())
     }
 
     /// Keeps a snapshot of the failed member's worktree under the round of its item, and returns its reference.
@@ -470,12 +569,44 @@ impl Owner {
             .and_then(|values| values.with("member", holder.agent.as_str()))
             .and_then(|values| values.with("task", holder.task.as_str()))
             .and_then(|values| values.with("commits", list_of(&lacking.commits)))
-            .and_then(|values| values.with("files", list_of(&lacking.files)));
+            .and_then(|values| values.with("files", list_of(&lacking.files)))
+            .and_then(|values| values.with("outcome", outcome_of(holder.status)));
         self.tell_human(pulls, AutopilotNotice::MemberWorkLeft, values, lead, now);
         if let Some(told) = self.watch.delivered.get_mut(&holder.task) {
             told.asked = true;
         }
         Ok(())
+    }
+}
+
+/// Whether the human was asked, in a saved notice of `directory`, of the work of `member` (task `task`) of `team` that the
+/// lead left, naming each of `commits`.
+///
+/// # Errors
+/// [`SavedNoticeError`] when the saved notices cannot be read.
+pub(super) async fn member_work_notice_saved(
+    directory: &Path,
+    team: &TeamId,
+    member: &str,
+    task: &TaskId,
+    commits: &[CommitId],
+) -> Result<bool, SavedNoticeError> {
+    // The words of `notice-member-work-left.md` that name the team, the member and its task.
+    let title = format!("Team {team} holds item");
+    let who = format!("member {member} (task {task})");
+    saved_notice_where(directory, |text| {
+        text.contains(&title) && text.contains(&who) && commits.iter().all(|commit| text.contains(&commit.to_string()))
+    })
+    .await
+}
+
+/// What happens to the item of a member with `status` whose work the lead left: a failed member keeps holding it, and the
+/// item of a stopped one goes with the lead's delivery.
+fn outcome_of(status: TaskStatus) -> &'static str {
+    if status == TaskStatus::Failed {
+        "The item is not published, so that the work is not dropped without a decision."
+    } else {
+        "The item is published with the lead's branch; the work stays on the member's branch and in its worktree."
     }
 }
 

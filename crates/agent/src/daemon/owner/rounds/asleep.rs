@@ -29,7 +29,7 @@ const SAVED_NOTICE_BYTES: usize = MAX_TITLE_BYTES + MAX_BODY_BYTES + 1;
 /// Why previously delivered standing-item notices could not be inspected.
 #[derive(Debug, thiserror::Error)]
 #[error("cannot inspect saved notifications at {path:?}")]
-struct SavedNoticeError {
+pub(super) struct SavedNoticeError {
     /// Directory or file that could not be inspected.
     path: PathBuf,
     /// Read or limit-conversion failure, preserved for diagnostics.
@@ -41,6 +41,22 @@ async fn standing_was_announced(
     directory: &Path,
     team: &TeamId,
     standing: &Standing,
+) -> Result<bool, SavedNoticeError> {
+    let item = format!(
+        "Team {team} waits with item {} behind failed member {}",
+        standing.item, standing.member
+    );
+    saved_notice_where(directory, |text| {
+        text.contains(&item) && (text.contains(&standing.line) || text.contains(&standing.legacy_line))
+    })
+    .await
+}
+
+/// Whether a saved notice of `directory` satisfies `wanted`: the notices are the `.md` files there, each read up to the
+/// size a notice can have.
+pub(super) async fn saved_notice_where(
+    directory: &Path,
+    wanted: impl Fn(&str) -> bool,
 ) -> Result<bool, SavedNoticeError> {
     let mut entries = match tokio::fs::read_dir(directory).await {
         Ok(entries) => entries,
@@ -56,10 +72,6 @@ async fn standing_was_announced(
         path: directory.to_owned(),
         source: std::io::Error::other(source),
     })?;
-    let item = format!(
-        "Team {team} waits with item {} behind failed member {}",
-        standing.item, standing.member
-    );
     while let Some(entry) = entries.next_entry().await.map_err(|source| SavedNoticeError {
         path: directory.to_owned(),
         source,
@@ -77,7 +89,7 @@ async fn standing_was_announced(
             .read_to_string(&mut text)
             .await
             .map_err(|source| SavedNoticeError { path, source })?;
-        if text.contains(&item) && (text.contains(&standing.line) || text.contains(&standing.legacy_line)) {
+        if wanted(&text) {
             return Ok(true);
         }
     }
@@ -209,6 +221,20 @@ impl Owner {
         })
     }
 
+    /// The directory the notices of the daemon are saved in.
+    pub(super) fn notice_directory(&self) -> PathBuf {
+        self.parts
+            .settings
+            .config
+            .notifications()
+            .directory
+            .as_ref()
+            .map_or_else(
+                || self.parts.store.home().notifications_dir(),
+                |directory| directory.as_path().to_owned(),
+            )
+    }
+
     /// Checks standing items behind failed members, resets dedup when assignee leaves failed, and notifies human if lead is done.
     async fn check_standing_items(
         &mut self,
@@ -232,17 +258,7 @@ impl Owner {
         let Some(lead_status) = found.statuses.first().copied() else {
             return Ok(());
         };
-        let directory = self
-            .parts
-            .settings
-            .config
-            .notifications()
-            .directory
-            .as_ref()
-            .map_or_else(
-                || self.parts.store.home().notifications_dir(),
-                |directory| directory.as_path().to_owned(),
-            );
+        let directory = self.notice_directory();
         let now = Timestamp::now(&self.parts.clock)?;
         for standing in &found.standings {
             // The human was told of the member's work the lead left, with its list: the item stands behind it already.
@@ -260,7 +276,23 @@ impl Owner {
                     item: standing.item.clone(),
                 };
                 if self.watch.announced.insert(announcement) {
-                    match standing_was_announced(&directory, team_id, standing).await {
+                    // The human was asked of this member's work in an earlier life of the daemon: the item stands behind it
+                    // already.
+                    let saved = async {
+                        if delivered::member_work_notice_saved(
+                            &directory,
+                            team_id,
+                            &standing.member,
+                            &standing.task,
+                            &[],
+                        )
+                        .await?
+                        {
+                            return Ok(true);
+                        }
+                        standing_was_announced(&directory, team_id, standing).await
+                    };
+                    match saved.await {
                         Ok(true) => continue,
                         Ok(false) => {}
                         Err(error) => {

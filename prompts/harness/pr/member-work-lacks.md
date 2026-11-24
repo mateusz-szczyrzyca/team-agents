@@ -1,11 +1,11 @@
 # A FAILED MEMBER HAS WORK YOUR BRANCH LACKS
 
-You ended your turn with `STATUS: DONE` and the gate passed, but the member {{member}} failed and has work that is not
-in your branch. The harness will not publish your branch while the member's work is only on the member's side: it
-would be dropped without anybody having decided so.
+You ended your turn with `STATUS: DONE` and the gate passed, but the member {{member}}, whose task failed or was
+stopped, has work that is not in your branch. The harness does not let the work of a member be dropped without anybody
+having decided so: it tells you, once.
 
-The member's branch is `{{branch}}`; its worktree is `{{worktree}}`. You may use both: read them, commit there, and
-merge the branch into yours.
+The member's branch is `{{branch}}`; its worktree is `{{worktree}}`. They are yours to use for this: read them, commit
+there, and merge the branch into yours, as the rules of your team say for this message.
 
 Commits on the member's branch that your branch lacks:
 {{commits}}
