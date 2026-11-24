@@ -609,3 +609,38 @@ async fn workspace_loading_refuses_the_requesters_task_even_with_its_matching_br
         value
     );
 }
+
+#[test]
+fn saving_removes_the_temporary_record_after_a_failed_rename() {
+    let temporary = tempfile::tempdir().unwrap();
+    let record = workspace(23);
+    let path = path_of(temporary.path(), record.record().request);
+    std::fs::create_dir(&path).unwrap();
+
+    let failure = save(temporary.path(), &record).unwrap_err();
+
+    assert!(matches!(failure, WorkspaceError::Write { request: found, .. } if found == record.record().request));
+    assert!(!path.with_extension("json.tmp").try_exists().unwrap());
+}
+
+#[tokio::test]
+async fn preparing_removes_the_temporary_record_after_a_failed_rename() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let record: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
+        base: fixture.head(),
+        ..workspace(24).record().clone()
+    }
+    .try_into()
+    .unwrap();
+    let task_dir = home.task_dir(&record.record().requester_task);
+    let path = path_of(&task_dir, record.record().request);
+    std::fs::create_dir_all(&path).unwrap();
+
+    let failure = prepare_workspace(&home, &handle(&fixture.repo), &record)
+        .await
+        .unwrap_err();
+
+    assert!(matches!(failure, WorkspaceError::Write { request: found, .. } if found == record.record().request));
+    assert!(!path.with_extension("json.tmp").try_exists().unwrap());
+}
