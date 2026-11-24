@@ -410,6 +410,11 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let pool = if detail == Detail::Short {
+        pool_line(activity, &listing.teams).await?
+    } else {
+        None
+    };
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -432,11 +437,6 @@ async fn running_text(
             activity.zone,
         );
         format!("{text}{}", told.unread())
-    };
-    let pool = if detail == Detail::Short {
-        pool_line(activity, &listed).await?
-    } else {
-        None
     };
     Ok(Shown {
         text,
