@@ -293,7 +293,7 @@ impl Owner {
             match item {
                 Ok(found) if found.request == record.record().request => pending = Some(found),
                 Err(error) if error.path().and_then(request_of_file) == Some(record.record().request) => {
-                    damaged = Some(error)
+                    damaged = Some(error);
                 }
                 _ => {}
             }
