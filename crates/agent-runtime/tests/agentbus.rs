@@ -1250,4 +1250,56 @@ mod agentbus_commands {
         );
         flock(&lock, FlockOperation::Unlock).unwrap();
     }
+    #[tokio::test]
+    async fn owned_settlement_fences_replays_and_preserves_the_final_notice() {
+        use agent_runtime::agentbus::{OwnedChange, OwnedOutcome, RequestOwner, RequestResult};
+        let fixture = with_team().await;
+        let id = fixture.bus.delegate(&delegation("Owned request")).await.unwrap();
+        let worker = agent("gemini-1");
+        assert_eq!(fixture.bus.helper_next(&worker).await.unwrap().unwrap().id, id);
+        let worker_task = task("bbb2");
+        let run = "run-20261124-120000-ab12".parse().unwrap();
+        let owner = RequestOwner {
+            worker: &worker,
+            task: &worker_task,
+            run: &run,
+        };
+        assert_eq!(
+            fixture.bus.helper_owned(id, owner, OwnedChange::Start).await.unwrap(),
+            OwnedOutcome::Applied
+        );
+        let change = OwnedChange::Settle {
+            result: RequestResult::Done,
+            summary: "żółć",
+            notice: "Worker gemini-1 served the step",
+        };
+        assert_eq!(
+            fixture.bus.helper_owned(id, owner, change).await.unwrap(),
+            OwnedOutcome::Applied
+        );
+        assert_eq!(
+            fixture.bus.helper_owned(id, owner, change).await.unwrap(),
+            OwnedOutcome::Replay
+        );
+        let request = fixture.bus.helper_get(id).await.unwrap();
+        assert_eq!(request.status, DelegationStatus::Done);
+        assert_eq!(request.summary, "żółć");
+        let late_run = "run-20261124-120001-ab12".parse().unwrap();
+        let late = RequestOwner {
+            run: &late_run,
+            ..owner
+        };
+        assert_eq!(
+            fixture.bus.helper_owned(id, late, change).await.unwrap(),
+            OwnedOutcome::Stale
+        );
+        let messages = read_to_string(fixture.bus.bus_dir().join("messages.jsonl")).unwrap();
+        assert_eq!(
+            messages
+                .lines()
+                .filter(|line| line.contains("Worker gemini-1 served the step"))
+                .count(),
+            1
+        );
+    }
 }

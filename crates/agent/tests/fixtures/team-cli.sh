@@ -302,6 +302,12 @@ case $action in
     if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
     printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: %s"}}\n' "$n" "$status"
     ;;
+  opencode-declared:*)
+    fake_script="$home/fake-scripts/${action#opencode-declared:}.sh"
+    [[ -f "$fake_script" ]] || { echo "script $fake_script does not exist" >&2; exit 64; }
+    bash "$fake_script"
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: FAILED"}}\n' "$n"
+    ;;
   opencode-script:*)
     fake_script="$home/fake-scripts/${action#opencode-script:}.sh"
     [[ -f "$fake_script" ]] || { echo "script $fake_script does not exist" >&2; exit 64; }
@@ -895,6 +901,14 @@ case $action in
     # Ends after the other reviewer of the pass has had its verdict recorded in `state.json`, then prints the text and STATUS: DONE.
     wait_for_peer_review
     result "${action#late:}"'\nSTATUS: DONE'
+    ;;
+  script-questions:*)
+    bash "$home/fake-scripts/${action#script-questions:}.sh"
+    result 'Did some work.\nSTATUS: QUESTIONS'
+    ;;
+  script-declared:*)
+    bash "$home/fake-scripts/${action#script-declared:}.sh"
+    result 'Did some work.\nSTATUS: FAILED'
     ;;
   script:*)
     bash "$home/fake-scripts/${action#script:}.sh"

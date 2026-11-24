@@ -247,15 +247,17 @@ Existing configurations need no changes.
 ### `[workers]`
 
 What the harness does with the result of a worker — a model of `[tiers] workers` — that served a `delegate` request.
-A request is given to one worker first. Its result is wrong when the request's check fails, the worker ends otherwise
-than `STATUS: DONE`, it says it cannot, it changed a file outside the request's `files`, or its run passed `seconds`;
-the request then goes once more to a free worker of another CLI (the same CLI only when no other is free), and a second
-wrong result returns the step to the requester, who does it itself. A request that names no path to write asks for
-facts only: its result goes to the requester as before, and its check, when it has one, is run all the same. Both keys
-apply to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the requester as failed at
-once, as before (its second try comes with a later version). The second worker is told who served the request before it and
-why that result did not serve; the requester is told the request went again, and, after a second wrong result, gets the
-reasons of both. A restart of the daemon while the request waits for the second worker does not lose it.
+A request is given to one worker first. A wrong result gets one second try when `tries` is above 1,
+preferably with a free worker of another provider (the same provider when no other is free). For new local
+requests, an explicit `STATUS: FAILED` or `STATUS: QUESTIONS` is a wrong result even without file changes;
+it consumes a try just as a wrong `STATUS: DONE` result does. A missing result or status does not yet enter
+automatic recovery. Existing open requests without the ownership marker keep their previous handling,
+including immediate failure for endings other than `DONE`.
+
+A request naming no path asks for facts only; its result is reported, and its check, when present, still runs.
+The second worker is told who served the request before it and why that result did not serve. The requester
+is told that the request went again and receives both rejection causes if the second result is wrong.
+A restart while the request waits for its second worker does not lose it.
 
 | Key | Default | Meaning |
 |---|---|---|
@@ -264,9 +266,8 @@ reasons of both. A restart of the daemon while the request waits for the second 
 
 A file without `[workers]` gets these defaults, so existing configurations need no change.
 
-The keys are read and checked at load. `seconds` is applied: a worker's run that lasted longer is a wrong result, and the
-step is returned to the requester. `tries` is applied with the second try of a request, in the next version: until then a
-wrong result is returned to the requester at once, whatever `tries` says.
+The keys are read and checked at load. A run past `seconds` is a wrong result, subject to the same
+`tries` limit. At most one second try is made; after that the requester does the step itself.
 
 ### `[split]`
 

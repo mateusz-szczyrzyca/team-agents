@@ -1,0 +1,16 @@
+{
+  "next_id": 1,
+  "next_helper_id": 1,
+  "helpers": {
+    "1": {
+      "recovery": true,
+      "attempt_run": "run-1",
+      "id": 1,
+      "from": "lead",
+      "from_task": "requester-task",
+      "worker": "worker",
+      "helper_task": "worker-task",
+      "status": "running"
+    }
+  }
+}

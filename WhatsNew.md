@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.92.0 — 24.11.2026 — PR #246
+## 0.93.0 — 25.11.2026 — PR #246
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A run that has Serena and searches code without it past a bound is told once to find code with Serena, while it goes on: the reminder reaches the agent on the bus and the run is not stopped. The shell's `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` and `find` over a file or a directory of code count, and so do `Grep`, `Glob` and `Read` of the CLI; The line of the shell is read command by command, so a search's pattern is never taken for a directory, `rg x src | sort` counts and `git log | grep x` does not; a search filtered to Markdown or another text (`rg --glob '*.md'`) and `sed -i` never count. Markdown, TOML, logs and diffs never count, and neither does a run that called Serena.
@@ -20,7 +20,19 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Configuration
 - [agent-core] new: `[serena] remind_after` (default `40`; `0` turns the reminder off) — the count of searches of code without Serena at which a run with Serena is reminded once; a file without `[serena]` keeps the default.
 
-## 0.91.0 — 24.11.2026 — PR pending
+## 0.92.0 — 24.11.2026 — PR #247
+
+### Bug fixes
+- [agent] [agent-runtime] [agentbus] A late or repeated worker result can no longer settle a newer attempt or send a second final notice, including after a daemon restart. The final notice names the worker that served the request.
+- [agent] [agent-runtime] Workers that declare FAILED or QUESTIONS get another try, preferring another provider. Rejected work is saved before handoff, and a pool with one eligible worker can use its second try.
+
+- [agent] Failed worker preparation leaves requests ready to dispatch again and preserves running workspaces.
+- [agentbus] Replaying worker notices reads only newly appended messages after the first scan and preserves concurrent bus updates.
+
+### Configuration
+- [agent] [agent-runtime] changed: `[workers] tries` (default `2`) — new local requests count declared FAILED and QUESTIONS endings as wrong-result tries, even without file changes. Existing open requests keep their previous handling.
+
+## 0.91.0 — 24.11.2026 — PR #244
 
 ### Enhancements
 - [agent-core] [agent-runtime] Prepare a recovery policy and an opt-in durable journal for worker requests, retaining workspace and snapshot identities, run ownership and separate retry counters. Automatic recovery is not enabled in this version; existing requests keep their previous handling.

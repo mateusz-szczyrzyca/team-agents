@@ -1480,9 +1480,18 @@ Integrate the guide.
 
         /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
         fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
+            let state: agent_core::state::State =
+                serde_json::from_slice(&std::fs::read(self.home.join("state.json")).unwrap()).unwrap();
+            let worker_task: agent_core::ids::TaskId = worker.parse().unwrap();
+            let name = state
+                .find_task(&worker_task)
+                .expect("the pass marker uses an existing crew worker")
+                .member
+                .agent()
+                .name();
             serde_json::json!({
                 "request": number, "team": self.team_id(), "requester": "claude-1", "requester_task": member,
-                "worker": "glm-2", "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
+                "worker": name, "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
                 "stage": settled_returned(),
             })
         }
@@ -1498,9 +1507,43 @@ Integrate the guide.
         /// Puts one more request of `member` on the bus as running with `worker` (a worker whose task directory the test
         /// may write to) and returns its number; the bus does not take a request while a result of the member is unrated.
         fn one_more_request(&self, member: &str, worker: &str) -> u64 {
+            // These synthetic pass markers exercise legacy settlement, without a worker execution.
+            // Pause only this fixture's daemon so it cannot claim the request before it is marked legacy.
+            /// Resumes the fixture daemon even when staging assertions fail.
+            struct ResumeDaemon(
+                /// The temporary daemon, absent when the fixture is already stopped.
+                Option<Pid>,
+            );
+            impl Drop for ResumeDaemon {
+                fn drop(&mut self) {
+                    if let Some(pid) = self.0 {
+                        rustix::process::kill_process(pid, Signal::CONT).unwrap();
+                    }
+                }
+            }
+            let pid = self.daemon.as_ref().map(|daemon| {
+                let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+                rustix::process::kill_process(pid, Signal::STOP).unwrap();
+                pid
+            });
+            let _resume = ResumeDaemon(pid);
+            if let Some(pid) = pid {
+                let (_, status) = rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::UNTRACED)
+                    .unwrap()
+                    .unwrap();
+                assert!(status.stopped(), "the fixture daemon stopped for staging");
+            }
             let number = u64::try_from(self.requests().len()).unwrap() + 1;
             let answer = answers(&self.delegate_as(member, MEMBER_REQUEST));
             assert!(!answer[0].0, "{answer:?}");
+            {
+                let lock = std::fs::File::open(self.home.join("bus/bus.lock")).unwrap();
+                rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
+                let path = self.home.join("bus/state.json");
+                let mut state: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                state["helpers"][number.to_string()]["recovery"] = serde_json::json!(false);
+                std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+            }
             self.bus_cli(&[
                 "helper-set",
                 "--id",
@@ -3342,5 +3385,377 @@ fi
         world.request_is("1", "done");
         assert!(hooks.join("failed").exists(), "the preparation failure was injected");
         assert_eq!(world.requests()["1"]["worker"], "w-di");
+    }
+    #[test]
+    fn declared_failure_after_committing_is_retried_on_another_provider() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-declared:wrong",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/qwen"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        world.script("wrong", &commit_script("unfinished guide", &[]));
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-or");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        world.told("claude-1", "w-or");
+    }
+    #[test]
+    fn declared_failure_after_uncommitted_work_is_retried() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-declared:wrong",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/qwen"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        world.script(
+            "wrong",
+            "#!/bin/sh\nset -eu\nmkdir -p docs\nprintf 'unfinished guide\\n' > docs/guide.md\n",
+        );
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        eventually("the declared partial result to settle", || {
+            matches!(
+                world.requests()["1"]["status"].as_str(),
+                Some("done" | "failed" | "unclear")
+            )
+        });
+        assert_eq!(world.requests()["1"]["status"], "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-or");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        world.told("claude-1", "w-or");
+    }
+    #[test]
+    fn legacy_crew_declared_failure_uses_another_provider_and_one_notice() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
+    #[test]
+    fn questions_after_work_retries_without_asking_the_requester() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-questions:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
+
+    #[test]
+    fn declared_failures_exhaust_tries_and_return_the_step_once() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script-declared:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "failed");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 0);
+        assert!(!world.worktree(task(&tasks, "claude-1")).join("docs/guide.md").exists());
+    }
+
+    #[test]
+    fn settlement_replay_after_restart_and_late_owner_deliver_no_second_notice() {
+        let (mut world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        let request = world.requests()["1"].clone();
+        world.stop();
+        let member = task(&tasks, "claude-1");
+        let worker = task(&tasks, "glm-2");
+        let pending = world.settled_file(1, member, worker);
+        std::fs::write(
+            world.home.join("tasks").join(worker).join("worker-request-1.json"),
+            serde_json::to_vec(&pending).unwrap(),
+        )
+        .unwrap();
+        world.start();
+        eventually("the replayed settlement file to be removed", || {
+            !world
+                .home
+                .join("tasks")
+                .join(worker)
+                .join("worker-request-1.json")
+                .exists()
+        });
+        let input = serde_json::json!({"id":1,"action":"settle","worker":"glm-1","task":task(&tasks,"glm-1"),"run":"late-run","status":"failed","notice":"late failure","summary":"late failure"}).to_string();
+        let output = Command::new(agentbus_binary())
+            .env("AGENTS_HOME", &world.home)
+            .args(["helper-owned", "--dir"])
+            .arg(world.home.join("bus"))
+            .args(["--input", &input])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(serde_json::from_slice::<String>(&output.stdout).unwrap(), "stale");
+        assert!(
+            std::fs::read_to_string(world.home.join("logs/agentbus.jsonl"))
+                .unwrap()
+                .contains("worker_result_dropped")
+        );
+        assert_eq!(world.requests()["1"], request);
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        assert_eq!(world.count_told("claude-1", "late failure"), 0);
+    }
+    #[test]
+    fn owned_success_keeps_the_confirmed_step_history() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        world.stop();
+        let reader = agent_runtime::history::Reader::open(&world.home.join("history.db")).unwrap();
+        let records = reader.step_judgements(&member.parse().unwrap()).unwrap();
+        let confirmations: Vec<_> = records
+            .iter()
+            .filter(|record| record.state == agent_core::plan::judge::JudgementState::Confirmed)
+            .collect();
+        assert_eq!(confirmations.len(), 1, "{records:?}");
+    }
+    #[test]
+    fn declared_failure_reuses_the_only_pool_worker_and_exhausts_tries() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "only",
+                    kind: "worker",
+                    scenario: "script-declared:retry",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        // Retry selection is independent of the discarded worktree of the wrong first result.
+        world.script("retry", &format!("if test -f \"$AGENTS_HOME/first-worker-try\"; then\n{}\nelse\ntouch \"$AGENTS_HOME/first-worker-try\"\nmkdir -p docs\necho first > docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Record first try'\nfi\n", commit_script("the walkthrough", &[])));
+        let plan = MEMBER_PLAN.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        let request = MEMBER_REQUEST.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        world.asks("member", Some(&plan), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "failed");
+        assert_eq!(world.requests()["1"]["worker"], "only");
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+    }
+    #[test]
+    fn owned_declared_failure_without_file_work_uses_a_wrong_result_try() {
+        let (world, tasks) = second_try_world(&[("glm-1", "sleep,fail"), ("glm-2", "sleep,script:guide")], Some(2));
+        world.request_is("1", "done");
+        let request = &world.requests()["1"];
+        assert_eq!(request["recovery"], true);
+        assert_eq!(request["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        let retry_prompt = world.file(task(&tasks, "glm-2"), ".fake-prompt-2");
+        assert!(
+            retry_prompt.contains("the worker did not end its run with STATUS: DONE"),
+            "{retry_prompt}"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            0
+        );
+    }
+    #[test]
+    fn metadata_read_failure_before_launch_preserves_single_execution_and_answer() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "only",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        let wrapper = world.home.join("fault-bus");
+        let counter = world.home.join("metadata-reads");
+        std::fs::write(&wrapper, format!(
+            "#!/bin/sh\nset -eu\nif test \"$1\" = helper-get; then\n n=0\n if test -f '{}'; then n=$(cat '{}'); fi\n n=$((n + 1))\n echo \"$n\" > '{}'\n if test \"$n\" = 2; then exit 1; fi\nfi\nexec '{}' \"$@\"\n",
+            counter.display(), counter.display(), counter.display(), agentbus_binary().display(),
+        )).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config_path = world.home.join("agents.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        let config = config.replace(
+            &format!("agentbus = \"{}\"", agentbus_binary().display()),
+            &format!("agentbus = \"{}\"", wrapper.display()),
+        );
+        std::fs::write(config_path, config).unwrap();
+        let executions = world.home.join("worker-executions");
+        world.script(
+            "guide",
+            &format!(
+                "test -d \"$PWD\"\nprintf 'execution\\n' >> '{}'\n{}",
+                executions.display(),
+                commit_script("the walkthrough", &[]),
+            ),
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert!(std::fs::read_to_string(counter).unwrap().trim().parse::<u32>().unwrap() >= 2);
+        assert_eq!(std::fs::read_to_string(executions).unwrap(), "execution\n");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        let journal_path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+        let journal: serde_json::Value = serde_json::from_slice(&std::fs::read(journal_path).unwrap()).unwrap();
+        assert_eq!(
+            journal["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["event"] == "assigned")
+                .count(),
+            1
+        );
     }
 }

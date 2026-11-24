@@ -1,11 +1,11 @@
-//! Opt-in durable attempt journals. No daemon dispatch path uses recovery yet.
+//! Opt-in durable attempt journals for fenced settlement; automatic no-result requeue remains deferred.
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use agent_core::decide::worker_recovery::{Cause, MAX_NO_RESULT_RETURNS};
-use agent_core::decide::worker_result::Wrong;
+use agent_core::decide::worker_result::{WorkerEnding, Wrong};
 use agent_core::history::SnapshotRecord;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId};
 use agent_core::state::CommitId;
@@ -71,6 +71,13 @@ pub enum Transition {
         /// Fresh run identifier.
         run: RunId,
     },
+    /// A retry starts in a dedicated workspace while preserving the original identity.
+    Assigned {
+        /// Workspace prepared for this execution.
+        workspace: RequestWorkspace,
+        /// Fresh execution identifier.
+        run: RunId,
+    },
     /// A current execution supplied no result.
     Interrupted {
         /// Run whose ownership must still be current.
@@ -93,6 +100,13 @@ pub enum Transition {
         wrong: Vec<Wrong>,
         /// Snapshot before handing the workspace to the next execution.
         snapshot: SnapshotIdentity,
+    },
+    /// The current execution produced a declared ending, retained before settlement.
+    Observed {
+        /// Execution whose ending was read.
+        run: RunId,
+        /// Declared result, independent of the check outcome.
+        ending: WorkerEnding,
     },
     /// Settlement finished; subsequent results must be dropped.
     Settled {
@@ -173,6 +187,26 @@ impl TryFrom<Record> for Journal {
         let mut generation = 0_u32;
         for event in record.events {
             match &event {
+                Transition::Assigned { workspace, run } => {
+                    let original = journal.workspace().record();
+                    let next = workspace.record();
+                    if journal.phase != Phase::Queued
+                        || !runs.insert(run.clone())
+                        || next.request != original.request
+                        || next.requester_task != original.requester_task
+                        || next.requester_repo != original.requester_repo
+                        || next.requester != original.requester
+                        || next.stage != Stage::Working
+                    {
+                        return Err(Invalid::Transition);
+                    }
+                    generation = generation.checked_add(1).ok_or(Invalid::Transition)?;
+                    journal.phase = Phase::Running(Attempt {
+                        number: NonZeroU32::new(generation).ok_or(Invalid::Transition)?,
+                        worker: next.worker.clone(),
+                        run: run.clone(),
+                    });
+                }
                 Transition::Started { worker, run } => {
                     if journal.phase != Phase::Queued || !runs.insert(run.clone()) {
                         return Err(Invalid::Transition);
@@ -208,6 +242,12 @@ impl TryFrom<Record> for Journal {
                     journal.wrong_try = journal.wrong_try.checked_add(1).ok_or(Invalid::Transition)?;
                     journal.phase = Phase::Queued;
                 }
+                Transition::Observed { run, .. } => {
+                    journal.require_run(run)?;
+                    if journal.ending().is_some() {
+                        return Err(Invalid::Transition);
+                    }
+                }
                 Transition::Settled { run } => {
                     journal.require_run(run)?;
                     journal.phase = Phase::Settled;
@@ -230,7 +270,7 @@ impl Journal {
 
     /// A snapshot must preserve this request's workspace, never the requester's files.
     fn require_snapshot(&self, snapshot: &SnapshotIdentity) -> Result<(), Invalid> {
-        if snapshot.task == self.record.workspace.record().worker_task {
+        if snapshot.task == self.current_workspace().record().worker_task {
             Ok(())
         } else {
             Err(Invalid::Transition)
@@ -257,6 +297,32 @@ impl Journal {
             events: Vec::new(),
         }
         .try_into()
+    }
+
+    /// Ending observed for the current execution, if one was durably recorded.
+    #[must_use]
+    pub fn ending(&self) -> Option<WorkerEnding> {
+        let Phase::Running(attempt) = &self.phase else {
+            return None;
+        };
+        self.record.events.iter().rev().find_map(|event| match event {
+            Transition::Observed { run, ending } if run == &attempt.run => Some(*ending),
+            _ => None,
+        })
+    }
+
+    /// Workspace used by the latest execution.
+    #[must_use]
+    pub fn current_workspace(&self) -> &RequestWorkspace {
+        self.record
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Transition::Assigned { workspace, .. } => Some(workspace),
+                _ => None,
+            })
+            .unwrap_or(&self.record.workspace)
     }
 
     /// Original workspace identity, unaffected by later worker assignments.

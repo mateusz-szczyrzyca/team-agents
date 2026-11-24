@@ -363,7 +363,7 @@ const fn goes_on(end: &RunEnd) -> bool {
 
 /// The worker's report without its closing `STATUS:` line; the whole message when nothing else is in it, so that a
 /// report is never empty.
-fn report(message: &str) -> String {
+pub(in crate::daemon) fn report(message: &str) -> String {
     let trimmed = message.trim_end();
     let without = match trimmed.rsplit_once('\n') {
         Some((before, last)) if last.trim_start().starts_with(STATUS_PREFIX) => before.trim_end(),

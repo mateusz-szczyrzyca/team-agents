@@ -1771,6 +1771,23 @@
      "doc": "logs exceed the count limit or include unrelated informational entries"
     }
    ]
+  },
+  {
+   "type": "CmdHelperOwned",
+   "op": "helper-owned",
+   "what": "the subcommand helper-owned",
+   "causes": [
+    {
+     "name": "InvalidArgument",
+     "class": "InvalidArgument",
+     "doc": "the ownership command is malformed"
+    },
+    {
+     "name": "NoSuchRequest",
+     "class": "NotFound",
+     "doc": "the worker request does not exist"
+    }
+   ]
   }
  ]
 }

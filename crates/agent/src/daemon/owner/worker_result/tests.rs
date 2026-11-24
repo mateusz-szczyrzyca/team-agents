@@ -829,3 +829,27 @@ async fn answered_request_keeps_worker_reserved_until_workspace_release() {
         "successful release makes the worker eligible again"
     );
 }
+
+#[test]
+fn retry_journal_retains_check_and_ending_causes_instead_of_a_done_failure() {
+    for (ending, outcome, committed, want) in [
+        (WorkerEnding::Done, CheckOutcome::Failed, true, vec![Wrong::CheckFailed]),
+        (
+            WorkerEnding::Failed,
+            CheckOutcome::Failed,
+            true,
+            vec![Wrong::EndedOtherwise(WorkerEnding::Failed), Wrong::CheckFailed],
+        ),
+        (
+            WorkerEnding::Cannot,
+            CheckOutcome::Passed,
+            true,
+            vec![Wrong::EndedOtherwise(WorkerEnding::Cannot)],
+        ),
+        (WorkerEnding::Done, CheckOutcome::Passed, false, vec![Wrong::NoCommit]),
+    ] {
+        let mut value = checked(&["guide.md"], &[], Some(found(outcome)));
+        value.committed = committed;
+        assert_eq!(super::rejection_causes(&value, ending, 0, 0), want);
+    }
+}

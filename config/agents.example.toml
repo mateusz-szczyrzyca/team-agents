@@ -157,8 +157,8 @@ check_refuse = ["agent gate", "make gate"]
 #   tries     how many tries a request gets, its first try included; 1 never gives it to a second worker; a request gets one
 #             second try at most, so a value above 2 behaves as 2 (default: 2)
 #   seconds   how long a worker's run may last; a run past it is a wrong result; 0 has no limit (default: 0)
-# The daemon applies both keys to a result of a run that ended `STATUS: DONE`; a run that ends otherwise is answered to the
-# requester as failed at once, as before (its second try comes with a later version).
+# New local requests count declared FAILED or QUESTIONS endings as wrong results, even without file changes.
+# Existing open requests without ownership keep their previous immediate-failure handling for non-DONE endings.
 
 [workers]
 tries = 2

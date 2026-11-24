@@ -3,3 +3,5 @@ The result of the worker {{worker}} for your request H{{request_id}} is wrong: {
 The request went once more to the worker {{next}}, which started again from the same request.
 
 Wait for its result; do not send the request again in other words meanwhile.
+
+A declared FAILED or QUESTIONS ending counts as a wrong result too. The harness keeps a snapshot of that attempt.

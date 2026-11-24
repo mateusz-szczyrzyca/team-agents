@@ -21,7 +21,9 @@ use agent_core::log::LogEvent;
 use agent_core::plan::Check;
 use agent_core::plan::judge::JudgementState;
 use agent_core::state::{CommitId, Timestamp};
-use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpdate, FailureClass, RequestId};
+use agent_runtime::agentbus::{
+    DelegationRequest, DelegationStatus, DelegationUpdate, FailureClass, OwnedOutcome, RequestId,
+};
 use agent_runtime::git::{BringOver, CommitIdentity, Git, Revision};
 use agent_runtime::plan::check::{CheckContext, execute_request_check, read_check_tail, request_check_outcome};
 use agent_runtime::process::error_chain;
@@ -116,6 +118,7 @@ fn reasons_of(checked: &Checked, wrong: &[Wrong], limit_seconds: u64) -> Vec<Str
                 "the worker changed files the request did not name: {}",
                 checked.outside.join(", ")
             ),
+            Wrong::NoCommit => "the worker committed nothing, so there is nothing to bring over".to_owned(),
             Wrong::NoCheck => "the request names files but no check, so nothing shows the commit right".to_owned(),
             Wrong::PastSeconds => format!("the worker's run lasted past {limit_seconds} seconds"),
         })
@@ -158,7 +161,7 @@ impl Owner {
 
     /// The git handle of the worktree of `task`, a task of `team`, for `agent`; `None` when the team or the path is not
     /// there.
-    fn git_of(&self, team: &TeamId, task: &TaskId, agent: &AgentName) -> Option<Git> {
+    pub(super) fn git_of(&self, team: &TeamId, task: &TaskId, agent: &AgentName) -> Option<Git> {
         let path = self.worker_worktree(team, task)?;
         let worktree = AbsolutePath::from_str(path.to_str()?).ok()?;
         Some(Git::new(
@@ -619,7 +622,7 @@ impl Owner {
         }
         loop {
             let next = match &pending.stage {
-                Stage::Ended | Stage::Checked(_) if !self.still_the_workers(&pending).await => {
+                Stage::Ended | Stage::Checked(_) if !self.still_the_workers(&pending).await? => {
                     return self.drop_settled(task_dir, &pending, workspace).await;
                 }
                 Stage::Ended => match self.gather_request(&pending, workspace).await {
@@ -636,10 +639,23 @@ impl Owner {
                         }
                         return Ok(());
                     }
-                    Gathered::Wrong(checked, reasons) => Stage::Settled {
-                        checked: Box::new(checked),
-                        settlement: Settlement::Returned { reasons },
-                    },
+                    Gathered::Wrong(checked, reasons) => {
+                        let declared_failure = self
+                            .owned_journal(&pending.requester_task, pending.request)
+                            .await?
+                            .and_then(|journal| journal.ending())
+                            .is_some_and(|ending| matches!(ending, WorkerEnding::Failed | WorkerEnding::Cannot));
+                        let again = declared_failure
+                            && matches!(
+                                self.settle_result(&pending, &checked, workspace).await,
+                                Settlement::Again { .. }
+                            );
+                        let settlement = self.wrong_settlement(&pending, reasons, again);
+                        Stage::Settled {
+                            checked: Box::new(checked),
+                            settlement,
+                        }
+                    }
                     Gathered::Checked(checked) => Stage::Checked(Box::new(checked)),
                     Gathered::Check(checked, step, text) => {
                         self.start_request_check(task_dir, pending, checked, step, text, workspace);
@@ -763,8 +779,12 @@ impl Owner {
     /// Whether the bus still has the request of `pending` running for its worker's task. A request that was answered, or is
     /// another worker's, is not settled from its file; one the bus cannot be asked about now is taken as running, and the
     /// bus is asked again at the next stage.
-    async fn still_the_workers(&self, pending: &Pending) -> bool {
-        match self.parts.bus.helper_get(pending.request).await {
+    async fn still_the_workers(&self, pending: &Pending) -> Result<bool, OwnerError> {
+        if !self.owns_observed_result(pending).await? {
+            tracing::warn!(event = "worker_result_dropped", request = %pending.request, worker = %pending.worker, "pending result no longer owns the observed execution");
+            return Ok(false);
+        }
+        Ok(match self.parts.bus.helper_get(pending.request).await {
             Ok(known) if is_running_for(&known, &pending.worker_task, &pending.worker) => true,
             Ok(known) => {
                 tracing::warn!(
@@ -787,7 +807,7 @@ impl Owner {
                 );
                 true
             }
-        }
+        })
     }
 
     /// Removes the file of `request` from `task_dir`, and says once, if it cannot, so that a look does not repeat it.
@@ -1048,15 +1068,34 @@ impl Owner {
         checked: &Checked,
         workspace: Option<&RequestWorkspace>,
     ) -> Settlement {
-        if checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()) {
+        let journal = match self.owned_journal(&pending.requester_task, pending.request).await {
+            Ok(journal) => journal,
+            Err(error) => {
+                return Settlement::Returned {
+                    reasons: vec![format!("cannot read execution ownership: {}", error_chain(&error))],
+                };
+            }
+        };
+        let ending = journal
+            .as_ref()
+            .and_then(agent_runtime::worker_request::recovery::Journal::ending)
+            .unwrap_or(WorkerEnding::Done);
+        if ending == WorkerEnding::Done
+            && (checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()))
+        {
             return Settlement::Report;
         }
         let limit = self.parts.settings.config.workers().seconds();
         let mut facts = facts_of(checked, pending.run_seconds, limit);
         let tried = self.try_of(pending);
+        facts.ending = ending;
         facts.try_number = tried.number;
         facts.tries = self.parts.settings.config.workers().tries();
-        facts.elsewhere = self.elsewhere_of(pending).await;
+        facts.elsewhere = if ending == WorkerEnding::NoStatus {
+            Elsewhere::None
+        } else {
+            self.elsewhere_of(pending).await
+        };
         match decide(&facts) {
             Verdict::Accept if facts.scope == Scope::Facts => Settlement::Report,
             Verdict::Accept if !checked.committed => {
@@ -1162,6 +1201,14 @@ impl Owner {
                 )
             }
         };
+        if let Some(outcome) = self.settle_owned_request(pending, status, &summary, &notice).await? {
+            if matches!(outcome, OwnedOutcome::Applied | OwnedOutcome::Replay)
+                && let (Settlement::Brought { commit }, Some(step)) = (settlement, checked.step)
+            {
+                self.record_confirmed(pending, checked, step, commit).await?;
+            }
+            return Ok(true);
+        }
         tracing::info!(
             event = LogEvent::RequestDelegated.as_str(),
             request = %pending.request,
@@ -1455,3 +1502,13 @@ async fn run_request_check(job: RequestCheck) -> Found {
 
 #[cfg(test)]
 mod tests;
+
+/// Retains the actual rejection causes alongside a retry snapshot.
+pub(super) fn rejection_causes(checked: &Checked, ending: WorkerEnding, seconds: u64, limit: u64) -> Vec<Wrong> {
+    let mut facts = facts_of(checked, seconds, limit);
+    facts.ending = ending;
+    match decide(&facts) {
+        Verdict::GiveToAnother { wrong } | Verdict::Return { wrong } => wrong,
+        Verdict::Accept => vec![Wrong::NoCommit],
+    }
+}
