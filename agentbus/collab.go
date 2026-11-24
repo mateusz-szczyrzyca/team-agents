@@ -1623,6 +1623,22 @@ func teamIsStopped(t *Team) bool {
 	return true
 }
 
+// legacyOwnsRequest reports whether a request belongs to a crew with its own workers.
+// Old requests without task identity retain the original requester-name lookup.
+func legacyOwnsRequest(st *State, h *Helper) bool {
+	for _, team := range st.Teams {
+		if !teamHasWorkers(team) {
+			continue
+		}
+		for name, member := range team.Members {
+			if (h.FromTask != "" && member.Task == h.FromTask) || (h.FromTask == "" && name == h.From) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // freePoolWorkersState observes full state (teams, active crews, running members, and unsettled helpers) to count free pool workers.
 func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) int {
 	if len(poolWorkers) == 0 {
@@ -1652,7 +1668,7 @@ func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) i
 				serving[h.Worker] = true
 			}
 		case HelperQueued:
-			if h.RemoteJob == nil {
+			if h.RemoteJob == nil && !legacyOwnsRequest(st, h) {
 				waiting++
 			}
 		case HelperDone, HelperFailed, HelperUnclear:
