@@ -316,3 +316,57 @@ async fn a_reminder_the_bus_took_before_a_restart_of_the_daemon_is_not_put_there
 
     assert_eq!(chats_from_the_harness(&rig), Vec::<String>::new());
 }
+
+#[tokio::test]
+async fn a_reminder_whose_mark_cannot_be_made_is_not_put_on_the_bus() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the first run of the task", |state| {
+        state
+            .find_task(&task)
+            .is_some_and(|found| found.member.runs().last().is_some())
+    })
+    .await;
+    let run = last_run(&rig, &task);
+    record_reminder(&rig, &team, &task, &run, SEARCHES);
+    rig.stop().await.unwrap();
+    // The mark of a reminder is made before the bus is asked: with no directory of the run to make it in, nothing goes out.
+    std::fs::remove_dir_all(rig.home.run_dir(&task, &run)).unwrap();
+
+    rig.start().await;
+    beyond_this_run(&rig).await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(chats_from_the_harness(&rig), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn a_reminder_whose_mark_cannot_be_looked_for_is_not_put_on_the_bus() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the first run of the task", |state| {
+        state
+            .find_task(&task)
+            .is_some_and(|found| found.member.runs().last().is_some())
+    })
+    .await;
+    let run = last_run(&rig, &task);
+    record_reminder(&rig, &team, &task, &run, SEARCHES);
+    rig.stop().await.unwrap();
+    // A file where the directory of the run should be: whether its mark is there cannot be told, so the reminder, which may
+    // have gone out before, does not go out again.
+    std::fs::remove_dir_all(rig.home.run_dir(&task, &run)).unwrap();
+    std::fs::write(rig.home.run_dir(&task, &run), "").unwrap();
+
+    rig.start().await;
+    beyond_this_run(&rig).await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(chats_from_the_harness(&rig), Vec::<String>::new());
+}
