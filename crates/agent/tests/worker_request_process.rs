@@ -1480,9 +1480,18 @@ Integrate the guide.
 
         /// The file of a request `number` of `member` that `worker` has ended and the daemon has settled as returned.
         fn settled_file(&self, number: u64, member: &str, worker: &str) -> serde_json::Value {
+            let state: agent_core::state::State =
+                serde_json::from_slice(&std::fs::read(self.home.join("state.json")).unwrap()).unwrap();
+            let worker_task: agent_core::ids::TaskId = worker.parse().unwrap();
+            let name = state
+                .find_task(&worker_task)
+                .expect("the pass marker uses an existing crew worker")
+                .member
+                .agent()
+                .name();
             serde_json::json!({
                 "request": number, "team": self.team_id(), "requester": "claude-1", "requester_task": member,
-                "worker": "glm-2", "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
+                "worker": name, "worker_task": worker, "summary": "Result: done.", "run_seconds": 1,
                 "stage": settled_returned(),
             })
         }
@@ -1498,9 +1507,43 @@ Integrate the guide.
         /// Puts one more request of `member` on the bus as running with `worker` (a worker whose task directory the test
         /// may write to) and returns its number; the bus does not take a request while a result of the member is unrated.
         fn one_more_request(&self, member: &str, worker: &str) -> u64 {
+            // These synthetic pass markers exercise legacy settlement, without a worker execution.
+            // Pause only this fixture's daemon so it cannot claim the request before it is marked legacy.
+            /// Resumes the fixture daemon even when staging assertions fail.
+            struct ResumeDaemon(
+                /// The temporary daemon, absent when the fixture is already stopped.
+                Option<Pid>,
+            );
+            impl Drop for ResumeDaemon {
+                fn drop(&mut self) {
+                    if let Some(pid) = self.0 {
+                        rustix::process::kill_process(pid, Signal::CONT).unwrap();
+                    }
+                }
+            }
+            let pid = self.daemon.as_ref().map(|daemon| {
+                let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+                rustix::process::kill_process(pid, Signal::STOP).unwrap();
+                pid
+            });
+            let _resume = ResumeDaemon(pid);
+            if let Some(pid) = pid {
+                let (_, status) = rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::UNTRACED)
+                    .unwrap()
+                    .unwrap();
+                assert!(status.stopped(), "the fixture daemon stopped for staging");
+            }
             let number = u64::try_from(self.requests().len()).unwrap() + 1;
             let answer = answers(&self.delegate_as(member, MEMBER_REQUEST));
             assert!(!answer[0].0, "{answer:?}");
+            {
+                let lock = std::fs::File::open(self.home.join("bus/bus.lock")).unwrap();
+                rustix::fs::flock(&lock, rustix::fs::FlockOperation::LockExclusive).unwrap();
+                let path = self.home.join("bus/state.json");
+                let mut state: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                state["helpers"][number.to_string()]["recovery"] = serde_json::json!(false);
+                std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+            }
             self.bus_cli(&[
                 "helper-set",
                 "--id",
