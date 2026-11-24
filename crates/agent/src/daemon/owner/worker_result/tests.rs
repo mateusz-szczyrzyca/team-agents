@@ -724,7 +724,7 @@ async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_a
     std::fs::write(&lock_file, "locked").unwrap();
 
     let res = owner.try_dispatch_pool_request(&worker_name, &req).await;
-    assert!(res.is_err(), "dispatch must fail due to missing worker config");
+    panic!("DISPATCH RESULT: {res:?}");
 
     assert_eq!(owner.cleanup_obligations.len(), 1, "cleanup obligation must be retained on release failure");
     assert!(owner.again.contains_key(&request_id), "again retry history must be preserved");

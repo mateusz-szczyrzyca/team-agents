@@ -186,7 +186,7 @@ fn worker_with_unsettled_workspace_shows_team_and_step_when_helper_is_done() {
     }))
     .unwrap();
     let unsettled = vec![UnsettledWorker {
-        worker: "glm-1".parse().unwrap(),
+        worker: Some("glm-1".parse().unwrap()),
         from_task: "task-20261124-114140-pq68".to_owned(),
         step: Some("1.1".to_owned()),
         damaged: false,
@@ -207,7 +207,7 @@ pool:
 fn damaged_workspace_record_renders_unsettled() {
     let workers = vec!["glm-1".parse().unwrap(), "glm-2".parse().unwrap()];
     let unsettled = vec![UnsettledWorker {
-        worker: "glm-1".parse().unwrap(),
+        worker: Some("glm-1".parse().unwrap()),
         from_task: String::new(),
         step: None,
         damaged: true,
