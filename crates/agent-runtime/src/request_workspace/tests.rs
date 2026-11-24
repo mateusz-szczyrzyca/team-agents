@@ -12,9 +12,10 @@ use agent_core::ids::TaskId;
 use agent_core::state::CommitId;
 
 use crate::agentbus::RequestId;
-use crate::git::{CommitIdentity, Git};
+use crate::git::{BringOver, CommitIdentity, Git};
 use crate::request_workspace::{
-    RequestWorkspace, Stage, branch, prepare as prepare_workspace, read_each, release as release_workspace, save,
+    RequestWorkspace, Stage, branch, path_of, prepare as prepare_workspace, read_each, release as release_workspace,
+    save,
 };
 use crate::store::Home;
 
@@ -190,4 +191,65 @@ async fn a_workspace_record_saves_and_reads_back() {
 
     let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
     assert_eq!(read, workspace);
+}
+
+#[tokio::test]
+async fn a_workspace_record_of_the_kept_format_loads() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    std::fs::write(
+        path_of(&task_dir, request(7)),
+        include_str!("fixtures/request-workspace-7.json"),
+    )
+    .unwrap();
+
+    let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
+    let expected = RequestWorkspace {
+        base: "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5".to_owned(),
+        ..workspace(7)
+    };
+    assert_eq!(read, expected);
+}
+
+#[tokio::test]
+async fn a_committed_step_of_the_workspace_is_brought_over_to_the_requesters_end() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let base = fixture.head();
+    let workspace = RequestWorkspace {
+        base: base.to_string(),
+        ..workspace(6)
+    };
+    let requester_git = handle(&fixture.repo);
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
+
+    // The worker commits the step of its run in the workspace's worktree, on the branch of its own.
+    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    std::fs::write(worktree.join("b.txt"), "two\n").unwrap();
+    raw(&worktree, &["add", "b.txt"]);
+    raw(&worktree, &["commit", "-q", "-m", "the worker's step"]);
+    let head: CommitId = raw(&worktree, &["rev-parse", "HEAD"]).parse().unwrap();
+    assert_eq!(
+        raw(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]),
+        workspace.branch.as_str(),
+        "the step is on the workspace's branch"
+    );
+
+    // The requester's committed end is brought to the worker's step through the workspace's git, and the requester's
+    // worktree holds the file the step brought.
+    let outcome = requester_git
+        .bring_over_since(&base, &head, &workspace.requester_round, &workspace.requester_task)
+        .await
+        .expect("the worker's step applies");
+    let BringOver::Applied { snapshot, commit } = outcome else {
+        panic!("the worker's step applies: {outcome:?}");
+    };
+    assert_eq!(snapshot.head.to_string(), base.to_string());
+    assert_eq!(raw(&fixture.repo, &["rev-parse", "HEAD"]), commit.to_string());
+    assert_eq!(raw(&fixture.repo, &["show", &format!("{commit}:b.txt")]), "two");
+    assert!(
+        fixture.repo.join("b.txt").exists(),
+        "the requester's worktree holds the worker's file"
+    );
 }
