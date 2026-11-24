@@ -676,3 +676,23 @@ fn second_try_pool_outcome_table() {
         Elsewhere::None
     );
 }
+
+#[test]
+fn second_try_reuses_the_only_compatible_worker_when_free() {
+    for (busy, runs, unsettled, expected) in [
+        (false, 0, false, true),
+        (true, 0, false, false),
+        (false, 1, false, false),
+        (false, 0, true, false),
+    ] {
+        let workers = pool_full(&[("only", "p1", busy, runs, unsettled)]);
+        let got = second_try_pool_worker(
+            &workers,
+            &requires(&[]),
+            name_of(&workers, 0),
+            "p1",
+            RunLimit::AtMost(std::num::NonZeroU32::new(1).unwrap()),
+        );
+        assert_eq!(got, expected.then_some((name_of(&workers, 0), "p1")));
+    }
+}

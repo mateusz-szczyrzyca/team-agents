@@ -3180,4 +3180,103 @@ Integrate the guide.
         assert_eq!(world.requests()["1"]["worker"], "w-cl-2");
         assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
     }
+    #[test]
+    fn review_legacy_crew_preserves_configured_provider_order() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "claude-2",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di-1",
+                    kind: "worker",
+                    scenario: "hold",
+                    cli: "opencode",
+                    model: Some("deepinfra/first"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/model"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di-2",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("deepinfra/second"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+        let legacy = world.run(&["claude-1", "w-di-1", "inv-opus"]);
+        world.ended(task(&legacy, "claude-1"), 1);
+        let tasks = world.run(&["claude-2", "inv-opus"]);
+        let member = task(&tasks, "claude-2");
+        world.ended(member, 1);
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        let reply = world.delegate_as(member, MEMBER_REQUEST);
+        assert!(!answers(&reply)[0].0, "{reply}");
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-di-2");
+    }
+
+    #[test]
+    fn review_single_worker_retries_in_the_handed_off_workspace() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "only",
+                    kind: "worker",
+                    scenario: "script:retry",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        // The first run commits an incomplete guide; the retry must receive that same workspace.
+        world.script("retry", &format!("if test -f docs/guide.md; then\n{}\nelse\nmkdir -p docs\necho first > docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Record first try'\nfi\n", commit_script("the walkthrough", &[])));
+        let plan = MEMBER_PLAN.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        let request = MEMBER_REQUEST.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        world.asks("member", Some(&plan), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "only");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+    }
 }
