@@ -113,10 +113,29 @@ async fn a_declared_failure_that_fails_again_is_taken_over_by_a_fitting_agent_in
     let state = replacement_ended_a_run(&rig, &tasks[1]).await;
     let takeover = rig.prompt(&tasks[1], 3).await;
     let log = std::fs::read_to_string(rig.worktree(&tasks[1]).join(".fake-log")).unwrap();
+    let delivered = git_out(&rig.worktree(&tasks[1]), &["log", "--format=%s", "-n", "1"]);
     let told = rig.notifications();
     rig.stop().await.unwrap();
 
     let member = state.find_task(&tasks[1]).unwrap().member;
+    assert!(
+        matches!(
+            member.runs().last().unwrap().state(),
+            agent_core::state::RunState::Ended {
+                end: agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done
+                },
+                ..
+            }
+        ),
+        "the replacement's run ended with STATUS: DONE: {:?}",
+        member.runs().last().unwrap().state()
+    );
+    assert_ne!(member.status(), TaskStatus::Failed, "the replacement finished the task");
+    assert_eq!(
+        delivered, "Work of run 3 of claude-2\n",
+        "the replacement committed its work on the task's branch"
+    );
     assert_eq!(
         member.agent().name(),
         "claude-2",
