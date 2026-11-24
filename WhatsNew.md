@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.93.0 — 25.11.2026 — PR #246
+## Unreleased — PR #246
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A run that has Serena and searches code without it past a bound is told once to find code with Serena, while it goes on: the reminder reaches the agent on the bus and the run is not stopped. The shell's `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` and `find` over a file or a directory of code count, and so do `Grep`, `Glob` and `Read` of the CLI; The line of the shell is read command by command, so a search's pattern is never taken for a directory, `rg x src | sort` counts and `git log | grep x` does not; a search filtered to Markdown or another text (`rg --glob '*.md'`) and `sed -i` never count. Markdown, TOML, logs and diffs never count, and neither does a run that called Serena.
