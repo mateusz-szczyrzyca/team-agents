@@ -402,7 +402,7 @@ async fn a_workspace_record_of_another_request_is_a_mismatch() {
     let read = read_each(&task_dir).await.unwrap();
     assert_eq!(read.len(), 1);
     assert!(
-        matches!(&read[0], Err(WorkspaceError::Mismatch { path, found }) if *path == path_of(&task_dir, request(1)) && *found == other.request.number()),
+        matches!(&read[0], Err(WorkspaceError::Mismatch { path, found }) if *path == path_of(&task_dir, request(1)) && *found == other.record().request.number()),
         "{:?}",
         read[0]
     );
