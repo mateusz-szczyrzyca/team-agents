@@ -925,7 +925,7 @@ pub struct Web {
 /// ```compile_fail
 /// let config = agent_core::config::Config { language: Default::default() };
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Config {
     /// The language of the texts only the human reads.
     language: Language,
@@ -979,12 +979,12 @@ pub struct Config {
     history: History,
     /// The daemon's own log.
     log: Log,
-    /// The reminder for a run with Serena.
-    serena: SerenaSettings,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
     repos: BTreeMap<RepoName, RepoConfig>,
+    /// The reminder for a run with Serena.
+    serena: SerenaSettings,
 }
 
 /// The fewest searches of code without Serena that bring a reminder, by default.
@@ -1116,15 +1116,15 @@ struct RawConfig {
     /// See [`Config::log`].
     #[serde(default)]
     log: Log,
-    /// See [`Config::serena`].
-    #[serde(default)]
-    serena: SerenaSettings,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
     /// The `[repos.NAME]` tables.
     #[serde(default)]
     repos: BTreeMap<RepoName, RepoConfig>,
+    /// See [`Config::serena`].
+    #[serde(default)]
+    serena: SerenaSettings,
 }
 
 impl RawConfig {
