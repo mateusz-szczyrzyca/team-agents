@@ -55,7 +55,7 @@ const MAX_EXPANDED_GLOBS: usize = 64;
 ///
 /// A `Grep` without a path or a filter has its pattern as its summary; one that was given a path or a filter has the
 /// files it searches, joined by spaces, with [`SEARCH_PATH_MARK`] after them: the path, and each filter that says what
-/// kind of file is searched (`*.rs`, `--type md`) under it. A `Glob` has its pattern under its path.
+/// kind of file is searched (`*.rs`, `--type md`) under it. A `Glob` has its pattern under its path, a brace group of the pattern (`*.{ts,tsx}`) expanded to its alternatives.
 #[must_use]
 pub fn search_summary(
     name: &str,
@@ -67,7 +67,11 @@ pub fn search_summary(
         "Grep" | "grep" => grep_summary(input, clip, max_chars),
         "Glob" | "glob" => {
             let pattern = input.pattern?;
-            Some(clip(&under(input.path, pattern), max_chars))
+            let named: Vec<String> = expand_braces(pattern)
+                .iter()
+                .map(|alternative| under(input.path, alternative))
+                .collect();
+            Some(clip(&named.join(" "), max_chars))
         }
         _ => None,
     }
