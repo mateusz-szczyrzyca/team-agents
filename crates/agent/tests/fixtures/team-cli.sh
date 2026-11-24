@@ -24,6 +24,9 @@
 #                   member that fails with real work done, part of it on its branch and part of it not
 #   fail-tool-committed  like fail-tool, after it committed a file (`work-N.txt`) and left nothing uncommitted: a member that
 #                   fails with real work done, all of it on its branch
+#   fail-tool-committed-dirty-named  like fail-tool-committed-dirty, with a committed file named after the task, so that the
+#                   branches of two members merge without a conflict
+#   integrate-after-changing-drafts  like `integrate`, after it appended a line to the draft.txt of every other worktree
 #   take-gone-members-work  as the lead of a member that is gone: reads the text the harness gave it on the bus, takes the
 #                   worktree it names, commits the files left uncommitted there as they are (no question to the human),
 #                   merges the member's branch into its own, records the gate and ends with STATUS: DONE; it fails when the
@@ -661,6 +664,30 @@ case $action in
     commit_work
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
     result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  fail-tool-committed-dirty-named)
+    # Like fail-tool-committed-dirty, with a committed file whose name is the task's own: two members that run it have
+    # branches that merge without a conflict.
+    hide_own_files
+    task=$(basename "$PWD")
+    echo "run $n of $task" > "work-$task-$n.txt"
+    git add "work-$task-$n.txt"
+    git "${GIT_FIXTURE[@]}" commit -q -m "Work of run $n of $task"
+    echo "draft of run $n" > draft.txt
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  integrate-after-changing-drafts)
+    # As the lead that was told of a member's draft: changes the draft in the member's worktree, then integrates.
+    for draft in ../*/draft.txt; do
+      if [[ -f $draft ]]; then echo "changed by the lead" >> "$draft"; fi
+    done
+    current=$(git rev-parse --abbrev-ref HEAD)
+    for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+      [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+    done
+    record_gate
+    result 'Integrated.\nSTATUS: DONE'
     ;;
   take-gone-members-work)
     # The text the harness wrote for the lead is on the bus; the worktree and the branch of the gone member are read from it,

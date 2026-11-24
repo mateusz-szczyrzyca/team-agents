@@ -2,10 +2,12 @@
 //! told to the lead once, and when the lead ends without it the human is told, with the list.
 
 use agent_core::ids::TaskId;
+use agent_core::protocol::{Client, Command, ControlRequest, Reply, SayRequest, Target};
 use agent_core::state::{ItemPhase, MergeMode, State};
 use agent_core::status::TaskStatus;
 
-use super::rig::{ONE, Rig, git, investigator, normal};
+use super::rig::{ONE, PARALLEL, Rig, git, investigator, normal};
+use crate::client::Connection;
 
 /// A reviewer that approves.
 const APPROVE: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
@@ -213,4 +215,199 @@ async fn a_release_of_a_failed_member_survives_a_restart_of_the_daemon() {
         rig.notifications().iter().all(|text| !text.contains(BEHIND)),
         "the human is not told of a round that is published"
     );
+}
+
+/// A team of a lead that runs `lead` and two members that run `member`, each with an item of its own, started with
+/// `[replacement] mode = "off"`.
+async fn team_of_two(lead: &'static str, member: &'static str) -> (Rig, Vec<TaskId>) {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", lead),
+            normal("claude-1", member),
+            normal("claude-2", member),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[replacement]\nmode = \"off\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.wake_sleeping_teams();
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["inv-lead", "claude-1", "claude-2"],
+            PARALLEL,
+            MergeMode::Autopilot,
+            Some("inv-lead"),
+        )
+        .await;
+    (rig, tasks)
+}
+
+/// Lets the lead, which holds in its first run, go on.
+fn release_lead(rig: &Rig, lead: &TaskId) {
+    std::fs::write(rig.worktree(lead).join(".fake-continue"), "").unwrap();
+}
+
+/// Asks the daemon something a few times, so that it looks at its teams, and lets what it started get going.
+async fn look(rig: &Rig) {
+    for _ in 0..10 {
+        Connection::connect(&rig.home.socket_file())
+            .await
+            .unwrap()
+            .request(
+                Client::Cli,
+                Command::Status(agent_core::protocol::StatusRequest { target: None }),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+// Rule: two failed members whose work the lead lacks are told to it in one briefing: the second does not replace the
+// first, and nothing is published until the lead has been told of both.
+#[tokio::test]
+async fn two_failed_members_with_uncommitted_files_are_both_told_to_the_lead_in_one_briefing() {
+    let (mut rig, tasks) = team_of_two("hold,integrate,integrate", "fail-tool-committed-dirty-named").await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.status_is(&tasks[2], TaskStatus::Failed).await;
+    release_lead(&rig, &tasks[0]);
+
+    let told = rig.prompt(&tasks[0], 3).await;
+    rig.item_where("1.1", "published by the lead", |phase| {
+        matches!(
+            phase,
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+        )
+    })
+    .await;
+    let state = rig
+        .item_where("2.1", "published by the lead", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    for member in [&tasks[1], &tasks[2]] {
+        let worktree = rig.worktree(member);
+        assert!(
+            told.contains(worktree.to_str().unwrap()),
+            "the lead is told of the work in {}: {told}",
+            worktree.display()
+        );
+        assert_eq!(state.find_task(member).unwrap().member.status(), TaskStatus::Stopped);
+    }
+    assert_eq!(
+        state.find_task(&tasks[0]).unwrap().member.runs().len(),
+        3,
+        "one briefing for both: the lead held, integrated, and was told once"
+    );
+}
+
+// Rule: a member the human stopped has its uncommitted file told to the lead before the round is published: stopping a
+// member does not drop what it left in its worktree.
+#[tokio::test]
+async fn a_stopped_member_with_an_uncommitted_file_is_told_to_the_lead_before_the_round_is_published() {
+    let (mut rig, tasks) = team("hold,integrate,integrate", "fail-tool-committed-dirty").await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(tasks[1].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    release_lead(&rig, &tasks[0]);
+
+    let state = published(&rig).await;
+    assert_eq!(
+        state.find_task(&tasks[0]).unwrap().member.runs().len(),
+        3,
+        "the lead was told once after it delivered, and took it"
+    );
+    let told = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(told.contains("draft.txt"), "the lead is told of the file: {told}");
+    assert!(rig.worktree(&tasks[1]).join("draft.txt").is_file());
+}
+
+// Rule: a file the lead was told of that changed afterwards is another file: the lead is told again, and the round is
+// published only when the lead ended after that.
+#[tokio::test]
+async fn a_draft_that_changed_after_the_lead_was_told_is_told_again() {
+    let (mut rig, tasks) = team(
+        "sleep,integrate,integrate-after-changing-drafts,integrate",
+        "fail-tool-committed-dirty",
+    )
+    .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+
+    let state = published(&rig).await;
+    assert_eq!(
+        state.find_task(&tasks[0]).unwrap().member.runs().len(),
+        4,
+        "told of the draft, changed it, told of the change, took it"
+    );
+    let told = rig.prompt(&tasks[0], 4).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        told.contains("draft.txt"),
+        "the lead is told of the changed file: {told}"
+    );
+    assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
+}
+
+// Rule: the human is asked once what the lead left, also across a restart of the daemon: the notice is found among the
+// saved ones and not made again when the lead ends once more.
+#[tokio::test]
+async fn the_human_is_asked_once_also_when_the_daemon_restarts_and_the_lead_ends_again() {
+    let (mut rig, tasks) = team("sleep,work,work,work,work,work", "fail-tool-committed").await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    let commit = member_tip(&rig, &tasks[1]);
+    rig.notification_with(&commit).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let lead = tasks[0].clone();
+    let asked = Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Say(SayRequest {
+                target: Target::Task(lead.clone()),
+                text: "Look at it again.".to_owned().try_into().unwrap(),
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(asked, Reply::Applied { .. }), "{asked:?}");
+    rig.wait_for("the lead ended its fourth run", || rig.runs(&lead) >= 4)
+        .await;
+    rig.status_is(&lead, TaskStatus::Waiting).await;
+    look(&rig).await;
+    let runs = rig.runs(&lead);
+    let asked: Vec<_> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains(&commit))
+        .collect();
+    rig.stop().await.unwrap();
+
+    assert_eq!(runs, 4, "the lead is not woken again for what the human was told");
+    assert_eq!(asked.len(), 1, "the human is asked once: {asked:?}");
 }
