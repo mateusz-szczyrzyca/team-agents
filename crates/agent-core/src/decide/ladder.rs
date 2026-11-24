@@ -40,7 +40,6 @@ pub enum Trouble {
     ContextBound,
     /// The run reported `STATUS: FAILED` after it used the bus's tools: the agent itself gave up on the work. It is never
     /// resumed in its session; it goes to a new session once, then up the rest of the ladder.
-    #[serde(rename = "declared")]
     Failed,
 }
 
