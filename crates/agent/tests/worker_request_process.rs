@@ -4032,4 +4032,75 @@ git commit -qm 'Finish after restart'
                 .any(|e| e["event"] == "interrupted" && e["snapshot"]["commit"].as_str().is_some())
         );
     }
+    #[test]
+    fn startup_recovers_running_and_queued_journals_without_losing_partial_work() {
+        for phase in ["running", "queued"] {
+            let mut world = World::new(&[
+                ("claude-1", "agent", "ask-worker:member,sleep"),
+                ("w-one", "worker", "script:durable-restart"),
+                ("inv-opus", "investigator", "sleep"),
+            ]);
+            world.script(
+                "durable-restart",
+                r#"
+if test ! -f .fake-started; then
+    mkdir -p docs
+    printf 'partial\n' > docs/partial.txt
+    touch .fake-started
+    while test ! -f "$AGENTS_HOME/release-worker"; do sleep 0.05; done
+fi
+test "$(cat docs/partial.txt)" = partial
+printf 'the walkthrough\n' > docs/guide.md
+git add docs
+git commit -qm 'Complete retained work'
+"#,
+            );
+            let request = MEMBER_REQUEST.replace(
+                "\"files\":\"docs/guide.md\"",
+                "\"files\":\"docs/guide.md, docs/partial.txt\"",
+            );
+            world.asks("member", Some(MEMBER_PLAN), &[&request]);
+            world.start();
+            let tasks = world.run(&["claude-1", "inv-opus"]);
+            let member = task(&tasks, "claude-1");
+            world.ended(member, 1);
+            eventually("durable running worker", || {
+                world
+                    .requests()
+                    .get("1")
+                    .and_then(|r| r["helper_task"].as_str())
+                    .is_some_and(|t| world.worktree(t).join(".fake-started").exists())
+            });
+            let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+            let journal_path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+            let running_journal = std::fs::read(&journal_path).unwrap();
+            let running_bus = std::fs::read(world.home.join("bus/state.json")).unwrap();
+            world.stop();
+            if phase == "running" {
+                // Restore the durable files from before orderly shutdown to exercise the crash window.
+                std::fs::write(&journal_path, running_journal).unwrap();
+                std::fs::write(world.home.join("bus/state.json"), running_bus).unwrap();
+            }
+            std::fs::write(world.home.join("release-worker"), "").unwrap();
+            world.start();
+            world.request_is("1", "done");
+            assert_eq!(world.requests()["1"]["helper_task"], worker);
+            assert_eq!(world.file(member, "docs/partial.txt"), "partial\n");
+            assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+            let journal: serde_json::Value = serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+            let events = journal["events"].as_array().unwrap();
+            assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+            assert_eq!(
+                events.iter().filter(|e| e["event"] == "restarted_queued").count(),
+                usize::from(phase == "queued")
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| e["event"] == "interrupted" && e["cause"] == "restart_running")
+                    .count(),
+                1
+            );
+        }
+    }
 }
