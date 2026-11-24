@@ -115,7 +115,8 @@ pub fn provider_of(cli: CliKind, model: Option<&ModelName>) -> &str {
 
 /// Whether `worker` may serve a request with `requires`: every capability of the request is among the worker's declared
 /// ones. A request that requires nothing is met by any worker; a worker that declares none meets only such a request.
-fn meets(worker: &PoolWorker<'_>, requires: &Requires<'_>) -> bool {
+#[must_use]
+pub fn meets(worker: &PoolWorker<'_>, requires: &Requires<'_>) -> bool {
     requires
         .capabilities
         .iter()

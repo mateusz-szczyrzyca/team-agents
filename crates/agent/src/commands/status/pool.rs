@@ -3,7 +3,7 @@
 use agent_core::ids::AgentName;
 use agent_core::protocol::TeamSummary;
 use agent_core::status::TaskStatus;
-use agent_runtime::store::Home;
+use agent_runtime::agentbus::{DelegationStatus, HelperEntry};
 
 #[cfg(test)]
 mod tests;
@@ -14,7 +14,7 @@ mod tests;
 pub(crate) fn render_pool(
     configured: &[AgentName],
     teams: &[TeamSummary],
-    helpers: Option<&serde_json::Map<String, serde_json::Value>>,
+    helpers: Option<&[HelperEntry]>,
 ) -> Option<String> {
     if configured.is_empty() {
         return None;
@@ -29,48 +29,27 @@ pub(crate) fn render_pool(
     Some(text)
 }
 
-/// Reads the helper requests from the bus state file of `home`, if present.
-pub(crate) fn read_helpers(home: &Home) -> Option<serde_json::Map<String, serde_json::Value>> {
-    let state_file = home.root().join("bus/state.json");
-    let text = std::fs::read_to_string(state_file).ok()?;
-    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
-    value.get("helpers").and_then(serde_json::Value::as_object).cloned()
-}
-
 fn find_serving(
     worker: &AgentName,
     teams: &[TeamSummary],
-    helpers: Option<&serde_json::Map<String, serde_json::Value>>,
+    helpers: Option<&[HelperEntry]>,
 ) -> Option<String> {
     if let Some(helpers) = helpers {
-        for helper in helpers.values() {
-            let status = helper
-                .get("status")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if status != "running" && status != "starting" {
+        for helper in helpers {
+            if !matches!(helper.status, DelegationStatus::Running | DelegationStatus::Starting) {
                 continue;
             }
-            let assigned_worker = helper
-                .get("worker")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if assigned_worker != worker.as_str() {
+            if helper.worker.as_ref() != Some(worker) {
                 continue;
             }
-            let from_task = helper
-                .get("from_task")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
+            let from_task = helper.from_task.as_str();
             let team_id = teams
                 .iter()
                 .find(|t| t.members.iter().any(|m| m.task.as_str() == from_task))
                 .map_or(from_task, |t| t.id.as_str());
-            let step = helper
-                .get("step")
-                .and_then(serde_json::Value::as_str)
-                .unwrap_or_default();
-            if !step.is_empty() {
+            if let Some(ref step) = helper.step
+                && !step.is_empty()
+            {
                 return Some(format!("{team_id} (step {step})"));
             }
             if !team_id.is_empty() {

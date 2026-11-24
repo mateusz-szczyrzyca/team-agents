@@ -1045,7 +1045,7 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 			if team != nil || len(s.workers) > 0 {
 				if freeWorkers(team, sortedHelpers(st), s.workers...) <= 0 {
 					msg := fmt.Sprintf("no worker of the pool is free now: do step %s yourself, or ask again for a later step", named.Step)
-					if team != nil && teamHasWorkers(team) {
+					if len(s.workers) == 0 || (team != nil && teamHasWorkers(team)) {
 						msg = fmt.Sprintf("no worker of your team is free now: do step %s yourself, or ask again for a later step", named.Step)
 					}
 					return opErr(DelegateNoFreeWorker, "%s", msg)

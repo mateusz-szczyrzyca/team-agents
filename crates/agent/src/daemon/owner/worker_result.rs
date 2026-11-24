@@ -1054,7 +1054,7 @@ impl Owner {
         let tried = self.try_of(pending);
         facts.try_number = tried.number;
         facts.tries = self.parts.settings.config.workers().tries();
-        facts.elsewhere = self.elsewhere_of(pending);
+        facts.elsewhere = self.elsewhere_of(pending).await;
         match decide(&facts) {
             Verdict::Accept if facts.scope == Scope::Facts => Settlement::Report,
             Verdict::Accept if !checked.committed => {

@@ -18,6 +18,7 @@ use agent_core::protocol::{
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::{AgentBus, AgentBusError};
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
@@ -52,6 +53,9 @@ pub(crate) enum StatusError {
         /// The I/O failure, kept as the cause.
         source: io::Error,
     },
+    /// The bus could not be queried.
+    #[error("cannot read worker requests from the bus")]
+    Bus(#[source] AgentBusError),
     /// The configuration file is not valid.
     #[error("cannot parse the configuration file {path:?}")]
     ConfigParse {
@@ -383,14 +387,8 @@ async fn listing_text(
         &|task| requests.of(task).to_vec(),
         activity.zone,
     );
-    let pool = if !is_targeted && detail == Detail::Short && !listing.teams.is_empty() {
-        if let Ok(settings) = Settings::load(&activity.home).await {
-            let workers = settings.config.worker_agents();
-            let helpers = pool::read_helpers(&activity.home);
-            pool::render_pool(workers, &listing.teams, helpers.as_ref())
-        } else {
-            None
-        }
+    let pool = if !is_targeted && detail == Detail::Short {
+        pool_line(activity, &listing.teams).await?
     } else {
         None
     };
@@ -435,14 +433,8 @@ async fn running_text(
         );
         format!("{text}{}", told.unread())
     };
-    let pool = if detail == Detail::Short && !listed.is_empty() {
-        if let Ok(settings) = Settings::load(&activity.home).await {
-            let workers = settings.config.worker_agents();
-            let helpers = pool::read_helpers(&activity.home);
-            pool::render_pool(workers, &listed, helpers.as_ref())
-        } else {
-            None
-        }
+    let pool = if detail == Detail::Short {
+        pool_line(activity, &listed).await?
     } else {
         None
     };
@@ -470,6 +462,25 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
             .await
         }
     }
+}
+
+/// Observes the configured pool of workers and reads helper requests asynchronously.
+async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+    let settings = match Settings::load(&activity.home).await {
+        Ok(s) => s,
+        Err(SettingsError::MissingConfig { .. }) => return Ok(None),
+        Err(err) => return Err(StatusError::Settings(err)),
+    };
+    let workers = settings.config.worker_agents();
+    if workers.is_empty() {
+        return Ok(None);
+    }
+    let bus = AgentBus::new(
+        settings.config.binaries().agentbus.clone(),
+        activity.home.absolute_root().clone(),
+    );
+    let helpers = bus.helper_list(false).await.map_err(StatusError::Bus)?;
+    Ok(pool::render_pool(workers, teams, Some(&helpers)))
 }
 
 /// Writes `prefix`, then what `shown` says, then the line of runs per CLI if any, the line about low disk space if any
