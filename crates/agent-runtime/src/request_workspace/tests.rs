@@ -206,7 +206,7 @@ async fn a_workspace_record_of_the_kept_format_loads() {
 
     let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
     let expected = RequestWorkspace {
-        base: "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5".parse().unwrap(),
+        base: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
         ..workspace(7)
     };
     assert_eq!(read, expected);
