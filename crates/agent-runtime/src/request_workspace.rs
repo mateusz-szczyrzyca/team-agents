@@ -1,22 +1,31 @@
 //! The record of a request's workspace: the task and worktree a worker serves one request in, made in the requester's
 //! repository at the requester's commit and kept with no place in the requester's crew.
 //!
+//! From part c of the item on, a request of a worker of the pool is served in a workspace of its own: a task and a git
+//! worktree of that task, in the requester's repository, created at the requester's committed end, so that the
+//! requester's uncommitted files stay in their own worktree untouched. The workspace is kept from the moment the
+//! request is given to the worker until its result is settled, then released — its worktree and branch removed — by
+//! the retention policy told in `docs/architecture.md` ("Request workspaces").
+//!
 //! This module is the persisted record and the helpers that create and release such a workspace, so that completion,
 //! pending-settlement and second-try lookups can find a request's worker task and worktree without going through the
-//! requester's crew.
+//! requester's crew. The record is kept in the requester's task directory, which the request names; finding it never
+//! needs the crew.
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, RepoName};
 use agent_core::ids::{AgentName, BranchName, RoundId, TaskId};
+use agent_core::state::CommitId;
 use serde::{Deserialize, Serialize};
 
 use crate::agentbus::RequestId;
-use crate::git::{Git, GitError};
+use crate::git::{DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use crate::store::Home;
 
-/// The start of the name of the file that keeps a request's workspace.
+/// The start of the name of the file that keeps a request's workspace: `request-workspace-<number>.json` in the
+/// requester's task directory.
 const FILE_PREFIX: &str = "request-workspace-";
 
 /// Why a request's workspace cannot be recorded, read or released.
@@ -62,7 +71,7 @@ pub enum WorkspaceError {
         /// The number of the request it holds.
         found: std::num::NonZeroU64,
     },
-    /// A need name cannot be read from its text.
+    /// A name the workspace needs cannot be read from its text.
     #[error("cannot read a name: {0:?}")]
     Name(String),
     /// A workspace cannot be written as JSON.
@@ -87,6 +96,9 @@ pub fn branch(worker: &AgentName, task: &TaskId) -> Result<BranchName, Workspace
 }
 
 /// The absolute path of the worktree of the worker task `task` of the requester's repository `repo` in the `home`.
+///
+/// # Errors
+/// [`WorkspaceError::Name`] when the path is not UTF-8 text or not absolute.
 pub fn worktree_of(home: &Home, repo: &RepoName, task: &TaskId) -> Result<AbsolutePath, WorkspaceError> {
     let path = home.worktree_dir(repo, task);
     let text = path
@@ -95,7 +107,12 @@ pub fn worktree_of(home: &Home, repo: &RepoName, task: &TaskId) -> Result<Absolu
     AbsolutePath::from_str(text).map_err(|source| WorkspaceError::Name(format!("the worktree of {task}: {source}")))
 }
 
-/// A request's workspace.
+/// A request's workspace: the worker, its task and worktree, in the requester's repository at the requester's commit.
+///
+/// The worktree is at [`Home::worktree_dir`]`(requester_repo, worker_task)` on [`RequestWorkspace::branch`]; the record
+/// is kept in the requester's task directory (`request-workspace-<number>.json`), so that lookups of completion,
+/// pending settlement and second try find it without the requester's crew. The workspace is released — its worktree and
+/// branch removed — when the request's result is settled; that is the retention policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct RequestWorkspace {
@@ -105,23 +122,23 @@ pub struct RequestWorkspace {
     pub requester: AgentName,
     /// The requester's task.
     pub requester_task: TaskId,
-    /// The round the requester's last run worked for.
+    /// The round the requester's last run worked for, under which a snapshot of its worktree is kept.
     pub requester_round: RoundId,
-    /// The repository the requester works in.
+    /// The repository the requester works in; the workspace's worktree is of this repository.
     pub requester_repo: RepoName,
     /// The worker that serves the request.
     pub worker: AgentName,
-    /// The worker's task.
+    /// The worker's task; the workspace's worktree and task directory are of this task.
     pub worker_task: TaskId,
     /// The branch of the workspace's worktree.
     pub branch: BranchName,
-    /// The commit the requester's worktree was at when it was committed.
+    /// The commit the requester's worktree was at when it was committed; the workspace's worktree starts here.
     pub base: String,
-    /// How far its request's result got.
+    /// How far its request's result got; each stage is kept as the harness settles it.
     pub stage: Stage,
 }
 
-/// How far the settlement of a request's result has got.
+/// How far the settlement of a request's result has got; written before each next stage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "workspace_stage", rename_all = "snake_case")]
 pub enum Stage {
@@ -142,35 +159,164 @@ fn is_workspace_name(name: &str) -> bool {
     name.starts_with(FILE_PREFIX) && Path::new(name).extension().is_some_and(|ext| ext == "json")
 }
 
-/// The request whose workspace's file is `path`, from its name alone.
+/// The request whose workspace's file is `path`, from its name alone; `None` when the name is not of the form.
 #[must_use]
 pub fn request_of_file(path: &Path) -> Option<RequestId> {
     let digits = path.file_name()?.to_str()?.strip_prefix(FILE_PREFIX)?.strip_suffix(".json")?;
     digits.parse::<std::num::NonZeroU64>().ok().map(RequestId::new)
 }
 
-/// Writes `workspace` to its file in the requester's task directory `task_dir`.
+/// Writes `workspace` to its file in the requester's task directory `task_dir`, through a temporary file, so that a
+/// reader never sees half of it.
+///
+/// # Errors
+/// [`WorkspaceError::Write`] when the file cannot be written; [`WorkspaceError::Encode`] when it cannot be made JSON.
 pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let _ = (task_dir, workspace);
-    Err(WorkspaceError::Name("not implemented".to_owned()))
+    let path = path_of(task_dir, workspace.request);
+    let text = serde_json::to_string_pretty(workspace).map_err(WorkspaceError::Encode)?;
+    let temporary = path.with_extension("json.tmp");
+    std::fs::write(&temporary, text).map_err(|source| WorkspaceError::Write {
+        request: workspace.request,
+        source,
+    })?;
+    std::fs::rename(&temporary, &path).map_err(|source| WorkspaceError::Write {
+        request: workspace.request,
+        source,
+    })
 }
 
-/// The workspace files kept in the requester's task directory `task_dir`, each read on its own.
+/// The workspace files kept in the requester's task directory `task_dir`, each read on its own, oldest first by number:
+/// a file that cannot be read or is not a workspace is an error of its own and does not hide the others. A directory
+/// that is not there holds none.
+///
+/// # Errors
+/// [`WorkspaceError::List`] when the directory cannot be listed.
 pub async fn read_each(task_dir: &Path) -> Result<Vec<Result<RequestWorkspace, WorkspaceError>>, WorkspaceError> {
-    let _ = task_dir;
-    Ok(Vec::new())
+    let mut entries = match tokio::fs::read_dir(task_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => {
+            return Err(WorkspaceError::List {
+                path: task_dir.to_owned(),
+                source,
+            });
+        }
+    };
+    let mut paths = Vec::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(source) => {
+                return Err(WorkspaceError::List {
+                    path: task_dir.to_owned(),
+                    source,
+                });
+            }
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if is_workspace_name(name) {
+            paths.push(entry.path());
+        }
+    }
+    let number = |path: &Path| {
+        path.file_stem()
+            .and_then(|stem| stem.to_str())
+            .and_then(|stem| stem.strip_prefix(FILE_PREFIX))
+            .and_then(|digits| digits.parse::<u64>().ok())
+            .unwrap_or(u64::MAX)
+    };
+    paths.sort_by_key(|path| number(path));
+    let mut read = Vec::new();
+    for path in paths {
+        read.push(read_one(&path).await);
+    }
+    Ok(read)
 }
 
-/// Creates the workspace of `request` in the `home`.
+/// Reads the workspace of one file, checking that it is the request its name says.
+async fn read_one(path: &Path) -> Result<RequestWorkspace, WorkspaceError> {
+    let text = tokio::fs::read_to_string(path)
+        .await
+        .map_err(|source| WorkspaceError::Read {
+            path: path.to_owned(),
+            source,
+        })?;
+    let workspace = serde_json::from_str::<RequestWorkspace>(&text).map_err(|source| WorkspaceError::Parse {
+        path: path.to_owned(),
+        source,
+    })?;
+    if request_of_file(path) == Some(workspace.request) {
+        Ok(workspace)
+    } else {
+        Err(WorkspaceError::Mismatch {
+            path: path.to_owned(),
+            found: workspace.request.number(),
+        })
+    }
+}
+
+/// Creates the workspace of `request` in the `home`: a worktree of the requester's `git` at `base`, on
+/// [`RequestWorkspace::branch`], and records it in the requester's task directory.
+///
+/// The requester's uncommitted files stay in the requester's own worktree untouched: the workspace's worktree is added
+/// for the worker's task, from the requester's committed `base`.
+///
+/// # Errors
+/// [`WorkspaceError`] when the worktree cannot be added, or the record cannot be saved.
 pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let _ = (home, git, workspace);
-    Err(WorkspaceError::Name("not implemented".to_owned()))
+    let base: CommitId = workspace.base
+        .parse()
+        .map_err(|source| WorkspaceError::Name(format!("the base commit of the workspace of {}: {source}", workspace.request)))?;
+    let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
+    git.worktree_add(
+        &worktree,
+        &WorktreeBranch::New {
+            branch: workspace.branch.clone(),
+            start: Revision::Commit(base),
+        },
+    )
+    .await
+    .map_err(|source| WorkspaceError::Git {
+        request: workspace.request,
+        source,
+    })?;
+    let task_dir = home.task_dir(&workspace.requester_task);
+    std::fs::create_dir_all(&task_dir).map_err(|source| WorkspaceError::Write {
+        request: workspace.request,
+        source,
+    })?;
+    save(&task_dir, workspace)
 }
 
-/// Releases the workspace of `request` in the `home`.
+/// Releases the workspace of `request` in the `home`: removes its worktree and its branch, and the record of it kept in
+/// the requester's task directory.
+///
+/// # Errors
+/// [`WorkspaceError`] when a worktree or branch cannot be removed, or the record cannot be removed.
 pub async fn release(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let _ = (home, git, workspace);
-    Err(WorkspaceError::Name("not implemented".to_owned()))
+    let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
+    git.worktree_remove(&worktree, RemoveMode::Force)
+        .await
+        .map_err(|source| WorkspaceError::Git {
+            request: workspace.request,
+            source,
+        })?;
+    git.branch_delete(&workspace.branch, DeleteMode::Force)
+        .await
+        .map_err(|source| WorkspaceError::Git {
+            request: workspace.request,
+            source,
+        })?;
+    let path = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
+    tokio::fs::remove_file(path)
+        .await
+        .map_err(|source| WorkspaceError::Write {
+            request: workspace.request,
+            source,
+        })?;
+    Ok(())
 }
 
 #[cfg(test)]
