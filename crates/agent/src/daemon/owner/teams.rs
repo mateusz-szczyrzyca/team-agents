@@ -1141,9 +1141,7 @@ impl Owner {
                         for res in read {
                             match res {
                                 Ok(workspace) => {
-                                    if workspace.record().worker == *name
-                                        && Some(workspace.record().request) != request
-                                        && !self.answered_requests.contains(&workspace.record().request)
+                                    if workspace.record().worker == *name && Some(workspace.record().request) != request
                                     {
                                         unsettled = true;
                                         break;
