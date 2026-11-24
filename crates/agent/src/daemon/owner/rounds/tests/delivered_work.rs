@@ -345,6 +345,46 @@ async fn a_stopped_member_with_an_uncommitted_file_is_told_to_the_lead_before_th
     assert!(rig.worktree(&tasks[1]).join("draft.txt").is_file());
 }
 
+// Rule: a member that was started in a new session once and is then stopped by the human has its uncommitted file told to
+// the lead like any other stopped member: only a member the ladder gave to the lead is not looked at again.
+#[tokio::test]
+async fn a_renewed_member_the_human_stopped_has_its_uncommitted_file_told_to_the_lead() {
+    let (mut rig, tasks) = team(
+        "hold,integrate,integrate",
+        "nostatus,nostatus,nostatus,fail-tool-committed-dirty",
+    )
+    .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(tasks[1].clone()),
+            }),
+        )
+        .await
+        .unwrap();
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    release_lead(&rig, &tasks[0]);
+
+    let state = published(&rig).await;
+    assert!(
+        state.find_task(&tasks[1]).unwrap().member.renewals().is_some(),
+        "the member was started in a new session before it failed"
+    );
+    assert_eq!(
+        state.find_task(&tasks[0]).unwrap().member.runs().len(),
+        3,
+        "the lead was told once after it delivered, and took it"
+    );
+    let told = rig.prompt(&tasks[0], 3).await;
+    rig.stop().await.unwrap();
+
+    assert!(told.contains("draft.txt"), "the lead is told of the file: {told}");
+}
+
 // Rule: a file the lead was told of that changed afterwards is another file: the lead is told again, and the round is
 // published only when the lead ended after that.
 #[tokio::test]
