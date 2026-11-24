@@ -72,6 +72,20 @@ pub enum WorkspaceError {
         /// The number of the request it holds.
         found: std::num::NonZeroU64,
     },
+    /// A worker task would reuse the requester's worktree.
+    #[error("worker workspace cannot reuse requester task {task}")]
+    AliasedTask {
+        /// The aliased task.
+        task: TaskId,
+    },
+    /// A saved branch does not belong to the dedicated worker task.
+    #[error("workspace branch {found} does not match {expected}")]
+    UnexpectedBranch {
+        /// Branch derived from the worker and task.
+        expected: BranchName,
+        /// Untrusted branch in the record.
+        found: BranchName,
+    },
     /// A branch of the workspace cannot be read from its text.
     #[error("the branch of the workspace of {worker} in {task} cannot be read from its text")]
     Branch {
@@ -171,13 +185,13 @@ pub fn worktree_of(home: &Home, repo: &RepoName, task: &TaskId) -> Result<Absolu
 
 /// A request's workspace: the worker, its task and worktree, in the requester's repository at the requester's commit.
 ///
-/// The worktree is at [`Home::worktree_dir`]`(requester_repo, worker_task)` on [`RequestWorkspace::branch`]; the record
+/// The worktree is at [`Home::worktree_dir`]`(requester_repo, worker_task)` on the branch derived from its worker and task; the record
 /// is kept in the requester's task directory (`request-workspace-<number>.json`), so that lookups of completion,
 /// pending settlement and second try find it without the requester's crew. The workspace is released — its worktree and
 /// branch removed — when the request's result is settled; that is the retention policy.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct RequestWorkspace {
+pub struct WorkspaceRecord {
     /// The request.
     pub request: RequestId,
     /// The requester.
@@ -200,14 +214,46 @@ pub struct RequestWorkspace {
     pub stage: Stage,
 }
 
-/// Unvalidated workspace metadata, checked when converted to a request workspace.
-pub type WorkspaceRecord = RequestWorkspace;
+/// A workspace whose worker task and branch cannot alias the requester.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "WorkspaceRecord")]
+pub struct RequestWorkspace {
+    /// Validated metadata; callers can only borrow it immutably.
+    #[serde(flatten)]
+    record: WorkspaceRecord,
+}
 
 impl RequestWorkspace {
     /// Borrows the workspace metadata without permitting changes to its identity.
     #[must_use]
     pub fn record(&self) -> &WorkspaceRecord {
-        self
+        &self.record
+    }
+}
+
+impl TryFrom<WorkspaceRecord> for RequestWorkspace {
+    type Error = WorkspaceError;
+
+    /// Seals a dedicated worker task and its derived branch.
+    ///
+    /// # Errors
+    /// Returns [`WorkspaceError::AliasedTask`] for the requester's task,
+    /// [`WorkspaceError::UnexpectedBranch`] for another branch, or
+    /// [`WorkspaceError::Branch`] if the derived branch is invalid.
+    fn try_from(record: WorkspaceRecord) -> Result<Self, Self::Error> {
+        if record.worker_task == record.requester_task {
+            return Err(WorkspaceError::AliasedTask {
+                task: record.worker_task,
+            });
+        }
+        let expected = branch(&record.worker, &record.worker_task)?;
+        if record.branch != expected {
+            return Err(WorkspaceError::UnexpectedBranch {
+                expected,
+                found: record.branch,
+            });
+        }
+        Ok(Self { record })
     }
 }
 
@@ -248,7 +294,7 @@ pub fn request_of_file(path: &Path) -> Option<RequestId> {
 /// # Errors
 /// [`WorkspaceError::Encode`] when the workspace cannot be made JSON.
 fn file_and_text(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(PathBuf, String), WorkspaceError> {
-    let path = path_of(task_dir, workspace.request);
+    let path = path_of(task_dir, workspace.record.request);
     let text = serde_json::to_string_pretty(workspace).map_err(WorkspaceError::Encode)?;
     Ok((path, text))
 }
@@ -263,11 +309,11 @@ pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), Workspa
     let (path, text) = file_and_text(task_dir, workspace)?;
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, text).map_err(|source| WorkspaceError::Write {
-        request: workspace.request,
+        request: workspace.record.request,
         source,
     })?;
     std::fs::rename(&temporary, &path).map_err(|source| WorkspaceError::Write {
-        request: workspace.request,
+        request: workspace.record.request,
         source,
     })
 }
@@ -281,21 +327,21 @@ pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), Workspa
 /// [`CompleteError::Pending`] when the pending cannot be written; [`CompleteError::Workspace`] when the record cannot be
 /// saved at `Ended`.
 pub fn complete(home: &Home, workspace: &mut RequestWorkspace, pending: &Pending) -> Result<(), CompleteError> {
-    let worker_dir = home.task_dir(&workspace.worker_task);
+    let worker_dir = home.task_dir(&workspace.record.worker_task);
     std::fs::create_dir_all(&worker_dir).map_err(|source| CompleteError::Pending {
-        request: workspace.request,
+        request: workspace.record.request,
         source: PendingError::Write {
             path: worker_dir.clone(),
             source,
         },
     })?;
     write_pending(&worker_dir, pending).map_err(|source| CompleteError::Pending {
-        request: workspace.request,
+        request: workspace.record.request,
         source,
     })?;
-    workspace.stage = Stage::Ended;
-    save(&home.task_dir(&workspace.requester_task), workspace).map_err(|source| CompleteError::Workspace {
-        request: workspace.request,
+    workspace.record.stage = Stage::Ended;
+    save(&home.task_dir(&workspace.record.requester_task), workspace).map_err(|source| CompleteError::Workspace {
+        request: workspace.record.request,
         source,
     })
 }
@@ -362,18 +408,18 @@ async fn read_one(path: &Path) -> Result<RequestWorkspace, WorkspaceError> {
         path: path.to_owned(),
         source,
     })?;
-    if request_of_file(path) == Some(workspace.request) {
+    if request_of_file(path) == Some(workspace.record.request) {
         Ok(workspace)
     } else {
         Err(WorkspaceError::Mismatch {
             path: path.to_owned(),
-            found: workspace.request.number(),
+            found: workspace.record.request.number(),
         })
     }
 }
 
 /// Creates the workspace of `request` in the `home`: a worktree of the requester's `git` at `base`, on
-/// [`RequestWorkspace::branch`], and records it in the requester's task directory.
+/// the branch derived from its worker and task, and records it in the requester's task directory.
 ///
 /// The requester's uncommitted files stay in the requester's own worktree untouched: the workspace's worktree is added
 /// for the worker's task, from the requester's committed `base`.
@@ -381,20 +427,20 @@ async fn read_one(path: &Path) -> Result<RequestWorkspace, WorkspaceError> {
 /// # Errors
 /// [`WorkspaceError`] when the worktree cannot be added, or the record cannot be saved.
 pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
+    let worktree = worktree_of(home, &workspace.record.requester_repo, &workspace.record.worker_task)?;
     git.worktree_add(
         &worktree,
         &WorktreeBranch::New {
-            branch: workspace.branch.clone(),
-            start: Revision::Commit(workspace.base.clone()),
+            branch: workspace.record.branch.clone(),
+            start: Revision::Commit(workspace.record.base.clone()),
         },
     )
     .await
     .map_err(|source| WorkspaceError::Git {
-        request: workspace.request,
+        request: workspace.record.request,
         source,
     })?;
-    let task_dir = home.task_dir(&workspace.requester_task);
+    let task_dir = home.task_dir(&workspace.record.requester_task);
     let record = write_record(&task_dir, workspace).await;
     if let Err(write_error) = record {
         // A failed record write rolls the new worktree and its branch back, so a failed prepare leaves nothing
@@ -403,7 +449,7 @@ pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Re
         if let Err(rollback_error) = remove_worktree_and_branch(home, git, workspace).await {
             tracing::warn!(
                 event = agent_core::log::LogEvent::GitCallFailed.as_str(),
-                request = %workspace.request,
+                request = %workspace.record.request,
                 error = %rollback_error,
                 "the worktree of a failed prepare could not be rolled back"
             );
@@ -423,12 +469,15 @@ pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Re
 /// [`WorkspaceError`] when a worktree or branch cannot be removed, or the record cannot be removed.
 pub async fn release(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
     remove_worktree_and_branch(home, git, workspace).await?;
-    let path = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
+    let path = path_of(
+        &home.task_dir(&workspace.record.requester_task),
+        workspace.record.request,
+    );
     match tokio::fs::remove_file(&path).await {
         Ok(()) => Ok(()),
         Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(WorkspaceError::Write {
-            request: workspace.request,
+            request: workspace.record.request,
             source,
         }),
     }
@@ -443,7 +492,7 @@ async fn write_record(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(
     tokio::fs::create_dir_all(task_dir)
         .await
         .map_err(|source| WorkspaceError::Write {
-            request: workspace.request,
+            request: workspace.record.request,
             source,
         })?;
     let (path, text) = file_and_text(task_dir, workspace)?;
@@ -451,13 +500,13 @@ async fn write_record(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(
     tokio::fs::write(&temporary, text)
         .await
         .map_err(|source| WorkspaceError::Write {
-            request: workspace.request,
+            request: workspace.record.request,
             source,
         })?;
     tokio::fs::rename(&temporary, &path)
         .await
         .map_err(|source| WorkspaceError::Write {
-            request: workspace.request,
+            request: workspace.record.request,
             source,
         })
 }
@@ -474,32 +523,32 @@ async fn remove_worktree_and_branch(
     git: &Git,
     workspace: &RequestWorkspace,
 ) -> Result<(), WorkspaceError> {
-    let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
+    let worktree = worktree_of(home, &workspace.record.requester_repo, &workspace.record.worker_task)?;
     let held = git.held_branches().await.map_err(|source| WorkspaceError::Git {
-        request: workspace.request,
+        request: workspace.record.request,
         source,
     })?;
-    if held.contains(&workspace.branch) {
+    if held.contains(&workspace.record.branch) {
         git.worktree_remove(&worktree, RemoveMode::Force)
             .await
             .map_err(|source| WorkspaceError::Git {
-                request: workspace.request,
+                request: workspace.record.request,
                 source,
             })?;
     }
     if git
-        .branch_tip(&workspace.branch)
+        .branch_tip(&workspace.record.branch)
         .await
         .map_err(|source| WorkspaceError::Git {
-            request: workspace.request,
+            request: workspace.record.request,
             source,
         })?
         .is_some()
     {
-        git.branch_delete(&workspace.branch, DeleteMode::Force)
+        git.branch_delete(&workspace.record.branch, DeleteMode::Force)
             .await
             .map_err(|source| WorkspaceError::Git {
-                request: workspace.request,
+                request: workspace.record.request,
                 source,
             })?;
     }
