@@ -1738,6 +1738,7 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
         f.status_is(task, TaskStatus::Waiting).await;
     }
 
+    f.stop().await.unwrap();
     let id = f
         .bus()
         .delegate(&Delegation {
@@ -1753,6 +1754,8 @@ async fn a_worker_that_fails_returns_the_failure_to_the_requester() {
         })
         .await
         .unwrap();
+    f.stage_legacy_request(id);
+    f.start().await;
     f.status_is(&tasks[2], TaskStatus::Failed).await;
     let request = f.request_with(id, DelegationStatus::Failed).await;
     f.stop().await.unwrap();
@@ -1925,7 +1928,10 @@ async fn a_worker_whose_questions_cannot_be_used_fails_the_request_as_one_withou
         f.status_is(task, TaskStatus::Waiting).await;
     }
 
+    f.stop().await.unwrap();
     let id = f.delegate(&pair, "Do it.").await;
+    f.stage_legacy_request(id);
+    f.start().await;
     let request = f.request_with(id, DelegationStatus::Failed).await;
     f.stop().await.unwrap();
 
@@ -3517,4 +3523,15 @@ async fn owned_crew_request_from_a_roundless_member_is_served() {
     f.stop().await.unwrap();
     assert_eq!(answer.worker, Some(agent("glm-1")));
     assert_eq!(answer.summary, "Roundless result.");
+}
+
+impl Fixture {
+    /// Selects pre-ownership request behavior while this temporary daemon is stopped.
+    fn stage_legacy_request(&self, id: RequestId) {
+        assert!(self.daemon.is_none(), "stage before the fixture daemon can dispatch");
+        let path = self.home.root().join("bus/state.json");
+        let mut state: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        state["helpers"][id.number().to_string()]["recovery"] = serde_json::json!(false);
+        std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
+    }
 }
