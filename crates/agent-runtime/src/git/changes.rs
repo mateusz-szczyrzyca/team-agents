@@ -118,7 +118,26 @@ impl Git {
     /// # Errors
     /// The errors of [`Git::uncommitted_changes`].
     pub async fn worktree_tree(&self) -> Result<String, GitError> {
-        Ok(String::new())
+        let objects = self.objects_dir().await?;
+        let scratch = make_scratch().await?;
+        let read = match self.scratch_handle(scratch.path(), &objects) {
+            Ok((handle, hooks)) => handle.read_worktree_tree(&hooks).await,
+            Err(error) => Err(error),
+        };
+        close_scratch(scratch).await;
+        read
+    }
+
+    /// With an index of its own that nothing else sees: the head's tree read in, every file of the worktree added, and
+    /// the tree of that index written.
+    async fn read_worktree_tree(&self, hooks: &str) -> Result<String, GitError> {
+        let overrides = self.capture_overrides(hooks).await?;
+        self.run_scratch(GitOperation::ReadTree, &overrides, &[arg("read-tree"), arg("HEAD")])
+            .await?;
+        self.run_scratch(GitOperation::Add, &overrides, &[arg("add"), arg("-A"), arg("--")])
+            .await?;
+        self.scratch_text(GitOperation::WriteTree, &overrides, &[arg("write-tree")])
+            .await
     }
 
     /// The directory the repository keeps its objects in, shared by all its worktrees.
