@@ -1292,8 +1292,18 @@ impl Owner {
                 ),
             };
             owned = if ending == agent_core::decide::worker_result::WorkerEnding::NoStatus {
-                self.interrupt_owned_request(&task, &run_id, agent_core::decide::worker_recovery::Cause::NoStatus)
-                    .await?
+                let cause = match &outcome {
+                    Outcome::Verdict(verdict) => match verdict.as_ref() {
+                        RunVerdict::Finished(run) => match &run.classified.end {
+                            RunEnd::QuotaExhausted { .. } => agent_core::decide::worker_recovery::Cause::Quota,
+                            RunEnd::RateLimited => agent_core::decide::worker_recovery::Cause::Refused,
+                            _ => agent_core::decide::worker_recovery::Cause::NoStatus,
+                        },
+                        RunVerdict::Interrupted { .. } => agent_core::decide::worker_recovery::Cause::NoStatus,
+                    },
+                    Outcome::Failed(_) => agent_core::decide::worker_recovery::Cause::Died,
+                };
+                self.interrupt_owned_request(&task, &run_id, cause).await?
             } else {
                 self.observe_owned_request(&task, &run_id, ending, summary).await?
             };

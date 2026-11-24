@@ -1295,19 +1295,17 @@ impl Owner {
             if !self.launch_allowed().await {
                 break;
             }
-            let recovering = self
-                .owned_journal(&req.from_task, req.id)
-                .await?
-                .is_some_and(|journal| {
-                    journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
-                        && matches!(
-                            journal.events().last(),
-                            Some(
-                                agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
-                                    | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
-                            )
+            let journal = self.owned_journal(&req.from_task, req.id).await?;
+            let recovering = journal.as_ref().is_some_and(|journal| {
+                journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
+                    && matches!(
+                        journal.events().last(),
+                        Some(
+                            agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
+                                | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
                         )
-                });
+                    )
+            });
             if recovering {
                 for worker in &mut pool_workers_data {
                     let availability = self.worker_availability_except(&worker.name, Some(req.id)).await;
@@ -1342,6 +1340,34 @@ impl Owner {
                         run_limit,
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
+                } else if let Some((worker, failed_provider)) = journal.as_ref().and_then(|journal| {
+                    use agent_core::decide::worker_recovery::Cause;
+                    use agent_runtime::worker_request::recovery::Transition;
+                    if !matches!(
+                        journal.events().last(),
+                        Some(Transition::Interrupted {
+                            cause: Cause::Quota | Cause::Refused,
+                            ..
+                        })
+                    ) {
+                        return None;
+                    }
+                    let worker = journal.events().iter().rev().find_map(|event| match event {
+                        Transition::Started { worker, .. } => Some(worker),
+                        Transition::Assigned { workspace, .. } => Some(&workspace.record().worker),
+                        _ => None,
+                    })?;
+                    let config = self.parts.settings.config.agent(worker)?;
+                    Some((worker, provider_of(config.cli, config.model.as_ref())))
+                }) {
+                    agent_core::decide::pool::second_try_pool_worker(
+                        &pool_workers,
+                        &requires,
+                        worker,
+                        failed_provider,
+                        run_limit,
+                    )
+                    .map(|(name, provider)| (name.clone(), provider.to_owned()))
                 } else {
                     let last_served = LastServed(if recovering {
                         None

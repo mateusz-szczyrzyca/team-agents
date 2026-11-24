@@ -324,7 +324,12 @@ impl Owner {
         };
         // The pending must belong to this team and name the record's worker, task and requester before any
         // record path is used or the workspace is released; a mismatch is a damaged file.
-        if pending.worker != record.record().worker
+        if (pending.worker != record.record().worker
+            && !(self
+                .owned_journal(&pending.requester_task, pending.request)
+                .await?
+                .is_some()
+                && self.owns_observed_result(&pending).await?))
             || pending.team != *team
             || pending.worker_task != record.record().worker_task
             || pending.requester != record.record().requester
