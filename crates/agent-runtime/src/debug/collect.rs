@@ -737,7 +737,7 @@ impl Collection {
                     },
                 );
                 self.summary.history_tail = Some(text.clone());
-                self.enrich_last_run_details(home, &records, team);
+                self.enrich_last_run_details_with_tools(Some(home), &records, team);
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -756,7 +756,19 @@ impl Collection {
         Ok(())
     }
 
-    fn enrich_last_run_details(&mut self, home: &Home, records: &[agent_core::history::SequencedRecord], team: &Team) {
+    /// Adds the last run of each member of `team` to the summary, without counting its tool calls: the history the
+    /// steps of a run are read from is not given here.
+    #[cfg(test)]
+    fn enrich_last_run_details(&mut self, records: &[agent_core::history::SequencedRecord], team: &Team) {
+        self.enrich_last_run_details_with_tools(None, records, team);
+    }
+
+    fn enrich_last_run_details_with_tools(
+        &mut self,
+        home: Option<&Home>,
+        records: &[agent_core::history::SequencedRecord],
+        team: &Team,
+    ) {
         let selection = agent_core::story::Selection::Team(team.id().clone());
         let roster: Vec<_> = team
             .crew()
@@ -764,7 +776,9 @@ impl Collection {
             .into_iter()
             .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
             .collect();
-        self.count_tools(home, &roster);
+        if let Some(home) = home {
+            self.count_tools(home, &roster);
+        }
         for (_role, member) in roster {
             let Some(last_run) = member.runs().last() else {
                 continue;
