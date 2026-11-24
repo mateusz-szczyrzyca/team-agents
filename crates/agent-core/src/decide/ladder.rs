@@ -85,9 +85,9 @@ pub fn next_step(
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
         // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
-        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound => false,
-        // RED stub: a declared failure is wrongly resumed in its session.
-        Trouble::Failed => true,
+        // A declared failure is the agent's own verdict on its work: its session is not resumed, the new session comes
+        // from the rung below.
+        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound | Trouble::Failed => false,
     };
     if retried {
         return LadderStep::SameSession;
