@@ -5,13 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.92.0 — 24.11.2026 — PR pending
-
-### Bug fixes
-- [agent] [agent-runtime] [agentbus] A late or repeated worker result can no longer settle a newer attempt or send a second final notice, including after a daemon restart. The final notice names the worker that served the request.
-- [agent] [agent-runtime] Workers that report FAILED or QUESTIONS after doing work get another try under `[workers] tries`, preferring another provider. Rejected work is saved before handoff, and a pool with one eligible worker can use its second try.
-
-## 0.91.0 — 24.11.2026 — PR #244
+## 0.91.0 — 24.11.2026 — PR pending
 
 ### Enhancements
 - [agent-core] [agent-runtime] Prepare a recovery policy and an opt-in durable journal for worker requests, retaining workspace and snapshot identities, run ownership and separate retry counters. Automatic recovery is not enabled in this version; existing requests keep their previous handling.
