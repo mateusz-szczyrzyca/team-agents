@@ -3385,7 +3385,7 @@ fi
         world.request_is("1", "done");
         assert_eq!(world.requests()["1"]["worker"], "w-or");
         assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
-        assert_eq!(world.count_told("claude-1", "Your request H1"), 1);
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
         world.told("claude-1", "w-or");
     }
 }
