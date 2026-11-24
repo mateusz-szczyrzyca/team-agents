@@ -132,20 +132,27 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 |---|---|---|
 | `serena.remind_after` | `40` | a run that has Serena and made this many searches of code without it is told once in its session to find code with Serena; `0` turns the reminder off. A file without `[serena]` keeps the default, and a run without Serena is never reminded |
 
-**What counts as a search of code.** A step of the run counts when it searches or reads a file of code without calling
-Serena: the shell running `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` or `find` over such a file, or the CLI's own
-`Grep` or `Read` (opencode's `grep` or `read`) over one. A file of code is a file whose extension is one Serena's
-language servers read — `rs`, `go`, `py`, `pyi`, `ts`, `tsx`, `js`, `jsx`, `mjs`, `cjs`, `java`, `c`, `h`, `cc`,
-`cpp`, `cxx`, `hpp`, `hh`, `cs`, `rb`, `php`, `kt`, `kts`, `swift`, `sh`, `bash`, `zsh`, `sql`, `ex`, `exs`, `erl`,
-`lua`, `pl` — and the shell, SQL, Elixir, Erlang and Lua that a repository of these agents holds too. Markdown, TOML,
-YAML, a log or a diff is text: it never counts, and `grep` stays the tool for it. A call of Serena, agentbus, a file
-edit, a message and an error never count.
+**What counts as a search of code.** A step of the run counts when it searches or reads code without calling Serena:
+the shell running `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` or `find` over a file of code, or the CLI's own
+`Grep`, `Glob` or `Read` (opencode's `grep`, `glob` or `read`) over one. A file of code is a file whose extension is one
+Serena's language servers read — `rs`, `go`, `py`, `pyi`, `ts`, `tsx`, `js`, `jsx`, `mjs`, `cjs`, `java`, `c`, `h`,
+`cc`, `cpp`, `cxx`, `hpp`, `hh`, `cs`, `rb`, `php`, `kt`, `kts`, `swift`, `sh`, `bash`, `zsh`, `sql`, `ex`, `exs`,
+`erl`, `lua`, `pl` — and the shell, SQL, Elixir, Erlang and Lua that a repository of these agents holds too. A search
+over a directory of code counts as well: `.`, or a path with one of `src`, `crates`, `lib`, `cmd`, `pkg`, `internal`,
+`app`, `tests`, `test`, `tools`, `bin`, `agentbus` among its parts (`grep -rn x crates/`, `Grep` over `src`), unless the
+line pipes the result on to another command (`rg x src | sort`) and for `find`, whose directories only say where it
+looks; a `Glob` of `src/**/*.rs` counts by its pattern. Running a script (`python3 x.py`, `awk`) is no search. Markdown,
+TOML, YAML, a log or a diff is text: it never counts, and `grep` stays the tool for it. A call of Serena, agentbus, a
+file edit, a message and an error never count.
 
-**One reminder per session.** At `remind_after` the run engine logs `serena_reminded` and records it in the history,
-without a stop or a restart of the run; the text of the reminder is the catalog's, names the count, asks in the
-imperative to find a symbol with `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations
-with `get_symbols_overview`, and to keep `grep` for text. A run that called Serena at least once is never reminded, and
-neither is a session that was reminded once. A new session counts anew; a resumed one keeps the count of its session.
+**One reminder per session.** At `remind_after` the run engine logs `serena_reminded` and records it in the history, and
+the daemon puts the text of the reminder on the bus for the run's agent in the same look at its runs, as `agent say`
+does: the agent reads it at its next call of the bus while the run goes on, with no stop and no restart, and the run is
+not given a second one. The text is the catalog's, names the count, asks in the imperative to find a symbol with
+`find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and to
+keep `grep` for text. A run that called Serena at least once is never reminded, and neither is a session that was
+reminded once, also after a restart of the daemon: a resumed session reads its count and its reminder from the history. A
+new session counts anew. The default of `40` leaves a short task alone and reaches a run that has settled on `grep` long before it makes hundreds of reads, as the run that made this reminder necessary did (678 reads and 126 greps, no call of Serena).
 No tool is taken away and no command is refused. Each reminder is the log event `serena_reminded` and a record of the
 history with the task, the run, the count and the CLI; `agent debug` tells, next to each run's tool count, whether it
 was reminded and how many calls of Serena it made after.

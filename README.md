@@ -317,10 +317,12 @@ message, a configuration key, a log event, Markdown, a diff — with a narrow pa
 it, a worker with the others (the delegation text names the same tools), and so does a new session; a resumed one does
 not repeat it, and a run without Serena gets the prompt it always got, byte for byte. `agent debug` counts each run's
 tool calls, Serena's and the shell's among them, so you can see whether the agents use it. A run that searches code
-without Serena — `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` or `find` over a file of code, or the CLI's own `Grep`
-or `Read` over one — is reminded once in its session, at `[serena] remind_after` searches (40 by default, `0` turns it
-off) and only if it never called Serena: one reminder of the prompts' catalog, naming the count and asking for
-`find_symbol`, `find_referencing_symbols` and `get_symbols_overview`, while `grep` stays for text. It is logged as
+without Serena — `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` or `find` over a file or a directory of code, or the CLI's own
+`Grep`, `Glob` or `Read` over one — is reminded once in its session, at `[serena] remind_after` searches (40 by default,
+`0` turns it off) and only if it never called Serena: one reminder of the prompts' catalog, naming the count and asking
+for `find_symbol`, `find_referencing_symbols` and `get_symbols_overview`, while `grep` stays for text. The daemon puts it
+on the bus while the run goes on, so the agent reads it at its next call of the bus; a daemon restarted in between does
+not remind a session twice. It is logged as
 `serena_reminded` and recorded in the history, and `agent debug` tells whether a run was reminded and how many calls
 of Serena it made after. No tool is blocked. See
 [configuration](docs/configuration.md#binaries) and [`[serena]`](docs/configuration.md#serena).
