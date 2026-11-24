@@ -286,3 +286,6 @@ fn assigned_run<'a>(journal: &'a Journal, task: &TaskId, worker: &agent_core::id
     }
     None
 }
+
+#[cfg(test)]
+mod tests;
