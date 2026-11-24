@@ -1258,6 +1258,10 @@ async fn a_member_run_that_used_a_tool_when_it_failed_is_not_retried() {
         investigator("inv-gemini", "sleep"),
         normal("claude-1", "fail-first-tool:the member failed"),
     ]);
+    // A declared FAILED ends the task here, as it did before the ladder took it: `mode = "off"`.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("\n[replacement]\nmode = \"off\"\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
     // The first run of this home that streams the marker tool call failed with it used: the run is not retried for
@@ -1372,6 +1376,10 @@ async fn a_member_that_failed_after_using_a_tool_tells_the_coordinators_next_run
         investigator("inv-gemini", "sleep"),
         normal("claude-1", "fail-first-tool:the member failed"),
     ]);
+    // A declared FAILED ends the task here, as it did before the ladder took it: `mode = "off"`.
+    let mut config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    config.push_str("\n[replacement]\nmode = \"off\"\n");
+    std::fs::write(f.home.config_file(), config).unwrap();
     f.start().await;
     let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
     // The first run of this home that streams the marker tool call failed with it used: the run is not retried for

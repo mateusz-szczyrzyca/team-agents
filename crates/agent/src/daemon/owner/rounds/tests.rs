@@ -787,6 +787,10 @@ async fn lead_done_blocked_notice_dedup_resume_member_with_status_then_pr() {
     )
     .await;
     rig.wake_sleeping_teams();
+    // A declared FAILED ends the task here, as it did before the ladder took it: `mode = "off"`.
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("\n[replacement]\nmode = \"off\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start().await;
 
     let (_team, tasks) = rig
