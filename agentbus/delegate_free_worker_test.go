@@ -343,3 +343,28 @@ func TestFreePoolWorkersStoppedTeam(t *testing.T) {
 		}
 	})
 }
+
+func TestFreePoolWorkersRefuseUnknownWorkspaceOwnership(t *testing.T) {
+	for _, kind := range []string{"tasks-file", "missing-worker"} {
+		t.Run(kind, func(t *testing.T) {
+			tasks := filepath.Join(t.TempDir(), "tasks")
+			if kind == "tasks-file" {
+				if err := os.WriteFile(tasks, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				task := filepath.Join(tasks, "requester")
+				if err := os.MkdirAll(task, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(task, "request-workspace-1.json"), []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := &State{}
+			if got := freePoolWorkersState(st, []string{"w1"}, tasks); got != 0 {
+				t.Fatalf("unknown workspace ownership: free workers = %d, want 0", got)
+			}
+		})
+	}
+}
