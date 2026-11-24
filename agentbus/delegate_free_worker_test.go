@@ -287,7 +287,9 @@ func TestFreePoolWorkersObservationCauses(t *testing.T) {
 
 	// 4. Truly free worker
 	mustWith(t, b, func(st *State) {
-		_ = os.Remove(recordPath)
+		if err := os.Remove(recordPath); err != nil {
+			t.Fatal(err)
+		}
 		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 1 {
 			t.Fatalf("expected 1 free worker when w1 is clear, got %d", free)
 		}
@@ -312,14 +314,20 @@ func TestFreePoolWorkersDamagedOrUnreadableRecord(t *testing.T) {
 			t.Fatalf("expected 0 free workers when malformed workspace record exists, got %d", free)
 		}
 	})
-	_ = os.Remove(malformedPath)
+	if err := os.Remove(malformedPath); err != nil {
+		t.Fatal(err)
+	}
 
 	// 2. Unreadable workspace record conservatively marks pool workers unsettled
 	unreadablePath := filepath.Join(taskPath, "request-workspace-unreadable.json")
 	if err := os.WriteFile(unreadablePath, []byte(`{"worker":"w1"}`), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.Chmod(unreadablePath, 0o600) })
+	t.Cleanup(func() {
+		if err := os.Chmod(unreadablePath, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
 	mustWith(t, b, func(st *State) {
 		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
 			t.Fatalf("expected 0 free workers when unreadable workspace record exists, got %d", free)
