@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.85.0 — 24.11.2026 — PR #TBD
+
+### New features
+- [agent] [agent-core] An agent that reports `STATUS: FAILED` after it called a bus tool no longer ends its task at once. The task is started once more in a new session, briefed with the reason `failed` and the words its agent last wrote; if that fails too, another agent of `[replacement] agents` or the team's lead takes it over (the lead may use the member's worktree and branch), and the human is asked only when no rung is left. `[replacement] mode = "off"` keeps the failure final, as before.
+
 ## 0.84.0 — 24.11.2026 — PR #236
 
 ### New features
