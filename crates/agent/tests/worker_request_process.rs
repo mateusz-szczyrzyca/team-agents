@@ -1960,6 +1960,110 @@ Integrate the guide.
     }
 
     #[test]
+    fn a_workspace_whose_pending_is_malformed_is_quarantined_and_never_released_across_passes_and_reload() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, true);
+        // The record is at Ended and its pending is not JSON: the pending cannot be used, so it is set aside and kept,
+        // and the workspace is never released on its behalf.
+        let task_dir = world.home.join("tasks").join(worker_task);
+        std::fs::write(task_dir.join("worker-request-1.json"), "not json at all").unwrap();
+        let record_path = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let mut record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+        record["stage"] = serde_json::json!({"workspace_stage": "ended"});
+        std::fs::write(&record_path, record.to_string()).unwrap();
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+
+        world.start();
+
+        // The first settlement pass sets the malformed pending aside, keeping it under a `.damaged` name.
+        eventually("the malformed pending to be set aside", || {
+            task_dir.join("worker-request-1.json.damaged").exists()
+        });
+        // A later pass must not release the quarantined workspace: its record, worktree and branch all stay.
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a later pass");
+        assert!(worktree.exists(), "the worktree is kept after a later pass");
+        assert!(
+            world.git_output(&member, &["branch", "--list", &branch]).contains(&branch),
+            "the branch is kept after a later pass"
+        );
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the malformed pending is kept"
+        );
+        // A daemon that restarts still keeps the quarantined workspace and its malformed pending.
+        world.stop();
+        world.start();
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a reload");
+        assert!(worktree.exists(), "the worktree is kept after a reload");
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the malformed pending is kept after a reload"
+        );
+    }
+
+    #[test]
+    fn a_workspace_whose_pending_mismatches_is_quarantined_and_never_released_across_passes_and_reload() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, true);
+        // The pending is a valid request for a different worker task than the record: it mismatches the record, so it
+        // is set aside and kept, and the workspace is never released on its behalf.
+        let mismatching = serde_json::json!({
+            "request": 1,
+            "team": world.team_id(),
+            "requester": "claude-1",
+            "requester_task": member,
+            "worker": "glm-1",
+            "worker_task": "task-20261124-090000-0000",
+            "summary": "Result: done.",
+            "run_seconds": 1,
+            "stage": {"stage": "ended"},
+        });
+        let task_dir = world.home.join("tasks").join(worker_task);
+        std::fs::write(task_dir.join("worker-request-1.json"), mismatching.to_string()).unwrap();
+        let record_path = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let mut record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+        record["stage"] = serde_json::json!({"workspace_stage": "ended"});
+        std::fs::write(&record_path, record.to_string()).unwrap();
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+
+        world.start();
+
+        eventually("the mismatching pending to be set aside", || {
+            task_dir.join("worker-request-1.json.damaged").exists()
+        });
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a later pass");
+        assert!(worktree.exists(), "the worktree is kept after a later pass");
+        assert!(
+            world.git_output(&member, &["branch", "--list", &branch]).contains(&branch),
+            "the branch is kept after a later pass"
+        );
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the mismatching pending is kept"
+        );
+        world.stop();
+        world.start();
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a reload");
+        assert!(worktree.exists(), "the worktree is kept after a reload");
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the mismatching pending is kept after a reload"
+        );
+    }
+
+    #[test]
     fn a_wrong_result_of_a_workspace_request_is_given_once_more_and_the_workspace_is_released_after_the_handoff() {
         let mut world = World::new(&[
             ("inv-opus", "investigator", "sleep"),
