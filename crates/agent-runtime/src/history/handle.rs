@@ -622,8 +622,8 @@ impl History {
         self.shared.report(Cause::Unavailable, || reason);
     }
 
-    /// Records that a run's session searched code without Serena and was reminded at the step and count given.
-    /// If `override_team` is provided, uses it instead of looking up the team from the run.
+    /// Records that a run's session searched code without Serena and was reminded at the step and count given. A run the
+    /// history was not told of is counted as lost: the record carries the team and the rounds the run started with.
     pub fn serena_reminded(
         &self,
         run: &RunId,
@@ -633,25 +633,6 @@ impl History {
         step: u32,
         clock: &impl Clock,
     ) {
-        self.serena_reminded_with_team(run, task, cli, searches, step, None, clock);
-    }
-
-    /// Records a serena reminder with an explicit team (for testing when the run hasn't started yet).
-    #[doc(hidden)]
-    #[expect(
-        clippy::too_many_arguments,
-        reason = "test-only helper; public API serena_reminded follows the limit"
-    )]
-    pub fn serena_reminded_with_team(
-        &self,
-        run: &RunId,
-        task: &TaskId,
-        cli: CliKind,
-        searches: u64,
-        step: u32,
-        override_team: Option<&TeamId>,
-        clock: &impl Clock,
-    ) {
         if self.is_disabled() {
             return;
         }
@@ -659,16 +640,9 @@ impl History {
             || (None, Vec::new()),
             |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
         );
-        // The run hasn't been started yet: no rounds to record the reminder with.
-        // Even if an override_team is provided for testing, we cannot record a reminder without rounds.
-        let Some(team_to_use) = team else {
+        let Some(team) = team else {
             self.shared.lose(1);
             return;
-        };
-        let team = if let Some(override_team) = override_team {
-            override_team.clone()
-        } else {
-            team_to_use
         };
         let at = match Timestamp::now(clock) {
             Ok(at) => at,

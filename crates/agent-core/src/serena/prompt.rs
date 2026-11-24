@@ -44,7 +44,8 @@ impl ReminderText {
     }
 }
 
-/// Why the text of the reminder cannot be made.
+/// Why the values of the text of the reminder cannot be made. Rendering the text is the harness's own business and has
+/// its own error where the text is rendered.
 #[derive(Debug, thiserror::Error)]
 pub enum ReminderTextError {
     /// The count is not a value the text of the reminder takes.
@@ -52,11 +53,5 @@ pub enum ReminderTextError {
     Variables {
         /// What the name refused.
         source: VariablesError,
-    },
-    /// The loader of the texts cannot render the text of the reminder with its values.
-    #[error("the text of the reminder of Serena cannot be rendered")]
-    Refused {
-        /// What the loader refused.
-        source: Box<dyn std::error::Error + Send + Sync>,
     },
 }
