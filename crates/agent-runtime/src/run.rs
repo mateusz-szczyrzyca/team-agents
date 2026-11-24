@@ -11,6 +11,7 @@ pub mod compose;
 mod hold;
 mod launch;
 pub mod outcome;
+pub mod serena;
 pub use launch::check_environment;
 mod output;
 
