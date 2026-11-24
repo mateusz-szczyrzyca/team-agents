@@ -1,8 +1,9 @@
 //! Opt-in durable attempt journals. No daemon dispatch path uses recovery yet.
 
+use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
-use agent_core::decide::worker_recovery::Cause;
+use agent_core::decide::worker_recovery::{Cause, MAX_NO_RESULT_RETURNS};
 use agent_core::decide::worker_result::Wrong;
 use agent_core::history::SnapshotRecord;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId};
@@ -10,7 +11,7 @@ use agent_core::state::CommitId;
 use serde::{Deserialize, Serialize};
 
 use crate::agentbus::RequestId;
-use crate::request_workspace::RequestWorkspace;
+use crate::request_workspace::{RequestWorkspace, Stage};
 
 /// Snapshot identity from the existing snapshot facility; the git reference retains its commit.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -155,16 +156,96 @@ impl TryFrom<Record> for Journal {
     type Error = Invalid;
 
     fn try_from(record: Record) -> Result<Self, Self::Error> {
-        Ok(Self {
-            record,
+        if record.workspace.record().stage != Stage::Working {
+            return Err(Invalid::Transition);
+        }
+        let mut journal = Self {
+            record: Record {
+                workspace: record.workspace,
+                events: Vec::new(),
+            },
             phase: Phase::Queued,
             wrong_try: NonZeroU32::MIN,
             returns: 0,
-        })
+        };
+        let mut runs = BTreeSet::new();
+        let mut generation = 0_u32;
+        for event in record.events {
+            match &event {
+                Transition::Started { worker, run } => {
+                    if journal.phase != Phase::Queued || !runs.insert(run.clone()) {
+                        return Err(Invalid::Transition);
+                    }
+                    generation = generation.checked_add(1).ok_or(Invalid::Transition)?;
+                    journal.phase = Phase::Running(Attempt {
+                        number: NonZeroU32::new(generation).ok_or(Invalid::Transition)?,
+                        worker: worker.clone(),
+                        run: run.clone(),
+                    });
+                }
+                Transition::Interrupted { run, cause, snapshot } => {
+                    journal.require_run(run)?;
+                    if *cause == Cause::RestartQueued {
+                        return Err(Invalid::Transition);
+                    }
+                    journal.require_snapshot(snapshot)?;
+                    journal.return_without_result();
+                }
+                Transition::RestartedQueued { snapshot } => {
+                    if journal.phase != Phase::Queued {
+                        return Err(Invalid::Transition);
+                    }
+                    journal.require_snapshot(snapshot)?;
+                    journal.return_without_result();
+                }
+                Transition::Rejected { run, wrong, snapshot } => {
+                    journal.require_run(run)?;
+                    if wrong.is_empty() {
+                        return Err(Invalid::Transition);
+                    }
+                    journal.require_snapshot(snapshot)?;
+                    journal.wrong_try = journal.wrong_try.checked_add(1).ok_or(Invalid::Transition)?;
+                    journal.phase = Phase::Queued;
+                }
+                Transition::Settled { run } => {
+                    journal.require_run(run)?;
+                    journal.phase = Phase::Settled;
+                }
+            }
+            journal.record.events.push(event);
+        }
+        Ok(journal)
     }
 }
 
 impl Journal {
+    /// Rejects late answers without changing current ownership.
+    fn require_run(&self, run: &RunId) -> Result<(), Invalid> {
+        match &self.phase {
+            Phase::Running(attempt) if &attempt.run == run => Ok(()),
+            Phase::Queued | Phase::Running(_) | Phase::Exhausted | Phase::Settled => Err(Invalid::Transition),
+        }
+    }
+
+    /// A snapshot must preserve this request's workspace, never the requester's files.
+    fn require_snapshot(&self, snapshot: &SnapshotIdentity) -> Result<(), Invalid> {
+        if snapshot.task == self.record.workspace.record().worker_task {
+            Ok(())
+        } else {
+            Err(Invalid::Transition)
+        }
+    }
+
+    /// Keeps the terminal cause without spending a fourth return to the queue.
+    fn return_without_result(&mut self) {
+        if self.returns >= MAX_NO_RESULT_RETURNS {
+            self.phase = Phase::Exhausted;
+        } else {
+            self.returns = self.returns.saturating_add(1);
+            self.phase = Phase::Queued;
+        }
+    }
+
     /// Prepares an empty journal for a new request in its already validated workspace.
     ///
     /// # Errors
