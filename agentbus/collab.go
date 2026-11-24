@@ -1525,12 +1525,15 @@ func cmdClaimLead(args []string) {
 	fmt.Println(out)
 }
 
-// freeWorkers counts the workers of team that could take one more request of the team now: the workers whose task
+// freeWorkers counts the workers of team or the pool that could take one more request of the team now: the workers whose task
 // waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
 // zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
 // requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
 // the request was given to (while that is not yet recorded, the worker counts as serving here).
-func freeWorkers(team *Team, helpers []*Helper) int {
+func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
+	if team == nil {
+		return 0
+	}
 	tasks := map[string]bool{}
 	for _, m := range team.Members {
 		tasks[m.Task] = true

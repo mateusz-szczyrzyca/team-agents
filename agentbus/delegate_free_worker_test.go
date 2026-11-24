@@ -138,3 +138,64 @@ func TestFreeWorkersCountOnlyTheTeamsOwnRequests(t *testing.T) {
 		}
 	}
 }
+
+func TestFreeWorkersOfPool(t *testing.T) {
+	pool := []string{"w1", "w2"}
+	cases := []struct {
+		name    string
+		helpers []*Helper
+		want    int
+	}{
+		{"two workers, no helpers", nil, 2},
+		{"one worker running", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}}, 1},
+		{"one worker starting", []*Helper{{ID: 1, Status: HelperStarting, Worker: "w1"}}, 1},
+		{"one request queued", []*Helper{{ID: 1, Status: HelperQueued}}, 1},
+		{"one running, one queued", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}, {ID: 2, Status: HelperQueued}}, 0},
+		{"two running", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}, {ID: 2, Status: HelperRunning, Worker: "w2"}}, 0},
+		{"finished helpers do not count", []*Helper{
+			{ID: 1, Status: HelperDone, Worker: "w1"},
+			{ID: 2, Status: HelperFailed, Worker: "w2"},
+			{ID: 3, Status: HelperUnclear, Worker: "w1"},
+		}, 2},
+	}
+	for _, c := range cases {
+		if got := freeWorkers(nil, c.helpers, pool...); got != c.want {
+			t.Errorf("%s: freeWorkers(nil, helpers, pool...) = %d, want %d", c.name, got, c.want)
+		}
+	}
+	if got := freeWorkers(nil, nil); got != 0 {
+		t.Errorf("empty pool: freeWorkers(nil, nil) = %d, want 0", got)
+	}
+}
+
+func TestDelegateWithAPlanIsQueuedWhenPoolWorkerIsFree(t *testing.T) {
+	b := newBus(t)
+	// Team without workers: pool workers passed via s.workers.
+	m := planMember(t, b, map[string][3]string{"m": {"normal", "a", "active"}})
+	m.workers = []string{"pool-w1"}
+
+	chk(t).ok(toolResult(m.delegateFields(namedFields(t.TempDir()))))
+	err := failure(t, DelegateNoFreeWorker)(m.delegateFields(namedFields(t.TempDir())))
+	if !strings.Contains(err.Message, "no worker of the pool is free") {
+		t.Fatalf("expected pool refusal message, got: %q", err.Message)
+	}
+}
+
+func TestDelegateWithAPlanSoloRequesterWithPoolWorkers(t *testing.T) {
+	b := newBus(t)
+	m := server(b, "solo")
+	m.plan = planPath(t)
+	m.agentCmd, m.home = "agent", "/home/fake"
+	m.workers = []string{"pool-w1"}
+	harnessCheck(t, func(string) string { return acceptedAnswer })
+	old := agentCmdFn
+	agentCmdFn = func(_, _ string, _ ...string) {}
+	t.Cleanup(func() { agentCmdFn = old })
+
+	chk(t).ok(toolResult(m.delegateFields(namedFields(t.TempDir()))))
+	err := failure(t, DelegateNoFreeWorker)(m.delegateFields(namedFields(t.TempDir())))
+	if !strings.Contains(err.Message, "no worker of the pool is free") {
+		t.Fatalf("expected pool refusal message, got: %q", err.Message)
+	}
+}
+
