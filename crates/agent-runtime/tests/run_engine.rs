@@ -104,7 +104,7 @@ mod run_engine {
         let home = Home::new(&abs(home_dir.path()));
         let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
         let config = Config::from_toml_str(&format!(
-            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{binary}\"\n"
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{binary}\"\nopencode = \"{binary}\"\n"
         ))
         .unwrap();
         let texts = HarnessPrompts::load(
@@ -147,7 +147,8 @@ mod run_engine {
             .collect::<Vec<_>>()
             .join(", ");
         let config = Config::from_toml_str(&format!(
-            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\nagent_path = [{path_list}]\n",
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\nopencode = \"{}\"\nagent_path = [{path_list}]\n",
+            fake_cli(),
             fake_cli(),
         ))
         .unwrap();
@@ -751,6 +752,73 @@ mod run_engine {
 
         let text = std::fs::read_to_string(mcp).unwrap();
         assert!(text.contains("/opt/bin/agentbus") && text.contains("serve"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn the_window_of_the_job_reaches_the_configuration_of_an_opencode_run() {
+        let env = env().await;
+        let mut job = env.job("done", Env::new_session());
+        job.cli = CliKind::Opencode;
+        job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
+        job.context = Some(202_752);
+        let configuration = env.home.run_dir(&job.task, &job.run).join("opencode-config.json");
+
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+
+        let config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(configuration).unwrap()).unwrap();
+        assert_eq!(
+            config["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"],
+            serde_json::json!({
+                "name": "zai-org/GLM-5.3-Flash",
+                "limit": { "context": 202_752 }
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_command_line_of_an_opencode_run_carries_no_window() {
+        let env = env().await;
+        let mut job = env.job("done", Env::new_session());
+        job.cli = CliKind::Opencode;
+        job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
+        job.context = Some(202_752);
+
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+
+        let args = env.recorded(".fake-args");
+        assert_eq!(
+            args.lines().take(7).map(str::to_owned).collect::<Vec<_>>(),
+            [
+                "run",
+                "--standalone",
+                "--format",
+                "json",
+                "--auto",
+                "-m",
+                "deepinfra/zai-org/GLM-5.3-Flash",
+            ]
+        );
+        assert!(
+            !args.contains("202752") && !args.contains("202_752"),
+            "the window reached the command line: {args}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_job_without_a_window_writes_no_limit_for_its_model() {
+        let env = env().await;
+        let mut job = env.job("done", Env::new_session());
+        job.cli = CliKind::Opencode;
+        job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
+        let configuration = env.home.run_dir(&job.task, &job.run).join("opencode-config.json");
+
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+
+        let config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(configuration).unwrap()).unwrap();
+        assert_eq!(
+            config["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"],
+            serde_json::json!({ "name": "zai-org/GLM-5.3-Flash" })
+        );
     }
 
     #[tokio::test]
