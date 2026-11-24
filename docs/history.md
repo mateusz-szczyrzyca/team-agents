@@ -865,3 +865,8 @@ migration (`023-serena-reminded.sql`) preserves the existing daemon logs, record
 cursors. The version-22 dump `crates/agent-runtime/tests/fixtures/history-before-serena-reminded.sql` is loaded and
 upgraded by a test. Back up the history before upgrading if you need to return to an older daemon: older versions
 refuse a history newer than their supported schema.
+
+The summary of a tool step of a CLI's own search (`Grep`, `grep`) that was given a path is that path followed by ` (path)`
+(`src (path)`); a search with only a pattern keeps the pattern as its summary. The harness reads the mark to tell a path
+from a pattern when it counts searches of code, and a history written before it has none: such a summary is read as a
+pattern, which searches the whole repository. The format of the table is unchanged.
