@@ -228,6 +228,7 @@ mod run_engine {
                 identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::new(),
                 context: None,
+                output: None,
             }
         }
 
@@ -824,6 +825,25 @@ mod run_engine {
                 "name": "zai-org/GLM-5.3-Flash",
                 "limit": { "context": 202_752, "output": 0 }
             })
+        );
+    }
+
+    #[tokio::test]
+    async fn the_output_of_the_job_reaches_the_configuration_of_an_opencode_run_with_its_window() {
+        let env = env_for_opencode().await;
+        let mut job = env.job("done", Env::new_session());
+        job.cli = CliKind::Opencode;
+        job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
+        job.context = Some(202_752);
+        job.output = Some(16_384);
+        let configuration = env.home.run_dir(&job.task, &job.run).join("opencode-config.json");
+
+        env.engine.run(job, &CancellationToken::new()).await.unwrap();
+
+        let config: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(configuration).unwrap()).unwrap();
+        assert_eq!(
+            config["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"]["limit"],
+            serde_json::json!({ "context": 202_752, "output": 16_384 })
         );
     }
 

@@ -714,3 +714,70 @@ fn a_request_without_a_window_writes_the_very_bytes_it_wrote_before_the_key() ->
     }
     Ok(())
 }
+
+#[test]
+fn a_window_with_an_output_gives_the_registered_model_both_as_they_are() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.model = Some("deepinfra/meta-llama/Llama-3.3-70B-Instruct-Turbo".parse()?);
+    request.context = Some(131_072);
+    request.output = Some(16_384);
+
+    let spec = OpencodeAdapter.build_run(&request)?;
+
+    assert_eq!(
+        configuration(&spec)?["provider"]["deepinfra"]["models"],
+        json!({
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo": {
+                "name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "limit": { "context": 131_072, "output": 16_384 }
+            }
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn two_agents_with_different_outputs_each_get_their_own() -> TestResult {
+    let mut narrow = request(new_run()?, Servers::Bus)?;
+    narrow.model = Some("deepinfra/Qwen/Qwen3-Coder".parse()?);
+    narrow.context = Some(131_072);
+    narrow.output = Some(8_192);
+    let mut wide = request(new_run()?, Servers::Bus)?;
+    wide.model = Some("openrouter/anthropic/claude-4".parse()?);
+    wide.context = Some(1_048_576);
+    wide.output = Some(65_536);
+    let mut unsaid = request(new_run()?, Servers::Bus)?;
+    unsaid.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse()?);
+    unsaid.context = Some(202_752);
+
+    let narrow = configuration(&OpencodeAdapter.build_run(&narrow)?)?;
+    let wide = configuration(&OpencodeAdapter.build_run(&wide)?)?;
+    let unsaid = configuration(&OpencodeAdapter.build_run(&unsaid)?)?;
+
+    assert_eq!(
+        narrow["provider"]["deepinfra"]["models"]["Qwen/Qwen3-Coder"]["limit"],
+        json!({ "context": 131_072, "output": 8_192 })
+    );
+    assert_eq!(
+        wide["provider"]["openrouter"]["models"]["anthropic/claude-4"]["limit"],
+        json!({ "context": 1_048_576, "output": 65_536 })
+    );
+    assert_eq!(
+        unsaid["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"]["limit"],
+        json!({ "context": 202_752, "output": 0 })
+    );
+    Ok(())
+}
+
+#[test]
+fn an_output_without_a_window_writes_no_limit() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.model = Some("deepinfra/Qwen/Qwen3-Coder".parse()?);
+    request.context = None;
+    request.output = Some(8_192);
+
+    let spec = OpencodeAdapter.build_run(&request)?;
+
+    assert!(!configuration_text(&spec)?.contains("limit"));
+    Ok(())
+}

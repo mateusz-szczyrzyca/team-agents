@@ -82,6 +82,7 @@ pub(crate) fn request(mode: RunMode, servers: Servers) -> TestResult<RunRequest>
         run_dir: "/work/run".parse()?,
         mcp_servers,
         context: None,
+        output: None,
     })
 }
 

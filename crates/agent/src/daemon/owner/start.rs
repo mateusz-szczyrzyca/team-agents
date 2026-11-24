@@ -409,6 +409,7 @@ pub(super) async fn plan(
             identity,
             mcp_servers,
             context: setup.context,
+            output: None,
         },
     })
 }

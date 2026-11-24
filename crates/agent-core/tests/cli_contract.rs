@@ -132,6 +132,7 @@ fn request(mode: RunMode) -> Result<RunRequest, Box<dyn std::error::Error>> {
         run_dir: "/work/run".parse()?,
         mcp_servers,
         context: None,
+        output: None,
     })
 }
 

@@ -489,6 +489,7 @@ mod tests {
             run_dir: "/work/run".parse().unwrap(),
             mcp_servers: servers.iter().cloned().collect(),
             context: None,
+            output: None,
         }
     }
 

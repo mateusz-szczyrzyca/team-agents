@@ -3395,3 +3395,82 @@ async fn an_opencode_investigator_is_told_its_own_window() {
 
     assert_eq!(window, Some(serde_json::json!({ "context": 131_072, "output": 0 })));
 }
+
+/// The configuration as written, with `context` and `output` keys at the end of the named table `[table.name]`.
+fn with_window(text: &str, table: &str, name: &str, context: u64, output: u64) -> String {
+    text.replacen(
+        &format!("[{table}.{name}]\n"),
+        &format!("[{table}.{name}]\ncontext = {context}\noutput = {output}\n"),
+        1,
+    )
+}
+
+#[tokio::test]
+async fn an_opencode_agent_is_told_its_own_output_with_its_window() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("glm-1", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config
+        .replace(
+            "[agents.glm-1]\ncli = \"claude\"\n",
+            "[agents.glm-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_window(&config, "agents", "glm-1", 202_752, 16_384);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "glm-1", "claude-1"], PARALLEL).await;
+    let run = first_run(&f, &tasks[1]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        window,
+        Some(serde_json::json!({ "context": 202_752, "output": 16_384 }))
+    );
+}
+
+#[tokio::test]
+async fn an_opencode_investigator_is_told_its_own_output_with_its_window() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config
+        .replace(
+            "[investigators.inv-opus]\ncli = \"claude\"\n",
+            "[investigators.inv-opus]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_window(&config, "investigators", "inv-opus", 131_072, 8_192);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    let run = first_run(&f, &tasks[0]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(window, Some(serde_json::json!({ "context": 131_072, "output": 8_192 })));
+}

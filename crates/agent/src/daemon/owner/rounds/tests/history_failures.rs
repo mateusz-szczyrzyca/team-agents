@@ -334,6 +334,7 @@ async fn a_fix_pass_whose_event_cannot_be_built_is_counted_as_lost() {
             identity: CommitIdentity::new("claude-1".to_owned(), "agents@example.com".to_owned(), None),
             mcp_servers: BTreeMap::new(),
             context: None,
+            output: None,
         },
     };
 
@@ -391,6 +392,7 @@ fn fix_pass_plan(run_id: &str, addition: Option<String>) -> crate::daemon::owner
             identity: CommitIdentity::new("claude-1".to_owned(), "agents@example.com".to_owned(), None),
             mcp_servers: BTreeMap::new(),
             context: None,
+            output: None,
         },
     }
 }
