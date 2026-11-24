@@ -443,6 +443,9 @@ pub async fn advance(task_dir: &Path, request: RequestId, transition: Transition
         path: path.clone(),
         source,
     })?;
+    if text.len() > MAX_JOURNAL_BYTES {
+        return Err(StoreError::TooLarge { path });
+    }
     crate::text_file::replace_text_file(&path, &text, 0o600)
         .await
         .map_err(|source| StoreError::Write { path, source })?;
