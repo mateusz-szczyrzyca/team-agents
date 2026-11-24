@@ -1164,7 +1164,6 @@ impl RawConfig {
             serena,
             web,
             repos,
-            serena,
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
@@ -1520,12 +1519,6 @@ impl Config {
     #[must_use]
     pub fn web(&self) -> &Web {
         &self.web
-    }
-
-    /// The reminder for a run with Serena.
-    #[must_use]
-    pub const fn serena(&self) -> &SerenaSettings {
-        &self.serena
     }
 
     /// The repository named `name`, if the configuration has it.
