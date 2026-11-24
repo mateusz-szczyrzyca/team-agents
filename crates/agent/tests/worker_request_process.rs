@@ -3343,4 +3343,49 @@ fi
         assert!(hooks.join("failed").exists(), "the preparation failure was injected");
         assert_eq!(world.requests()["1"]["worker"], "w-di");
     }
+    #[test]
+    fn declared_failure_after_committing_is_retried_on_another_provider() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-declared:wrong",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/qwen"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        world.script("wrong", &commit_script("unfinished guide", &[]));
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-or");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "Your request H1"), 1);
+        world.told("claude-1", "w-or");
+    }
 }
