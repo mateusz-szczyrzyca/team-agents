@@ -593,8 +593,8 @@ pub(super) struct Owner {
     /// The requests whose result was wrong and that wait in the bus's queue for a second try, with what their next worker
     /// and their requester are told.
     again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
-    /// The provider of the last request the pool of workers served.
-    last_served_provider: Option<String>,
+    /// The last served provider; boxed to keep owner lifecycle futures bounded.
+    last_served_provider: Box<Option<String>>,
     /// Outstanding workspace cleanup obligations after dispatch failure when release failed.
     pub(in crate::daemon::owner) cleanup_obligations: Vec<teams::CleanupObligation>,
 }
@@ -682,7 +682,7 @@ impl Owner {
             again: HashMap::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
-            last_served_provider: None,
+            last_served_provider: Box::new(None),
             cleanup_obligations: Vec::new(),
         }
     }

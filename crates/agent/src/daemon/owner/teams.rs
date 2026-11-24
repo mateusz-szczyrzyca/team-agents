@@ -1363,7 +1363,7 @@ impl Owner {
                 }
             };
 
-            self.last_served_provider = Some(provider);
+            *self.last_served_provider = Some(provider);
             self.dispatch_pool_request(&worker_name, request).await;
 
             let avail = self.worker_availability(&worker_name).await;
