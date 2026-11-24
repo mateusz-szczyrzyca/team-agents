@@ -1163,7 +1163,11 @@ impl Owner {
             }
         }
 
-        if self.cleanup_obligations.iter().any(|o| o.workspace.record().worker == *name) {
+        if self
+            .cleanup_obligations
+            .iter()
+            .any(|o| o.workspace.record().worker == *name)
+        {
             unsettled = true;
         }
 
@@ -1629,7 +1633,13 @@ impl Owner {
         }
         let mut remaining = Vec::new();
         for obligation in std::mem::take(&mut self.cleanup_obligations) {
-            match request_workspace::release(self.parts.store.home(), &obligation.requester_git, &obligation.workspace).await {
+            match request_workspace::release(
+                self.parts.store.home(),
+                &obligation.requester_git,
+                &obligation.workspace,
+            )
+            .await
+            {
                 Ok(()) => {
                     tracing::info!(
                         event = LogEvent::RequestDelegated.as_str(),
