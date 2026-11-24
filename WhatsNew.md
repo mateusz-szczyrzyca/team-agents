@@ -13,6 +13,8 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-runtime] A session that goes on after a restart of the daemon keeps its count and its reminder, and is never told twice, also when the bound was lowered since its earlier runs. A history of version 22 is read and upgraded to version 23, which admits the new record and log event.
+- [agent-core] [agent-runtime] A CLI's `Grep` is told by what it was given: with no path it searches the whole repository, with `docs` or `config` it searches text, and the history keeps its path as `src (path)`. A search filtered to Markdown and Rust together counts, and so does `rg --files src`.
+- [agent] A reminder of Serena that the engine recorded just before the daemon went down is put on the bus once when the daemon starts; the file `serena-reminder-told` in the run's directory keeps one the bus took from going out again.
 - [agent] A reminder of Serena that the bus refuses, or that cannot be rendered or addressed, is tried again at the next turns of the daemon and at the end of its run, not lost.
 
 ### Configuration
