@@ -70,12 +70,12 @@ impl SessionWatch {
 
     /// The watch of the session `session` of `task`, as the history at `path` holds it: the steps of every run of the
     /// session counted again in order, and the session taken as reminded when the history holds a reminder of one of its
-    /// runs, whatever `after` was then. A resumed session of a new engine, after a restart of the daemon, goes on from
+    /// runs, whatever the bound was then. A resumed session of a new engine, after a restart of the daemon, goes on from
     /// it.
     ///
     /// # Errors
     /// [`ReadError`] when the history cannot be read: the caller decides what a session without its count does.
-    pub fn from_history(path: &Path, task: &TaskId, session: &str, after: RemindAfter) -> Result<Self, ReadError> {
+    pub fn from_history(path: &Path, task: &TaskId, session: &str) -> Result<Self, ReadError> {
         let reader = Reader::open(path)?;
         let mut watch = Self::counting();
         let mut teams = Vec::new();
@@ -91,7 +91,7 @@ impl SessionWatch {
                 continue;
             }
             for step in reader.steps(&start.run)? {
-                watch.replay(&step.value.event, after);
+                watch.replay(&step.value.event);
             }
             if !teams.contains(&start.team) {
                 teams.push(start.team.clone());
@@ -111,13 +111,11 @@ impl SessionWatch {
         Ok(watch)
     }
 
-    /// Counts the step `event` of a run that was carried out before: the reminder it brought is not due again, the
-    /// session is only taken as reminded.
-    fn replay(&mut self, event: &ActivityEvent, after: RemindAfter) {
-        if let Some(tally) = self.tally.as_mut()
-            && tally.note(event, after).is_some()
-        {
-            self.reminded = true;
+    /// Counts the step `event` of a run that was carried out before. It brings no reminder: a session was reminded when
+    /// the history holds the record of it, not when its count passes today's bound.
+    fn replay(&mut self, event: &ActivityEvent) {
+        if let Some(tally) = self.tally.as_mut() {
+            tally.count(event);
         }
     }
 

@@ -446,7 +446,7 @@ impl RunEngine {
         let path = self.parts.store.home().history_file();
         let task = job.task.clone();
         let session = key.clone();
-        let read = tokio::task::spawn_blocking(move || SessionWatch::from_history(&path, &task, &session, after)).await;
+        let read = tokio::task::spawn_blocking(move || SessionWatch::from_history(&path, &task, &session)).await;
         match read {
             Ok(Ok(watch)) => Some(watch),
             // A session whose count cannot be read counts anew: it may be reminded once more, which is told.

@@ -100,6 +100,12 @@ impl SessionTally {
         })
     }
 
+    /// Counts the step `event` of the session without asking whether its reminder is due: a step of a run that was
+    /// carried out before, whose reminder, if there was one, the history holds.
+    pub fn count(&mut self, event: &ActivityEvent) {
+        self.counted.count(event);
+    }
+
     /// Whether the reminder of the session is due, and marks the session as reminded: it is told once.
     fn is_due(&mut self, after: RemindAfter) -> bool {
         if self.reminded || self.counted.used_serena {
