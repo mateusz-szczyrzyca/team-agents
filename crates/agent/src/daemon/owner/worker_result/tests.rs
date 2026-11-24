@@ -549,3 +549,56 @@ async fn removal_refuses_or_joins_a_workers_pending_check() {
         }
     }
 }
+
+#[tokio::test]
+async fn starting_a_workspace_check_preserves_the_joined_path_length_error() {
+    use std::sync::Arc;
+
+    use agent_core::config::{AbsolutePath, ValueRule};
+    use agent_runtime::process::error_chain;
+    use agent_runtime::request_workspace::{Stage, WorkspaceError, worktree_of};
+    use agent_runtime::store::{Home, StateStore};
+    use agent_runtime::worker_request::{Stage as PendingStage, read_pending_each};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let root = tempfile::tempdir().unwrap();
+    let mut text = root.path().to_str().unwrap().to_owned();
+    // Keep the home and its lock below the path bound, while the joined worker path exceeds it.
+    while text.len() < 4070 {
+        text.push('/');
+        let component = (4070 - text.len()).min(200);
+        text.push_str(&"h".repeat(component));
+    }
+    let home = Home::new(&text.parse::<AbsolutePath>().unwrap());
+    owner.parts.store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+    let record = a_workspace_record(Stage::Ended);
+    let error = worktree_of(&home, &record.requester_repo, &record.worker_task).unwrap_err();
+    assert!(matches!(
+        &error,
+        WorkspaceError::NotAbsolute { source, .. } if source.rule == ValueRule::TooLong { max: 4096 }
+    ));
+    let reason = error_chain(&error);
+    let task_dir = daemon.home.task_dir(&record.worker_task);
+    std::fs::create_dir_all(&task_dir).unwrap();
+
+    owner.start_request_check(
+        &task_dir,
+        a_matching_pending(),
+        checked(&[], &[], None),
+        "1.1".parse().unwrap(),
+        "/bin/true".to_owned(),
+        Some(&record),
+    );
+    let joined = owner.request_checks.join_next_with_id().await.unwrap();
+    owner.request_check_done(joined).await.unwrap();
+
+    let mut pending = read_pending_each(&task_dir).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let pending = pending.pop().unwrap().unwrap();
+    let PendingStage::Checked(checked) = pending.stage else {
+        panic!("the starter's check must be recorded");
+    };
+    let found = checked.found.unwrap();
+    assert_eq!(found.outcome, CheckOutcome::Failed);
+    assert_eq!(found.reason.as_deref(), Some(reason.as_str()));
+}

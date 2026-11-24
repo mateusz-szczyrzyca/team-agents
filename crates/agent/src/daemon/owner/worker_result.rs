@@ -960,7 +960,7 @@ impl Owner {
                     &record.worker_task,
                 ) {
                     Ok(worktree) => (Some(worktree.as_path().to_path_buf()), None),
-                    Err(error) => (None, Some(error_chain(&error))),
+                    Err(_error) => (None, None),
                 }
             }
             None => (self.worker_worktree(&pending.team, &pending.worker_task), None),
