@@ -925,7 +925,7 @@ pub struct Web {
 /// ```compile_fail
 /// let config = agent_core::config::Config { language: Default::default() };
 /// ```
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct Config {
     /// The language of the texts only the human reads.
     language: Language,
