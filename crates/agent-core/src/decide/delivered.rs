@@ -4,8 +4,10 @@
 //! delivered the member's item; the member that failed afterwards, or never ended, must not hold the round's
 //! publication. [`delivered_step`] tells the cases apart:
 //!
-//! 1. Only a member whose task *failed* is looked at. A member that still runs, waits, asks or is paused is never
-//!    bypassed, and one the human stopped is published when its lead is done, as before.
+//! 1. Only a member whose task *failed* or was *stopped* is looked at. A member that still runs, waits, asks or is paused
+//!    is never bypassed. A stopped member is closed already: nothing is done for it when its work is held, but work the
+//!    lead's branch lacks is told to the lead and to the human as for a failed one, so that stopping a member never drops
+//!    its commits or its files silently.
 //! 2. The lead is done and its gate passed at the tip of its branch; before that nothing is decided.
 //! 3. The member's branch holds no commit the lead's branch lacks, and every uncommitted file of its worktree is one
 //!    the lead was told of: the member's task is closed as taken over and the round is published.
@@ -64,7 +66,10 @@ pub enum Delivered {
 /// What the harness does about the failed member described by `delivery`.
 #[must_use]
 pub fn delivered_step(delivery: &Delivery<'_>) -> Delivered {
-    if delivery.member != TaskStatus::Failed || !delivery.lead_done || !delivery.gate_passed {
+    if !matches!(delivery.member, TaskStatus::Failed | TaskStatus::Stopped)
+        || !delivery.lead_done
+        || !delivery.gate_passed
+    {
         return Delivered::Nothing;
     }
     let (told_commits, told_files) = delivery
@@ -77,7 +82,12 @@ pub fn delivered_step(delivery: &Delivery<'_>) -> Delivered {
         return Delivered::TellLead;
     }
     if delivery.commits.is_empty() {
-        return Delivered::Release;
+        // A stopped member is closed already: there is nothing to release.
+        return if delivery.member == TaskStatus::Failed {
+            Delivered::Release
+        } else {
+            Delivered::Nothing
+        };
     }
     // Every lacking commit was told of: the lead's answer decides, and the human is asked once.
     match delivery.told {
