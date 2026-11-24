@@ -253,7 +253,7 @@ briefed from a snapshot it has none of. The restart is logged as `decision_taken
 
 ### `[replacement]`
 
-A run that reports `STATUS: FAILED` after it called a bus tool is started once more in a new session, then goes up the same rungs, and `mode = "off"` keeps it failed.
+A run of a team member that reports `STATUS: FAILED` after it called a bus tool is started once more in a new session, then goes up the same rungs, and `mode = "off"` keeps it failed.
 
 A run may end without a `STATUS:` line or hang. The task is asked again in the same session a few times — twice for a run
 without a status, `watchdog.hang_strikes` times for a hang, `limits.turn_limit_resumes` times for an

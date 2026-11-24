@@ -346,11 +346,12 @@ its CLI's tool catalog under the MCP server `agentbus`. This applies to every ro
 A second such failure names the agent, CLI and model in the human notice and shows the reason in `agent status`.
 This one startup retry always runs, including with `[replacement] new_sessions = 0`, and counts against that session
 budget. With the default `1`, a later hang, missing status or turn limit has no further ladder session available.
-A run that reports `STATUS: FAILED` after it called a bus tool is not the end of its task either: the task is started once
+A run of a team member that reports `STATUS: FAILED` after it called a bus tool is not the end of its task either: the task is started once
 more in a new session, briefed with the reason `failed` and the words its agent last wrote, then goes to another agent of
 `[replacement] agents` or to the team's lead (who may use the member's worktree and branch), and the human is asked only when
 no rung is left. The defaults of a configuration with no `[replacement]` section are `mode = "auto"`, `new_sessions = 1`,
-`replacements = 1` and `agents = []`: one new session, then the team's lead (a task with no lead is failed for the human). `[replacement] mode = "off"` keeps such a failure final, as before this version.
+`replacements = 1` and `agents = []`: one new session, then the team's lead. A solo task or a coordinator that reports `STATUS: FAILED` after a tool call still
+ends failed, as before. `[replacement] mode = "off"` keeps a member's failure final, as before this version.
 The named log events `run_no_tool_retry` (`info`) and `run_no_tool_failed` (`warn`) record both transitions with the
 task, agent, CLI and model, so they can be monitored independently. History schema 21 admits these events through a
 forward migration that preserves old logs, round links, search text and the log cursor; back up the history before
