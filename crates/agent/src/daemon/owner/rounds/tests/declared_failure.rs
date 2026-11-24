@@ -668,3 +668,109 @@ async fn a_failed_member_of_an_older_state_stays_failed_until_resumed_and_can_be
     );
     assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
 }
+
+// Rule: a team state written before the ladder took declared failures, kept as a fixture of that format — a lead that
+// sleeps and a member whose only run reported FAILED — is started by the daemon with no `[replacement]` section: the member
+// stays failed and no run is started for it; `agent resume` starts it again and `agent stop` stops it.
+#[tokio::test]
+async fn a_team_state_of_the_old_format_with_a_failed_member_stays_failed_until_resumed() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "hold"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    std::fs::write(
+        rig.home.state_file(),
+        include_str!("../../../../../../agent-core/tests/fixtures/state-before-declared-failure-ladder.json"),
+    )
+    .unwrap();
+    let lead_task: TaskId = "task-20261121-120001-dfl1".parse().unwrap();
+    let member_task: TaskId = "task-20261121-120002-dfl1".parse().unwrap();
+    std::fs::create_dir_all(rig.home.task_dir(&lead_task)).unwrap();
+    std::fs::create_dir_all(rig.home.task_dir(&member_task)).unwrap();
+    for (task, agent) in [(&lead_task, "inv-lead"), (&member_task, "claude-1")] {
+        let branch = format!("agents/{agent}/{task}-1.1");
+        super::rig::git(&rig.repo, &["branch", &branch, "main"]);
+        super::rig::git(
+            &rig.repo,
+            &["worktree", "add", rig.worktree(task).to_str().unwrap(), &branch],
+        );
+    }
+
+    rig.start().await;
+    let after_start = rig.state();
+    let told = rig.notifications();
+    rig.resume(&member_task).await;
+    rig.wait_for("the resumed member to start a run", || rig.runs(&member_task) >= 2)
+        .await;
+    let stopped = stop_task(&rig, &member_task).await;
+    let state = rig.status_is(&member_task, TaskStatus::Stopped).await;
+    rig.stop().await.unwrap();
+
+    let waiting = after_start.find_task(&member_task).unwrap().member;
+    assert_eq!(
+        waiting.status(),
+        TaskStatus::Failed,
+        "the daemon leaves it failed at its start"
+    );
+    assert_eq!(waiting.runs().len(), 1, "and starts no run of it by itself");
+    assert_eq!(waiting.renewals(), None, "and records no rung for it");
+    assert!(told.is_empty(), "and tells nobody: {told:?}");
+    assert!(
+        matches!(stopped, agent_core::protocol::Reply::Applied { .. }),
+        "agent stop answers as it did: {stopped:?}"
+    );
+    assert_eq!(
+        state.find_task(&member_task).unwrap().member.status(),
+        TaskStatus::Stopped,
+        "and the task is stopped"
+    );
+}
+
+// Rule: the last rung survives a restart of the daemon: the human was told once, and a daemon that starts again with the
+// task still failed and every rung used neither tells again nor starts a run for it.
+#[tokio::test]
+async fn a_restart_after_the_last_rung_tells_nobody_again_and_starts_nothing() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "fail-tool"),
+            normal("claude-2", "fail-tool"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.notification_with("ended with STATUS: FAILED").await;
+    let before = rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    let after = rig.state();
+    let told = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("ended with STATUS: FAILED"))
+        .count();
+    rig.stop().await.unwrap();
+
+    let held = before.find_task(&tasks[1]).unwrap().member;
+    let member = after.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Failed, "still failed after the restart");
+    assert_eq!(member.agent().name(), "claude-2");
+    assert_eq!(member.runs().len(), held.runs().len(), "no run was started");
+    assert_eq!(told, 1, "the human was told once, not again after the restart");
+}

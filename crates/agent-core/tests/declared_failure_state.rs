@@ -44,3 +44,21 @@ fn a_failed_member_of_a_state_written_before_the_ladder_loads_as_failed() {
         .collect();
     assert_eq!(failed.len(), 1, "the fixture holds one failed member");
 }
+
+// The state of a team as the version before the ladder took declared failures wrote it, with a failed member whose only
+// run reported FAILED: it loads, the member is failed, and it holds no rung of the ladder.
+#[test]
+fn a_team_state_of_the_old_format_with_a_failed_member_loads() {
+    let fixture = include_str!("fixtures/state-before-declared-failure-ladder.json");
+
+    let state = State::from_json(fixture).unwrap();
+
+    let members = state.teams()[0].crew().roster();
+    let failed: Vec<_> = members
+        .iter()
+        .filter(|(_, member)| member.status() == agent_core::status::TaskStatus::Failed)
+        .collect();
+    assert_eq!(failed.len(), 1, "one failed member among {} tasks", members.len());
+    assert_eq!(failed[0].1.agent().name(), "claude-1");
+    assert!(failed[0].1.renewals().is_none(), "no rung was used");
+}
