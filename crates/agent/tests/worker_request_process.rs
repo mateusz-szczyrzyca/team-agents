@@ -3893,4 +3893,54 @@ git commit -qm 'Complete retained work'
             vec!["quota"]
         );
     }
+    #[test]
+    fn missing_results_return_once_after_three_requeues_with_all_causes() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:missing",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script("missing", "n=0\nif [ -f .fake-attempt ]; then n=$(cat .fake-attempt); fi\nn=$((n + 1))\nprintf '%s' \"$n\" > .fake-attempt\ncase $n in\n1) printf 'quota exhausted\\n' >&2;;\n2) printf '429 Too Many Requests\\n' >&2;;\nesac\nexit 1");
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "failed");
+        let journal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(world.home.join("tasks").join(member).join("worker-recovery-1.json")).unwrap(),
+        )
+        .unwrap();
+        let events = journal["events"].as_array().unwrap();
+        assert_eq!(events.iter().filter(|e| e["event"] == "started").count(), 3);
+        assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["event"] == "interrupted")
+                .map(|e| e["cause"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            vec!["quota", "refused", "no_status", "no_status"]
+        );
+        assert_eq!(world.count_told("claude-1", "step 1.1"), 1);
+        for cause in ["quota", "refused", "no_status", "w-di"] {
+            assert_eq!(world.count_told("claude-1", cause), 1, "{cause}");
+        }
+    }
 }
