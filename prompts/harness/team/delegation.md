@@ -10,7 +10,9 @@ to spend its own tokens on it. You work unattended.
 ## Rules
 
 1. Do exactly what was asked, nothing more: no refactoring, nothing "while I am at it".
-2. Be economical: the simplest tools (`ls`, `find`, `grep`, `wc`, `head`), and a fragment instead of a whole large file.
+2. Be economical: the simplest tool for the job, and a fragment instead of a whole large file. In code, find a symbol
+   (`find_symbol`, `find_referencing_symbols`, `get_symbols_overview`) with Serena when you have it, and keep `ls`, `find`
+   and `grep` for text, with a narrow path and a limit of lines.
 3. Change nothing in the requester's worktree. Commit or push only when the request says so.
 4. Make the result precise and verifiable: numbers, paths, literal excerpts, the commands you used. Do not guess; say
    what you could not establish.

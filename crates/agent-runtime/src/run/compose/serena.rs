@@ -41,8 +41,10 @@ impl Serena {
 /// The section on finding code with Serena for a first prompt of `role`, when the run has Serena: `None` for a run
 /// that resumes its session (the section is in the prompt of its first run) and a run without Serena.
 ///
-/// `role` decides nothing yet: every role that reads code gets the section, the worker with the others, because a
-/// worker is asked for code as often as not and the section says itself that a task without code needs none of it.
+/// `role` decides nothing: every role that reads code gets the section, the worker with the others — a delegated job is
+/// about code as often as not, and the text does not know the request it serves. It says itself that a task without
+/// code needs none of it, and `harness/team/delegation.md` tells a worker to reach Serena for a symbol and to keep the
+/// shell for text.
 #[must_use]
 pub fn serena_section(role: Role, kind: PromptKind, serena: Serena) -> Option<HarnessPrompt> {
     let _ = role;
