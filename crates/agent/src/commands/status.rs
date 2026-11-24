@@ -497,13 +497,27 @@ async fn scan_unsettled_workspaces(
     let tasks_dir = home.tasks_dir();
     let mut entries = match tokio::fs::read_dir(&tasks_dir).await {
         Ok(entries) => entries,
-        Err(_) => return Vec::new(),
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(source) => return vec![damaged_pool_workspace(&tasks_dir, &source)],
     };
     let mut result = Vec::new();
-    while let Ok(Some(entry)) = entries.next_entry().await {
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(source) => {
+                result.push(damaged_pool_workspace(&tasks_dir, &source));
+                break;
+            }
+        };
         let task_path = entry.path();
-        if !task_path.is_dir() {
-            continue;
+        match entry.file_type().await {
+            Ok(kind) if !kind.is_dir() => continue,
+            Ok(_) => {}
+            Err(source) => {
+                result.push(damaged_pool_workspace(&task_path, &source));
+                continue;
+            }
         }
         match agent_runtime::request_workspace::read_each(&task_path).await {
             Ok(records) => {
@@ -522,28 +536,30 @@ async fn scan_unsettled_workspaces(
                                 damaged: false,
                             });
                         }
-                        Err(_) => {
-                            result.push(pool::UnsettledWorker {
-                                worker: None,
-                                from_task: String::new(),
-                                step: None,
-                                damaged: true,
-                            });
-                        }
+                        Err(source) => result.push(damaged_pool_workspace(&task_path, &source)),
                     }
                 }
             }
-            Err(_) => {
-                result.push(pool::UnsettledWorker {
-                    worker: None,
-                    from_task: String::new(),
-                    step: None,
-                    damaged: true,
-                });
-            }
+            Err(source) => result.push(damaged_pool_workspace(&task_path, &source)),
         }
     }
     result
+}
+
+/// A damaged record cannot prove any worker free; report the cause and retain that uncertainty.
+fn damaged_pool_workspace(path: &std::path::Path, source: &dyn std::error::Error) -> pool::UnsettledWorker {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::WorkerRequestDamaged.as_str(),
+        path = %path.display(),
+        error = %error_chain(source),
+        "cannot scan worker workspace: pool availability is unknown"
+    );
+    pool::UnsettledWorker {
+        worker: None,
+        from_task: String::new(),
+        step: None,
+        damaged: true,
+    }
 }
 
 /// Writes `prefix`, then what `shown` says, then the line of runs per CLI if any, the line about low disk space if any

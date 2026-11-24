@@ -12,9 +12,13 @@ mod tests;
 /// An unsettled workspace observation for a pool worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnsettledWorker {
+    /// Known worker, or none when damage prevents identifying it.
     pub(crate) worker: Option<AgentName>,
+    /// Requester task when its record can be read.
     pub(crate) from_task: String,
+    /// Delegated plan step, when present in the helper queue.
     pub(crate) step: Option<String>,
+    /// Whether record damage prevents proving availability.
     pub(crate) damaged: bool,
 }
 
