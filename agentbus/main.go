@@ -156,9 +156,22 @@ type Bus struct {
 // path returns the absolute path of a file in the state directory.
 func (b *Bus) path(n string) string { return filepath.Join(b.dir, n) }
 
-// load reads state.json (missing file = empty state) and initialises nil maps. An unknown enum value in the
-// file is a decoding error (see types.go).
+// load reads a snapshot while holding the bus lock, including receipt repair and
+// its cursor save. Callers already holding the lock must use loadLocked instead.
 func (b *Bus) load() (*State, *StorageError) {
+	var st *State // snapshot read under the same lock as receipt repair
+	serr := b.withLock(func() *StorageError {
+		var loadErr *StorageError // failure from loading or repairing the snapshot
+		st, loadErr = b.loadLocked()
+		return loadErr
+	})
+	return st, serr
+}
+
+// loadLocked reads state.json (missing file = empty state) and initialises nil maps.
+// The caller must hold the bus lock: receipt recovery can save the whole state.
+// An unknown enum value in the file is a decoding error (see types.go).
+func (b *Bus) loadLocked() (*State, *StorageError) {
 	st := &State{}
 	data, err := os.ReadFile(b.path("state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -246,7 +259,7 @@ func (b *Bus) withLock(fn func() *StorageError) *StorageError {
 // state afterwards. Only storage can fail here; failures of the operation itself are fn's business.
 func (b *Bus) locked(fn func(*State)) *StorageError {
 	return b.withLock(func() *StorageError {
-		st, serr := b.load()
+		st, serr := b.loadLocked()
 		if serr != nil {
 			return serr
 		}
