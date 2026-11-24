@@ -66,8 +66,22 @@ pub enum Decision {
 /// prefer another provider; other interruptions take the first free worker.
 #[must_use]
 pub fn decide(event: Event, returns: u8, elsewhere: Elsewhere) -> Decision {
-    let _ = (event, returns, elsewhere);
-    Decision::Return
+    let cause = match event {
+        Event::Result => return Decision::Settle,
+        Event::StaleAnswer => return Decision::Drop,
+        Event::NoResult(cause) => cause,
+    };
+    if returns >= MAX_NO_RESULT_RETURNS {
+        return Decision::Return;
+    }
+    let preference = match cause {
+        Cause::Refused | Cause::Quota => Preference::OtherProvider,
+        Cause::Died | Cause::NoStatus | Cause::RestartQueued | Cause::RestartRunning => Preference::FirstFree,
+    };
+    match elsewhere {
+        Elsewhere::Free | Elsewhere::SameProvider => Decision::Serve(preference),
+        Elsewhere::None => Decision::Wait(preference),
+    }
 }
 
 #[cfg(test)]
