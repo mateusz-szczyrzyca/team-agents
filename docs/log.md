@@ -361,8 +361,12 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `github_step_resumed` | `info` | A step of a round that waited for GitHub goes through, once, with `team` and `operation`. |
 | `task_handed_over` | `info` | A task whose runs went bad after its last new session is handed over (`[replacement]`), with `team`, `task`, `from` (the agent that held it) and `to`: the agent that holds it now, or `lead` when a member's work goes to its team's lead. A task that waited `[replacement] busy_after` seconds for its busy agent is handed over with `reason = "busy"`. |
 | `task_waits_for_agent` | `info` | A queued task waits, not failed, because its agent runs another task at its limit of `limits.runs_per_agent` or `limits.runs_per_worker`; logged once per wait, with the task and the run it waits for. |
-| `worker_result_dropped` | `warn` | The bus refuses stale or replayed owned request transitions (`request`, `worker`, `task`, `run`, `outcome`); written to agentbus JSON logs and journal. The daemon also emits this diagnostic for late observations, stale pending results or settlement replay (replay at `info`), on its tracing stderr/journal; these diagnostics are not history database events. |
 | `worker_request_damaged` | `warn` | What the daemon keeps for a worker's request cannot be used: its file is cut short, has an unknown field, holds another request than its name says or cannot be read, a stage cannot be written, or the removal of the file, the output of its check or the wording of its answer fails. The file is set aside as `<name>.damaged` and the request is settled as a wrong result (`team`, `task`, `file`, `kept_as`, `request`, `error`), or the answer falls back; the daemon goes on. |
+
+The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
+with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and
+journal. The daemon emits late observations, stale pending results and settlement replay to tracing
+stderr/journal (replay at `info`). These diagnostics are not daemon history database events.
 
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers
