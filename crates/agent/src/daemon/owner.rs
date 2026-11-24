@@ -16,6 +16,8 @@ mod gate;
 mod history;
 mod idle;
 mod last_step;
+#[cfg(test)]
+mod launch_tests;
 mod plan;
 mod removal;
 mod returned;
@@ -925,6 +927,11 @@ impl Owner {
             );
         }
         Ok(())
+    }
+
+    /// Whether the shared process ceiling and disk reserve permit another launch.
+    async fn launch_allowed(&mut self) -> bool {
+        true
     }
 
     /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
