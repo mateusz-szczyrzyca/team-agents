@@ -98,7 +98,7 @@ fn workspace(number: u64) -> RequestWorkspace {
     use agent_core::ids::{AgentName, RoundId};
     let worker_task = task(WORKER);
     let worker: AgentName = "glm-1".parse().unwrap();
-    RequestWorkspace {
+    crate::request_workspace::WorkspaceRecord {
         request: request(number),
         requester: "claude-1".parse().unwrap(),
         requester_task: task(REQUESTER),
@@ -110,6 +110,8 @@ fn workspace(number: u64) -> RequestWorkspace {
         base: "0000000000000000000000000000000000000000".parse().unwrap(),
         stage: Stage::Working,
     }
+    .try_into()
+    .unwrap()
 }
 
 #[tokio::test]
@@ -118,26 +120,28 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
     let workspace = workspace(1);
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace
-    };
+        ..workspace.record().clone()
+    }
+    .try_into()
+    .unwrap();
 
     // The requester has uncommitted work in its own worktree, which the workspace must not touch.
-    let requester_worktree = home.worktree_dir(&workspace.requester_repo, &workspace.requester_task);
+    let requester_worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().requester_task);
     std::fs::create_dir_all(&requester_worktree).unwrap();
     std::fs::write(requester_worktree.join("dirty.txt"), "not committed\n").unwrap();
 
     let requester_git = handle(&fixture.repo);
     prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
 
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     assert!(worktree.exists(), "the workspace's worktree is there");
     let head: CommitId = raw(&worktree, &["rev-parse", "HEAD"]).parse().unwrap();
     assert_eq!(head, base, "the workspace starts from the requester's committed end");
     assert_eq!(
         raw(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        workspace.branch.as_str(),
+        workspace.record().branch.as_str(),
         "on a branch of its own"
     );
     assert!(
@@ -146,13 +150,13 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
     );
     assert!(worktree.join("a.txt").exists(), "has the requester's committed files");
 
-    let task_dir = home.task_dir(&workspace.requester_task);
+    let task_dir = home.task_dir(&workspace.record().requester_task);
     let files = read_each(&task_dir).await.unwrap();
     assert_eq!(files.len(), 1, "the record is in the requester's task directory");
     let read = files.into_iter().next().unwrap().unwrap();
-    assert_eq!(read.worker_task, workspace.worker_task);
-    assert_eq!(read.requester_task, workspace.requester_task);
-    assert_eq!(read.base.to_string(), base.to_string());
+    assert_eq!(read.record().worker_task, workspace.record().worker_task);
+    assert_eq!(read.record().requester_task, workspace.record().requester_task);
+    assert_eq!(read.record().base.to_string(), base.to_string());
 }
 
 #[tokio::test]
@@ -160,13 +164,15 @@ async fn releasing_removes_the_worktree_branch_and_record() {
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(2)
-    };
+        ..workspace(2).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
     prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     assert!(worktree.exists());
 
     release_workspace(&home, &requester_git, &workspace).await.unwrap();
@@ -174,10 +180,10 @@ async fn releasing_removes_the_worktree_branch_and_record() {
     assert!(!worktree.exists(), "the workspace's worktree is gone");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
     assert!(
-        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        !branches.lines().any(|line| line == workspace.record().branch.as_str()),
         "the workspace's branch is gone: {branches}"
     );
-    let task_dir = home.task_dir(&workspace.requester_task);
+    let task_dir = home.task_dir(&workspace.record().requester_task);
     assert_eq!(read_each(&task_dir).await.unwrap().len(), 0);
 }
 
@@ -185,7 +191,10 @@ async fn releasing_removes_the_worktree_branch_and_record() {
 async fn a_workspace_record_saves_and_reads_back() {
     let tmp = tempfile::tempdir().unwrap();
     let workspace = workspace(3);
-    let task_dir = tmp.path().join("tasks").join(workspace.requester_task.as_str());
+    let task_dir = tmp
+        .path()
+        .join("tasks")
+        .join(workspace.record().requester_task.as_str());
     std::fs::create_dir_all(&task_dir).unwrap();
 
     save(&task_dir, &workspace).unwrap();
@@ -206,10 +215,12 @@ async fn a_workspace_record_of_the_kept_format_loads() {
     .unwrap();
 
     let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
-    let expected = RequestWorkspace {
+    let expected: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
-        ..workspace(7)
-    };
+        ..workspace(7).record().clone()
+    }
+    .try_into()
+    .unwrap();
     assert_eq!(read, expected);
 }
 
@@ -218,29 +229,36 @@ async fn a_committed_step_of_the_workspace_is_brought_over_to_the_requesters_end
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(6)
-    };
+        ..workspace(6).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
     prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
 
     // The worker commits the step of its run in the workspace's worktree, on the branch of its own.
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     std::fs::write(worktree.join("b.txt"), "two\n").unwrap();
     raw(&worktree, &["add", "b.txt"]);
     raw(&worktree, &["commit", "-q", "-m", "the worker's step"]);
     let head: CommitId = raw(&worktree, &["rev-parse", "HEAD"]).parse().unwrap();
     assert_eq!(
         raw(&worktree, &["rev-parse", "--abbrev-ref", "HEAD"]),
-        workspace.branch.as_str(),
+        workspace.record().branch.as_str(),
         "the step is on the workspace's branch"
     );
 
     // The requester's committed end is brought to the worker's step through the workspace's git, and the requester's
     // worktree holds the file the step brought.
     let outcome = requester_git
-        .bring_over_since(&base, &head, &workspace.requester_round, &workspace.requester_task)
+        .bring_over_since(
+            &base,
+            &head,
+            &workspace.record().requester_round,
+            &workspace.record().requester_task,
+        )
         .await
         .expect("the worker's step applies");
     let BringOver::Applied { snapshot, commit } = outcome else {
@@ -262,10 +280,12 @@ async fn prepare_rolls_the_worktree_and_branch_back_when_the_record_cannot_be_wr
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(8)
-    };
+        ..workspace(8).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
 
     // A file blocks the tasks directory, so the record of the workspace cannot be written after the worktree is made.
@@ -274,16 +294,16 @@ async fn prepare_rolls_the_worktree_and_branch_back_when_the_record_cannot_be_wr
 
     let refused = prepare_workspace(&home, &requester_git, &workspace).await;
     assert!(
-        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.request),
+        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.record().request),
         "{refused:?}"
     );
 
     // The worktree and its branch are rolled back: a failed prepare leaves nothing behind.
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     assert!(!worktree.exists(), "the worktree is rolled back");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
     assert!(
-        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        !branches.lines().any(|line| line == workspace.record().branch.as_str()),
         "the branch is rolled back: {branches}"
     );
 }
@@ -293,30 +313,35 @@ async fn a_partial_release_can_be_retried_to_completion() {
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(9)
-    };
+        ..workspace(9).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
     prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     assert!(worktree.exists());
 
     // The record's file is a directory when the release tries to remove it, so the removal fails after the worktree
     // and the branch are already gone.
-    let record = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
+    let record = path_of(
+        &home.task_dir(&workspace.record().requester_task),
+        workspace.record().request,
+    );
     std::fs::remove_file(&record).unwrap();
     std::fs::create_dir(&record).unwrap();
 
     let refused = release_workspace(&home, &requester_git, &workspace).await;
     assert!(
-        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.request),
+        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.record().request),
         "{refused:?}"
     );
     assert!(!worktree.exists(), "the worktree was removed before the failure");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
     assert!(
-        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        !branches.lines().any(|line| line == workspace.record().branch.as_str()),
         "the branch was removed before the failure: {branches}"
     );
     assert!(record.exists(), "the record is still there");
@@ -329,7 +354,7 @@ async fn a_partial_release_can_be_retried_to_completion() {
     assert!(!worktree.exists(), "the retried release leaves the worktree gone");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
     assert!(
-        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        !branches.lines().any(|line| line == workspace.record().branch.as_str()),
         "the retried release leaves the branch gone: {branches}"
     );
 }
@@ -402,16 +427,18 @@ async fn a_workspace_record_of_the_ended_stage_reads_back() {
     let tmp = tempfile::tempdir().unwrap();
     let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
     std::fs::create_dir_all(&task_dir).unwrap();
-    let ended = RequestWorkspace {
+    let ended: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         stage: Stage::Ended,
-        ..workspace(3)
-    };
+        ..workspace(3).record().clone()
+    }
+    .try_into()
+    .unwrap();
 
     save(&task_dir, &ended).unwrap();
 
     let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
     assert_eq!(read, ended);
-    assert_eq!(read.stage, Stage::Ended);
+    assert_eq!(read.record().stage, Stage::Ended);
 }
 
 #[tokio::test]
@@ -419,10 +446,12 @@ async fn the_requesters_dirty_worktree_stays_byte_identical_after_the_workspace_
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace {
+    let workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(10)
-    };
+        ..workspace(10).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
 
     // The requester's own worktree — the repository itself — has uncommitted work: a changed file and an untracked one.
@@ -441,7 +470,7 @@ async fn the_requesters_dirty_worktree_stays_byte_identical_after_the_workspace_
     );
 
     // The workspace's worktree starts from the committed content, without the requester's uncommitted work.
-    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    let worktree = home.worktree_dir(&workspace.record().requester_repo, &workspace.record().worker_task);
     assert_eq!(std::fs::read_to_string(worktree.join("a.txt")).unwrap(), "one\n");
     assert!(!worktree.join("untracked.txt").exists());
 }
@@ -452,12 +481,12 @@ async fn the_requesters_dirty_worktree_stays_byte_identical_after_the_workspace_
 /// `workspace`, with no base of its own and at the `Ended` stage, like the pending the harness keeps of an ended run.
 fn pending_for(workspace: &RequestWorkspace) -> Pending {
     Pending {
-        request: workspace.request,
+        request: workspace.record().request,
         team: TeamId::from_str("team-20261124-090000-aaaa").unwrap(),
-        requester: workspace.requester.clone(),
-        requester_task: workspace.requester_task.clone(),
-        worker: workspace.worker.clone(),
-        worker_task: workspace.worker_task.clone(),
+        requester: workspace.record().requester.clone(),
+        requester_task: workspace.record().requester_task.clone(),
+        worker: workspace.record().worker.clone(),
+        worker_task: workspace.record().worker_task.clone(),
         summary: "Result: done.".to_owned(),
         run_seconds: 1,
         base: None,
@@ -470,26 +499,28 @@ async fn completing_writes_the_pending_into_the_worker_task_and_saves_the_record
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let mut workspace = RequestWorkspace {
+    let mut workspace: RequestWorkspace = crate::request_workspace::WorkspaceRecord {
         base: base.to_string().parse().unwrap(),
-        ..workspace(11)
-    };
+        ..workspace(11).record().clone()
+    }
+    .try_into()
+    .unwrap();
     let requester_git = handle(&fixture.repo);
     prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
     let pending = pending_for(&workspace);
 
     complete(&home, &mut workspace, &pending).unwrap();
 
-    assert_eq!(workspace.stage, Stage::Ended, "the record is ended");
-    let read = read_each(&home.task_dir(&workspace.requester_task))
+    assert_eq!(workspace.record().stage, Stage::Ended, "the record is ended");
+    let read = read_each(&home.task_dir(&workspace.record().requester_task))
         .await
         .unwrap()
         .into_iter()
         .next()
         .unwrap()
         .unwrap();
-    assert_eq!(read.stage, Stage::Ended, "the record on disk is ended");
-    let kept = read_pending_each(&home.task_dir(&workspace.worker_task))
+    assert_eq!(read.record().stage, Stage::Ended, "the record on disk is ended");
+    let kept = read_pending_each(&home.task_dir(&workspace.record().worker_task))
         .await
         .unwrap()
         .into_iter()
@@ -513,7 +544,7 @@ async fn completing_keeps_the_typed_cause_when_the_pending_cannot_be_written() {
     let refused = complete(&home, &mut workspace, &pending);
 
     assert!(
-        matches!(&refused, Err(CompleteError::Pending { request, source: PendingError::Write { .. } }) if *request == workspace.request),
+        matches!(&refused, Err(CompleteError::Pending { request, source: PendingError::Write { .. } }) if *request == workspace.record().request),
         "{refused:?}"
     );
 }
@@ -529,17 +560,17 @@ async fn completing_keeps_the_typed_cause_when_the_record_cannot_be_saved() {
     // record cannot be saved after it.
     std::fs::create_dir_all(home.root()).unwrap();
     std::fs::create_dir_all(home.tasks_dir()).unwrap();
-    std::fs::create_dir_all(home.task_dir(&workspace.worker_task)).unwrap();
-    std::fs::write(home.task_dir(&workspace.requester_task), "not a directory\n").unwrap();
+    std::fs::create_dir_all(home.task_dir(&workspace.record().worker_task)).unwrap();
+    std::fs::write(home.task_dir(&workspace.record().requester_task), "not a directory\n").unwrap();
 
     let refused = complete(&home, &mut workspace, &pending);
 
     assert!(
-        matches!(&refused, Err(CompleteError::Workspace { request, source: WorkspaceError::Write { .. } }) if *request == workspace.request),
+        matches!(&refused, Err(CompleteError::Workspace { request, source: WorkspaceError::Write { .. } }) if *request == workspace.record().request),
         "{refused:?}"
     );
     assert_eq!(
-        workspace.stage,
+        workspace.record().stage,
         Stage::Ended,
         "the record is ended in memory, ready to be saved again"
     );
@@ -566,8 +597,9 @@ async fn workspace_loading_refuses_the_requesters_task_even_with_its_matching_br
     let tmp = tempfile::tempdir().unwrap();
     let record = workspace(22);
     let mut value = serde_json::to_value(&record).unwrap();
-    value["worker_task"] = serde_json::to_value(&record.requester_task).unwrap();
-    value["branch"] = serde_json::to_value(branch(&record.worker, &record.requester_task).unwrap()).unwrap();
+    value["worker_task"] = serde_json::to_value(&record.record().requester_task).unwrap();
+    value["branch"] =
+        serde_json::to_value(branch(&record.record().worker, &record.record().requester_task).unwrap()).unwrap();
     let path = path_of(tmp.path(), request(22));
     std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
     let found = read_each(tmp.path()).await.unwrap().pop().unwrap();

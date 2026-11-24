@@ -279,7 +279,7 @@ fn a_workspace_record(
 
     let worker: agent_core::ids::AgentName = "claude-2".parse().unwrap();
     let worker_task = task(2);
-    agent_runtime::request_workspace::RequestWorkspace {
+    agent_runtime::request_workspace::WorkspaceRecord {
         request: RequestId::new(NonZeroU64::new(1).unwrap()),
         requester: "claude-1".parse().unwrap(),
         requester_task: task(1),
@@ -291,6 +291,8 @@ fn a_workspace_record(
         base: "0000000000000000000000000000000000000000".parse().unwrap(),
         stage,
     }
+    .try_into()
+    .unwrap()
 }
 
 /// The pending of request 1 in the worker `claude-2`'s task 2, matching [`a_workspace_record`].
@@ -431,10 +433,11 @@ async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_
     git(checkout.path(), &["commit", "-q", "-m", "first"]);
     let requester_worktree = daemon.home.worktree_dir(&repo(), &task(1));
     let worker_worktree = daemon.home.worktree_dir(&repo(), &task(2));
-    let requester_branch = agent_runtime::request_workspace::branch(&record.requester, &record.requester_task).unwrap();
+    let requester_branch =
+        agent_runtime::request_workspace::branch(&record.record().requester, &record.record().requester_task).unwrap();
     for (path, branch) in [
         (requester_worktree, requester_branch),
-        (worker_worktree.clone(), record.branch.clone()),
+        (worker_worktree.clone(), record.record().branch.clone()),
     ] {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         git(
@@ -459,7 +462,7 @@ async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_
     );
     assert!(!worker_worktree.exists(), "the worker's worktree is removed");
     assert_eq!(
-        git(checkout.path(), &["branch", "--list", record.branch.as_str()]).trim(),
+        git(checkout.path(), &["branch", "--list", record.record().branch.as_str()]).trim(),
         "",
         "the workspace branch is deleted"
     );
@@ -572,13 +575,13 @@ async fn starting_a_workspace_check_preserves_the_joined_path_length_error() {
     let home = Home::new(&text.parse::<AbsolutePath>().unwrap());
     owner.parts.store = Arc::new(StateStore::open(home.clone()).await.unwrap());
     let record = a_workspace_record(Stage::Ended);
-    let error = worktree_of(&home, &record.requester_repo, &record.worker_task).unwrap_err();
+    let error = worktree_of(&home, &record.record().requester_repo, &record.record().worker_task).unwrap_err();
     assert!(matches!(
         &error,
         WorkspaceError::NotAbsolute { source, .. } if source.rule == ValueRule::TooLong { max: 4096 }
     ));
     let reason = error_chain(&error);
-    let task_dir = daemon.home.task_dir(&record.worker_task);
+    let task_dir = daemon.home.task_dir(&record.record().worker_task);
     std::fs::create_dir_all(&task_dir).unwrap();
 
     owner.start_request_check(
