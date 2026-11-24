@@ -1368,8 +1368,9 @@ impl Owner {
                 }
             };
 
-            *self.last_served_provider = Some(provider);
-            self.dispatch_pool_request(&worker_name, request).await;
+            if let Taken::Served = self.dispatch_pool_request(&worker_name, request).await {
+                *self.last_served_provider = Some(provider);
+            }
 
             let avail = self.worker_availability(&worker_name).await;
             if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
@@ -1383,7 +1384,7 @@ impl Owner {
     }
 
     /// Dispatches a single request to a dedicated pool worker workspace.
-    async fn dispatch_pool_request(&mut self, worker_name: &AgentName, request: DelegationRequest) {
+    async fn dispatch_pool_request(&mut self, worker_name: &AgentName, request: DelegationRequest) -> Taken {
         if let Err(error) = self.try_dispatch_pool_request(worker_name, &request).await {
             tracing::warn!(
                 event = LogEvent::WorkerRequestDamaged.as_str(),
@@ -1405,7 +1406,9 @@ impl Owner {
                     "cannot reset request status to queued after dispatch failure"
                 );
             }
+            return Taken::Held;
         }
+        Taken::Served
     }
 
     #[expect(
