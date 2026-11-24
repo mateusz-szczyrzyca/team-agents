@@ -233,9 +233,16 @@ impl Owner {
                 Transition::Rejected {
                     run: run.clone(),
                     snapshot: identity,
-                    wrong: vec![agent_core::decide::worker_result::Wrong::EndedOtherwise(
+                    wrong: super::worker_result::rejection_causes(
+                        match &pending.stage {
+                            agent_runtime::worker_request::Stage::Checked(checked)
+                            | agent_runtime::worker_request::Stage::Settled { checked, .. } => checked,
+                            agent_runtime::worker_request::Stage::Ended => return Err(OwnerError::RequestOwnership),
+                        },
                         journal.ending().unwrap_or(WorkerEnding::Done),
-                    )],
+                        pending.run_seconds,
+                        self.parts.settings.config.workers().seconds(),
+                    ),
                 },
             )
             .await?;

@@ -1484,11 +1484,12 @@ async fn run_request_check(job: RequestCheck) -> Found {
 #[cfg(test)]
 mod tests;
 
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "wired into owned retry in the following GREEN commit")
-)]
 /// Retains the actual rejection causes alongside a retry snapshot.
-pub(super) fn rejection_causes(_checked: &Checked, _ending: WorkerEnding, _seconds: u64, _limit: u64) -> Vec<Wrong> {
-    vec![]
+pub(super) fn rejection_causes(checked: &Checked, ending: WorkerEnding, seconds: u64, limit: u64) -> Vec<Wrong> {
+    let mut facts = facts_of(checked, seconds, limit);
+    facts.ending = ending;
+    match decide(&facts) {
+        Verdict::GiveToAnother { wrong } | Verdict::Return { wrong } => wrong,
+        Verdict::Accept => vec![Wrong::NoCommit],
+    }
 }
