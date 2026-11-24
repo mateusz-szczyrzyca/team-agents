@@ -8,7 +8,7 @@ use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
 use agent_runtime::worker_request::recovery::{self, Journal, Phase, Transition};
 
-use super::{Owner, OwnerError};
+use super::{Outcome, Owner, OwnerError, RunEnd, RunOutcome, RunVerdict};
 
 /// Whether dispatch owns a newly prepared workspace or a retained one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -20,6 +20,75 @@ pub(super) enum WorkspaceUse {
 }
 
 impl Owner {
+    /// Records an owned run's declared ending or interruption before ordinary task settlement.
+    pub(super) async fn settle_owned_run(
+        &mut self,
+        task: &TaskId,
+        run_id: &RunId,
+        outcome: &Outcome,
+    ) -> Result<bool, OwnerError> {
+        let (ending, summary) = match outcome {
+            Outcome::Verdict(verdict) => match verdict.as_ref() {
+                RunVerdict::Finished(run) => {
+                    let ending = match &run.classified.end {
+                        RunEnd::Reported {
+                            outcome: RunOutcome::Done,
+                        } => agent_core::decide::worker_result::WorkerEnding::Done,
+                        RunEnd::Reported {
+                            outcome: RunOutcome::Failed,
+                        } => agent_core::decide::worker_result::WorkerEnding::Failed,
+                        RunEnd::Reported {
+                            outcome: RunOutcome::Questions,
+                        } => agent_core::decide::worker_result::WorkerEnding::Cannot,
+                        RunEnd::Reported { .. }
+                        | RunEnd::NoStatus { .. }
+                        | RunEnd::QuotaExhausted { .. }
+                        | RunEnd::RateLimited
+                        | RunEnd::Hung
+                        | RunEnd::TurnLimit
+                        | RunEnd::Stopped => agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                    };
+                    (ending, run.final_message.clone().unwrap_or_default())
+                }
+                RunVerdict::Interrupted { .. } => (
+                    agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                    "worker interrupted".to_owned(),
+                ),
+            },
+            Outcome::Failed(reason) => (
+                agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                reason.clone(),
+            ),
+        };
+        let owned = if ending == agent_core::decide::worker_result::WorkerEnding::NoStatus {
+            let cause = match outcome {
+                Outcome::Verdict(verdict) => match verdict.as_ref() {
+                    RunVerdict::Finished(run) => match &run.classified.end {
+                        RunEnd::QuotaExhausted { .. } => agent_core::decide::worker_recovery::Cause::Quota,
+                        RunEnd::RateLimited => agent_core::decide::worker_recovery::Cause::Refused,
+                        RunEnd::Reported { .. }
+                        | RunEnd::NoStatus { .. }
+                        | RunEnd::Hung
+                        | RunEnd::TurnLimit
+                        | RunEnd::Stopped => agent_core::decide::worker_recovery::Cause::NoStatus,
+                    },
+                    RunVerdict::Interrupted { .. } => {
+                        if self.shutdown.is_cancelled() {
+                            agent_core::decide::worker_recovery::Cause::RestartRunning
+                        } else {
+                            agent_core::decide::worker_recovery::Cause::NoStatus
+                        }
+                    }
+                },
+                Outcome::Failed(_) => agent_core::decide::worker_recovery::Cause::Died,
+            };
+            self.interrupt_owned_request(task, run_id, cause).await?
+        } else {
+            self.observe_owned_request(task, run_id, ending, summary).await?
+        };
+        Ok(owned)
+    }
+
     /// Reconciles durable owned attempts before the queue may dispatch a replacement.
     pub(super) async fn recover_owned_requests(&mut self) -> Result<(), OwnerError> {
         for entry in self.parts.bus.helper_list(false).await? {
@@ -95,7 +164,7 @@ impl Owner {
                     let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
                     self.finish_owned_interruption(&journal, &served, &task, run).await?;
                 }
-                Phase::Running(_) | Phase::Queued | Phase::Settled { .. } => {}
+                Phase::Running(_) | Phase::Queued | Phase::Settled => {}
             }
         }
         Ok(())

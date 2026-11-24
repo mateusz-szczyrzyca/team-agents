@@ -1259,65 +1259,7 @@ impl Owner {
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
-            let (ending, summary) = match &outcome {
-                Outcome::Verdict(verdict) => match verdict.as_ref() {
-                    RunVerdict::Finished(run) => {
-                        let ending = match &run.classified.end {
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Done,
-                            } => agent_core::decide::worker_result::WorkerEnding::Done,
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Failed,
-                            } => agent_core::decide::worker_result::WorkerEnding::Failed,
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Questions,
-                            } => agent_core::decide::worker_result::WorkerEnding::Cannot,
-                            RunEnd::Reported { .. }
-                            | RunEnd::NoStatus { .. }
-                            | RunEnd::QuotaExhausted { .. }
-                            | RunEnd::RateLimited
-                            | RunEnd::Hung
-                            | RunEnd::TurnLimit
-                            | RunEnd::Stopped => agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                        };
-                        (ending, run.final_message.clone().unwrap_or_default())
-                    }
-                    RunVerdict::Interrupted { .. } => (
-                        agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                        "worker interrupted".to_owned(),
-                    ),
-                },
-                Outcome::Failed(reason) => (
-                    agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                    reason.clone(),
-                ),
-            };
-            owned = if ending == agent_core::decide::worker_result::WorkerEnding::NoStatus {
-                let cause = match &outcome {
-                    Outcome::Verdict(verdict) => match verdict.as_ref() {
-                        RunVerdict::Finished(run) => match &run.classified.end {
-                            RunEnd::QuotaExhausted { .. } => agent_core::decide::worker_recovery::Cause::Quota,
-                            RunEnd::RateLimited => agent_core::decide::worker_recovery::Cause::Refused,
-                            RunEnd::Reported { .. }
-                            | RunEnd::NoStatus { .. }
-                            | RunEnd::Hung
-                            | RunEnd::TurnLimit
-                            | RunEnd::Stopped => agent_core::decide::worker_recovery::Cause::NoStatus,
-                        },
-                        RunVerdict::Interrupted { .. } => {
-                            if self.shutdown.is_cancelled() {
-                                agent_core::decide::worker_recovery::Cause::RestartRunning
-                            } else {
-                                agent_core::decide::worker_recovery::Cause::NoStatus
-                            }
-                        }
-                    },
-                    Outcome::Failed(_) => agent_core::decide::worker_recovery::Cause::Died,
-                };
-                self.interrupt_owned_request(&task, &run_id, cause).await?
-            } else {
-                self.observe_owned_request(&task, &run_id, ending, summary).await?
-            };
+            owned = self.settle_owned_run(&task, &run_id, &outcome).await?;
         }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
