@@ -55,7 +55,7 @@ fn a_shell_command_over_text_is_no_search_of_code() {
         (command("head -20 notes.txt"), None),
         (command("tail -f run.out"), None),
         (command("find . -name '*.md'"), None),
-        (command("grep -rn serena ."), None),
+        (command("grep -rn serena ."), Some(vec!["."])),
     ]);
 }
 
@@ -76,7 +76,7 @@ fn a_cli_tool_that_reads_a_file_of_code_is_a_search_of_code() {
             Some(vec!["/work/tree/src/main.rs"]),
         ),
         (call("Grep", "fn main src/lib.rs"), Some(vec!["src/lib.rs"])),
-        (call("glob", "src/**/*.rs"), None),
+        (call("glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
         (call("read", "lib/handler.py"), Some(vec!["lib/handler.py"])),
         (call("grep", "src"), None),
     ]);
