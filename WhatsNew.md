@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.91.0 — 24.11.2026 — PR pending
+
+### Enhancements
+- [agent-core] [agent-runtime] Prepare a recovery policy and an opt-in durable journal for worker requests, retaining workspace and snapshot identities, run ownership and separate retry counters. Automatic recovery is not enabled in this version; existing requests keep their previous handling.
+
 ## 0.90.0 — 24.11.2026 — PR #243
 
 ### New features

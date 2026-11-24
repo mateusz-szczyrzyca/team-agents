@@ -1119,6 +1119,13 @@ worker goes on from the file of the first result. A worker whose result is not s
 answered does not keep it busy, even when its file cannot be removed. A run that ends otherwise than `STATUS: DONE`, the
 lines of `agent status` for the tries and the pull request's description of the returned steps come with the next version.
 
+**Recovery protocol preparation.** The runtime now provides an explicitly prepared request-attempt journal,
+with separate counters for wrong results and up to three returns without a result. It preserves the original
+worker workspace and snapshot identities and validates run ownership when reloaded. This version does not enable
+automatic recovery dispatch: existing open requests keep their previous handling, and no journal is created for
+them implicitly. There is no new configuration key. The [durable format](docs/state.md) and
+[policy](docs/architecture.md#prepared-request-recovery-protocol) describe the APIs for the next recovery parts.
+
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
 say it: a step with one result, named files and a check a machine runs, the reading and listing of many files, a

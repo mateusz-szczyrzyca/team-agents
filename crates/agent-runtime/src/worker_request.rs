@@ -481,3 +481,6 @@ pub fn has_pending(task_dir: &Path) -> bool {
 
 #[cfg(test)]
 mod tests;
+
+/// Validated attempt journals for opt-in request recovery.
+pub mod recovery;
