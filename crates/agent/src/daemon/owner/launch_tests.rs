@@ -192,3 +192,32 @@ async fn pool_recovery_does_not_requeue_a_starting_request_owned_by_a_state_team
 
     assert!(!reset.exists(), "pool recovery must leave a state-team claim alone");
 }
+
+#[tokio::test]
+async fn pool_run_keeps_slot_after_requester_removal() {
+    let daemon = Daemon::new(&pair_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.record_pool_run(
+        task(4),
+        Served {
+            request: RequestId::new(NonZeroU64::MIN),
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            worker: "claude-2".parse().unwrap(),
+            started: at(0),
+            base: None,
+        },
+        team_id(0),
+    );
+    owner.parts.state.remove_team(&team_id(0)).unwrap();
+
+    assert_eq!(
+        owner.run_holding(&worker("claude-2")),
+        Some(Going {
+            agent: "claude-2".parse().unwrap(),
+            team: team_id(0),
+            task: task(4),
+        })
+    );
+    assert!(owner.agents_in_runs().contains(&"claude-2"));
+}

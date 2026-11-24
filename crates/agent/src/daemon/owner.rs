@@ -901,6 +901,11 @@ impl Owner {
         Ok(())
     }
 
+    /// Keeps the run's team identity while its requester may be removed.
+    fn record_pool_run(&mut self, task: TaskId, served: Served, _team: TeamId) {
+        self.serving.insert(task, served);
+    }
+
     /// Active team and request-owned runs, with legacy team workers counted once.
     fn all_runs_going(&self) -> Vec<Going> {
         let mut going = runs_going(self.parts.state.teams());
