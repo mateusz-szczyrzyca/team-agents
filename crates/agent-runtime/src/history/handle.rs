@@ -21,6 +21,7 @@ use agent_core::history::{
     EventRecord, HistoryEvent, HistoryHealth, HistoryState, LostCause, LostKind, Record, RecordKind, RunSession, Step,
 };
 use agent_core::ids::{Clock, RoundId, RunId, TaskId, TeamId};
+use agent_core::kinds::CliKind;
 use agent_core::log::LogRecord;
 use agent_core::state::Timestamp;
 
@@ -619,6 +620,44 @@ impl History {
         let reason = "the writer of the history has stopped".to_owned();
         *locked(&self.shared.state) = HistoryState::Unavailable { reason: reason.clone() };
         self.shared.report(Cause::Unavailable, || reason);
+    }
+
+    /// Records that the run `run` of `task` was told once, after `searches` searches of code without Serena, to find
+    /// code with Serena. The record carries the team and rounds the history knows of the run. Best-effort, like every
+    /// event of a run: a history without a writer counts the loss.
+    pub fn serena_reminded(&self, run: &RunId, task: &TaskId, cli: CliKind, searches: u64, clock: &impl Clock) {
+        if self.is_disabled() {
+            return;
+        }
+        let (team, rounds) = locked(&self.shared.runs).get(run).map_or_else(
+            || (None, Vec::new()),
+            |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
+        );
+        let Some(team) = team else {
+            // The history never saw the run start: no record to attach the reminder to.
+            self.shared.lose(1);
+            return;
+        };
+        let at = match Timestamp::now(clock) {
+            Ok(at) => at,
+            Err(error) => {
+                self.shared.lose(1);
+                self.shared
+                    .report(Cause::Write(WriteKind::Encoding), || error_chain(&error));
+                return;
+            }
+        };
+        self.record(Record::Event(Box::new(EventRecord {
+            at,
+            team,
+            rounds,
+            event: HistoryEvent::SerenaReminded {
+                task: task.clone(),
+                run: run.clone(),
+                searches,
+                cli,
+            },
+        })));
     }
 
     /// Records a step of `run`, numbering it after the steps of the run recorded before.

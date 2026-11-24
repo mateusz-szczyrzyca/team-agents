@@ -54,6 +54,22 @@ impl SessionWatch {
         }
     }
 
+    /// The watch of a session that goes on with the tally `tally` it had: a resumed session keeps the searches it made
+    /// and is reminded only if it was not yet.
+    #[must_use]
+    pub fn resumed(tally: SessionTally) -> Self {
+        Self {
+            tally: Some(tally),
+            reminded: tally.was_reminded(),
+        }
+    }
+
+    /// The tally of the session as the watch has counted it so far, for a session that goes on in a later run.
+    #[must_use]
+    pub fn tally(&self) -> Option<SessionTally> {
+        self.tally
+    }
+
     /// Gives the step `event` to the count.
     pub fn note(&mut self, event: &ActivityEvent, after: RemindAfter) -> Watched {
         let Some(tally) = self.tally.as_mut() else {

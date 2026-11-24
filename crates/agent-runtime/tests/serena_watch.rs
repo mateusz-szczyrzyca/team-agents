@@ -1,5 +1,10 @@
 //! The count of a session's searches of code without Serena across the runs of the engine: the steps the history holds.
 
+#![expect(
+    clippy::expect_used,
+    reason = "a failed expectation is a failed test, as the workspace tests allow (clippy.toml)"
+)]
+
 use std::num::NonZeroU32;
 use std::str::FromStr;
 
@@ -9,7 +14,7 @@ use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy,
 use agent_core::ids::{RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::serena::RemindAfter;
-use agent_core::state::{MergeMode, Timestamp};
+use agent_core::state::Timestamp;
 use agent_runtime::history::{HistoryDb, Reader, Store};
 use agent_runtime::run::serena::{SessionWatch, Watched};
 

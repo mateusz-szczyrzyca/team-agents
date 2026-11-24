@@ -31,6 +31,11 @@
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
 #   context-from-file     reads the size N in `.fake-context`, reports one model call whose input is N tokens (usage with
 #                         its ID, and a cost of 0.5 dollars in the result), ends like `done`
+#   serena-reads          reads forty-two code files of `src` with its `Read` tool, then ends like `done`
+#   serena-calls          calls a tool of Serena, then reads code files as `serena-reads` does
+#   serena-text           reads forty-two text files as `serena-reads` reads code ones
+#   serena-writes         writes and edits files of code forty-two times, ends like `done`
+#   serena-three          reads three code files, then ends like `done`
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -87,8 +92,57 @@ leave_work() {
   printf 'left over\nin two lines\n' > left.txt
 }
 
+# read_code FIRST N — tool_use blocks of the Read tool over the code files of the worktree, one a line, the first
+# numbered FIRST.
+read_code() {
+  local first=$1 n=$2 i
+  for ((i = first; i < first + n; i++)); do
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Read","input":{"file_path":"%s"}}]}}\n' \
+      "$i" "src/module-$((i % 3)).rs"
+  done
+}
+
+# read_text FIRST N — tool_use blocks of the Read tool over text files, one a line, the first numbered FIRST.
+read_text() {
+  local first=$1 n=$2 i
+  for ((i = first; i < first + n; i++)); do
+    printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Read","input":{"file_path":"%s"}}]}}\n' \
+      "$i" "docs/note-$((i % 3)).md"
+  done
+}
+
 case $scenario in
   done) finish_done ;;
+  serena-reads)
+    init
+    read_code 0 42
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  serena-writes)
+    init
+    for i in $(seq 1 42); do
+      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"w%s","name":"Write","input":{"file_path":"src/written-%s.rs"}}]}}\n' "$i" "$i"
+      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"e%s","name":"Edit","input":{"file_path":"src/module-1.rs"}}]}}\n' "$i"
+    done
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  serena-three)
+    init
+    read_code 0 3
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  serena-calls)
+    init
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"s1","name":"mcp__serena__find_symbol","input":{}}]}}'
+    read_code 0 42
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  serena-text)
+    init
+    read_text 0 42
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+
   done-child)
     sleep 600 &
     whole .fake-child "$!"

@@ -114,6 +114,12 @@ impl SessionTally {
     pub const fn searches(&self) -> u64 {
         self.counted.searches
     }
+
+    /// Whether the session was reminded already.
+    #[must_use]
+    pub const fn was_reminded(&self) -> bool {
+        self.reminded
+    }
 }
 
 /// What a session counted by the time of one of its steps: the searches of code and whether Serena was called.
