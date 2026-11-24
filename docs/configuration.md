@@ -77,6 +77,7 @@ branch names, file names and unit names. The two tables have the same keys:
 | `max_context` | tokens, a nonnegative integer | the `[session]` bound | this agent's own bound on its session; above it the next run starts a new session; `0` switches it off (see `[session]`) |
 | `context` | tokens, a positive integer | none | the model's context window. For an `opencode` agent whose model is `openrouter/…` or `deepinfra/…` the generated opencode configuration gives it to the model as `limit: {context, output}` (opencode's schema requires `output` next to `context`: it is the agent's `output` where set; without it the harness writes `0`, which is no limit of the model's — opencode replaces what its model catalogue knows of the model's output with it and requests 32000 tokens, so set `output` for a model whose catalogue output matters), so that opencode compacts the session at that window instead of the run failing when the provider refuses it. For a `codex` agent the run gets `-c model_context_window=N`. A window below the agent's bound is allowed: that is what makes the CLI compact first. Without the key nothing is given, as before. Claude Code and Antigravity are left as they were by this key, and so is an opencode model of another provider, which is not registered: for them the key changes nothing. `0` is refused (`ConfigError::AgentContextZero`, naming the agent and the key); no `agents.toml` written before the key has it |
 | `output` | tokens, a positive integer, at most `context` | none | the most tokens the model writes in one answer; only the `opencode` configuration reads it, next to `context` as `limit.output`, so that opencode keeps the model's real output limit instead of the fallback described under `context`. Without `context` it takes effect nowhere. `0` and a value above `context` are refused at load (`ConfigError::AgentOutputZero`, `ConfigError::AgentOutputAboveContext`), naming the agent and the keys. Other CLIs ignore it; no `agents.toml` written before the key has it |
+| `capabilities` | array of strings (no whitespace) | `[]` | declared capabilities matched against worker request `requires`, in `<namespace>:<value>` form (e.g. `["build:rust", "os:linux"]`); namespaces are `os`, `arch`, `build`, `test`, `hw`, `net`, and values contain lowercase ASCII letters, digits, `.`, `_`, or `-` |
 
 An agent runs one task at a time: add `claude-2` for more parallel work. The investigators review every pull request
 and may coordinate a team. Every pull request gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team.
@@ -91,8 +92,13 @@ workers = ["deepinfra-glm"]
 ```
 
 `normal`: agents that take task-list items, solo or in a team, and may coordinate a team. `workers`: cheap models that
-never coordinate and take no items; they serve `delegate` requests, **the first free worker in the order of this list**,
-so put the stronger ones first. The order of `normal` is kept as written. Rules, each a typed `ConfigError`:
+never coordinate and take no items; they serve `delegate` requests as an installation-wide pool. The workers are
+chosen alternately across providers (turns taking in configured order of first appearance of each provider; within
+a provider, in configured order), skipping busy providers without waiting. The provider is the part of `model`
+before the first `/` for `cli = "opencode"` with a slash, and the `cli` itself when `model` has no slash or for any
+other CLI (`claude`, `codex`, `agy`). On daemon restart, the rotation resets to the first provider. An explicit-worker
+`agent run` continues to be supported for manual worker runs, while team and solo delegation requests draw from the
+installation pool. The order of `normal` is kept as written. Rules, each a typed `ConfigError`:
 
 | Error | When |
 |---|---|

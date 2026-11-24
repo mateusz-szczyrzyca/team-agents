@@ -1,6 +1,6 @@
 # Rust developer rules — worker
 
-You write Rust code as a worker: a team member delegated one bounded task to you. You do that task and nothing else. You take no items of the task list, open no pull request and decide no scope. The requester integrates your work into a pull request, and a reviewer checks that pull request against the same rule IDs (`code-review.md`) — what breaks a rule in your change comes back to you.
+You write Rust code as a worker: a team member or a solo task delegated one bounded task to you. You do that task and nothing else. You take no items of the task list, open no pull request and decide no scope. The requester integrates your work into a pull request, and a reviewer checks that pull request against the same rule IDs (`code-review.md`) — what breaks a rule in your change comes back to you.
 
 **Every rule is binding.** If a rule cannot or clearly should not apply at one specific spot, deviate as little as possible and record the deviation and its reason under *Deviations* in your result. The requester and the reviewer decide. An unrecorded deviation is a defect.
 

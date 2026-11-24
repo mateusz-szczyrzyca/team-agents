@@ -649,3 +649,183 @@ async fn releasing_without_requester_git_records_one_warning_per_request() {
         ["release 1".to_owned()].into_iter().collect()
     );
 }
+
+#[tokio::test]
+async fn elsewhere_of_defers_conservatively_when_helper_request_is_missing() {
+    use super::super::fixture::{Daemon, fake_cli, pair_state};
+    use agent_runtime::agentbus::RequestId;
+    use std::num::NonZeroU64;
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let custom_config = format!(
+        "[agents.claude-1]\ncli = \"claude\"\n[agents.claude-2]\ncli = \"claude\"\n\
+         [agents.w-1]\ncli = \"claude\"\n\
+         [agents.w-2]\ncli = \"opencode\"\nmodel = \"openrouter/free\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"claude-2\"]\nworkers = [\"w-1\", \"w-2\"]\n\
+         [binaries]\nclaude = \"{}\"\nopencode = \"{}\"\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+        fake_cli(),
+        fake_cli(),
+    );
+    std::fs::write(daemon.home.config_file(), custom_config).unwrap();
+    let (owner, _sinks) = daemon.bare_owner().await;
+
+    let mut pending = a_matching_pending();
+    pending.worker = "w-1".parse().unwrap();
+    pending.request = RequestId::new(NonZeroU64::new(999).unwrap());
+
+    let elsewhere = owner.elsewhere_of(&pending).await;
+    assert_eq!(elsewhere, Elsewhere::None);
+}
+
+#[tokio::test]
+async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_and_retries() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::daemon::owner::worker_result::Again;
+    use crate::fixtures::team_id;
+    use agent_runtime::agentbus::RequestId;
+    use std::num::NonZeroU64;
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Working);
+    let worker_name: AgentName = "w-nonexistent".parse().unwrap();
+    let request_id = RequestId::new(NonZeroU64::new(1).unwrap());
+
+    let again = Again {
+        team: team_id(0),
+        worker: "w-old".parse().unwrap(),
+        failed_cli: agent_core::kinds::CliKind::Claude,
+        failed_provider: "claude".to_owned(),
+        tried: agent_runtime::worker_request::Try {
+            number: 2,
+            earlier: vec!["first try failed".to_owned()],
+        },
+        reason: "wrong result".to_owned(),
+    };
+    owner.again.insert(request_id, again);
+
+    let req = DelegationRequest {
+        id: request_id,
+        from: "claude-1".parse().unwrap(),
+        from_task: record.record().requester_task.clone(),
+        repo: record.record().requester_repo.clone(),
+        branch: "main".parse().unwrap(),
+        worktree: daemon
+            .home
+            .worktree_dir(&record.record().requester_repo, &record.record().requester_task),
+        request: "do work".to_owned(),
+        context: String::new(),
+        status: DelegationStatus::Queued,
+        worker: None,
+        helper_task: None,
+        summary: String::new(),
+    };
+
+    let repo_dir = daemon
+        .home
+        .worktree_dir(&record.record().requester_repo, &record.record().requester_task);
+    std::fs::create_dir_all(&repo_dir).unwrap();
+    git(&repo_dir, &["init", "-b", "main"]);
+    git(&repo_dir, &["commit", "--allow-empty", "-m", "Initial"]);
+    // Git runs this hook in the newly created worktree. Locking it makes rollback
+    // fail after allocation, without changing the requester's working files.
+    let hook = repo_dir.join(".git/hooks/post-checkout");
+    std::fs::write(&hook, "#!/bin/sh\ngit worktree lock \"$PWD\"\n").unwrap();
+    std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let res = owner.try_dispatch_pool_request(&worker_name, &req).await;
+    assert!(
+        matches!(res, Err(super::super::teams::PoolDispatchError::WorkerConfigNotFound(ref name)) if name == &worker_name)
+    );
+
+    assert_eq!(
+        owner.cleanup_obligations.len(),
+        1,
+        "cleanup obligation must be retained on release failure"
+    );
+    assert!(
+        owner.again.contains_key(&request_id),
+        "again retry history must be preserved"
+    );
+    assert!(
+        owner.worker_availability(&worker_name).await.unsettled,
+        "worker must be marked unsettled while obligation exists"
+    );
+
+    let worker_task = owner.cleanup_obligations[0].workspace.record().worker_task.clone();
+    let worker_path = daemon.home.worktree_dir(&req.repo, &worker_task);
+    git(&repo_dir, &["worktree", "unlock", worker_path.to_str().unwrap()]);
+    owner.retry_cleanup_obligations().await;
+
+    assert!(
+        owner.cleanup_obligations.is_empty(),
+        "cleanup obligation must be cleared after successful retry"
+    );
+    assert!(
+        !owner.worker_availability(&worker_name).await.unsettled,
+        "worker must no longer be unsettled"
+    );
+    assert!(
+        owner.again.contains_key(&request_id),
+        "again retry history must remain preserved"
+    );
+}
+
+#[tokio::test]
+async fn answered_request_keeps_worker_reserved_until_workspace_release() {
+    use crate::fixtures::{repo, task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    agent_runtime::request_workspace::save(&requester_dir, &record).unwrap();
+    owner.answered_requests.insert(record.record().request);
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(owner.unreadable_requests.contains("release 1"));
+    assert!(requester_dir.join("request-workspace-1.json").exists());
+    assert!(
+        owner.worker_availability(&record.record().worker).await.unsettled,
+        "an answered request still owns its worker while release fails"
+    );
+
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(checkout.path().join("README.md"), "read me\n").unwrap();
+    git(checkout.path(), &["add", "README.md"]);
+    git(checkout.path(), &["commit", "-q", "-m", "first"]);
+    let requester_worktree = daemon.home.worktree_dir(&repo(), &task(1));
+    let worker_worktree = daemon.home.worktree_dir(&repo(), &task(2));
+    let requester_branch =
+        agent_runtime::request_workspace::branch(&record.record().requester, &record.record().requester_task).unwrap();
+    for (path, branch) in [
+        (requester_worktree, requester_branch),
+        (worker_worktree.clone(), record.record().branch.clone()),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(
+            checkout.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch.as_str(),
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+    }
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(!requester_dir.join("request-workspace-1.json").exists());
+    assert!(!worker_worktree.exists());
+    assert!(
+        !owner.worker_availability(&record.record().worker).await.unsettled,
+        "successful release makes the worker eligible again"
+    );
+}

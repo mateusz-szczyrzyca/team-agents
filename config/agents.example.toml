@@ -33,6 +33,7 @@ cli = "gemini"
 # [agents.deepinfra-glm]
 # cli = "opencode"
 # model = "deepinfra/zai-org/GLM-5.3-Flash"
+# capabilities = ["build:rust", "hw:rp2350"] # matched against delegate request `requires`
 # context = 202752   # the model's window in tokens: the CLI compacts the session at it
 # output = 32768     # its output limit in tokens; with context alone opencode uses its fallback instead of the catalogue's
 

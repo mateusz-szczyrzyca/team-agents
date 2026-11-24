@@ -321,6 +321,20 @@ fn assignment(
     Ok(sections)
 }
 
+/// Shapes the prompt of a pool worker for `request`: the composed prompt and the delegation section alone,
+/// without any team context, coordinator details, or member chatter.
+pub(in crate::daemon) fn shape_pool_worker(
+    texts: &TeamPrompts,
+    composed: &str,
+    request: &DelegationRequest,
+) -> Result<String, TeamPromptError> {
+    let mut sections = vec![composed.trim_end().to_owned()];
+    sections.push(delegation(texts, request)?.trim_end().to_owned());
+    let mut prompt = sections.join(SECTION_SEPARATOR);
+    prompt.push('\n');
+    Ok(prompt)
+}
+
 /// What a worker is told when it is asked to serve `request`.
 fn delegation(texts: &TeamPrompts, request: &DelegationRequest) -> Result<String, TeamPromptError> {
     let values = Variables::new()

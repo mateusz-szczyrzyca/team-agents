@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1040,9 +1041,17 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 		s.touch(st)
 		// A request for a step of a plan is checked in the transaction that queues it: two requests at once cannot
 		// both take the last free worker.
-		if team := st.Teams[s.team]; named.Step != "" && team != nil && freeWorkers(team, sortedHelpers(st)) <= 0 {
-			return opErr(DelegateNoFreeWorker, "no worker of your team is free now: do step %s yourself, or ask again "+
-				"for a later step", named.Step)
+		if named.Step != "" {
+			team := st.Teams[s.team]
+			if team != nil || len(s.workers) > 0 {
+				if freeWorkersState(st, team, s.workers, s.tasksDir) <= 0 {
+					msg := fmt.Sprintf("no worker of the pool is free now: do step %s yourself, or ask again for a later step", named.Step)
+					if len(s.workers) == 0 || (team != nil && teamHasWorkers(team)) {
+						msg = fmt.Sprintf("no worker of your team is free now: do step %s yourself, or ask again for a later step", named.Step)
+					}
+					return opErr(DelegateNoFreeWorker, "%s", msg)
+				}
+			}
 		}
 		st.NextHelperID++
 		if follows != 0 {
@@ -1239,6 +1248,7 @@ func cmdHelperNext(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	worker := fs.String("worker", "", "worker that gets it")
 	caps := fs.String("capabilities", "[]", "local capabilities JSON array")
+	reqID := fs.Int64("id", 0, "request number to take; 0 for oldest")
 	parseFlags(fs, args)
 	capabilities, cerr := helperCapabilities(*caps)
 	if cerr != nil {
@@ -1247,7 +1257,7 @@ func cmdHelperNext(args []string) {
 	}
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdHelperNextStorage, func(st *State) *CmdHelperNextError {
-		if h := takeLocalHelper(st, *worker, capabilities); h != nil {
+		if h := takeLocalHelper(st, *worker, capabilities, *reqID); h != nil {
 			return fromStorage(CmdHelperNextStorage, printJSON(h))
 		}
 		return nil
@@ -1304,28 +1314,37 @@ func cmdHelperGet(args []string) {
 	}).asError())
 }
 
-// helper-list: human-readable list of worker requests.
+// helper-list: list of worker requests (human-readable text, or JSON array with --json).
 func cmdHelperList(args []string) {
 	fs := newFlagSet("helper-list")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	all := fs.Bool("all", false, "include finished")
+	jsonOut := fs.Bool("json", false, "output JSON array")
 	parseFlags(fs, args)
 	b := &Bus{dir: *dir}
-	var out cliWriter
 	exitOn(transact(b, CmdHelperListStorage, func(st *State) *CmdHelperListError {
-		n := 0
+		var list []*Helper
 		for _, h := range sortedHelpers(st) {
 			if !*all && !h.Status.Open() {
 				continue
 			}
-			n++
+			list = append(list, h)
+		}
+		if *jsonOut {
+			if list == nil {
+				list = []*Helper{}
+			}
+			return fromStorage(CmdHelperListStorage, printJSON(list))
+		}
+		var out cliWriter
+		for _, h := range list {
 			w := ""
 			if h.Worker != "" {
 				w = " → " + h.Worker
 			}
 			out.printf("H%d [%s%s]%s from %s (%s): %s\n", h.ID, h.Status, w, rated(h), h.From, h.FromTask, trunc(h.Request, 100))
 		}
-		if n == 0 {
+		if len(list) == 0 {
 			out.println("No worker requests.")
 		}
 		return fromStorage(CmdHelperListStorage, out.err)
@@ -1525,12 +1544,22 @@ func cmdClaimLead(args []string) {
 	fmt.Println(out)
 }
 
-// freeWorkers counts the workers of team that could take one more request of the team now: the workers whose task
-// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
-// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
-// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
-// the request was given to (while that is not yet recorded, the worker counts as serving here).
-func freeWorkers(team *Team, helpers []*Helper) int {
+// teamHasWorkers reports whether team has any members in the worker tier.
+func teamHasWorkers(team *Team) bool {
+	if team == nil {
+		return false
+	}
+	for _, m := range team.Members {
+		if m.Tier == TierWorker {
+			return true
+		}
+	}
+	return false
+}
+
+// freeTeamWorkers counts the workers of team that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them.
+func freeTeamWorkers(team *Team, helpers []*Helper) int {
 	tasks := map[string]bool{}
 	for _, m := range team.Members {
 		tasks[m.Task] = true
@@ -1563,6 +1592,171 @@ func freeWorkers(team *Team, helpers []*Helper) int {
 		}
 	}
 	return free - waiting
+}
+
+// freePoolWorkers reports how many pool workers are free to take a request of a step of a plan;
+// zero or below when a new request would wait.
+func freePoolWorkers(helpers []*Helper, poolWorkers []string) int {
+	st := &State{
+		Helpers: make(map[string]*Helper, len(helpers)),
+		Teams:   make(map[string]*Team),
+	}
+	for _, h := range helpers {
+		st.Helpers[helperKey(h.ID)] = h
+	}
+	return freePoolWorkersState(st, poolWorkers)
+}
+
+// teamIsStopped reports whether a team is finished or all its members are in terminal states.
+func teamIsStopped(t *Team) bool {
+	if t.Done {
+		return true
+	}
+	if len(t.Members) == 0 {
+		return false
+	}
+	for _, m := range t.Members {
+		if m.State != MemberDone && m.State != MemberStopped && m.State != MemberExcluded {
+			return false
+		}
+	}
+	return true
+}
+
+// legacyOwnsRequest reports whether a request belongs to a crew with its own workers.
+// Old requests without task identity retain the original requester-name lookup.
+func legacyOwnsRequest(st *State, h *Helper) bool {
+	for _, team := range st.Teams {
+		if !teamHasWorkers(team) {
+			continue
+		}
+		for name, member := range team.Members {
+			if (h.FromTask != "" && member.Task == h.FromTask) || (h.FromTask == "" && name == h.From) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// freePoolWorkersState observes full state (teams, active crews, running members, and unsettled helpers) to count free pool workers.
+func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) int {
+	if len(poolWorkers) == 0 {
+		return 0
+	}
+	activeInCrew := map[string]bool{}
+	runningInTeams := map[string]bool{}
+	for _, team := range st.Teams {
+		if !teamIsStopped(team) {
+			for name, m := range team.Members {
+				if m.Tier == TierWorker {
+					activeInCrew[name] = true
+				}
+				if m.State == MemberActive || m.State == MemberWaking {
+					runningInTeams[name] = true
+				}
+			}
+		}
+	}
+	serving := map[string]bool{}
+	unsettled := map[string]bool{}
+	waiting := 0
+	for _, h := range st.Helpers {
+		switch h.Status {
+		case HelperStarting, HelperRunning:
+			if h.Worker != "" {
+				serving[h.Worker] = true
+			}
+		case HelperQueued:
+			if h.RemoteJob == nil && !legacyOwnsRequest(st, h) {
+				waiting++
+			}
+		case HelperDone, HelperFailed, HelperUnclear:
+		}
+	}
+	if len(tasksDir) > 0 && tasksDir[0] != "" {
+		// Task enumeration must report I/O errors: Glob silently skips unreadable directories.
+		entries, err := os.ReadDir(tasksDir[0])
+		if err != nil && !os.IsNotExist(err) {
+			logWarn(LogSideEffectFailed, "effect", "list_workspace_tasks", "error", err.Error())
+			return 0
+		}
+		// matches holds only request records in immediate task directories.
+		var matches []string
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			// taskPath is the internal task directory being examined.
+			taskPath := filepath.Join(tasksDir[0], entry.Name())
+			// records enumerates its entries without suppressing filesystem errors.
+			records, err := os.ReadDir(taskPath)
+			if err != nil {
+				logWarn(LogSideEffectFailed, "effect", "list_workspace_records", "path", taskPath, "error", err.Error())
+				return 0
+			}
+			for _, record := range records {
+				if strings.HasPrefix(record.Name(), "request-workspace-") && strings.HasSuffix(record.Name(), ".json") {
+					matches = append(matches, filepath.Join(taskPath, record.Name()))
+				}
+			}
+		}
+		for _, m := range matches {
+			if strings.HasSuffix(m, ".damaged") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Clean(m)) //nolint:gosec // G304: reading internal workspace records in tasks directory
+			if err != nil {
+				logWarn(LogSideEffectFailed, "effect", "read_workspace_record", "path", m, "error", err.Error())
+				for _, w := range poolWorkers {
+					unsettled[w] = true
+				}
+				break
+			}
+			var rec struct {
+				Worker string `json:"worker"`
+			}
+			if err := json.Unmarshal(data, &rec); err != nil {
+				logWarn(LogSideEffectFailed, "effect", "parse_workspace_record", "path", m, "error", err.Error())
+				for _, w := range poolWorkers {
+					unsettled[w] = true
+				}
+				break
+			}
+			if rec.Worker == "" {
+				logWarn(LogSideEffectFailed, "effect", "identify_workspace_worker", "path", m, "reason", "missing worker")
+				return 0
+			}
+			unsettled[rec.Worker] = true
+		}
+	}
+	free := 0
+	for _, name := range poolWorkers {
+		if !activeInCrew[name] && !runningInTeams[name] && !serving[name] && !unsettled[name] {
+			free++
+		}
+	}
+	return free - waiting
+}
+
+// freeWorkers counts the workers of team or the pool that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
+// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
+// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
+// the request was given to (while that is not yet recorded, the worker counts as serving here).
+func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
+	if team != nil && teamHasWorkers(team) {
+		return freeTeamWorkers(team, helpers)
+	}
+	return freePoolWorkers(helpers, poolWorkers)
+}
+
+// freeWorkersState counts free workers taking into account the entire state st and optional tasksDir.
+func freeWorkersState(st *State, team *Team, poolWorkers []string, tasksDir ...string) int {
+	if team != nil && teamHasWorkers(team) {
+		return freeTeamWorkers(team, sortedHelpers(st))
+	}
+	return freePoolWorkersState(st, poolWorkers, tasksDir...)
 }
 
 // workerWaits reports whether a worker in state waits for work: only such a worker is given a request by the daemon.

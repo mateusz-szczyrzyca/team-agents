@@ -466,6 +466,7 @@ type Server struct {
 	home     string        // AGENTS_HOME (passed to spawned processes)
 	remote   string        // the node a remote team member works on ("" = a local agent); its tools run here
 	plan     string        // the path of the requester's plan file (--plan): only a run whose role keeps a plan has one
+	workers  []string      // configured pool workers (--workers): used for free worker checks when a team has no workers or for a solo requester
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -1232,7 +1233,7 @@ func (s *Server) handle(line []byte) {
 type serveFlags struct {
 	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string // where the bus is, and who the run is
 	tasksDir, team, tier, agentCmd, plan, home                     *string // its team, its tier and its harness
-	relay, member, source                                          *string // a remote member's relay to its lead
+	relay, member, source, workers                                 *string // a remote member's relay to its lead, or configured workers
 	queueMax, slots                                                *int    // the limits of the investigations
 }
 
@@ -1256,10 +1257,11 @@ func defineServeFlags(fs *flag.FlagSet) serveFlags {
 		agentCmd: fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
 		plan: fs.String("plan", "", "path to the requester's plan file: a run whose role keeps a plan, whose "+
 			"delegate requests must name a step"),
-		home:   fs.String("home", agentsHome(), "AGENTS_HOME"),
-		relay:  fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead"),
-		member: fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>"),
-		source: fs.String("source", "", "with --relay: an optional local source IP (isolated installations, as node-request)"),
+		home:    fs.String("home", agentsHome(), "AGENTS_HOME"),
+		relay:   fs.String("relay", "", "a remote team member: the lead's URL — every MCP message goes to the lead"),
+		member:  fs.String("member", "", "with --relay: the member's name in its team, <agent>@<node>"),
+		source:  fs.String("source", "", "with --relay: an optional local source IP (isolated installations, as node-request)"),
+		workers: fs.String("workers", "", "configured pool workers, comma-separated"),
 	}
 }
 
@@ -1275,6 +1277,13 @@ func (f serveFlags) server(r Role, tr Tier, out *json.Encoder) *Server {
 	}
 	if s.tasksDir == "" {
 		s.tasksDir = filepath.Join(filepath.Dir(*f.dir), "tasks")
+	}
+	if *f.workers != "" {
+		for _, w := range strings.Split(*f.workers, ",") {
+			if w = strings.TrimSpace(w); w != "" {
+				s.workers = append(s.workers, w)
+			}
+		}
 	}
 	return s
 }
