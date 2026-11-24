@@ -14,8 +14,8 @@ use agent_core::state::CommitId;
 use crate::agentbus::RequestId;
 use crate::git::{BringOver, CommitIdentity, Git};
 use crate::request_workspace::{
-    RequestWorkspace, Stage, branch, path_of, prepare as prepare_workspace, read_each, release as release_workspace,
-    save,
+    RequestWorkspace, Stage, WorkspaceError, branch, path_of, prepare as prepare_workspace, read_each,
+    release as release_workspace, save,
 };
 use crate::store::Home;
 
@@ -252,4 +252,183 @@ async fn a_committed_step_of_the_workspace_is_brought_over_to_the_requesters_end
         fixture.repo.join("b.txt").exists(),
         "the requester's worktree holds the worker's file"
     );
+}
+
+// ---- failure and recovery branches -------------------------------------------------------------------------------
+
+#[tokio::test]
+async fn prepare_leaves_an_orphan_worktree_when_the_record_cannot_be_written() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let base = fixture.head();
+    let workspace = RequestWorkspace {
+        base: base.to_string().parse().unwrap(),
+        ..workspace(8)
+    };
+    let requester_git = handle(&fixture.repo);
+
+    // A file blocks the tasks directory, so the record of the workspace cannot be written after the worktree is made.
+    std::fs::create_dir_all(home.root()).unwrap();
+    std::fs::write(home.tasks_dir(), "not a directory\n").unwrap();
+
+    let refused = prepare_workspace(&home, &requester_git, &workspace).await;
+    assert!(
+        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.request),
+        "{refused:?}"
+    );
+
+    // The worktree and its branch are left behind: a later release can still clean them up.
+    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    assert!(worktree.exists(), "the worktree stays");
+    let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
+    assert!(
+        branches.lines().any(|line| line == workspace.branch.as_str()),
+        "the branch stays: {branches}"
+    );
+}
+
+#[tokio::test]
+async fn release_that_cannot_remove_the_record_leaves_the_worktree_gone() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let base = fixture.head();
+    let workspace = RequestWorkspace {
+        base: base.to_string().parse().unwrap(),
+        ..workspace(9)
+    };
+    let requester_git = handle(&fixture.repo);
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
+    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    assert!(worktree.exists());
+
+    // The record's file is a directory when the release tries to remove it, so the removal fails after the worktree
+    // and the branch are already gone.
+    let record = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
+    std::fs::remove_file(&record).unwrap();
+    std::fs::create_dir(&record).unwrap();
+
+    let refused = release_workspace(&home, &requester_git, &workspace).await;
+    assert!(
+        matches!(&refused, Err(WorkspaceError::Write { request, .. }) if *request == workspace.request),
+        "{refused:?}"
+    );
+    assert!(!worktree.exists(), "the worktree was removed before the failure");
+    let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
+    assert!(
+        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        "the branch was removed before the failure: {branches}"
+    );
+    assert!(record.exists(), "the record is still there");
+}
+
+#[tokio::test]
+async fn read_each_of_a_missing_task_directory_holds_no_workspaces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    assert!(!task_dir.exists());
+
+    let read = read_each(&task_dir).await.unwrap();
+
+    assert!(read.is_empty());
+}
+
+#[tokio::test]
+async fn a_malformed_workspace_record_is_an_error_of_its_own() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    std::fs::write(path_of(&task_dir, request(1)), "not the record of a workspace").unwrap();
+
+    let read = read_each(&task_dir).await.unwrap();
+    assert_eq!(read.len(), 1);
+    assert!(
+        matches!(&read[0], Err(WorkspaceError::Parse { path, .. }) if *path == path_of(&task_dir, request(1))),
+        "{:?}",
+        read[0]
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_record_of_another_request_is_a_mismatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    // The file of request 1 holds the record of request 2.
+    let other = workspace(2);
+    std::fs::write(
+        path_of(&task_dir, request(1)),
+        serde_json::to_string_pretty(&other).unwrap(),
+    )
+    .unwrap();
+
+    let read = read_each(&task_dir).await.unwrap();
+    assert_eq!(read.len(), 1);
+    assert!(
+        matches!(&read[0], Err(WorkspaceError::Mismatch { path, found }) if *path == path_of(&task_dir, request(1)) && *found == other.request.number()),
+        "{:?}",
+        read[0]
+    );
+}
+
+#[tokio::test]
+async fn a_damaged_workspace_record_does_not_hide_the_others() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    std::fs::write(path_of(&task_dir, request(1)), "not the record of a workspace").unwrap();
+    save(&task_dir, &workspace(2)).unwrap();
+
+    let read = read_each(&task_dir).await.unwrap();
+    assert_eq!(read.len(), 2, "each file is read on its own");
+    assert!(matches!(&read[0], Err(WorkspaceError::Parse { .. })), "{:?}", read[0]);
+    assert_eq!(read[1].as_ref().unwrap(), &workspace(2));
+}
+
+#[tokio::test]
+async fn a_workspace_record_of_the_ended_stage_reads_back() {
+    let tmp = tempfile::tempdir().unwrap();
+    let task_dir = tmp.path().join("tasks").join(task(REQUESTER).as_str());
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let ended = RequestWorkspace {
+        stage: Stage::Ended,
+        ..workspace(3)
+    };
+
+    save(&task_dir, &ended).unwrap();
+
+    let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
+    assert_eq!(read, ended);
+    assert_eq!(read.stage, Stage::Ended);
+}
+
+#[tokio::test]
+async fn the_requesters_dirty_worktree_stays_byte_identical_after_the_workspace_is_made() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let base = fixture.head();
+    let workspace = RequestWorkspace {
+        base: base.to_string().parse().unwrap(),
+        ..workspace(10)
+    };
+    let requester_git = handle(&fixture.repo);
+
+    // The requester's own worktree — the repository itself — has uncommitted work: a changed file and an untracked one.
+    std::fs::write(fixture.repo.join("a.txt"), "the requester's own uncommitted edit\n").unwrap();
+    std::fs::write(fixture.repo.join("untracked.txt"), "untracked by the requester\n").unwrap();
+    let changed_before = std::fs::read(fixture.repo.join("a.txt")).unwrap();
+    let untracked_before = std::fs::read(fixture.repo.join("untracked.txt")).unwrap();
+
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
+
+    // The requester's uncommitted files are untouched, byte for byte.
+    assert_eq!(std::fs::read(fixture.repo.join("a.txt")).unwrap(), changed_before);
+    assert_eq!(
+        std::fs::read(fixture.repo.join("untracked.txt")).unwrap(),
+        untracked_before
+    );
+
+    // The workspace's worktree starts from the committed content, without the requester's uncommitted work.
+    let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
+    assert_eq!(std::fs::read_to_string(worktree.join("a.txt")).unwrap(), "one\n");
+    assert!(!worktree.join("untracked.txt").exists());
 }
