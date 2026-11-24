@@ -362,10 +362,9 @@ mod run_compose {
                     wanted,
                     "{role:?} {kind:?} serena={with_serena}: {found:?}"
                 );
-                let shown = found.map(|section| section.trim_end().to_owned());
                 assert_eq!(
-                    shown,
-                    wanted.then(|| SERENA.to_owned()),
+                    found,
+                    wanted.then_some(HarnessPrompt::Serena),
                     "{role:?} {kind:?} serena={with_serena}"
                 );
             }

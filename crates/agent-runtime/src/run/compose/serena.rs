@@ -6,6 +6,7 @@
 //! `agents.toml` without `serena` renders byte for byte as before.
 
 use agent_core::kinds::Role;
+use agent_core::prompt::HarnessPrompt;
 
 use super::PromptKind;
 
@@ -28,8 +29,11 @@ impl Serena {
 
 /// The section on finding code with Serena for a first prompt of `role`, when the run has Serena: `None` for a run
 /// that resumes its session (the section is in the prompt of its first run) and a run without Serena.
+///
+/// `role` decides nothing yet: every role that reads code gets the section, the worker with the others, because a
+/// worker is asked for code as often as not and the section says itself that a task without code needs none of it.
 #[must_use]
-pub fn serena_section(role: Role, kind: PromptKind, serena: Serena) -> Option<&'static str> {
-    let _ = (role, kind, serena);
-    None
+pub fn serena_section(role: Role, kind: PromptKind, serena: Serena) -> Option<HarnessPrompt> {
+    let _ = role;
+    matches!((kind, serena), (PromptKind::First, Serena::Given)).then_some(HarnessPrompt::Serena)
 }
