@@ -1,3 +1,9 @@
+## 0.87.0 — 24.11.2026 — PR #240
+
+### Enhancements
+- [agent-runtime] Prepares a worker's task, branch and worktree at the requester's committed base, keeping the requester's uncommitted files untouched. New dispatch will use this in the next part.
+- [agent] Settles recorded worker requests outside the team crew: checks the result in its own worktree, brings over a valid commit, retries a wrong result, and releases the workspace. Failed cleanup is retried; malformed results are retained for inspection.
+
 # What is new in `agent`
 
 Newest first. One entry per version, written by the pull request that raises it — the rule and the form are in
