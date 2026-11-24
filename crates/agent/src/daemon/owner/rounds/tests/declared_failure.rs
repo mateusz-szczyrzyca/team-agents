@@ -97,13 +97,22 @@ async fn a_declared_failure_that_fails_again_is_taken_over_by_a_fitting_agent_in
         .await;
     let takeover = rig.prompt(&tasks[0], 3).await;
     let log = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-log")).unwrap();
+    let told = rig.notifications();
     rig.stop().await.unwrap();
 
     let member = state.find_task(&tasks[0]).unwrap().member;
-    assert_eq!(member.agent().name(), "claude-2", "the first fitting agent holds the task");
+    assert_eq!(
+        member.agent().name(),
+        "claude-2",
+        "the first fitting agent holds the task"
+    );
     assert_eq!(member.past_holders().len(), 1, "who held it is recorded");
     assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
-    assert_eq!(member.runs().len(), 3, "two failed runs of claude-1, one run of claude-2");
+    assert_eq!(
+        member.runs().len(),
+        3,
+        "two failed runs of claude-1, one run of claude-2"
+    );
     assert!(
         takeover.contains("You are agent **claude-2**"),
         "the replacement is briefed: {takeover}"
@@ -115,6 +124,10 @@ async fn a_declared_failure_that_fails_again_is_taken_over_by_a_fitting_agent_in
     assert!(
         takeover.contains("I could not do it."),
         "the briefing holds what the failed run said: {takeover}"
+    );
+    assert!(
+        told.iter().all(|text| !text.contains("ended with STATUS: FAILED")),
+        "the human is not told while a rung is untried: {told:?}"
     );
     let branches: Vec<&str> = log.lines().filter_map(|line| line.split_whitespace().nth(2)).collect();
     assert_eq!(branches.len(), 3, "{log}");
@@ -158,7 +171,11 @@ async fn a_declared_failure_that_fails_again_gives_the_lead_the_members_work() {
     rig.stop().await.unwrap();
 
     let member = state.find_task(&member_task).unwrap().member;
-    assert_eq!(member.status(), TaskStatus::Stopped, "the member's task stops, it does not fail");
+    assert_eq!(
+        member.status(),
+        TaskStatus::Stopped,
+        "the member's task stops, it does not fail"
+    );
     assert_eq!(member.runs().len(), 2, "the failed run and its new session");
     assert_eq!(member.past_holders().len(), 0, "the lead, not an agent, takes the work");
     assert!(
@@ -173,7 +190,7 @@ async fn a_declared_failure_that_fails_again_gives_the_lead_the_members_work() {
 }
 
 // Rule: `[replacement] mode = "off"` keeps a declared failure final: the task fails at its first failed run, and nothing
-// is handed over.
+// is handed over; the human is told once.
 #[tokio::test]
 async fn mode_off_keeps_a_declared_failure_final() {
     let mut rig = Rig::new(
@@ -204,4 +221,12 @@ async fn mode_off_keeps_a_declared_failure_final() {
     assert_eq!(member.runs().len(), 1, "mode off: the failed run is not started again");
     assert_eq!(member.past_holders().len(), 0, "mode off: nothing is handed over");
     assert_eq!(member.agent().name(), "claude-1");
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("The run of claude-1 ended with STATUS: FAILED"))
+            .count(),
+        1,
+        "the human is told once, when the ladder has no rung left"
+    );
 }

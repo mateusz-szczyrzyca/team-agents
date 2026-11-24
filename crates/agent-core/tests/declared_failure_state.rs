@@ -21,7 +21,9 @@ fn a_state_written_before_the_declared_failure_reason_still_loads() {
             .teams()
             .iter()
             .flat_map(|team| team.crew().roster())
-            .all(|(_, member)| member.renewals().is_none_or(|renewals| renewals.reason() != Trouble::Failed)),
+            .all(|(_, member)| member
+                .renewals()
+                .is_none_or(|renewals| renewals.reason() != Trouble::Failed)),
         "the fixture predates the reason, so no renewal of it has it"
     );
 }
