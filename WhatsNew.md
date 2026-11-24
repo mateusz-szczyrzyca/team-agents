@@ -5,6 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.90.0 — 24.11.2026
+
+### New features
+- [agent-core] [agent-runtime] A run that has Serena and searches code without it past a bound is told once in its session to find code with Serena. Counted are the shell's `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` and `find` over a file of code, and the CLI's own `Grep` and `Read` over one; Markdown, TOML, a log or a diff never counts, and neither does a run that called Serena at least once. The reminder names the count and asks in the imperative for `find_symbol`, `find_referencing_symbols` and `get_symbols_overview`, while `grep` stays for text. A new session counts anew, a resumed one keeps its count.
+- [agent] [agent-core] [agent-runtime] Each reminder is the log event `serena_reminded` and a record of the history with the task, the run, the count and the CLI, and `agent debug` tells next to a run's tool count whether it was reminded and how many calls of Serena it made after.
+
+### Configuration
+- [agent-core] new: `[serena] remind_after` (default `40`; `0` turns the reminder off) — the count of searches of code without Serena at which a run with Serena is reminded once in its session; a file without `[serena]` keeps the default.
+- [agent-runtime] A history of version 22 is read and upgraded to version 23, which admits the record and the log event of a reminder.
+
 ## 0.89.0 — 24.11.2026 — PR #242
 
 ### Bug fixes
