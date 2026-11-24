@@ -101,11 +101,13 @@ fn a_watch_of_a_session_that_goes_on_is_not_reminded_again() {
 
 /// The start of the run `run()` in the session `session`.
 fn start_in(session: &str) -> Record {
-    let Record::Run(mut start) = start() else {
-        panic!("start() is the start of a run")
-    };
-    start.session = Some(session.parse().expect("a session"));
-    Record::Run(start)
+    match start() {
+        Record::Run(mut run) => {
+            run.session = Some(session.parse().expect("a session"));
+            Record::Run(run)
+        }
+        other => other,
+    }
 }
 
 #[test]
