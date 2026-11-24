@@ -8,6 +8,7 @@ use crate::cli::ActivityEvent;
 
 use super::code_search;
 
+#[cfg(test)]
 mod counting;
 #[cfg(test)]
 mod tests;
