@@ -483,6 +483,15 @@ enum Asked {
     Unusable(Notice),
 }
 
+/// Request-run ownership and provider rotation, kept together off the owner's stack.
+#[derive(Debug, Default)]
+struct PoolDispatch {
+    /// Original teams of request-owned runs, retained until settlement after requester removal.
+    run_teams: HashMap<TaskId, TeamId>,
+    /// Provider of the last successful pool dispatch; reset on restart.
+    last_served_provider: Option<String>,
+}
+
 /// The owner.
 pub(super) struct Owner {
     /// What it is made of.
@@ -528,8 +537,8 @@ pub(super) struct Owner {
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
     serving: HashMap<TaskId, Served>,
-    /// Original teams of request-owned runs, retained until settlement even after requester removal.
-    pool_run_teams: HashMap<TaskId, TeamId>,
+    /// Pool bookkeeping is boxed to keep owner lifecycle futures compact.
+    pool_dispatch: Box<PoolDispatch>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
@@ -597,8 +606,6 @@ pub(super) struct Owner {
     /// The requests whose result was wrong and that wait in the bus's queue for a second try, with what their next worker
     /// and their requester are told.
     again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
-    /// The last served provider; boxed to keep owner lifecycle futures bounded.
-    last_served_provider: Box<Option<String>>,
     /// Outstanding workspace cleanup obligations after dispatch failure when release failed.
     pub(in crate::daemon::owner) cleanup_obligations: Vec<teams::CleanupObligation>,
 }
@@ -655,7 +662,7 @@ impl Owner {
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
-            pool_run_teams: HashMap::new(),
+            pool_dispatch: Box::default(),
             closed: HashSet::new(),
             looks: BTreeSet::new(),
             watcher,
@@ -687,7 +694,6 @@ impl Owner {
             again: HashMap::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
-            last_served_provider: Box::new(None),
             cleanup_obligations: Vec::new(),
         }
     }
@@ -906,7 +912,7 @@ impl Owner {
 
     /// Keeps the run's team identity while its requester may be removed.
     fn record_pool_run(&mut self, task: TaskId, served: Served, team: TeamId) {
-        self.pool_run_teams.insert(task.clone(), team);
+        self.pool_dispatch.run_teams.insert(task.clone(), team);
         self.serving.insert(task, served);
     }
 
@@ -918,7 +924,8 @@ impl Owner {
                 .iter()
                 .filter(|(task, _)| self.parts.state.find_task(task).is_none())
                 .filter_map(|(task, served)| {
-                    self.pool_run_teams
+                    self.pool_dispatch
+                        .run_teams
                         .get(task)
                         .cloned()
                         .or_else(|| {
@@ -1234,7 +1241,7 @@ impl Owner {
         if self.parts.state.find_task(&task).is_none()
             && let Some(served) = self.serving.remove(&task)
         {
-            self.pool_run_teams.remove(&task);
+            self.pool_dispatch.run_teams.remove(&task);
             return self.settle_pool_worker_run(&task, &served, outcome);
         }
         let result = match outcome {

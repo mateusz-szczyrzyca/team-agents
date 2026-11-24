@@ -1319,7 +1319,7 @@ impl Owner {
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 } else {
-                    let last_served = LastServed(self.last_served_provider.as_deref());
+                    let last_served = LastServed(self.pool_dispatch.last_served_provider.as_deref());
                     next_pool_worker(&pool_workers, &requires, last_served, run_limit)
                         .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 }
@@ -1378,7 +1378,7 @@ impl Owner {
             };
 
             if let Taken::Served = self.dispatch_pool_request(&worker_name, request).await {
-                *self.last_served_provider = Some(provider);
+                self.pool_dispatch.last_served_provider = Some(provider);
             }
 
             let avail = self.worker_availability(&worker_name).await;
