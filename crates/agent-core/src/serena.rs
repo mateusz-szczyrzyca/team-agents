@@ -27,8 +27,15 @@ const CODE_EXTENSIONS: [&str; 33] = [
 ];
 
 /// The names of the CLI's own tools that search a file for a pattern or read it, as Claude Code and opencode name them:
-/// `Grep` and `grep`, `Read` and `read`. `Glob` and `glob` find the names of files by a pattern, which names no file.
-const SEARCH_TOOLS: [&str; 4] = ["Grep", "Read", "grep", "read"];
+/// `Grep` and `grep`, `Read` and `read`, `Glob` and `glob`. A glob names its files by a pattern (`src/**/*.rs`), which is
+/// searched like a path.
+const SEARCH_TOOLS: [&str; 6] = ["Grep", "Read", "Glob", "grep", "read", "glob"];
+
+/// The names of the directories that hold the code of a repository of these agents. A search over a directory with one of
+/// these names in its path, or over `.`, searches code; a search over `docs/` or `config` searches text.
+const CODE_DIRECTORIES: [&str; 12] = [
+    "src", "crates", "lib", "cmd", "pkg", "internal", "app", "tests", "test", "tools", "bin", "agentbus",
+];
 
 /// The names of the shell commands that search or read files.
 const SEARCH_COMMANDS: [&str; 7] = ["grep", "rg", "sed", "cat", "head", "tail", "find"];
@@ -39,9 +46,11 @@ const SEARCH_COMMANDS: [&str; 7] = ["grep", "rg", "sed", "cat", "head", "tail", 
 pub fn code_search(event: &ActivityEvent) -> Option<CodeSearch> {
     let names = match event {
         ActivityEvent::Command(command) => command_filenames(command),
-        ActivityEvent::ToolCall { name, summary } if SEARCH_TOOLS.contains(&name.as_str()) => {
-            summary.split_whitespace().flat_map(one_of_its_words).collect()
-        }
+        ActivityEvent::ToolCall { name, summary } if SEARCH_TOOLS.contains(&name.as_str()) => summary
+            .split_whitespace()
+            .flat_map(one_of_its_words)
+            .filter(|word| is_code_file(word) || (word.contains('/') && is_code_directory(word)))
+            .collect(),
         ActivityEvent::ToolCall { .. }
         | ActivityEvent::BusCall { .. }
         | ActivityEvent::FileEdit { .. }
@@ -52,7 +61,6 @@ pub fn code_search(event: &ActivityEvent) -> Option<CodeSearch> {
     };
     let paths: Vec<String> = names
         .into_iter()
-        .filter(|word| is_code_file(word))
         .map(str::to_owned)
         .collect::<BTreeSet<_>>()
         .into_iter()
@@ -68,9 +76,13 @@ pub struct CodeSearch {
 }
 
 /// The file names of `command`, as the shell gives them to the commands that search or read files: of every search or
-/// read of the line, its own words. A search that reads a pipe (`git log | head`) names no file.
+/// read of the line, its own words. A search that reads a pipe (`git log | head`) names no file. A directory of code counts
+/// for a search of the line (`grep -rn x crates/`) unless the line is piped (a quick filter of text, `rg x src | sort`) or
+/// the command is `find`, whose directories only say where it looks.
 fn command_filenames(command: &str) -> Vec<&str> {
     let mut names = Vec::new();
+    let piped = command.split_whitespace().any(|word| word == "|");
+    let mut directories = false;
     let mut reading = false;
     let mut reads_pipe = false;
     let mut after_pipe = false;
@@ -91,12 +103,17 @@ fn command_filenames(command: &str) -> Vec<&str> {
             },
         };
         let name = word.rsplit_once('/').map_or(word, |(_, last)| last);
-        if SEARCH_COMMANDS.contains(&name) || matches!(name, "awk" | "python" | "python3") {
+        if SEARCH_COMMANDS.contains(&name) {
             reading = true;
+            directories = !piped && name != "find";
             reads_pipe = after_pipe;
             after_pipe = false;
         } else if reading && !reads_pipe {
-            names.extend(one_of_its_words(word));
+            names.extend(
+                one_of_its_words(word)
+                    .into_iter()
+                    .filter(|part| is_code_file(part) || (directories && is_code_directory(part))),
+            );
         }
         if ends {
             reading = false;
@@ -111,6 +128,20 @@ fn one_of_its_words(word: &str) -> Vec<&str> {
     word.split(['"', '\'', '`', '>', '<', ',', ';', '('])
         .filter(|part| !part.is_empty())
         .collect()
+}
+
+/// Whether `path` is a directory of code: `.` or a name without extension that has a code directory among its components.
+/// A word that starts with `-` is an option, never a path.
+fn is_code_directory(path: &str) -> bool {
+    if path.starts_with('-') || path.starts_with("..") {
+        return false;
+    }
+    let trimmed = path.trim_end_matches('/');
+    if trimmed == "." {
+        return true;
+    }
+    let has_extension = Path::new(trimmed).extension().is_some();
+    !has_extension && trimmed.split('/').any(|part| CODE_DIRECTORIES.contains(&part))
 }
 
 /// Whether `path` is a file of code, by the extension of its name.
