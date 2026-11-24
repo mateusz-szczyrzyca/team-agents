@@ -103,7 +103,7 @@ enum DeliveredError {
     },
 }
 
-/// A member whose task failed while an item in progress is its own.
+/// A member whose task failed after a run that called a tool, while an item in progress is its own.
 struct FailedHolder {
     /// The member's task.
     task: TaskId,
@@ -148,6 +148,11 @@ impl Owner {
             }) else {
                 continue;
             };
+            // A member that never called a tool did no work the lead could hold: its failure is a setup defect that stays
+            // with the human, as the brief of the ladder says (`used_tool` is what the daemon recorded of its runs).
+            if !member.runs().iter().any(agent_core::state::Run::used_tool) {
+                continue;
+            }
             let Ok(agent) = agent_name_of(member.agent().name()) else {
                 continue;
             };
