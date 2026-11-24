@@ -1390,7 +1390,7 @@ impl Owner {
         clippy::too_many_lines,
         reason = "dispatching a pool worker prepares the dedicated workspace, derives the branch, shapes the prompt, configures MCP, and spawns the job"
     )]
-    async fn try_dispatch_pool_request(
+    pub(in crate::daemon::owner) async fn try_dispatch_pool_request(
         &mut self,
         worker_name: &AgentName,
         request: &DelegationRequest,
@@ -1612,6 +1612,9 @@ impl Owner {
 
         Ok(())
     }
+
+    /// Retries outstanding cleanup obligations, freeing workers whose workspace release failed earlier.
+    pub(in crate::daemon::owner) async fn retry_cleanup_obligations(&mut self) {}
 
     /// A run of a pool worker that ended.
     pub(super) fn settle_pool_worker_run(
@@ -2225,6 +2228,13 @@ fn answer_jobs(
             notice,
         },
     ])
+}
+
+/// An unfulfilled workspace release obligation after dispatch failure.
+#[derive(Debug, Clone)]
+pub(in crate::daemon::owner) struct CleanupObligation {
+    pub(in crate::daemon::owner) requester_git: Git,
+    pub(in crate::daemon::owner) workspace: RequestWorkspace,
 }
 
 #[cfg(test)]

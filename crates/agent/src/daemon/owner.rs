@@ -595,6 +595,8 @@ pub(super) struct Owner {
     again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
     /// The provider of the last request the pool of workers served.
     last_served_provider: Option<String>,
+    /// Outstanding workspace cleanup obligations after dispatch failure when release failed.
+    pub(in crate::daemon::owner) cleanup_obligations: Vec<teams::CleanupObligation>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -681,6 +683,7 @@ impl Owner {
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
             last_served_provider: None,
+            cleanup_obligations: Vec::new(),
         }
     }
 

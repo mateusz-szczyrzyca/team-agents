@@ -677,3 +677,63 @@ async fn elsewhere_of_defers_conservatively_when_helper_request_is_missing() {
     let elsewhere = owner.elsewhere_of(&pending).await;
     assert_eq!(elsewhere, Elsewhere::None);
 }
+
+#[tokio::test]
+async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_and_retries() {
+    use std::num::NonZeroU64;
+    use agent_runtime::agentbus::RequestId;
+    use crate::daemon::owner::worker_result::Again;
+    use crate::fixtures::team_id;
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Working);
+    let worker_name: AgentName = "w-nonexistent".parse().unwrap();
+    let request_id = RequestId::new(NonZeroU64::new(1).unwrap());
+
+    let again = Again {
+        team: team_id(0),
+        worker: "w-old".parse().unwrap(),
+        failed_cli: agent_core::kinds::CliKind::Claude,
+        failed_provider: "claude".to_owned(),
+        tried: agent_runtime::worker_request::Try {
+            number: 2,
+            earlier: vec!["first try failed".to_owned()],
+        },
+        reason: "wrong result".to_owned(),
+    };
+    owner.again.insert(request_id, again);
+
+    let req = DelegationRequest {
+        id: request_id,
+        from: "claude-1".parse().unwrap(),
+        from_task: record.record().requester_task.clone(),
+        repo: record.record().requester_repo.clone(),
+        branch: "main".parse().unwrap(),
+        worktree: daemon.home.worktree_dir(&record.record().requester_repo, &record.record().requester_task),
+        request: "do work".to_owned(),
+        context: String::new(),
+        status: DelegationStatus::Queued,
+        worker: None,
+        helper_task: None,
+        summary: String::new(),
+    };
+
+    let repo_dir = daemon.home.worktree_dir(&record.record().requester_repo, &record.record().requester_task);
+    let lock_file = repo_dir.join(".git/index.lock");
+    std::fs::create_dir_all(repo_dir.join(".git")).unwrap();
+    std::fs::write(&lock_file, "locked").unwrap();
+
+    let res = owner.try_dispatch_pool_request(&worker_name, &req).await;
+    assert!(res.is_err(), "dispatch must fail due to missing worker config");
+
+    assert_eq!(owner.cleanup_obligations.len(), 1, "cleanup obligation must be retained on release failure");
+    assert!(owner.again.contains_key(&request_id), "again retry history must be preserved");
+    assert!(owner.worker_availability(&worker_name).await.unsettled, "worker must be marked unsettled while obligation exists");
+
+    std::fs::remove_file(&lock_file).unwrap();
+    owner.retry_cleanup_obligations().await;
+
+    assert!(owner.cleanup_obligations.is_empty(), "cleanup obligation must be cleared after successful retry");
+    assert!(!owner.worker_availability(&worker_name).await.unsettled, "worker must no longer be unsettled");
+    assert!(owner.again.contains_key(&request_id), "again retry history must remain preserved");
+}
