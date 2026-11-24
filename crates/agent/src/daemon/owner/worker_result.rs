@@ -637,10 +637,23 @@ impl Owner {
                         }
                         return Ok(());
                     }
-                    Gathered::Wrong(checked, reasons) => Stage::Settled {
-                        checked: Box::new(checked),
-                        settlement: Settlement::Returned { reasons },
-                    },
+                    Gathered::Wrong(checked, reasons) => {
+                        let declared_failure = self
+                            .owned_journal(&pending.requester_task, pending.request)
+                            .await?
+                            .and_then(|journal| journal.ending())
+                            .is_some_and(|ending| matches!(ending, WorkerEnding::Failed | WorkerEnding::Cannot));
+                        let again = declared_failure
+                            && matches!(
+                                self.settle_result(&pending, &checked, workspace).await,
+                                Settlement::Again { .. }
+                            );
+                        let settlement = self.wrong_settlement(&pending, reasons, again);
+                        Stage::Settled {
+                            checked: Box::new(checked),
+                            settlement,
+                        }
+                    }
                     Gathered::Checked(checked) => Stage::Checked(Box::new(checked)),
                     Gathered::Check(checked, step, text) => {
                         self.start_request_check(task_dir, pending, checked, step, text, workspace);
@@ -1081,7 +1094,7 @@ impl Owner {
         facts.ending = ending;
         facts.try_number = tried.number;
         facts.tries = self.parts.settings.config.workers().tries();
-        facts.elsewhere = if ending == WorkerEnding::NoStatus || (ending != WorkerEnding::Done && !checked.committed) {
+        facts.elsewhere = if ending == WorkerEnding::NoStatus {
             Elsewhere::None
         } else {
             self.elsewhere_of(pending).await
