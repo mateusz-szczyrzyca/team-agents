@@ -250,7 +250,7 @@ impl Owner {
                             | agent_runtime::worker_request::Stage::Settled { checked, .. } => checked,
                             agent_runtime::worker_request::Stage::Ended => return Err(OwnerError::RequestOwnership),
                         },
-                        journal.ending().unwrap_or(WorkerEnding::Done),
+                        journal.ending().ok_or(OwnerError::RequestOwnership)?,
                         pending.run_seconds,
                         self.parts.settings.config.workers().seconds(),
                     ),
