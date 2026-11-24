@@ -622,8 +622,10 @@ case $action in
     for i in $(seq 0 41); do
       printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Read","input":{"file_path":"src/module-%d.rs"}}]}}\n' "$i" "$((i % 3))"
     done
+    # It says something while it waits, so that the watchdog does not take it for hung.
     while [[ ! -f .fake-continue ]]; do
-      sleep 0.05
+      printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}'
+      sleep 0.2
     done
     result 'Finished the item.\nSTATUS: DONE'
     ;;
