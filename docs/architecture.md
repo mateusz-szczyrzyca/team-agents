@@ -939,9 +939,9 @@ and unreadable explicit files are distinguished. No process is signalled or rest
 Task details include the latest run's reason, final message and steps. The steps of that run in the history count its
 tool calls, as `- Tool calls: 214 (serena 12, shell 160, other 42)`: Serena's tools by the name each CLI gives them
 (`mcp__serena__…` when Claude Code streams it, `serena.…` when Codex or Antigravity does, `serena_…` for the CLI that
-joins them that way), the shell's tools (`Bash`, `execute`, `run_command`, `shell`), and every other tool, agentbus's
-among them. A run whose steps name no tool
-says `- Tool calls: none recorded`. Questions are sorted numerically; gate
+joins them that way), the shell's tools (`Bash`, `execute`, `run_command`, `shell`) and every command a CLI streams as
+such, and every other tool, agentbus's among them, and the file edits. Each earlier run of the task has its own line
+starting `- Tool calls of run` and naming the run, from its own steps. A run whose steps name no tool says `none recorded`. Questions are sorted numerically; gate
 outputs retain their paths and modification times. Missing worktrees of each task's associated merged round
 are expected, with retained branch tips and commits over the base read from the caller's clone. An unpublished member branch
 is expected; coordinator origin differences remain assessable. Empty history and unreadable history have

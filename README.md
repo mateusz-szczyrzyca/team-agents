@@ -506,7 +506,8 @@ source changes before they are reported as unreadable. SQLite creates no files b
 Each task shows its latest run's reason, final message and steps, and how many tool calls that run made, Serena's and
 the shell's among them (`tools: 214 (serena 12, shell 160, other 42)`, or `tools: none recorded` when its steps name
 no tool): the count comes from the steps the run recorded in the history, so it tells whether the agents reach Serena
-or grep the code. Earlier runs remain in the bundle.
+or grep the code. Each earlier run of the task has its own count on a line of its own, before the latest run's. Earlier
+runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
 An unpublished member branch is expected; the coordinator's origin ref is still checked.
