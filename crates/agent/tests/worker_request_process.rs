@@ -2113,7 +2113,7 @@ Integrate the guide.
         let mut world = World::new(&[
             ("inv-opus", "investigator", "sleep"),
             ("claude-1", "agent", "ask-worker:member,sleep"),
-            ("glm-1", "worker", "sleep,script:guide"),
+            ("glm-1", "worker", "script:guide"),
         ]);
         world.script("guide", &commit_script("the walkthrough", &[]));
         world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
@@ -2137,7 +2137,7 @@ Integrate the guide.
     fn a_solo_task_delegates_a_step_to_a_pool_worker() {
         let mut world = World::new(&[
             ("claude-1", "agent", "ask-worker:solo,sleep"),
-            ("glm-1", "worker", "sleep,script:guide"),
+            ("glm-1", "worker", "script:guide"),
         ]);
         world.script("guide", &commit_script("the walkthrough", &[]));
         world.asks("solo", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
