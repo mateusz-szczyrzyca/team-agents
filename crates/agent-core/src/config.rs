@@ -896,6 +896,25 @@ pub struct Web {
     pub allowed_logins: Vec<TailscaleLogin>,
 }
 
+/// `[serena]`: soft enforcement settings for Serena tool use.
+///
+/// A reminder is sent to the agent when it searches code too many times without using Serena,
+/// once per session if Serena is available (configured and connected).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct Serena {
+    /// The number of code searches without Serena that trigger a reminder. Zero disables reminders.
+    /// Default is 40: a typical exploration uses 5-10 searches, so 40 suggests the agent is unaware
+    /// of Serena.
+    pub remind_after: usize,
+}
+
+impl Default for Serena {
+    fn default() -> Self {
+        Self { remind_after: 40 }
+    }
+}
+
 /// The validated contents of `agents.toml`.
 ///
 /// Made only by [`Config::from_toml_str`], so every value is valid and the lists are consistent: each name in
@@ -970,6 +989,8 @@ pub struct Config {
     history: History,
     /// The daemon's own log.
     log: Log,
+    /// Serena soft enforcement settings.
+    serena: Serena,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
@@ -1066,6 +1087,9 @@ struct RawConfig {
     /// See [`Config::log`].
     #[serde(default)]
     log: Log,
+    /// See [`Config::serena`].
+    #[serde(default)]
+    serena: Serena,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
@@ -1108,6 +1132,7 @@ impl RawConfig {
             split,
             history,
             log,
+            serena,
             web,
             repos,
         } = self;
@@ -1168,6 +1193,7 @@ impl RawConfig {
             split,
             history,
             log,
+            serena,
             web,
             repos,
         })
@@ -1422,6 +1448,12 @@ impl Config {
     #[must_use]
     pub const fn log(&self) -> &Log {
         &self.log
+    }
+
+    /// Serena soft enforcement settings.
+    #[must_use]
+    pub const fn serena(&self) -> &Serena {
+        &self.serena
     }
 
     /// What the harness does with the result of a worker.
