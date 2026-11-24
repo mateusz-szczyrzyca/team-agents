@@ -335,6 +335,37 @@ fn a_members_work_owed_to_its_lead_is_kept_until_the_lead_is_told() {
 }
 
 #[test]
+fn a_member_given_to_its_lead_is_remembered_to_be_so_after_the_lead_is_told() {
+    let mut state = old_state();
+    assert!(
+        !state.find_task(&task()).unwrap().member.given_to_lead(),
+        "a state of main gave nothing to a lead"
+    );
+
+    state
+        .owe_lead(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    state.lead_told(&task()).unwrap();
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    assert!(
+        loaded.find_task(&task()).unwrap().member.given_to_lead(),
+        "the hand-over to the lead stays recorded once the lead is told, across a restart"
+    );
+}
+
+#[test]
+fn a_member_started_in_a_new_session_was_not_given_to_its_lead() {
+    let mut state = old_state();
+
+    state
+        .renew_task(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+
+    assert!(!state.find_task(&task()).unwrap().member.given_to_lead());
+}
+
+#[test]
 fn only_a_members_work_is_owed_to_a_lead() {
     let mut state = old_state();
     assert!(
