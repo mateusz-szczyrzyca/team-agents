@@ -40,7 +40,7 @@ fn search<'a>(pattern: &'a str, path: Option<&'a str>, globs: &[&'a str], types:
 
 /// The paths as a list of texts, for a table.
 fn paths(of: &[&str]) -> Option<Vec<String>> {
-    Some(of.iter().map(|path| (*path).to_owned()).collect())
+    (!of.is_empty()).then(|| of.iter().map(|path| (*path).to_owned()).collect())
 }
 
 #[test]
@@ -204,4 +204,27 @@ fn a_tool_that_does_not_search_has_no_search_summary() {
         assert_eq!(search_summary(name, &input, clip, MAX), None, "{name}");
     }
     assert_eq!(search_summary("Grep", &SearchInput::default(), clip, MAX), None);
+}
+
+#[test]
+fn a_filter_with_many_brace_groups_is_expanded_to_a_bounded_number_of_globs() {
+    let glob = "*.{rs,md,rs,md,rs,md,rs,md}".repeat(12);
+    let input = search("fn", Some("src"), &[&glob], &[]);
+
+    let summary = search_summary("Grep", &input, clip, 100_000).expect("a search has a summary");
+
+    assert!(summary.split(' ').count() <= 65, "{} words", summary.split(' ').count());
+}
+
+#[test]
+fn a_type_of_text_and_a_type_named_by_its_language_are_told_apart() {
+    assert_eq!(told("Grep", &search("fn", Some("src"), &[], &["markdown"])), None);
+    assert_eq!(
+        told("Grep", &search("fn", Some("src"), &[], &["python"])),
+        paths(&["src/*.py"])
+    );
+    assert_eq!(
+        told("Grep", &search("fn", Some("src"), &[], &["go"])),
+        paths(&["src/*.go"])
+    );
 }
