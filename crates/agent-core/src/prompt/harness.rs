@@ -12,6 +12,8 @@ use super::{Audience, PromptSpec};
 pub enum HarnessPrompt {
     /// The working context every run starts with: who the agent is, where it works, how a turn ends and how it asks the human.
     Context,
+    /// How a run that has Serena finds code with it: a symbol through its language server, and `grep` only for text.
+    Serena,
     /// The role of the only agent of a task.
     RoleSolo,
     /// The role of the coordinator of a team.
@@ -156,6 +158,7 @@ impl HarnessPrompt {
     /// Every text of the catalog.
     pub const ALL: &'static [Self] = &[
         Self::Context,
+        Self::Serena,
         Self::RoleSolo,
         Self::RoleCoordinator,
         Self::RoleMember,
@@ -235,6 +238,7 @@ impl HarnessPrompt {
                 Audience::Model,
                 &["agent", "task", "repo", "worktree", "questions_file", "number"],
             ),
+            Self::Serena => PromptSpec::new("harness/run/serena.md", Audience::Model, &[]),
             Self::RoleSolo => PromptSpec::new("harness/run/role-solo.md", Audience::Model, &[]),
             Self::RoleCoordinator => PromptSpec::new("harness/run/role-coordinator.md", Audience::Model, &[]),
             Self::RoleMember => PromptSpec::new("harness/run/role-member.md", Audience::Model, &[]),

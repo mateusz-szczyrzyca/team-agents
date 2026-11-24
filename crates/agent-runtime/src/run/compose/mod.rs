@@ -18,11 +18,13 @@ use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::prompts::{PromptLoader, RenderPromptError};
 
 mod briefing;
+mod serena;
 
 pub use briefing::{
     Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, PlanHeadings,
     briefing_variables, briefing_variables_with,
 };
+pub use serena::{Serena, serena_section};
 
 /// Why a run is resumed instead of started: what its prompt tells the agent about the interruption.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -80,6 +82,8 @@ pub struct PromptInput<'a> {
     pub team_items: &'a [TeamItem<'a>],
     /// The agent's last checkpoint, if there is one.
     pub checkpoint: Option<&'a str>,
+    /// Whether the run is given Serena, whose section a first prompt then has.
+    pub serena: Serena,
 }
 
 /// An item of the team a coordinator leads, and who has it.
@@ -149,13 +153,16 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
         .with("worktree", input.worktree.display().to_string())?
         .with("questions_file", input.questions_file.display().to_string())?
         .with("number", input.number.to_string())?;
-    let mut sections = vec![
-        texts.harness.render(HarnessPrompt::Context, &context)?,
+    let mut sections = vec![texts.harness.render(HarnessPrompt::Context, &context)?];
+    if let Some(section) = serena_section(input.kind, input.serena) {
+        sections.push(texts.harness.render(section, &Variables::new())?);
+    }
+    sections.extend([
         texts.harness.render(role_prompt(input.role), &Variables::new())?,
         texts
             .rules
             .render(rules_prompt(input.role, input.tier), &Variables::new())?,
-    ];
+    ]);
     if !input.brief.trim().is_empty() {
         let values = Variables::new().with("brief", input.brief)?;
         sections.push(texts.harness.render(HarnessPrompt::Brief, &values)?);

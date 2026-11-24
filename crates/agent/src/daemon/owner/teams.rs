@@ -35,7 +35,7 @@ use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, 
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
 use agent_runtime::request_workspace::{self, RequestWorkspace, WorkspaceRecord};
-use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, compose};
+use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, Serena, compose};
 use agent_runtime::run::keep_out_of_git;
 use agent_runtime::run::{RunJob, RunVerdict};
 use agent_runtime::team_prompts::TeamPrompts;
@@ -1425,6 +1425,7 @@ impl Owner {
                 item: None,
                 team_items: &[],
                 checkpoint: None,
+                serena: Serena::Without,
             };
             let texts = PromptTexts {
                 harness: &self.parts.texts,

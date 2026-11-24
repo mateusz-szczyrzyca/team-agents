@@ -5,11 +5,22 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.89.0 — 24.11.2026 — PR #242
+
+### Bug fixes
+- [agent] [agent-core] A reviewer that its provider refuses run after run (a rate limit or a used-up quota) is now given to another investigator once `[review] replace_after_minutes` have passed since the review was asked. Before, every refused run started the wait anew, so short rate limits a few minutes apart kept the review, and the team, waiting until the human stopped the reviewer. A reviewer that did work since the request still waits the full time from its last real run.
+
+### Configuration
+- [agent-core] changed: `[review] replace_after_minutes` (default `15`) — counted from the reviewer's last run that its provider did not refuse, never before the review was asked; before, from its last run of any kind.
+
 ## 0.88.0 — 24.11.2026 — PR #241
 
 ### New features
-- [agent] [agent-core] [agent-runtime] [agentbus] A request for a worker from any team or solo task is served by a free worker from the installation-wide pool of `[tiers] workers`. Workers are chosen alternately across providers, skipping busy providers without waiting; second tries target another provider. The worker serves in a dedicated workspace worktree at the requester's commit, with no place in the requester's crew.
-- [agent] `agent status` shows the pool: each configured worker, whom it serves (team or task, step) or that it is free.
+- [agent-core] [agent-runtime] A run that has Serena is told in its first prompt how to find code with it. Find a symbol with `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and read only the body you need; `grep` and `rg` stay for text that is not a symbol. Every role gets it, a worker with the others, and so does a new session; a resumed session does not repeat it.
+- [agent] [agent-core] [agent-runtime] `agent debug` counts each run's tool calls, Serena's and the shell's among them, as `tools: 214 (serena 12, shell 160, other 42)` — or `tools: none recorded`. Each earlier run of a task has its own count on a line of its own. With `[binaries] serena` set, you can see whether the agents reach it or grep the code.
+
+### Enhancements
+- [agent-runtime] An `agents.toml` without `serena` runs as before, and its prompts are byte for byte as before.
 
 ## 0.87.0 — 24.11.2026 — PR #240
 

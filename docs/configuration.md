@@ -123,7 +123,7 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | Key | Default | Meaning |
 |---|---|---|
 | `claude`, `codex`, `agy`, `opencode`, `agentbus` | the bare command names | a bare name is looked up on `agent_path`; an absolute path is used as it is. `./x` and `bin/x` are refused |
-| `serena` | not used | Serena, the MCP server that finds code through language servers; without it the agents get none |
+| `serena` | not used | Serena, the MCP server that finds code through language servers; without it the agents get none. With it, the first prompt of every run — a solo agent, a coordinator, a member, a reviewer and a worker, of a new session too and not of a resumed one — says to find a symbol with `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and to keep `grep` and `rg` for text |
 | `agent_path` | `["/usr/local/bin", "/usr/bin", "/bin"]` | the directories of the `PATH` the agents run with, in order: add the toolchains they need (`cargo`, `go`, ...) |
 
 ### `[watchdog]` and `[limits]`
@@ -179,7 +179,7 @@ of the history requirement. Set `idle_team_minutes = 0` before upgrading to reta
 | `allow_second_opinion_on_blocker` | `true` | permission for one second opinion on an open BLOCKER; omission means true. Stored for the later daemon activation; requests are still refused in this release |
 | `fix_passes` | `5` | "changes requested" goes back to the team at most this many times; then the human is asked. `0` asks at once |
 | `check_passes` | `2` | the checks before a review ([`[repos.NAME.checks]`](#reposnamechecks)) send a round back to the team at most this many times; then the human is asked. `0` asks at once |
-| `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |
+| `replace_after_minutes` | `15` | a reviewer that is paused this long with its review still to come is replaced by another free investigator — counted from its last run that its provider did not refuse (a rate limit or a used-up quota), never before the review was asked; one whose task failed or was stopped is replaced at once. With no investigator free the human is told |
 
 ### `[plan]`
 
