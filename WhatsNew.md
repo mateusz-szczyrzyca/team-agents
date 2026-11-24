@@ -5,15 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.90.0 — 24.11.2026 — PR #243
-
-### New features
-- [agent] [agent-core] [agent-runtime] [agentbus] A request for a worker from any team or solo task is served by a free worker from the installation-wide pool of `[tiers] workers`. Workers are chosen alternately across providers, skipping busy providers without waiting; second tries target another provider. The worker serves in a dedicated workspace worktree at the requester's commit, with no place in the requester's crew.
-- [agent] `agent status` shows the pool: each configured worker, whom it serves (team or task, step) or that it is free.
-
-### Configuration
-- [agent-core] new: `[agents.NAME] capabilities` (default `[]`) — declared capabilities in `<namespace>:<value>` form (valid namespaces: `os`, `arch`, `build`, `test`, `hw`, `net`) matched against worker request `requires`.
-
 ## 0.89.0 — 24.11.2026 — PR #242
 
 ### Bug fixes
