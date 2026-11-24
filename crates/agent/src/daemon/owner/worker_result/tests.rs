@@ -785,7 +785,7 @@ async fn answered_request_keeps_worker_reserved_until_workspace_release() {
 
     owner.settle_workspace_results(&team_id(0)).await.unwrap();
 
-    assert!(owner.unreadable_requests.contains(&"release 1".to_owned()));
+    assert!(owner.unreadable_requests.contains("release 1"));
     assert!(requester_dir.join("request-workspace-1.json").exists());
     assert!(
         owner.worker_availability(&record.record().worker).await.unsettled,
