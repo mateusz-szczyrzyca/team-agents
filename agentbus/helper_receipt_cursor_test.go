@@ -105,3 +105,23 @@ func TestOwnedReceiptRecoveryRejectsOffsetsOutsideTheLog(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnedReceiptRecoveryReportsANonterminalReceipt(t *testing.T) {
+	b, cmd := ownedFixture(t)
+	if _, err := b.helperOwned(cmd); err != nil {
+		t.Fatal(err)
+	}
+	st, serr := b.load()
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if _, serr := b.post(st, "agent", "lead", EventScript{Notice: NoticeHelperResult, Fields: map[string]string{
+		"owned_request": "1", "run": cmd.Run, "worker": cmd.Worker, "task": cmd.Task,
+		"status": string(HelperRunning),
+	}}); serr != nil {
+		t.Fatal(serr)
+	}
+	if _, serr := b.load(); serr == nil {
+		t.Fatal("accepted a nonterminal final receipt")
+	}
+}
