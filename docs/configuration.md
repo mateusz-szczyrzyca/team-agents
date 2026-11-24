@@ -117,7 +117,7 @@ not affect builds started by hand. Copy [`agents.example.toml`](../config/agents
 | Key | Default | Meaning |
 |---|---|---|
 | `claude`, `codex`, `agy`, `opencode`, `agentbus` | the bare command names | a bare name is looked up on `agent_path`; an absolute path is used as it is. `./x` and `bin/x` are refused |
-| `serena` | not used | Serena, the MCP server that finds code through language servers; without it the agents get none |
+| `serena` | not used | Serena, the MCP server that finds code through language servers; without it the agents get none. With it, the first prompt of every run — a solo agent, a coordinator, a member, a reviewer and a worker, of a new session too and not of a resumed one — says to find a symbol with `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and to keep `grep` and `rg` for text |
 | `agent_path` | `["/usr/local/bin", "/usr/bin", "/bin"]` | the directories of the `PATH` the agents run with, in order: add the toolchains they need (`cargo`, `go`, ...) |
 
 ### `[watchdog]` and `[limits]`
