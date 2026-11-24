@@ -98,12 +98,20 @@ pub(in crate::daemon::owner) struct WorkerAvailability {
     pub(in crate::daemon::owner) unsettled: bool,
 }
 
+/// An owned snapshot used while dispatch mutates the daemon state.
+#[derive(Debug)]
 struct OwnedPoolWorker {
+    /// Configured worker identity.
     name: AgentName,
+    /// Provider used for installation-wide rotation.
     provider: String,
+    /// Declared requirements this worker can satisfy.
     capabilities: Vec<String>,
+    /// Whether another request already reserves this worker.
     busy: bool,
+    /// Ordinary runs counted against the configured limit.
     runs: u32,
+    /// Whether a result or cleanup still needs settlement.
     unsettled: bool,
 }
 
