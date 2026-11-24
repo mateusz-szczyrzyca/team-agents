@@ -201,3 +201,43 @@ fn a_cut_by_the_daemon_is_not_a_bad_run_to_retry_in_the_same_session() {
         );
     }
 }
+
+#[test]
+fn a_declared_failure_is_never_resumed_in_its_session() {
+    for role in WORKING_ROLES {
+        assert_eq!(step(role, Trouble::Failed, 1, true), LadderStep::NewSession, "{role:?}");
+        assert_eq!(step(role, Trouble::Failed, 2, true), LadderStep::NewSession, "{role:?}");
+    }
+}
+
+#[test]
+fn a_declared_failure_without_a_new_session_left_goes_up_the_ladder() {
+    let used = Renewals { used: 1, allowed: 1 };
+    let session = session();
+
+    assert_eq!(
+        next_step(
+            Role::Member,
+            Trouble::Failed,
+            1,
+            Some(&session),
+            used,
+            &watchdog(),
+            &limits()
+        ),
+        LadderStep::GiveUp
+    );
+}
+
+#[test]
+fn a_worker_or_a_reviewer_that_declares_a_failure_is_not_started_anew() {
+    for role in [Role::Worker, Role::Reviewer] {
+        assert_eq!(step(role, Trouble::Failed, 1, true), LadderStep::GiveUp, "{role:?}");
+    }
+}
+
+#[test]
+fn a_declared_failure_is_stored_as_failed() {
+    assert_eq!(serde_json::to_string(&Trouble::Failed).unwrap(), "\"failed\"");
+    assert_eq!(serde_json::from_str::<Trouble>("\"failed\"").unwrap(), Trouble::Failed);
+}
