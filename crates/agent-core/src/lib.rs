@@ -71,6 +71,7 @@ pub mod repo_path;
 pub mod review_findings;
 pub mod review_response;
 pub mod round_work;
+pub mod serena;
 pub mod state;
 pub mod status;
 pub mod story;
