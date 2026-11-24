@@ -173,7 +173,9 @@ pub async fn is_set_aside(task_dir: &Path, request: RequestId) -> Result<bool, P
         // `request`, only the reading does not meet it.
         if request_of_file(&entry.path()).is_none()
             && name.starts_with(&prefix)
-            && name.strip_prefix(&prefix).is_some_and(|rest| rest.starts_with(".damaged"))
+            && name
+                .strip_prefix(&prefix)
+                .is_some_and(|rest| rest.starts_with(".damaged"))
         {
             return Ok(true);
         }

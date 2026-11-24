@@ -1378,7 +1378,9 @@ async fn run_request_check(job: RequestCheck) -> Found {
         return failed("the check is not one the harness can run".to_owned());
     };
     let Some(worktree) = &job.worktree else {
-        let reason = job.worktree_fault.unwrap_or_else(|| "the worker's worktree cannot be reached".to_owned());
+        let reason = job
+            .worktree_fault
+            .unwrap_or_else(|| "the worker's worktree cannot be reached".to_owned());
         return failed(reason);
     };
     let context = CheckContext {

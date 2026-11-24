@@ -1987,7 +1987,9 @@ Integrate the guide.
         assert!(record_path.exists(), "the record is kept after a later pass");
         assert!(worktree.exists(), "the worktree is kept after a later pass");
         assert!(
-            world.git_output(&member, &["branch", "--list", &branch]).contains(&branch),
+            world
+                .git_output(&member, &["branch", "--list", &branch])
+                .contains(&branch),
             "the branch is kept after a later pass"
         );
         assert!(
@@ -2044,7 +2046,9 @@ Integrate the guide.
         assert!(record_path.exists(), "the record is kept after a later pass");
         assert!(worktree.exists(), "the worktree is kept after a later pass");
         assert!(
-            world.git_output(&member, &["branch", "--list", &branch]).contains(&branch),
+            world
+                .git_output(&member, &["branch", "--list", &branch])
+                .contains(&branch),
             "the branch is kept after a later pass"
         );
         assert!(

@@ -228,6 +228,154 @@ async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_rec
     );
 }
 
+/// The workspace record of request 1, requester `claude-1` of task 1, working in the workspace of `claude-2`'s task 2.
+fn a_workspace_record(
+    stage: agent_runtime::request_workspace::Stage,
+) -> agent_runtime::request_workspace::RequestWorkspace {
+    use std::num::NonZeroU64;
+    use std::str::FromStr;
+
+    use crate::fixtures::{repo, task};
+    use agent_core::ids::RoundId;
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::request_workspace::branch;
+
+    let worker: agent_core::ids::AgentName = "claude-2".parse().unwrap();
+    let worker_task = task(2);
+    agent_runtime::request_workspace::RequestWorkspace {
+        request: RequestId::new(NonZeroU64::new(1).unwrap()),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        requester_round: RoundId::from_str("round-20261124-090000-aaaa").unwrap(),
+        requester_repo: repo(),
+        worker: worker.clone(),
+        worker_task: worker_task.clone(),
+        branch: branch(&worker, &worker_task).unwrap(),
+        base: "0000000000000000000000000000000000000000".parse().unwrap(),
+        stage,
+    }
+}
+
+/// The pending of request 1 in the worker `claude-2`'s task 2, matching [`a_workspace_record`].
+fn a_matching_pending() -> agent_runtime::worker_request::Pending {
+    use std::num::NonZeroU64;
+
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::worker_request::{Pending, Stage};
+
+    Pending {
+        request: RequestId::new(NonZeroU64::new(1).unwrap()),
+        team: team_id(0),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        worker: "claude-2".parse().unwrap(),
+        worker_task: task(2),
+        summary: "finished".to_owned(),
+        run_seconds: 0,
+        base: None,
+        stage: Stage::Ended,
+    }
+}
+
+/// A daemon in a temporary home with one pair team, whose owner is not running.
+async fn pair_daemon() -> (super::super::fixture::Daemon, super::super::Owner) {
+    use super::super::fixture::{Daemon, pair_state};
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    (daemon, owner)
+}
+
+#[tokio::test]
+async fn a_completion_whose_record_cannot_be_written_leaves_the_workspace_working_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::request_workspace::save;
+    use agent_runtime::worker_request::write_pending;
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Working);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    let worker_dir = daemon.home.task_dir(&task(2));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    std::fs::create_dir_all(&worker_dir).unwrap();
+    save(&requester_dir, &record).unwrap();
+    write_pending(&worker_dir, &a_matching_pending()).unwrap();
+    // The requester's task directory is read-only, so the completion's write of the Ended record fails and the record
+    // stays Working to be completed again at the next look.
+    std::fs::set_permissions(&requester_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    std::fs::set_permissions(&worker_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(requester_dir.join("request-workspace-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        on_disk["stage"]["workspace_stage"], "working",
+        "the record stays Working"
+    );
+    assert_eq!(owner.unreadable_requests.len(), 1, "the failed completion is told once");
+    assert!(
+        owner
+            .unreadable_requests
+            .iter()
+            .any(|reason| reason.contains("cannot be saved as ended")),
+        "the told reason names the failed completion, got {:?}",
+        owner.unreadable_requests
+    );
+
+    // A second look tries the completion again: the fault is still told once.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(owner.unreadable_requests.len(), 1);
+    std::fs::set_permissions(&requester_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[tokio::test]
+async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_another_try() {
+    use crate::fixtures::{task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    agent_runtime::request_workspace::save(&requester_dir, &record).unwrap();
+    // No pending and no `*.damaged` marker: a leftover of a settled request whose workspace is to be released. The
+    // requester's worktree cannot be released (there is no such git worktree), so the release fails and is tried again.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(
+        owner.unreadable_requests.iter().any(|reason| reason == "release 1"),
+        "the failed release is told once, got {:?}",
+        owner.unreadable_requests
+    );
+    assert!(
+        requester_dir.join("request-workspace-1.json").exists(),
+        "the record is kept for the next look to release it"
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_record_that_cannot_be_read_is_told_once_and_left_alone() {
+    use crate::fixtures::{task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    let record_path = requester_dir.join("request-workspace-1.json");
+    std::fs::write(&record_path, "not json at all").unwrap();
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(owner.unreadable_requests.len(), 1, "the unreadable record is told once");
+    assert_eq!(
+        std::fs::read_to_string(&record_path).unwrap(),
+        "not json at all",
+        "the file is left alone"
+    );
+}
+
 #[tokio::test]
 async fn removal_refuses_or_joins_a_workers_pending_check() {
     use std::num::NonZeroU64;
