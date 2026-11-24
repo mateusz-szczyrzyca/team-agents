@@ -2,7 +2,7 @@
 
 use crate::daemon::team::{BusNotice, render_notice};
 use agent_core::decide::worker_result::WorkerEnding;
-use agent_core::ids::{RunId, TaskId};
+use agent_core::ids::{RoundId, RunId, TaskId};
 use agent_runtime::agentbus::{DelegationStatus, Outgoing, OwnedChange, OwnedOutcome, RequestOwner, RequestResult};
 use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
@@ -33,7 +33,7 @@ impl Owner {
     }
 
     /// Binds a legacy crew worker's existing worktree without creating or releasing it.
-    pub(super) async fn start_owned_team_request(&self, task: &TaskId, run: &RunId) -> Result<(), OwnerError> {
+    pub(super) async fn start_owned_team_request(&mut self, task: &TaskId, run: &RunId) -> Result<(), OwnerError> {
         let Some(served) = self.serving.get(task) else {
             return Ok(());
         };
@@ -48,13 +48,15 @@ impl Owner {
             .rev_parse(&agent_runtime::git::Revision::Head)
             .await
             .map_err(OwnerError::RequestSnapshot)?;
+        let requester_round = match self.requester_round(found.team.id(), &served.requester_task) {
+            Some(round) => round,
+            None => RoundId::generate(&self.parts.clock, &mut self.parts.rng)?,
+        };
         let workspace = RequestWorkspace::try_from(agent_runtime::request_workspace::WorkspaceRecord {
             request: served.request,
             requester: served.requester.clone(),
             requester_task: served.requester_task.clone(),
-            requester_round: self
-                .requester_round(found.team.id(), &served.requester_task)
-                .ok_or(OwnerError::RequestOwnership)?,
+            requester_round,
             requester_repo: found.team.repo().clone(),
             worker: served.worker.clone(),
             worker_task: task.clone(),
@@ -143,7 +145,7 @@ impl Owner {
             .find_task(&served.requester_task)
             .map(|found| found.team.id().clone())
         {
-            self.keep_worker_result(&team, &served, task, summary)?;
+            self.keep_worker_result(&team, &served, task, crate::daemon::team::worker_report(&summary))?;
             self.look_at(&team);
         }
         self.serving.remove(task);

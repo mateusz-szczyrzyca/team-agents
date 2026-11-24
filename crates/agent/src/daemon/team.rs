@@ -29,7 +29,8 @@ pub(super) use self::jobs::{
 };
 pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape_pool_worker, shape_with_answers};
 pub(super) use self::react::{
-    BusNotice, NoticeError, RequestOutcome, WorkerEnd, lead_takes_work, notice_for, request_outcome,
+    BusNotice, NoticeError, RequestOutcome, WorkerEnd, lead_takes_work, notice_for, report as worker_report,
+    request_outcome,
 };
 pub(super) use self::shared::shared_agents;
 pub(super) use self::sync::reconcile;
