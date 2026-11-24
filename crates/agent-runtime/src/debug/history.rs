@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use crate::history::ReadError;
 use agent_core::cli::RunUsage;
-use agent_core::history::{Record, SequencedRecord};
+use agent_core::history::{Record, SequencedRecord, Step};
 use agent_core::ids::{RunId, TeamId};
 
 #[cfg(test)]
@@ -239,6 +239,41 @@ pub(crate) fn read_live_run_usage(
         }
     }
     Err(HistoryCollectionError::Changed)
+}
+
+/// The steps of the runs in `runs` as the live history at `history_path` says them, for each run in the order it
+/// recorded them: read from a copy of the database like the records of a team, so the home is not written to. A run
+/// without a step is not in the result.
+///
+/// # Errors
+/// [`HistoryCollectionError`] as [`read_live_run_usage`] makes it.
+pub(crate) fn read_live_run_steps(
+    history_path: &Path,
+    runs: &[RunId],
+) -> Result<Vec<(RunId, Vec<Step>)>, HistoryCollectionError> {
+    if file_stamp(history_path)?.is_none() {
+        return Ok(Vec::new());
+    }
+    for _attempt in 0..SNAPSHOT_ATTEMPTS {
+        match snapshot_with(history_path, &mut copy_bounded, |copied| steps_of(copied, runs)) {
+            Err(HistoryCollectionError::Changed) => {}
+            result => return result,
+        }
+    }
+    Err(HistoryCollectionError::Changed)
+}
+
+/// The steps of `runs`, the runs that have one, in the order of `runs`; a run without a step is left out.
+fn steps_of(copied: &Path, runs: &[RunId]) -> Result<Vec<(RunId, Vec<Step>)>, HistoryCollectionError> {
+    let reader = crate::history::Reader::open(copied).map_err(HistoryCollectionError::Read)?;
+    let mut found = Vec::new();
+    for run in runs {
+        let steps = reader.steps(run).map_err(HistoryCollectionError::Read)?;
+        if !steps.is_empty() {
+            found.push((run.clone(), steps.into_iter().map(|stored| stored.value).collect()));
+        }
+    }
+    Ok(found)
 }
 
 /// The usage rows of `runs` in the database at `copied`.

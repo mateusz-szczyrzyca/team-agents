@@ -889,7 +889,7 @@ async fn long_final_message_preserves_the_last_runs_reason_and_steps() {
         .task(&home, team.crew().roster()[0].1, Role::Solo)
         .await
         .unwrap();
-    collection.enrich_last_run_details(&records, &team);
+    collection.enrich_last_run_details(&home, &records, &team);
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
@@ -1104,7 +1104,7 @@ async fn redacts_complete_final_message_before_taking_its_tail() {
         &agent_core::config::Secrets::parse("github_token = \"boundary-secret-suffix\"", 0o600).unwrap(),
         [],
     );
-    collection.enrich_last_run_details(&records, &team);
+    collection.enrich_last_run_details(&home, &records, &team);
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
