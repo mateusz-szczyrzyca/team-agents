@@ -9,6 +9,8 @@ You work on task task-20261120-144101-r7q2 again, in a new session. The session 
 - `busy`: no run of it went bad: its agent was busy in another team for longer than `[replacement] busy_after`, and a
   free agent took the task over while it waited.
 - `daemon_down`: the daemon went down while the run was going. The run was cut from outside, not by the agent's fault.
+- `failed`: the last run of the session before reported `STATUS: FAILED` after it used the bus's tools: its agent said
+  that it could not finish the work. What it said is at the end of this briefing; read it first.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 
