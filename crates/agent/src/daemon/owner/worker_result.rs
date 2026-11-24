@@ -620,7 +620,7 @@ impl Owner {
         }
         loop {
             let next = match &pending.stage {
-                Stage::Ended | Stage::Checked(_) if !self.still_the_workers(&pending).await => {
+                Stage::Ended | Stage::Checked(_) if !self.still_the_workers(&pending).await? => {
                     return self.drop_settled(task_dir, &pending, workspace).await;
                 }
                 Stage::Ended => match self.gather_request(&pending, workspace).await {
@@ -769,8 +769,12 @@ impl Owner {
     /// Whether the bus still has the request of `pending` running for its worker's task. A request that was answered, or is
     /// another worker's, is not settled from its file; one the bus cannot be asked about now is taken as running, and the
     /// bus is asked again at the next stage.
-    async fn still_the_workers(&self, pending: &Pending) -> bool {
-        match self.parts.bus.helper_get(pending.request).await {
+    async fn still_the_workers(&self, pending: &Pending) -> Result<bool, OwnerError> {
+        if !self.owns_observed_result(pending).await? {
+            tracing::warn!(event = "worker_result_dropped", request = %pending.request, worker = %pending.worker, "pending result no longer owns the observed execution");
+            return Ok(false);
+        }
+        Ok(match self.parts.bus.helper_get(pending.request).await {
             Ok(known) if is_running_for(&known, &pending.worker_task, &pending.worker) => true,
             Ok(known) => {
                 tracing::warn!(
@@ -793,7 +797,7 @@ impl Owner {
                 );
                 true
             }
-        }
+        })
     }
 
     /// Removes the file of `request` from `task_dir`, and says once, if it cannot, so that a look does not repeat it.

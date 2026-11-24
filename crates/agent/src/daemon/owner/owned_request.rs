@@ -12,8 +12,15 @@ use super::{Owner, OwnerError};
 
 impl Owner {
     /// Checks the durable observation before checking or bringing over an owned result.
-    pub(super) async fn owns_observed_result(&self, _pending: &Pending) -> Result<bool, OwnerError> {
-        Ok(true)
+    pub(super) async fn owns_observed_result(&self, pending: &Pending) -> Result<bool, OwnerError> {
+        let Some(journal) = self.owned_journal(&pending.requester_task, pending.request).await? else {
+            return Ok(true);
+        };
+        Ok(
+            matches!(journal.phase(), Phase::Running(attempt) if attempt.worker == pending.worker)
+                && journal.current_workspace().record().worker_task == pending.worker_task
+                && journal.ending().is_some(),
+        )
     }
 
     /// Reads the journal from the requester's task, independently of the serving task.
