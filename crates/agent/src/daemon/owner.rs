@@ -924,7 +924,7 @@ impl Owner {
                 }
             }
             self.agent_waits.remove(&task);
-            self.start(task).await?;
+            Box::pin(self.start(task)).await?;
         }
         Ok(())
     }
