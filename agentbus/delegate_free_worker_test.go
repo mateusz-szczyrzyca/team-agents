@@ -293,3 +293,53 @@ func TestFreePoolWorkersObservationCauses(t *testing.T) {
 		}
 	})
 }
+
+func TestFreePoolWorkersDamagedOrUnreadableRecord(t *testing.T) {
+	b := newBus(t)
+	tasksDir := t.TempDir()
+	taskPath := filepath.Join(tasksDir, "task-requester")
+	if err := os.MkdirAll(taskPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Malformed JSON workspace record conservatively marks pool workers unsettled
+	malformedPath := filepath.Join(taskPath, "request-workspace-bad.json")
+	if err := os.WriteFile(malformedPath, []byte(`{not valid json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustWith(t, b, func(st *State) {
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when malformed workspace record exists, got %d", free)
+		}
+	})
+	_ = os.Remove(malformedPath)
+
+	// 2. Unreadable workspace record conservatively marks pool workers unsettled
+	unreadablePath := filepath.Join(taskPath, "request-workspace-unreadable.json")
+	if err := os.WriteFile(unreadablePath, []byte(`{"worker":"w1"}`), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(unreadablePath, 0o600) })
+	mustWith(t, b, func(st *State) {
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when unreadable workspace record exists, got %d", free)
+		}
+	})
+}
+
+func TestFreePoolWorkersStoppedTeam(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Teams["team-stopped"] = &Team{
+			ID:   "team-stopped",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"lead": {Agent: "lead", Tier: TierNormal, State: MemberStopped},
+				"w1":   {Agent: "w1", Tier: TierWorker, State: MemberStopped},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 1 {
+			t.Fatalf("expected 1 free worker when team is stopped (all members stopped), got %d", free)
+		}
+	})
+}
