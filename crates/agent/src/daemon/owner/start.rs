@@ -30,7 +30,7 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::RunJob;
 use agent_runtime::run::compose::{
-    ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, TeamItem, compose,
+    ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, Serena, TeamItem, compose,
 };
 use agent_runtime::settings::Settings;
 use agent_runtime::store::Home;
@@ -361,6 +361,7 @@ pub(super) async fn plan(
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
+        serena: Serena::Without,
     };
     let texts = PromptTexts {
         harness: ctx.texts,

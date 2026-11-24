@@ -1,5 +1,8 @@
 //! The prompt of a run, section by section: which sections a run gets, in which order, filled with which values. The
 //! texts are stand-ins that show their own path and variables, so each assertion shows exactly what was chosen.
+//!
+//! `agents.toml` without `serena` gives a prompt without the section on finding code with Serena; with it, a first
+//! prompt has the section right after the working context, a resumed one does not.
 
 #[cfg(test)]
 mod run_compose {
@@ -14,7 +17,9 @@ mod run_compose {
     use agent_core::task_list::{Item, ItemMark};
     use agent_runtime::harness_prompts::HarnessPrompts;
     use agent_runtime::prompts::PromptLoader;
-    use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, ResumeReason, TeamItem, compose};
+    use agent_runtime::run::compose::{
+        PromptInput, PromptKind, PromptTexts, ResumeReason, Serena, TeamItem, compose, serena_section,
+    };
 
     /// The stand-in for a file: its path in brackets, then each of its variables as `name={{name}}`.
     fn stand_in(path: &str, variables: &[&str]) -> String {
@@ -77,6 +82,7 @@ mod run_compose {
                 item: None,
                 team_items: &[],
                 checkpoint: None,
+                serena: Serena::Without,
             }
         }
 
@@ -93,6 +99,9 @@ mod run_compose {
     }
 
     const CONTEXT: &str = "[harness/run/context.md] agent=claude-1 task=task-20261111-153601-k3x9 repo=team-agents worktree=/w/team-agents/task-1 questions_file=/h/tasks/task-1/questions-2.md number=2";
+
+    /// The stand-in of the section on finding code with Serena.
+    const SERENA: &str = "[harness/run/serena.md]";
 
     fn item(expected: Option<&str>, checks: Option<&str>) -> Item {
         Item {
@@ -321,5 +330,94 @@ mod run_compose {
             prompt,
             "[harness/run/resume-restart.md]\n\n[harness/run/checkpoint.md] checkpoint=next: tests\n"
         );
+    }
+
+    /// Each role, a first run or a resumed one, with Serena or without: whether its prompt shows the section on finding
+    /// code with Serena.
+    #[test]
+    fn only_a_first_prompt_of_a_run_with_serena_shows_the_section() {
+        let cases = [
+            (PromptKind::First, true, true),
+            (PromptKind::First, false, false),
+            (PromptKind::Resume(ResumeReason::Restart), true, false),
+            (PromptKind::Resume(ResumeReason::Hang { after: minutes() }), true, false),
+            (PromptKind::Resume(ResumeReason::Limit), true, false),
+            (PromptKind::Resume(ResumeReason::TurnLimit), true, false),
+            (PromptKind::Resume(ResumeReason::NoStatus), true, false),
+            (PromptKind::Resume(ResumeReason::Restart), false, false),
+        ];
+        let roles = [
+            Role::Solo,
+            Role::Coordinator,
+            Role::Member,
+            Role::Reviewer,
+            Role::Worker,
+        ];
+
+        for role in roles {
+            for (kind, with_serena, wanted) in cases {
+                let found = serena_section(role, kind, Serena::of(with_serena));
+                assert_eq!(
+                    found.is_some(),
+                    wanted,
+                    "{role:?} {kind:?} serena={with_serena}: {found:?}"
+                );
+                let shown = found.map(|section| section.trim_end().to_owned());
+                assert_eq!(
+                    shown,
+                    wanted.then(|| SERENA.to_owned()),
+                    "{role:?} {kind:?} serena={with_serena}"
+                );
+            }
+        }
+    }
+
+    fn minutes() -> Minutes {
+        serde_json::from_str("30").unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_run_with_serena_has_the_section_right_after_the_working_context() {
+        let f = fixture().await;
+        let it = item(None, None);
+        let mut input = f.input(Role::Member, Tier::Normal);
+        input.serena = Serena::Given;
+        input.brief = "B";
+        input.item = Some(&it);
+
+        let prompt = f.compose(&input);
+
+        assert_eq!(
+            prompt,
+            format!(
+                "{CONTEXT}\n\n{SERENA}\n\n[harness/run/role-member.md]\n\n[agent/rust-developer.md]\n\n\
+                 [harness/run/brief.md] brief=B\n\n\
+                 [harness/run/item.md] item_id=2.3 item_title=The daemon item_description=Build it.\n"
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn a_run_without_serena_has_the_prompt_it_always_had() {
+        let f = fixture().await;
+        let with_context = f.compose(&f.input(Role::Reviewer, Tier::Investigator));
+
+        assert!(!with_context.contains("serena"), "{with_context}");
+        assert_eq!(
+            with_context,
+            format!("{CONTEXT}\n\n[harness/run/role-reviewer.md]\n\n[investigator/code-review.md]\n")
+        );
+    }
+
+    #[tokio::test]
+    async fn a_resumed_run_with_serena_is_not_told_again() {
+        let f = fixture().await;
+        let mut input = f.input(Role::Member, Tier::Normal);
+        input.serena = Serena::Given;
+        input.kind = PromptKind::Resume(ResumeReason::Restart);
+
+        let prompt = f.compose(&input);
+
+        assert_eq!(prompt, "[harness/run/resume-restart.md]\n");
     }
 }
