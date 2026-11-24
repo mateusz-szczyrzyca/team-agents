@@ -145,7 +145,7 @@ repository and counts, whatever the pattern says (also `docs (path)`); one given
 or a file of code (`src`, `src/lib.rs`) and not when it is `docs` or `config`; one given a filter (`glob`, `include`,
 `type`) is read as a search of the files the filter names, under its path: `src` with `*.md` or type `md` searches text and
 does not count, `src` with `*.rs` or type `rust` counts, and `*.{rs,md}` or a text filter next to a code one counts too. A
-`Glob` counts by its pattern under its path (`*.rs` under `src` is `src/*.rs`). The history keeps the files of such a
+`Glob` counts by its pattern under its path (`*.rs` under `src` is `src/*.rs`), a brace group of the pattern expanded to its alternatives (`*.{ts,tsx}` under `src` is `src/*.ts` and `src/*.tsx`). The harness does not know the root of the repository when it reads the stream, so a search over the absolute path of that root itself (`/home/u/repo`) is not counted: a path counts only through a directory of code in it (`/home/u/repo/src`); search `.` or give no path to have the whole repository counted. The history keeps the files of such a
 search as its summary with the mark ` (path)` after them, which is how they are told from a pattern. The line of the
 shell is read command by command, split at `|`, `||`, `&&`, `;` and `&`, with quotes, options and redirections taken off:
 only a command's path operands count, never its pattern (`grep -rn test docs/` searches text), a search that writes into a
