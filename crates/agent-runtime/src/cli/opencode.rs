@@ -137,10 +137,21 @@ struct ProviderOptions {
 struct ModelEntry {
     /// The model's display name.
     name: String,
+    /// The window opencode compacts a session by; absent leaves it what its catalogue knows of the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<ModelLimit>,
+}
+
+/// The limit of a model in opencode's configuration: its context window in tokens.
+#[derive(Debug, Serialize)]
+struct ModelLimit {
+    /// The context window in tokens; the schema has `input` and `output` too, both optional, so opencode keeps its
+    /// own for them.
+    context: u64,
 }
 
 /// The provider `known` for a run of `model`: the model is registered under it when it is one of its own.
-fn provider(known: &KnownProvider, model: Option<&str>) -> Provider {
+fn provider(known: &KnownProvider, model: Option<&str>, context: Option<u64>) -> Provider {
     let registered = model
         .and_then(|model| model.strip_prefix(known.key))
         .and_then(|rest| rest.strip_prefix('/'))
@@ -153,14 +164,23 @@ fn provider(known: &KnownProvider, model: Option<&str>) -> Provider {
             api_key: format!("{{env:{}}}", known.api_key_env),
         },
         models: registered
-            .map(|name| (name.to_owned(), ModelEntry { name: name.to_owned() }))
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    ModelEntry {
+                        name: name.to_owned(),
+                        limit: context.map(|context| ModelLimit { context }),
+                    },
+                )
+            })
             .into_iter()
             .collect(),
     }
 }
 
-/// The configuration of a run of `model` that gets `servers`.
-fn config(servers: &[Server], model: Option<&str>) -> Config {
+/// The configuration of a run of `model` that gets `servers`; a model registered under a provider gets `context` as
+/// its window.
+fn config(servers: &[Server], model: Option<&str>, context: Option<u64>) -> Config {
     Config {
         schema: "https://opencode.ai/config.json",
         autoupdate: false,
@@ -179,7 +199,7 @@ fn config(servers: &[Server], model: Option<&str>) -> Config {
             .collect(),
         provider: PROVIDERS
             .iter()
-            .map(|known| (known.key, provider(known, model)))
+            .map(|known| (known.key, provider(known, model, context)))
             .collect(),
     }
 }
@@ -202,7 +222,7 @@ impl CliAdapter for OpencodeAdapter {
 
     fn build_run(&self, request: &RunRequest) -> Result<RunSpec, BuildRunError> {
         let servers = servers(CliKind::Opencode, request, SERENA_CONTEXT)?;
-        let config = config(&servers, request.model.as_ref().map(ModelName::as_str));
+        let config = config(&servers, request.model.as_ref().map(ModelName::as_str), request.context);
         let file = json_file(
             CliKind::Opencode,
             path_under(CliKind::Opencode, &request.run_dir, CONFIG_FILE)?,
