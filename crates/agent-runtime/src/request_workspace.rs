@@ -315,7 +315,8 @@ pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), Workspa
     if let Err(source) = std::fs::rename(&temporary, &path) {
         // Cleanup must not replace the original rename failure.
         if let Err(cleanup) = std::fs::remove_file(&temporary) {
-            tracing::warn!(request = %workspace.record.request, path = ?temporary, error = %cleanup,
+            tracing::warn!(event = agent_core::log::LogEvent::WorkerRequestDamaged.as_str(),
+                request = %workspace.record.request, path = ?temporary, error = %cleanup,
                 "cannot remove temporary workspace record after failed rename");
         }
         return Err(WorkspaceError::Write {
@@ -507,7 +508,8 @@ async fn write_record(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(
     if let Err(source) = tokio::fs::rename(&temporary, &path).await {
         // Cleanup must not replace the original rename failure.
         if let Err(cleanup) = tokio::fs::remove_file(&temporary).await {
-            tracing::warn!(request = %workspace.record.request, path = ?temporary, error = %cleanup,
+            tracing::warn!(event = agent_core::log::LogEvent::WorkerRequestDamaged.as_str(),
+                request = %workspace.record.request, path = ?temporary, error = %cleanup,
                 "cannot remove temporary workspace record after failed rename");
         }
         return Err(WorkspaceError::Write {
