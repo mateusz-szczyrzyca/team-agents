@@ -1211,3 +1211,36 @@ fn the_counted_tool_calls_are_the_sum_of_their_kinds_and_none_when_no_tool_was_n
         assert_eq!(tools.counted(), expected, "{tools:?}");
     }
 }
+
+#[test]
+fn each_earlier_run_of_a_task_is_told_with_its_own_tool_calls_before_the_last_run() {
+    let mut input = sample_input();
+    let task = input.tasks.first_mut().expect("first task");
+    task.earlier_tools = vec![
+        RunToolCalls {
+            run: "run-20261117-120001-a1b2".parse().expect("valid run id"),
+            tools: ToolCalls {
+                serena: 1,
+                shell: 2,
+                other: 3,
+            },
+        },
+        RunToolCalls {
+            run: "run-20261117-130001-c3d4".parse().expect("valid run id"),
+            tools: ToolCalls::default(),
+        },
+    ];
+
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
+
+    let first = summary
+        .find("- Tool calls of run `run-20261117-120001-a1b2`: 6 (serena 1, shell 2, other 3)")
+        .expect("the first earlier run is told with its own count");
+    let second = summary
+        .find("- Tool calls of run `run-20261117-130001-c3d4`: none recorded")
+        .expect("an earlier run without steps says none recorded");
+    let last = summary
+        .find("- Tool calls: 214 (serena 12, shell 160, other 42)")
+        .expect("the last run is told after the earlier ones");
+    assert!(first < second && second < last, "{summary}");
+}
