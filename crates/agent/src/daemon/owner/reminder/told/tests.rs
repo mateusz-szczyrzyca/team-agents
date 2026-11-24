@@ -1,4 +1,4 @@
-//! The mark of a reminder the bus took: written once, read back, and refused where its directory is gone.
+//! The mark of a reminder: claimed once, read back, taken away again, and refused where its directory is gone.
 
 use std::str::FromStr;
 
@@ -6,7 +6,7 @@ use agent_core::config::AbsolutePath;
 use agent_core::ids::{RunId, TaskId};
 use agent_runtime::store::Home;
 
-use super::{Claim, MarkError, claim, is_told, mark_told, release};
+use super::{Claim, MarkError, claim, is_told, release};
 
 /// The task of the fixture.
 fn task() -> TaskId {
@@ -30,7 +30,7 @@ async fn a_run_is_not_told_until_the_mark_is_written() {
     std::fs::create_dir_all(home.run_dir(&task(), &run())).expect("the run's directory");
 
     let before = is_told(&home, &task(), &run()).await.expect("the look");
-    mark_told(&home, &task(), &run()).await.expect("the mark");
+    claim(&home, &task(), &run()).await.expect("the mark");
     let after = is_told(&home, &task(), &run()).await.expect("the look");
 
     assert_eq!((before, after), (false, true));
@@ -43,7 +43,7 @@ async fn the_mark_of_one_run_does_not_tell_another_run() {
     let other = RunId::from_str("run-20261124-100100-r2r2").expect("the other run");
     std::fs::create_dir_all(home.run_dir(&task(), &run())).expect("the run's directory");
 
-    mark_told(&home, &task(), &run()).await.expect("the mark");
+    claim(&home, &task(), &run()).await.expect("the mark");
 
     assert!(!is_told(&home, &task(), &other).await.expect("the look"));
 }
@@ -53,7 +53,7 @@ async fn a_mark_is_refused_when_the_directory_of_the_run_is_gone() {
     let dir = tempfile::tempdir().expect("a directory");
     let home = home(&dir);
 
-    let refused = mark_told(&home, &task(), &run()).await;
+    let refused = claim(&home, &task(), &run()).await;
 
     assert!(matches!(refused, Err(MarkError::Write { .. })), "{refused:?}");
 }
