@@ -3758,4 +3758,61 @@ fi
             1
         );
     }
+    #[test]
+    fn missing_result_reuses_dirty_workspace_without_spending_a_wrong_result_try() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:recover",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "recover",
+            r#"
+if [[ ! -f .fake-interrupted ]]; then
+    git symbolic-ref HEAD > .fake-original-branch
+    mkdir -p docs
+    printf '%s\n' 'retained partial work' > docs/partial.txt
+    touch .fake-interrupted
+    exit 1
+fi
+test "$(git symbolic-ref HEAD)" = "$(cat .fake-original-branch)"
+test "$(cat docs/partial.txt)" = 'retained partial work'
+printf '%s\n' 'the walkthrough' > docs/guide.md
+git add docs
+git commit -qm 'Complete retained work'
+"#,
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert_eq!(world.file(member, "docs/partial.txt"), "retained partial work\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        let journal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(world.home.join("tasks").join(member).join("worker-recovery-1.json")).unwrap(),
+        )
+        .unwrap();
+        let events = journal["events"].as_array().unwrap();
+        assert_eq!(events.iter().filter(|e| e["event"] == "interrupted").count(), 1);
+        assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+        assert_eq!(events.iter().filter(|e| e["event"] == "started").count(), 1);
+    }
 }
