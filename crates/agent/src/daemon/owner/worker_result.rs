@@ -964,28 +964,26 @@ impl Owner {
         workspace: Option<&RequestWorkspace>,
     ) {
         let config = &self.parts.settings.config;
-        let (worktree, worktree_fault) = match workspace {
-            Some(record) => {
-                match request_workspace::worktree_of(
-                    self.parts.store.home(),
-                    &record.record().requester_repo,
-                    &record.record().worker_task,
-                ) {
-                    Ok(worktree) => (Some(worktree.as_path().to_path_buf()), None),
-                    Err(error) => (None, Some(error_chain(&error))),
-                }
-            }
-            None => (self.worker_worktree(&pending.team, &pending.worker_task), None),
+        let worktree = match workspace {
+            Some(record) => request_workspace::worktree_of(
+                self.parts.store.home(),
+                &record.record().requester_repo,
+                &record.record().worker_task,
+            )
+            .map(|worktree| worktree.as_path().to_path_buf())
+            .map_err(|error| error_chain(&error)),
+            None => self
+                .worker_worktree(&pending.team, &pending.worker_task)
+                .ok_or_else(|| "the worker's worktree cannot be reached".to_owned()),
         };
-        let job = RequestCheck {
+        let job = RequestCheck::new(
             worktree,
-            worktree_fault,
-            task_dir: task_dir.to_owned(),
+            task_dir.to_owned(),
             step,
             text,
-            seconds: config.plan().check_seconds(),
-            refuse: config.plan().check_refuse().to_vec(),
-        };
+            config.plan().check_seconds(),
+            config.plan().check_refuse().to_vec(),
+        );
         let abort = self.request_checks.spawn(run_request_check(job));
         self.request_checking.insert(
             abort.id(),
@@ -1374,6 +1372,32 @@ struct RequestCheck {
     seconds: u64,
     /// `[plan] check_refuse`.
     refuse: Vec<String>,
+}
+
+impl RequestCheck {
+    /// Keeps either the resolved worktree or its cause for the recorded check result.
+    fn new(
+        worktree: Result<PathBuf, String>,
+        task_dir: PathBuf,
+        step: ItemId,
+        text: String,
+        seconds: u64,
+        refuse: Vec<String>,
+    ) -> Self {
+        let (worktree, worktree_fault) = match worktree {
+            Ok(path) => (Some(path), None),
+            Err(cause) => (None, Some(cause)),
+        };
+        Self {
+            worktree,
+            worktree_fault,
+            task_dir,
+            step,
+            text,
+            seconds,
+            refuse,
+        }
+    }
 }
 
 /// Runs the check of a request in the worker's worktree.
