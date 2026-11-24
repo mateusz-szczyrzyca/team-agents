@@ -1283,6 +1283,9 @@ impl Owner {
                 continue;
             }
 
+            if !self.launch_allowed().await {
+                break;
+            }
             let requires = Requires {
                 capabilities: &req.requires,
             };
