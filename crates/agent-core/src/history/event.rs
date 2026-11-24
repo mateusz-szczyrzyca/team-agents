@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
-use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, RoundId, TaskId, TeamId};
-use crate::kinds::{Keyword, UnknownKeyword};
+use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, RoundId, RunId, TaskId, TeamId};
+use crate::kinds::{CliKind, Keyword, UnknownKeyword};
 use crate::protocol::{Client, ControlAction, Target};
 use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
 use crate::status::ReviewVerdict;
@@ -122,6 +122,7 @@ impl FromStr for LostKind {
             | EventKind::QuestionAsked
             | EventKind::QuestionAnswered
             | EventKind::Controlled
+            | EventKind::SerenaReminded
             | EventKind::Notified
             | EventKind::RoundClosed
             | EventKind::TeamEnded) => Ok(Self::Event(kind)),
@@ -258,6 +259,8 @@ pub enum EventKind {
     QuestionAnswered,
     /// [`HistoryEvent::Controlled`].
     Controlled,
+    /// [`HistoryEvent::SerenaReminded`].
+    SerenaReminded,
     /// [`HistoryEvent::Notified`].
     Notified,
     /// [`HistoryEvent::RoundClosed`].
@@ -572,6 +575,17 @@ pub enum HistoryEvent {
         /// The tasks it reached.
         tasks: Vec<TaskId>,
     },
+    /// A run with Serena was told, once in its session, to find code with Serena.
+    SerenaReminded {
+        /// The task whose run it was.
+        task: TaskId,
+        /// The run it was told in.
+        run: RunId,
+        /// The searches of code without Serena the session had made when it was told.
+        searches: u64,
+        /// The model CLI that made them.
+        cli: CliKind,
+    },
     /// A notification was sent to the human.
     Notified {
         /// The task it is about, when it is about one.
@@ -647,6 +661,7 @@ impl HistoryEvent {
             Self::QuestionAsked { .. } => EventKind::QuestionAsked,
             Self::QuestionAnswered { .. } => EventKind::QuestionAnswered,
             Self::Controlled { .. } => EventKind::Controlled,
+            Self::SerenaReminded { .. } => EventKind::SerenaReminded,
             Self::Notified { .. } => EventKind::Notified,
             Self::RoundClosed { .. } => EventKind::RoundClosed,
             Self::TeamEnded {} => EventKind::TeamEnded,
@@ -673,6 +688,7 @@ impl HistoryEvent {
             Self::Gate { .. }
             | Self::Checked { .. }
             | Self::Controlled { .. }
+            | Self::SerenaReminded { .. }
             | Self::Notified { .. }
             | Self::Lost { .. } => None,
             Self::PullOpened { number: pr, .. }
@@ -750,6 +766,7 @@ impl HistoryEvent {
             | Self::PullHandedOver { .. }
             | Self::PullClosed { .. }
             | Self::Controlled { .. }
+            | Self::SerenaReminded { .. }
             | Self::RoundClosed { .. }
             | Self::TeamEnded {} => Vec::new(),
         }
@@ -790,7 +807,8 @@ impl HistoryEvent {
             Self::PullMerged { commit, .. } => commit.iter().map(CommitId::as_str).collect(),
             Self::SplitDecision { task, .. }
             | Self::QuestionAsked { task, .. }
-            | Self::QuestionAnswered { task, .. } => vec![task.as_str()],
+            | Self::QuestionAnswered { task, .. }
+            | Self::SerenaReminded { task, .. } => vec![task.as_str()],
             Self::Controlled { target, by, tasks, .. } => {
                 let mut found = vec![match target {
                     Target::Team(id) => id.as_str(),
