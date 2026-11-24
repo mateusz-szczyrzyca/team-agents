@@ -50,6 +50,7 @@ fn sample_task() -> TaskSummaryFacts {
             shell: 160,
             other: 42,
         },
+        earlier_tools: Vec::new(),
         questions: Some(QuestionsSummaryFacts {
             has_unanswered: false,
             content: "All answered".to_owned(),

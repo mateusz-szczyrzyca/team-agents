@@ -364,7 +364,7 @@ mod run_compose {
                 } else {
                     std::collections::BTreeMap::new()
                 };
-                let found = serena_section(role, kind, Serena::of(&servers));
+                let found = serena_section(kind, Serena::of(&servers));
                 assert_eq!(
                     found.is_some(),
                     wanted,

@@ -354,6 +354,7 @@ fn git_read_failures_are_prose_with_the_first_error_line() {
         last_activity: None,
         last_run_end_detail: None,
         tools: agent_core::debug_summary::ToolCalls::default(),
+        earlier_tools: Vec::new(),
         questions: None,
     });
     runtime.block_on(collection.git(&home, &team));
@@ -1326,7 +1327,7 @@ async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() 
         .await
         .unwrap();
     collection.enrich_last_run_details(&records, &team);
-    collection.enrich_last_run_tools(&home, &team);
+    collection.enrich_run_tools(&home, &team).await.unwrap();
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
@@ -1364,7 +1365,7 @@ async fn the_summary_says_no_tool_when_the_steps_of_a_tasks_last_run_name_none()
         .await
         .unwrap();
     collection.enrich_last_run_details(&[], &team);
-    collection.enrich_last_run_tools(&home, &team);
+    collection.enrich_run_tools(&home, &team).await.unwrap();
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
