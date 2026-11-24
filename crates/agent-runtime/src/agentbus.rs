@@ -1264,7 +1264,9 @@ impl AgentBus {
         let command = BusCommand::HelperNext;
         let mut args = Args::new().flag("--worker", worker.as_str());
         if !capabilities.is_empty() {
-            let caps_json = serde_json::to_string(capabilities).unwrap_or_else(|_| "[]".to_owned());
+            let caps_json =
+                serde_json::Value::Array(capabilities.iter().cloned().map(serde_json::Value::String).collect())
+                    .to_string();
             args = args.flag("--capabilities", caps_json);
         }
         if let Some(req_id) = id {
