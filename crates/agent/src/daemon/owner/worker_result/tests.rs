@@ -649,3 +649,31 @@ async fn releasing_without_requester_git_records_one_warning_per_request() {
         ["release 1".to_owned()].into_iter().collect()
     );
 }
+
+#[tokio::test]
+async fn elsewhere_of_defers_conservatively_when_helper_request_is_missing() {
+    use std::num::NonZeroU64;
+    use agent_runtime::agentbus::RequestId;
+    use super::super::fixture::{Daemon, fake_cli, pair_state};
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let custom_config = format!(
+        "[agents.claude-1]\ncli = \"claude\"\n[agents.claude-2]\ncli = \"claude\"\n\
+         [agents.w-1]\ncli = \"claude\"\n\
+         [agents.w-2]\ncli = \"opencode\"\nmodel = \"openrouter/free\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"claude-2\"]\nworkers = [\"w-1\", \"w-2\"]\n\
+         [binaries]\nclaude = \"{}\"\nopencode = \"{}\"\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+        fake_cli(),
+        fake_cli(),
+    );
+    std::fs::write(daemon.home.config_file(), custom_config).unwrap();
+    let (owner, _sinks) = daemon.bare_owner().await;
+
+    let mut pending = a_matching_pending();
+    pending.worker = "w-1".parse().unwrap();
+    pending.request = RequestId::new(NonZeroU64::new(999).unwrap());
+
+    let elsewhere = owner.elsewhere_of(&pending).await;
+    assert_eq!(elsewhere, Elsewhere::None);
+}
