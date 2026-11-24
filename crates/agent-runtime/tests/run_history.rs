@@ -224,6 +224,7 @@ mod run_history {
                 working_dir: abs(self.worktree.path()),
                 identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::<McpServerKind, agent_core::config::CommandLine>::new(),
+                context: None,
             }
         }
 
@@ -661,6 +662,7 @@ mod run_history {
             working_dir: abs(rig.worktree.path()),
             identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
             mcp_servers: BTreeMap::<McpServerKind, agent_core::config::CommandLine>::new(),
+            context: None,
         };
         let verdict = rig.engine.run(job, &CancellationToken::new()).await.unwrap();
         let RunVerdict::Finished(finished) = verdict else {

@@ -97,6 +97,7 @@ mod tests {
                     working_dir: absolute(tree.path()),
                     identity: CommitIdentity::new("Fixture".to_owned(), "fixture@example.com".to_owned(), None),
                     mcp_servers: BTreeMap::new(),
+                    context: None,
                 };
                 let RunVerdict::Finished(run) = engine.run(job, &CancellationToken::new()).await.unwrap() else {
                     panic!("the fake CLI must finish");

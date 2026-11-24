@@ -167,20 +167,24 @@ struct AgentSetup {
     model: Option<ModelName>,
     /// The extra arguments.
     args: CliArgs,
+    /// The model's context window in tokens, from the agent's `context`.
+    context: Option<u64>,
 }
 
-/// The CLI, model and arguments the configuration gives `participant`.
+/// The CLI, model, arguments and window the configuration gives `participant`.
 fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup> {
     match participant {
         Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| AgentSetup {
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
+            context: agent.context,
         }),
         Participant::Investigator(name) => config.investigator(name).map(|agent| AgentSetup {
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
+            context: agent.context,
         }),
     }
 }
@@ -404,6 +408,7 @@ pub(super) async fn plan(
             working_dir,
             identity,
             mcp_servers,
+            context: setup.context,
         },
     })
 }

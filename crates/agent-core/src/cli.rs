@@ -148,6 +148,9 @@ pub struct RunRequest {
     pub run_dir: AbsolutePath,
     /// The MCP servers the run is given, each kind at most once; none for a run without any.
     pub mcp_servers: BTreeMap<McpServerKind, CommandLine>,
+    /// The model's context window in tokens, from the agent's `context`; `None` leaves the CLI what it knows. Only
+    /// [`RunSpec`]s made by a CLI whose configuration takes a window use it.
+    pub context: Option<u64>,
 }
 
 /// A file to write before the CLI starts.
