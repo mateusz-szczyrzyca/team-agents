@@ -184,8 +184,15 @@ mod history_process {
         }
 
         fn runs(&self, task: &str) -> u32 {
-            std::fs::read_to_string(self.home.join("worktrees/example").join(task).join(".fake-runs"))
-                .map_or(0, |text| text.trim().parse().unwrap())
+            // The fixture publishes a whole counter by temporary file and rename. Before the first publication,
+            // a missing marker means no run has been recorded yet; a published non-number is a fixture failure.
+            let file = self.home.join("worktrees/example").join(task).join(".fake-runs");
+            let counter = match std::fs::read_to_string(&file) {
+                Ok(counter) => counter,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return 0,
+                Err(error) => panic!("cannot read run counter {}: {error}", file.display()),
+            };
+            counter.trim().parse().unwrap()
         }
     }
 

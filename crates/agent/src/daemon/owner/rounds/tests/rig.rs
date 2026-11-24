@@ -18,7 +18,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::history::HistoryLayer;
 use agent_runtime::run::RunTimings;
-use agent_runtime::store::Home;
+use agent_runtime::store::{Home, StateStore, StoreError};
 use time::UtcDateTime;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -27,8 +27,34 @@ use super::fake_github::{ACCOUNT, FakeGitHub};
 use crate::client::Connection;
 use crate::daemon::{DaemonError, DaemonSetup, Surroundings, Timings, run_in, run_with_log_layer};
 
-/// The longest any wait of these tests lasts.
+/// The failure bound for waits on a single run or file.
 pub(super) const PATIENCE: Duration = Duration::from_secs(60);
+
+/// The bound of `state_where`, three times `PATIENCE`: it waits for a state the whole team reaches through several
+/// agent runs, GitHub pulls and round transitions, so under a loaded gate it can legitimately take longer than the
+/// rest of the rig (see the review note on the split-execution round-open waits). The timeout it reports names the
+/// state it waited for.
+pub(super) const STATE_PATIENCE: Duration = Duration::from_secs(180);
+
+/// The store of `rig`, open; a lock that another store has just released can still be held a few milliseconds by a
+/// child that inherited its open file description between fork and exec, so retry a `HomeLocked`.
+pub(super) async fn open_store(rig: &Rig) -> Arc<StateStore> {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        match StateStore::open(rig.home.clone()).await {
+            Ok(store) => return Arc::new(store),
+            Err(StoreError::HomeLocked { path }) => {
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "timed out waiting for the lock of the home to free: {}",
+                    path.display(),
+                );
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot open the home store: {error}"),
+        }
+    }
+}
 
 /// Two features that do not wait for each other would start both items at once; this chain starts the second item when
 /// the first is merged.
@@ -460,7 +486,7 @@ impl Rig {
 
     /// Waits until the saved state satisfies `ready`.
     pub(super) async fn state_where(&self, what: &str, ready: impl Fn(&State) -> bool) -> State {
-        let deadline = Instant::now() + PATIENCE;
+        let deadline = Instant::now() + STATE_PATIENCE;
         loop {
             if let Ok(text) = std::fs::read_to_string(self.home.state_file())
                 && let Ok(state) = State::from_json(&text)
@@ -549,15 +575,30 @@ impl Rig {
         std::fs::read_to_string(prompt).unwrap()
     }
 
-    /// The prompt the task's `n`-th run was given, once it has been.
+    /// The prompt the task's `n`-th run was given, once the stand-in has written it. It writes the prompt before its
+    /// log line, so waiting for the prompt file itself is the state the caller reads: a run that is stopped between
+    /// the two would otherwise make the log count wait forever even though the prompt it needs is already there. The
+    /// failure names what the worktree shows.
     pub(super) async fn prompt(&self, task: &TaskId, n: u32) -> String {
-        let log = self.worktree(task).join(".fake-log");
-        let wanted = usize::try_from(n).unwrap();
-        self.wait_for(&format!("run {n} of {task} to be logged"), || {
-            std::fs::read_to_string(&log).is_ok_and(|text| text.lines().count() >= wanted)
-        })
-        .await;
-        std::fs::read_to_string(self.worktree(task).join(format!(".fake-prompt-{n}"))).unwrap()
+        let file = self.worktree(task).join(format!(".fake-prompt-{n}"));
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            match std::fs::read_to_string(&file) {
+                Ok(text) if !text.trim().is_empty() => return text,
+                Ok(_) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => panic!("cannot read prompt {}: {error}", file.display()),
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for run {n} of {task} to write its prompt\nruns: {}\nlog:\n{}",
+                std::fs::read_to_string(self.worktree(task).join(".fake-runs"))
+                    .unwrap_or_else(|error| format!("cannot read run counter: {error}")),
+                std::fs::read_to_string(self.worktree(task).join(".fake-log"))
+                    .unwrap_or_else(|error| format!("cannot read run log: {error}")),
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// The notifications written so far.

@@ -1,3 +1,4 @@
+use std::error::Error as _;
 use std::fs;
 
 use agent_core::ids::RunId;
@@ -937,6 +938,140 @@ async fn replace_running_record_and_proc_scan_propagate_errors() {
     assert_eq!(scan_err.kind(), std::io::ErrorKind::InvalidData);
 }
 
+/// Builds the after-the-name fields of a `/proc/<pid>/stat` line. The kernel's field numbers are the split indices
+/// plus 3, so the group ID (field 5) sits at index 2 and the start time (field 22) at index 19.
+fn stat_fields(pgrp: &str, starttime: &str) -> String {
+    [
+        "Z", // (3) state
+        "0", // (4) ppid
+        pgrp, "0", // (6) session
+        "0", // (7) tty_nr
+        "0", // (8) tpgid
+        "0", // (9) flags
+        "0", // (10) minflt
+        "0", // (11) cminflt
+        "0", // (12) majflt
+        "0", // (13) cmajflt
+        "0", // (14) utime
+        "0", // (15) stime
+        "0", // (16) cutime
+        "0", // (17) cstime
+        "0", // (18) priority
+        "0", // (19) nice
+        "0", // (20) num_threads
+        "0", // (21) itrealvalue
+        starttime, "0", // (23) vsize
+        "0", // (24) rss
+        "0", // (25) rsslim
+        "0", // (26) start_code
+        "0", // (27) end_code
+        "0", // (28) start_stack
+        "0", // (29) kstkesp
+    ]
+    .join(" ")
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_reads_ticks_of_an_exiting_process_without_a_group() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-exiting");
+    let pid_dir = fake_proc.join("7779");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7779 (sh) {}\n", stat_fields("-1", "42"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let (pgrp, ticks) = super::process_stat_group_and_ticks_in(&fake_proc, 7779)
+        .expect("the stat of an exiting process must not abort recovery")
+        .expect("the fake process must exist");
+    assert_eq!(pgrp, None, "a -1 group ID names no process group");
+    assert_eq!(ticks, 42, "the start time of an exiting process must still be read");
+}
+
+#[test]
+fn proc_scan_skips_an_exiting_process_that_names_its_group_minus_one() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-scan-exiting");
+    let pid_dir = fake_proc.join("7778");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7778 (sh) {}\n", stat_fields("-1", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let member = super::process_group_has_member_since_in(&fake_proc, 7778, 90)
+        .expect("the recovery scan must not fail on an exiting process that names its group -1");
+    assert!(
+        !member,
+        "a -1 group ID must not be mistaken for a member of the recorded group 7778"
+    );
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_rejects_a_group_that_is_not_a_number() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-bad-group");
+    let pid_dir = fake_proc.join("7780");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7780 (sh) {}\n", stat_fields("abc", "42"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_stat_group_and_ticks_in(&fake_proc, 7780)
+        .expect_err("a group that is not a number must not be swallowed by recovery");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn proc_scan_rejects_a_group_that_is_not_a_number() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-scan-bad-group");
+    let pid_dir = fake_proc.join("7781");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7781 (sh) {}\n", stat_fields("abc", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_group_has_member_since_in(&fake_proc, 7781, 90)
+        .expect_err("a scan over a stat with a group that is not a number must fail, not skip the entry");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_keeps_the_ticks_parse_error_source() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-bad-ticks");
+    let pid_dir = fake_proc.join("7782");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("7782 (sh) {}\n", stat_fields("7782", "not-ticks"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let error = super::process_stat_group_and_ticks_in(&fake_proc, 7782)
+        .expect_err("a start time that is not a number of ticks must fail");
+    assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+    assert!(
+        error.source().is_some()
+            && error
+                .source()
+                .unwrap()
+                .downcast_ref::<std::num::ParseIntError>()
+                .is_some(),
+        "the parse error must stay reachable through the io error chain, not only in its message"
+    );
+}
+
+#[test]
+fn proc_scan_matches_a_live_member_by_group_and_start_ticks() {
+    let env = TestEnv::new();
+    let fake_proc = env.task_dir.join("fake-proc-live");
+    let pid_dir = fake_proc.join("4242");
+    std::fs::create_dir_all(&pid_dir).unwrap();
+    let line = format!("4242 (sh) {}\n", stat_fields("4242", "100"));
+    std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+    let member = super::process_group_has_member_since_in(&fake_proc, 4242, 90)
+        .expect("the recovery scan succeeds for a readable stat");
+    assert!(
+        member,
+        "a live member of the recorded group started at or after the recorded ticks must match"
+    );
+}
+
 #[test]
 fn prepare_process_spec_in_returns_daemon_start_time_error_when_proc_stat_is_missing_or_corrupt() {
     let env = TestEnv::new();
@@ -1162,4 +1297,38 @@ async fn a_request_check_that_is_the_gate_is_refused_and_a_reviewers_is_only_dec
     assert!(gate.gate_refused);
     assert_eq!(gate.state, JudgementState::Declared);
     assert_eq!(reviewer.state, JudgementState::Declared);
+}
+
+#[test]
+fn process_stat_group_and_ticks_in_rejects_negative_groups_other_than_exact_minus_one() {
+    for group in ["-2", "-1x"] {
+        let env = TestEnv::new();
+        let fake_proc = env.task_dir.join("fake-proc-invalid-negative-group");
+        let pid_dir = fake_proc.join("7783");
+        std::fs::create_dir_all(&pid_dir).unwrap();
+        let line = format!("7783 (sh) {}\n", stat_fields(group, "42"));
+        std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+        let error = super::process_stat_group_and_ticks_in(&fake_proc, 7783)
+            .expect_err("only the exact -1 group field may mean no group");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "group {group}");
+    }
+}
+
+#[test]
+fn proc_scan_rejects_negative_groups_other_than_exact_minus_one() {
+    for group in ["-2", "-1x"] {
+        let env = TestEnv::new();
+        let fake_proc = env.task_dir.join("fake-proc-scan-invalid-negative-group");
+        let pid_dir = fake_proc.join("7784");
+        std::fs::create_dir_all(&pid_dir).unwrap();
+        let line = format!("7784 (sh) {}\n", stat_fields(group, "100"));
+        std::fs::write(pid_dir.join("stat"), line).unwrap();
+
+        let error = super::process_group_has_member_since_in(&fake_proc, 7784, 90)
+            .expect_err("a malformed negative group must fail the scan, not be skipped");
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "group {group}");
+    }
 }

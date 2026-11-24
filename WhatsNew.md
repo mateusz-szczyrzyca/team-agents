@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.81.0 — 23.11.2026 — PR #231
+## 0.82.0 — 24.11.2026 — PR #231
 
 ### New features
 - [agent] [agent-core] A session whose context grew above its agent's bound is no longer resumed: the task's next run starts a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before.
@@ -20,6 +20,12 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent-core] changed: `[session] max_context` (default `150000`) — the bound in tokens of a session's context for an agent without its own `max_context`; a session whose last run reached more tokens is no longer resumed; `0` switches the bound off, as before.
 - [agent-core] changed: `agents.NAME.max_context` (default: the `[session]` bound) — this agent's own bound in tokens; above it the agent's next run starts a new session; `0` switches it off.
 - [agent-core] changed: `investigators.NAME.max_context` (default: the `[session]` bound) — the bound of this investigator's session, as `agents.NAME.max_context` does for an agent; `0` switches it off.
+
+## 0.81.0 — 23.11.2026 — PR #232
+
+### Bug fixes
+- [agent] [agent-runtime] The harness tests wait for complete records and saved state, so a loaded build no longer makes them read unfinished fake CLI files or miss a round transition.
+- [agent-runtime] Restarting a daemon with a pending command check no longer fails when an unrelated process exits during recovery; malformed process records still report their cause.
 
 ## 0.80.0 — 23.11.2026 — PR #227
 

@@ -4,7 +4,8 @@
 # by a test, so that no test races an `exec` of a file that is still open for writing.
 #
 #   done                  a short run that ends with STATUS: DONE
-#   done-child            ends like `done`, leaving a child behind (pid in .fake-child)
+#   done-child            ends like `done` after starting a child whose PID is recorded in .fake-child
+#   done-after-ok          run 1 ends like `done`; a later invocation waits for ok.txt to appear before it ends (count in .fake-runs)
 #   fail                  ends with STATUS: FAILED
 #   fail-tool             like `fail`, after streaming one tool call (a tool_use block): a failed run the harness counts as
 #                         one that used a tool, so a task that fails this way is not retried for "no tool call"
@@ -34,8 +35,20 @@
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
 
+# Writes the values, one a line, into the file whole: staged in a same-directory temporary and renamed over the file,
+# so a reader that looks at the record while the run is still writing it sees the whole record or no file, never a
+# torn one.
+whole() {
+  local file temporary
+  file=$1
+  shift
+  temporary=$(mktemp "$file.XXXXXXXXXX")
+  printf '%s\n' "$@" > "$temporary"
+  mv -- "$temporary" "$file"
+}
+
 scenario=$(cat .fake-scenario)
-printf '%s\n' "$@" > .fake-args
+whole .fake-args "$@"
 
 session=""
 resumed=no
@@ -78,8 +91,28 @@ case $scenario in
   done) finish_done ;;
   done-child)
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     finish_done
+    ;;
+  done-after-ok)
+    # Run 1 ends like `done` at once, so the first mismatch sends the run back once and its test observes it; every
+    # later invocation waits for the test's ok.txt before it ends, so a bounce-back run can never consume the bounce
+    # budget while the file is still absent.
+    runs=1
+    if [[ -f .fake-runs ]]; then runs=$(( $(< .fake-runs) + 1 )); fi
+    whole .fake-runs "$runs"
+    if ((runs == 1)); then
+      finish_done
+    else
+      init
+      for _ in $(seq 1 600); do
+        [[ -f ok.txt ]] && break
+        sleep 0.05
+      done
+      [[ -f ok.txt ]] || { echo "the test never created ok.txt for run $runs" >&2; exit 65; }
+      say "working"
+      result false 'Finished the item.\nSTATUS: DONE'
+    fi
     ;;
   fail) init; result false 'I could not do it.\nSTATUS: FAILED' ;;
   fail-tool)
@@ -113,14 +146,14 @@ case $scenario in
   hang)
     init
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     wait
     ;;
   hang-slow-stop)
     init
     trap 'touch .fake-term; sleep 2; exit 0' TERM
     sleep 600 &
-    echo $! > .fake-child
+    whole .fake-child "$!"
     while true; do wait; done
     ;;
   hang-first)
@@ -129,21 +162,21 @@ case $scenario in
     else
       init
       sleep 600 &
-      echo $! > .fake-child
+      whole .fake-child "$!"
       wait
     fi
     ;;
   hang-then-step)
     runs=1
     if [[ -f .fake-runs ]]; then runs=$(( $(< .fake-runs) + 1 )); fi
-    echo "$runs" > .fake-runs
+    whole .fake-runs "$runs"
     if ((runs >= 3)); then
       finish_done
     else
       init
       if ((runs == 2)); then say "working"; fi
       sleep 600 &
-      echo $! > .fake-child
+      whole .fake-child "$!"
       wait
     fi
     ;;

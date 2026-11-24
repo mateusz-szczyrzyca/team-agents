@@ -183,7 +183,19 @@ mod daemon_process {
                 &TaskId::from_str(TASK).unwrap(),
             )
             .join(".fake-child");
-        eventually("the run to start its child", || marker.is_file());
+        // The fixture publishes a whole PID marker by temporary file and rename. Wait for that publication
+        // before reading the PID; the marker may still be absent while the child is starting.
+        eventually("the run to write its child pid", || {
+            match std::fs::read_to_string(&marker) {
+                Ok(text) if text.trim().is_empty() => false,
+                Ok(text) => {
+                    text.trim().parse::<i32>().unwrap();
+                    true
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+                Err(error) => panic!("cannot read child marker {}: {error}", marker.display()),
+            }
+        });
         let child: i32 = std::fs::read_to_string(&marker).unwrap().trim().parse().unwrap();
 
         terminate(&daemon);
@@ -215,6 +227,23 @@ mod daemon_process {
             .unwrap();
         assert!(output.status.success(), "{output:?}");
         String::from_utf8(output.stdout).unwrap()
+    }
+
+    /// Runs `agent log --task TASK` in `zone` until the daemon has logged `needle`: the run ends after the
+    /// questions notification appears, so a single read could see the log before its end is recorded.
+    fn log_until(home: &Home, zone: &str, needle: &str) -> String {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let text = run_in_zone(home, &["log", "--task", TASK], zone);
+            if text.contains(needle) {
+                return text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {needle} in the task log"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
     }
 
     /// Seeds a team with an open round `round` on item 1.1 in progress for `TASK`, whose run asks a question.
@@ -290,7 +319,7 @@ mod daemon_process {
         let round_east = run_in_zone(&home, &["status", ROUND], CENTRAL_EUROPE);
         let json_east = run_in_zone(&home, &["status", "--json"], CENTRAL_EUROPE);
         let json_utc = run_in_zone(&home, &["status", "--json"], "UTC0");
-        let log_east = run_in_zone(&home, &["log", "--task", TASK], CENTRAL_EUROPE);
+        let log_east = log_until(&home, CENTRAL_EUROPE, " info run_ended");
         let notice_path = std::fs::read_dir(&notices_dir)
             .unwrap()
             .map(|entry| entry.unwrap().path())
