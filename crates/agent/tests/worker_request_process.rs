@@ -3798,7 +3798,11 @@ git add docs
 git commit -qm 'Complete retained work'
 "#,
         );
-        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        let request = MEMBER_REQUEST.replace(
+            "\"files\":\"docs/guide.md\"",
+            "\"files\":\"docs/guide.md, docs/partial.txt\"",
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[&request]);
         world.start();
         let tasks = world.run(&["claude-1", "inv-opus"]);
         let member = task(&tasks, "claude-1");
