@@ -44,6 +44,7 @@ use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, RunUsageRecord, log_decision};
 use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
+pub use crate::run::serena::DueReminder;
 use crate::run::serena::{SessionWatch, Watched as WatchStep};
 
 use crate::store::StateStore;
@@ -389,6 +390,9 @@ pub struct RunEngine {
     /// The count of the sessions its runs made of code without Serena, by session: a session that goes on in a resumed
     /// run keeps its count, and is reminded no more than once.
     serena_sessions: Arc<Mutex<BTreeMap<String, SessionTally>>>,
+    /// The reminders that came due while runs went on and that the daemon has not taken yet, oldest first. A reminder is
+    /// put on the bus while its run goes on, so it is handed over at once, in memory, and not read back from the history.
+    due_reminders: Arc<Mutex<Vec<DueReminder>>>,
 }
 
 impl RunEngine {
@@ -399,7 +403,21 @@ impl RunEngine {
             parts,
             history: History::disabled(),
             serena_sessions: Arc::new(Mutex::new(BTreeMap::new())),
+            due_reminders: Arc::new(Mutex::new(Vec::new())),
         }
+    }
+
+    /// The reminders that came due since the last call, oldest first, each once: the run of each is going on, and the
+    /// caller puts the reminder on the bus for it.
+    #[must_use]
+    pub fn take_due_reminders(&self) -> Vec<DueReminder> {
+        // A poisoned lock still holds consistent data: the list is only ever appended to and emptied whole.
+        std::mem::take(
+            &mut *self
+                .due_reminders
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
     }
 
     /// The same engine, recording what its runs do in `history`: how each process was started, every step, and what the
@@ -897,6 +915,16 @@ impl Follow<'_> {
             u32::try_from(number).unwrap_or(u32::MAX),
             &self.engine.parts.clock,
         );
+        self.engine
+            .due_reminders
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .push(DueReminder {
+                task: self.task.clone(),
+                run: self.run.clone(),
+                cli: self.cli,
+                searches,
+            });
     }
 
     /// Feeds the lines written since the last call to the parser and its events to the history.

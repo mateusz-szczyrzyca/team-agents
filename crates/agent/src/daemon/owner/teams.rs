@@ -503,6 +503,7 @@ impl Owner {
         self.brief_leads().await;
         self.queue_busy_handover_notices().await?;
         self.flush_outbox().await?;
+        self.deliver_due_reminders().await;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
         for team in looks {

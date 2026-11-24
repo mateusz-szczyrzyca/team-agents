@@ -48,7 +48,7 @@ use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
@@ -1579,7 +1579,7 @@ impl Owner {
             self.read_returns(task, &located, *outcome, message).await?;
         }
         self.commit(task, &located, now, events, notice).await?;
-        self.report_reminder(task, &located).await?;
+        self.report_reminder(task, &located).await;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
     }
@@ -1597,73 +1597,82 @@ impl Owner {
         }
     }
 
-    /// Puts the reminder of Serena of the run of `task` that ended on the bus, when the engine recorded one for the run:
-    /// the agent reads it at its next call of the bus, in the run's session, and is not woken for it. A session is
-    /// reminded once, so each reminder goes out once.
+    /// Puts the reminders of Serena that came due while runs went on on the bus, as soon as the engine has recorded them:
+    /// the agent reads one at its next call of the bus, in the run that made the searches. The run is neither stopped nor
+    /// restarted. A session is reminded once, so each reminder goes out once.
+    pub(super) async fn deliver_due_reminders(&mut self) {
+        for due in self.parts.engine.take_due_reminders() {
+            self.deliver_reminder(&due.task, &due.run, due.searches, due.cli).await;
+        }
+    }
+
+    /// Puts the reminder of Serena that the history holds for the run of `task` that ended on the bus, unless it went out
+    /// while the run went on ([`Owner::deliver_due_reminders`]): what the engine recorded after its last hand-over to the
+    /// daemon, or before a restart of the daemon, still goes out at the end of the run.
     ///
-    /// The reminder goes out after the records of the run are saved: a crash before it loses the reminder of that
-    /// session, whose count the engine then keeps counting. A history that cannot be read or a bus that refuses the
-    /// message leaves the reminder out and changes nothing else about the end of the run.
-    ///
-    /// # Errors
-    /// [`OwnerError`] when the recipient of the task cannot be named.
-    async fn report_reminder(&mut self, task: &TaskId, located: &Located) -> Result<(), OwnerError> {
+    /// The reminder goes out after the records of the run are saved. A history that cannot be read or a bus that refuses
+    /// the message leaves the reminder out and changes nothing else about the end of the run.
+    async fn report_reminder(&mut self, task: &TaskId, located: &Located) {
         let Some(run) = self
             .parts
             .state
             .find_task(task)
             .and_then(|found| found.member.runs().last().map(|last| last.id().clone()))
         else {
-            return Ok(());
+            return;
         };
         let Some((searches, cli)) = self.reminder_of_run(task, &located.team).await else {
-            return Ok(());
+            return;
         };
-        // A session is reminded once: the reminder of the run that ended goes out once, however often the task's end is
-        // looked at.
+        self.deliver_reminder(task, &run, searches, cli).await;
+    }
+
+    /// Puts the text of the reminder for `searches` searches of code on the bus for `task`, once for the run `run`: a
+    /// reminder that cannot be rendered or that the bus refuses is logged and left out. It is the engine's log event
+    /// `serena_reminded` that tells the human a reminder was due; this only tells what went wrong on the way.
+    async fn deliver_reminder(&mut self, task: &TaskId, run: &RunId, searches: u64, cli: CliKind) {
+        // A session is reminded once: the reminder of a run goes out once, however often it is handed over.
         if !self.reminded.insert(format!("{task}:{run}")) {
-            return Ok(());
+            return;
         }
         let text = match reminder::text(searches, &self.parts.texts) {
             Ok(text) => text,
             Err(error) => {
                 tracing::warn!(
-                    event = LogEvent::SerenaReminded.as_str(),
+                    event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,
                     run = %run,
                     cli = cli.as_str(),
                     searches,
-                    outcome = "undelivered",
+                    operation = "serena_reminder",
                     error = %error_chain(&error),
                     "the reminder of Serena cannot be rendered"
                 );
-                return Ok(());
+                return;
             }
         };
-        let recipient = self.recipient_of(task)?;
+        let recipient = match self.recipient_of(task) {
+            Ok(recipient) => recipient,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    task = %task,
+                    run = %run,
+                    error = %error_chain(&error),
+                    "the reminder of Serena has no recipient: the run reads it not"
+                );
+                return;
+            }
+        };
         if let Err(error) = self.send_from_harness(&recipient, &Outgoing::Chat { text }).await {
             tracing::warn!(
-                event = LogEvent::SerenaReminded.as_str(),
+                event = LogEvent::BusDown.as_str(),
                 task = %task,
                 run = %run,
-                cli = cli.as_str(),
-                searches,
-                outcome = "undelivered",
                 error = %error_chain(&error),
                 "the reminder of Serena cannot be put on the bus: the run reads it not"
             );
-            return Ok(());
         }
-        tracing::info!(
-            event = LogEvent::SerenaReminded.as_str(),
-            task = %task,
-            run = %run,
-            cli = cli.as_str(),
-            searches,
-            outcome = "delivered",
-            "the reminder of Serena is on the bus for the run that ended"
-        );
-        Ok(())
     }
 
     /// The count of searches and the model CLI of the reminder the history holds for the run of `task` that ended; `None`

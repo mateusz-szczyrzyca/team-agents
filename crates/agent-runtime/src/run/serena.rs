@@ -5,11 +5,26 @@
 //! after its reminder counts from there and says nothing more.
 
 use agent_core::cli::ActivityEvent;
+use agent_core::ids::{RunId, TaskId};
+use agent_core::kinds::CliKind;
 use agent_core::serena::{RemindAfter, SessionTally};
 
 #[cfg(test)]
 #[path = "serena_tests.rs"]
 mod tests;
+
+/// A reminder that came due in a run that goes on: who is to be told, and what it counted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DueReminder {
+    /// The task whose run made the searches.
+    pub task: TaskId,
+    /// The run that goes on and is to be told.
+    pub run: RunId,
+    /// The model CLI of the run.
+    pub cli: CliKind,
+    /// The searches of code without Serena the session had made when the reminder came due.
+    pub searches: u64,
+}
 
 /// What a [`SessionWatch`] says about one step of the run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
