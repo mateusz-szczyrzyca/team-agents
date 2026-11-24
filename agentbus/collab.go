@@ -66,7 +66,7 @@ type BoardItem struct {
 // free worker; the `agent` script starts the worker as a helper task on a copy of the
 // requester's branch and sends the result back as a message.
 type Helper struct {
-	Recovery bool `json:"recovery,omitempty"` // new local requests use durable execution ownership
+	Recovery   bool   `json:"recovery,omitempty"`    // new local requests use durable execution ownership
 	AttemptRun string `json:"attempt_run,omitempty"` // optional execution fence; absent keeps legacy settlement
 
 	Requires  []string    `json:"requires,omitempty"`   // required declared capabilities; absent means ordinary local delegation
