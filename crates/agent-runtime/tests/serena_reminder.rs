@@ -383,4 +383,32 @@ mod serena_reminder {
 
         assert_eq!(rig.reminder_records(), Vec::new());
     }
+
+    // Rule: the engine logs the reminder as `serena_reminded` in the daemon's log, with the task, the run and the count.
+    #[tokio::test]
+    async fn the_engine_logs_the_reminder_in_the_log_of_the_daemon() {
+        let rig = rig(&Given::DEFAULT).await;
+        let layer = agent_runtime::history::HistoryLayer::new(
+            agent_core::log::LogLevel::Debug,
+            SharedClock::new(FixedClock(now().as_utc())),
+            Secrets::default(),
+            Some(rig.history.clone()),
+        );
+        let dispatch: tracing::Dispatch =
+            tracing_subscriber::layer::SubscriberExt::with(tracing_subscriber::registry(), layer).into();
+
+        tracing::instrument::WithSubscriber::with_subscriber(rig.run("serena-reads", &Given::DEFAULT), dispatch).await;
+        rig.history.flush();
+
+        let rows = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+        let told: Vec<_> = rows
+            .iter()
+            .filter(|row| row.event() == agent_core::log::LogEvent::SerenaReminded)
+            .collect();
+        let [row] = told.as_slice() else {
+            panic!("one log row of the reminder: {told:?}");
+        };
+        assert_eq!(row.task(), Some(&rig.task));
+        assert_eq!(row.run(), Some(&rig.run));
+    }
 }
