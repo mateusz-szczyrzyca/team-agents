@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use agent_core::decide::pool::{PoolWorker, Requires, second_try_pool_elsewhere};
 use agent_core::decide::worker_result::{Elsewhere, worker_for_second_try};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
@@ -94,8 +95,7 @@ impl Owner {
                 self.parts.settings.config.limits(),
                 agent_core::kinds::Tier::Worker,
             );
-            let mut has_same = false;
-
+            let mut pool_workers_data = Vec::new();
             for name in pool {
                 let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                     continue;
@@ -103,25 +103,37 @@ impl Owner {
                 if self.is_in_active_crew(name) {
                     continue;
                 }
+                let provider =
+                    agent_core::decide::pool::provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
+                let capabilities = agent_conf.capabilities.clone();
                 let avail = self.worker_availability(name).await;
-                let below_limit = match run_limit {
-                    agent_core::decide::slot::RunLimit::Unlimited => true,
-                    agent_core::decide::slot::RunLimit::AtMost(limit) => avail.runs < limit.get(),
-                };
-                if avail.busy || avail.unsettled || !below_limit {
-                    continue;
-                }
-                let worker_provider = agent_core::decide::pool::provider_of(agent_conf.cli, agent_conf.model.as_ref());
-                if worker_provider != failed_provider {
-                    return Elsewhere::Free;
-                }
-                has_same = true;
+                pool_workers_data.push((name, provider, capabilities, avail.busy, avail.runs, avail.unsettled));
             }
-            if has_same {
-                Elsewhere::SameProvider
-            } else {
-                Elsewhere::None
-            }
+            let workers: Vec<PoolWorker<'_>> = pool_workers_data
+                .iter()
+                .map(|(name, provider, capabilities, busy, runs, unsettled)| PoolWorker {
+                    name,
+                    provider,
+                    capabilities: capabilities.as_slice(),
+                    busy: *busy,
+                    runs: *runs,
+                    unsettled: *unsettled,
+                })
+                .collect();
+
+            let pending_requires = match self.parts.bus.helper_list(true).await {
+                Ok(helpers) => helpers
+                    .into_iter()
+                    .find(|h| h.id == pending.request)
+                    .map(|h| h.requires)
+                    .unwrap_or_default(),
+                Err(_) => Vec::new(),
+            };
+            let requires = Requires {
+                capabilities: &pending_requires,
+            };
+
+            second_try_pool_elsewhere(&workers, &requires, &pending.worker, &failed_provider, run_limit)
         }
     }
 

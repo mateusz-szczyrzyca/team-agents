@@ -5,6 +5,8 @@ package main
 // worker does it again later; a request in the old form still waits in the queue as before.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -210,6 +212,84 @@ func TestHelperListJSONAndHelperNextSpecificID(t *testing.T) {
 		h := takeLocalHelper(st, "worker-1", nil, 2)
 		if h == nil || h.ID != 2 || h.Status != HelperStarting || h.Worker != "worker-1" {
 			t.Fatalf("expected helper 2 to be taken, got: %+v", h)
+		}
+	})
+}
+
+func TestTakeLocalHelperRefusesAlreadyServingWorker(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"] = &Helper{ID: 1, Status: HelperStarting, Worker: "worker-1", Request: "req1"}
+		st.Helpers["2"] = &Helper{ID: 2, Status: HelperQueued, Request: "req2"}
+	})
+	mustWith(t, b, func(st *State) {
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h != nil {
+			t.Fatalf("expected nil when worker-1 is already starting helper 1, got %+v", h)
+		}
+	})
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"].Status = HelperRunning
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h != nil {
+			t.Fatalf("expected nil when worker-1 is already running helper 1, got %+v", h)
+		}
+	})
+}
+
+func TestFreePoolWorkersObservationCauses(t *testing.T) {
+	b := newBus(t)
+	// 1. Worker in active legacy crew
+	mustWith(t, b, func(st *State) {
+		st.Teams["team-1"] = &Team{
+			ID:   "team-1",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"w1": {Agent: "w1", Tier: TierWorker, State: MemberSleeping},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 is in active legacy crew, got %d", free)
+		}
+	})
+
+	// 2. Worker in active ordinary/manual run
+	mustWith(t, b, func(st *State) {
+		delete(st.Teams, "team-1")
+		st.Teams["team-2"] = &Team{
+			ID:   "team-2",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"w1": {Agent: "w1", Tier: TierNormal, State: MemberActive},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 is active in team-2, got %d", free)
+		}
+	})
+
+	// 3. Worker with unsettled workspace record in tasksDir
+	tasksDir := t.TempDir()
+	taskPath := filepath.Join(tasksDir, "task-requester")
+	if err := os.MkdirAll(taskPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(taskPath, "request-workspace-1.json")
+	if err := os.WriteFile(recordPath, []byte(`{"worker":"w1","stage":"working"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustWith(t, b, func(st *State) {
+		delete(st.Teams, "team-2")
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 has unsettled workspace, got %d", free)
+		}
+	})
+
+	// 4. Truly free worker
+	mustWith(t, b, func(st *State) {
+		_ = os.Remove(recordPath)
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 1 {
+			t.Fatalf("expected 1 free worker when w1 is clear, got %d", free)
 		}
 	})
 }

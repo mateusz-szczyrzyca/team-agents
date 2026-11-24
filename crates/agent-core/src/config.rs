@@ -139,6 +139,18 @@ pub enum ConfigError {
         /// The configured window in tokens.
         context: u64,
     },
+    /// An agent's or an investigator's capability does not follow `<namespace>:<value>` syntax or uses an invalid namespace.
+    #[error("{} of {name}: capability {capability:?} is invalid: {reason}", key.section())]
+    InvalidCapability {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that declares it.
+        name: String,
+        /// The invalid capability string.
+        capability: String,
+        /// The reason it was rejected.
+        reason: &'static str,
+    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
@@ -1128,6 +1140,7 @@ impl RawConfig {
         for (name, agent) in &agents {
             check_context(ContextKey::Agent, name.as_str(), agent.context)?;
             check_output(ContextKey::Agent, name.as_str(), agent.context, agent.output)?;
+            check_capabilities(ContextKey::Agent, name.as_str(), &agent.capabilities)?;
         }
         for (name, investigator) in &investigators {
             check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
@@ -1137,6 +1150,7 @@ impl RawConfig {
                 investigator.context,
                 investigator.output,
             )?;
+            check_capabilities(ContextKey::Investigator, name.as_str(), &investigator.capabilities)?;
         }
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews
@@ -1261,6 +1275,51 @@ fn check_tiers(
             first,
             second: Tier::Investigator,
         });
+    }
+    Ok(())
+}
+
+/// The valid namespaces of a capability.
+const VALID_CAPABILITY_NAMESPACES: [&str; 6] = ["os", "arch", "build", "test", "hw", "net"];
+
+/// Checks that every capability follows `<namespace>:<value>` syntax with a valid namespace and a value matching `[a-z0-9._-]+`.
+fn check_capabilities(key: ContextKey, name: &str, capabilities: &[String]) -> Result<(), ConfigError> {
+    for cap in capabilities {
+        let Some((ns, val)) = cap.split_once(':') else {
+            return Err(ConfigError::InvalidCapability {
+                key,
+                name: name.to_owned(),
+                capability: cap.clone(),
+                reason: "it must have namespace:value form",
+            });
+        };
+        if !VALID_CAPABILITY_NAMESPACES.contains(&ns) {
+            return Err(ConfigError::InvalidCapability {
+                key,
+                name: name.to_owned(),
+                capability: cap.clone(),
+                reason: "unknown capability namespace: valid namespaces are os, arch, build, test, hw, net",
+            });
+        }
+        if val.is_empty() {
+            return Err(ConfigError::InvalidCapability {
+                key,
+                name: name.to_owned(),
+                capability: cap.clone(),
+                reason: "value cannot be empty",
+            });
+        }
+        if !val
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(ConfigError::InvalidCapability {
+                key,
+                name: name.to_owned(),
+                capability: cap.clone(),
+                reason: "value must match [a-z0-9._-]+",
+            });
+        }
     }
     Ok(())
 }
@@ -2167,5 +2226,52 @@ workers = ["qwen", "qwen"]"#,
     fn a_negative_number_of_wake_ups_is_refused_with_the_line_of_the_value() {
         let text = "[limits]\nwake_ups_per_message = -1\n";
         assert_eq!(error_line(text, &failure(text)), Some(2));
+    }
+
+    #[test]
+    fn capabilities_syntax_validation_and_old_config_default() {
+        // 1. Old configuration without capabilities defaults to empty list
+        let text = "[agents.claude-1]\ncli = \"claude\"\n\n[tiers]\nnormal = [\"claude-1\"]\n";
+        let cfg = Config::from_toml_str(text).unwrap();
+        assert_eq!(
+            cfg.agent(&"claude-1".parse().unwrap()).unwrap().capabilities,
+            Vec::<String>::new()
+        );
+
+        // 2. Valid capabilities in all namespaces
+        let valid_text = "[agents.w-1]\ncli = \"claude\"\ncapabilities = [\"os:linux\", \"arch:arm64\", \"build:rust\", \"test:unit_go\", \"hw:rp2350\", \"net:tailscale\"]\n\n[tiers]\nnormal = []\nworkers = [\"w-1\"]\n";
+        let valid_cfg = Config::from_toml_str(valid_text).unwrap();
+        assert_eq!(
+            valid_cfg.agent(&"w-1".parse().unwrap()).unwrap().capabilities,
+            vec![
+                "os:linux",
+                "arch:arm64",
+                "build:rust",
+                "test:unit_go",
+                "hw:rp2350",
+                "net:tailscale"
+            ]
+        );
+
+        // 3. Invalid capability syntax checks
+        let invalid_cases = [
+            ("empty", ""),
+            ("no colon", "rust"),
+            ("unknown namespace", "gpu:rtx4090"),
+            ("empty value", "build:"),
+            ("whitespace in value", "build:rust 1.80"),
+            ("invalid char in value", "build:rust@1"),
+            ("uppercase in value", "os:Linux"),
+        ];
+        for (label, cap) in invalid_cases {
+            let invalid_text = format!(
+                "[agents.w-1]\ncli = \"claude\"\ncapabilities = [\"{cap}\"]\n\n[tiers]\nnormal = []\nworkers = [\"w-1\"]\n"
+            );
+            let err = Config::from_toml_str(&invalid_text).unwrap_err();
+            assert!(
+                matches!(err, ConfigError::InvalidCapability { ref capability, .. } if capability == cap),
+                "case {label} for capability {cap:?} did not fail with InvalidCapability: {err:?}"
+            );
+        }
     }
 }

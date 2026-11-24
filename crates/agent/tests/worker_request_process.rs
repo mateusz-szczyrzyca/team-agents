@@ -2732,4 +2732,452 @@ Integrate the guide.
         assert_eq!(req3["status"], "queued");
         assert!(req3.get("worker").is_none() || req3["worker"].is_null());
     }
+
+    #[test]
+    fn pool_cross_team_provider_alternation() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "claude-2",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/qwen"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "guide",
+            "mkdir -p docs\necho walkthrough >> docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
+        );
+        world.start();
+
+        let tasks1 = world.run(&["claude-1", "inv-opus"]);
+        let member1 = task(&tasks1, "claude-1");
+        std::fs::create_dir_all(world.worktree(member1).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member1).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member1, 1);
+
+        let tasks2 = world.run(&["claude-2", "inv-opus"]);
+        let member2 = task(&tasks2, "claude-2");
+        std::fs::create_dir_all(world.worktree(member2).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member2).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member2, 1);
+
+        // Team 1 delegates -> first provider is deepinfra
+        let reply1 = world.delegate_as(member1, MEMBER_REQUEST);
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-di");
+        world.feedback_as(member1, 1, "used");
+
+        // Team 2 delegates -> alternates across teams to openrouter
+        let reply2 = world.delegate_as(member2, MEMBER_REQUEST);
+        assert!(!answers(&reply2)[0].0, "{reply2}");
+        world.request_is("2", "done");
+        assert_eq!(world.requests()["2"]["worker"], "w-or");
+        world.feedback_as(member2, 2, "used");
+
+        // Team 1 delegates -> alternates back to deepinfra
+        let reply3 = world.delegate_as(member1, MEMBER_REQUEST);
+        assert!(!answers(&reply3)[0].0, "{reply3}");
+        world.request_is("3", "done");
+        assert_eq!(world.requests()["3"]["worker"], "w-di");
+    }
+
+    #[test]
+    fn pool_skips_busy_next_provider_in_three_provider_rotation() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "claude-2",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-hold",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-cl",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/qwen"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "guide",
+            "mkdir -p docs\necho walkthrough >> docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
+        );
+        world.start();
+
+        let tasks1 = world.run(&["claude-1", "inv-opus"]);
+        let member1 = task(&tasks1, "claude-1");
+        std::fs::create_dir_all(world.worktree(member1).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member1).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member1, 1);
+
+        let tasks2 = world.run(&["claude-2", "inv-opus"]);
+        let member2 = task(&tasks2, "claude-2");
+        std::fs::create_dir_all(world.worktree(member2).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member2).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member2, 1);
+
+        // 1. Team 1 delegates -> takes w-di and holds, making deepinfra provider busy
+        let reply1 = world.delegate_as(member1, MEMBER_REQUEST);
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+        world.request_is("1", "running");
+        assert_eq!(world.requests()["1"]["worker"], "w-di");
+
+        // 2. Team 2 delegates -> served by w-cl (claude provider)
+        let reply2 = world.delegate_as(member2, MEMBER_REQUEST);
+        assert!(!answers(&reply2)[0].0, "{reply2}");
+        world.request_is("2", "done");
+        assert_eq!(world.requests()["2"]["worker"], "w-cl");
+        world.feedback_as(member2, 2, "used");
+
+        // 3. Team 2 delegates again -> next in rotation after claude is deepinfra,
+        // but deepinfra (w-di) is still busy running request 1!
+        // Daemon skips deepinfra and serves with openrouter (w-or).
+        let reply3 = world.delegate_as(member2, MEMBER_REQUEST);
+        assert!(!answers(&reply3)[0].0, "{reply3}");
+        world.request_is("3", "done");
+        assert_eq!(world.requests()["3"]["worker"], "w-or");
+    }
+
+    #[test]
+    fn pool_worker_independent_run_limit_selects_next_worker() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "claude-2",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-1",
+                    kind: "worker",
+                    scenario: "hold",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-2",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            Some("runs_per_worker = 1"),
+        );
+        world.script(
+            "guide",
+            "mkdir -p docs\necho walkthrough >> docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
+        );
+        world.start();
+
+        let tasks1 = world.run(&["claude-1", "inv-opus"]);
+        let member1 = task(&tasks1, "claude-1");
+        std::fs::create_dir_all(world.worktree(member1).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member1).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member1, 1);
+
+        let tasks2 = world.run(&["claude-2", "inv-opus"]);
+        let member2 = task(&tasks2, "claude-2");
+        std::fs::create_dir_all(world.worktree(member2).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member2).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member2, 1);
+
+        // 1. Team 1 delegates -> w-1 takes request 1 and holds (running, at limit 1)
+        let reply1 = world.delegate_as(member1, MEMBER_REQUEST);
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+        world.request_is("1", "running");
+        assert_eq!(world.requests()["1"]["worker"], "w-1");
+
+        // 2. Team 2 delegates -> w-1 is at run limit 1, so daemon selects w-2
+        let reply2 = world.delegate_as(member2, MEMBER_REQUEST);
+        assert!(!answers(&reply2)[0].0, "{reply2}");
+        world.request_is("2", "done");
+        assert_eq!(world.requests()["2"]["worker"], "w-2");
+        world.feedback_as(member2, 2, "used");
+    }
+
+    #[test]
+    fn pool_unsettled_result_prevents_worker_reuse_until_settled() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "claude-2",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-1",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+
+        let tasks1 = world.run(&["claude-1", "inv-opus"]);
+        let member1 = task(&tasks1, "claude-1");
+        std::fs::create_dir_all(world.worktree(member1).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member1).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member1, 1);
+
+        let tasks2 = world.run(&["claude-2", "inv-opus"]);
+        let member2 = task(&tasks2, "claude-2");
+        std::fs::create_dir_all(world.worktree(member2).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member2).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member2, 1);
+
+        // 1. Team 1 delegates with a held check so the check starts and holds (unsettled result)
+        let mut req: serde_json::Value = serde_json::from_str(MEMBER_REQUEST).unwrap();
+        req["check"] = serde_json::Value::String(HELD_CHECK.to_owned());
+        let reply1 = world.delegate_as(member1, &req.to_string());
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+
+        eventually("the worker run to start", || {
+            world.requests().get("1").is_some_and(|r| r["status"] == "running")
+        });
+        let worker_task = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+        let started = world
+            .home
+            .join("worktrees/example")
+            .join(&worker_task)
+            .join(".fake-check-started");
+        eventually("the check to start", || started.exists());
+
+        // 2. While w-1's check is held (result is unsettled), Team 2 delegates -> refused because w-1 has unsettled result
+        let reply2 = world.delegate_as(member2, MEMBER_REQUEST);
+        let got2 = answers(&reply2);
+        assert!(got2[0].0, "must be refused while result is unsettled: {reply2}");
+        assert!(got2[0].1.contains("no worker of the pool is free now"), "{got2:?}");
+
+        // 3. Allow check to pass and settle
+        let go = world
+            .home
+            .join("worktrees/example")
+            .join(&worker_task)
+            .join(".fake-check-go");
+        std::fs::write(go, "").unwrap();
+        world.request_is("1", "done");
+        world.feedback_as(member1, 1, "used");
+
+        eventually("workspace of request 1 to be released", || {
+            !world
+                .home
+                .join("tasks")
+                .join(member1)
+                .join("request-workspace-1.json")
+                .exists()
+        });
+
+        // 4. Team 2 delegates again -> now accepted and served by w-1
+        let reply2_again = world.delegate_as(member2, MEMBER_REQUEST);
+        assert!(!answers(&reply2_again)[0].0, "{reply2_again}");
+        world.request_is("2", "done");
+        assert_eq!(world.requests()["2"]["worker"], "w-1");
+    }
+
+    #[test]
+    fn pool_k2_two_queued_requests_with_one_free_worker_starts_only_one_run() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-1",
+                    kind: "worker",
+                    scenario: "hold",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member, 1);
+
+        // Stop daemon so we can set up two queued requests in bus state
+        world.stop();
+
+        // Delegate first request directly to bus state
+        let reply1 = world.delegate_as(member, MEMBER_REQUEST);
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+
+        // Duplicate request 1 as request 2 in bus/state.json to simulate 2 simultaneously queued requests
+        let bus_state_path = world.home.join("bus/state.json");
+        let mut bus_state: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&bus_state_path).unwrap()).unwrap();
+        let h1 = bus_state["helpers"]["1"].clone();
+        let mut h2 = h1.clone();
+        h2["id"] = serde_json::json!(2);
+        bus_state["helpers"]["2"] = h2;
+        std::fs::write(&bus_state_path, serde_json::to_string_pretty(&bus_state).unwrap()).unwrap();
+
+        // Restart daemon: serve_pool_requests encounters both queued requests in a single tick
+        world.start();
+
+        // Request 1 is dispatched to w-1 and starts running
+        world.request_is("1", "running");
+        assert_eq!(world.requests()["1"]["worker"], "w-1");
+
+        // Request 2 must NOT be double-dispatched to w-1: it must remain queued and unassigned
+        let req2 = &world.requests()["2"];
+        assert_eq!(req2["status"], "queued");
+        assert!(req2.get("worker").is_none() || req2["worker"].is_null());
+    }
+
+    #[test]
+    fn pool_second_try_incompatible_alternate_provider_picks_compatible_same_provider() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-cl-1",
+                    kind: "worker",
+                    scenario: "done",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &["build:rust"],
+                },
+                AgentDef {
+                    name: "w-gemini",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("google/gemini-2.5-flash"),
+                    capabilities: &["build:python"],
+                },
+                AgentDef {
+                    name: "w-cl-2",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &["build:rust"],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        let req_rust = r#"{"goal":"build","workdir":"/tmp","steps":"cargo test","returns":"status","for":"1.1","files":"docs/guide.md","check":"exists docs/guide.md","do":"Write guide","requires":["build:rust"]}"#;
+        world.asks("member", Some(MEMBER_PLAN), &[req_rust]);
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+
+        world.request_is("1", "done");
+        // w-cl-1 failed the check; alternate provider "google" (w-gemini) lacks "build:rust";
+        // second try falls back to compatible worker of same provider "claude" (w-cl-2).
+        assert_eq!(world.requests()["1"]["worker"], "w-cl-2");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+    }
 }

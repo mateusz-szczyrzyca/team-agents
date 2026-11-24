@@ -14,6 +14,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -1043,7 +1044,7 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 		if named.Step != "" {
 			team := st.Teams[s.team]
 			if team != nil || len(s.workers) > 0 {
-				if freeWorkers(team, sortedHelpers(st), s.workers...) <= 0 {
+				if freeWorkersState(st, team, s.workers, s.tasksDir) <= 0 {
 					msg := fmt.Sprintf("no worker of the pool is free now: do step %s yourself, or ask again for a later step", named.Step)
 					if len(s.workers) == 0 || (team != nil && teamHasWorkers(team)) {
 						msg = fmt.Sprintf("no worker of your team is free now: do step %s yourself, or ask again for a later step", named.Step)
@@ -1596,25 +1597,72 @@ func freeTeamWorkers(team *Team, helpers []*Helper) int {
 // freePoolWorkers reports how many pool workers are free to take a request of a step of a plan;
 // zero or below when a new request would wait.
 func freePoolWorkers(helpers []*Helper, poolWorkers []string) int {
+	st := &State{
+		Helpers: make(map[string]*Helper, len(helpers)),
+		Teams:   make(map[string]*Team),
+	}
+	for _, h := range helpers {
+		st.Helpers[helperKey(h.ID)] = h
+	}
+	return freePoolWorkersState(st, poolWorkers)
+}
+
+// freePoolWorkersState observes full state (teams, active crews, running members, and unsettled helpers) to count free pool workers.
+func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) int {
 	if len(poolWorkers) == 0 {
 		return 0
 	}
+	activeInCrew := map[string]bool{}
+	runningInTeams := map[string]bool{}
+	for _, team := range st.Teams {
+		if !team.Done {
+			for name, m := range team.Members {
+				if m.Tier == TierWorker {
+					activeInCrew[name] = true
+				}
+				if m.State == MemberActive || m.State == MemberWaking {
+					runningInTeams[name] = true
+				}
+			}
+		}
+	}
 	serving := map[string]bool{}
+	unsettled := map[string]bool{}
 	waiting := 0
-	for _, h := range helpers {
+	for _, h := range st.Helpers {
 		switch h.Status {
 		case HelperStarting, HelperRunning:
 			if h.Worker != "" {
 				serving[h.Worker] = true
 			}
 		case HelperQueued:
-			waiting++
+			if h.RemoteJob == nil {
+				waiting++
+			}
 		case HelperDone, HelperFailed, HelperUnclear:
+		}
+	}
+	if len(tasksDir) > 0 && tasksDir[0] != "" {
+		matches, _ := filepath.Glob(filepath.Join(tasksDir[0], "*", "request-workspace-*.json"))
+		for _, m := range matches {
+			if strings.HasSuffix(m, ".damaged") {
+				continue
+			}
+			data, err := os.ReadFile(filepath.Clean(m)) //nolint:gosec // G304: reading internal workspace records in tasks directory
+			if err != nil {
+				continue
+			}
+			var rec struct {
+				Worker string `json:"worker"`
+			}
+			if err := json.Unmarshal(data, &rec); err == nil && rec.Worker != "" {
+				unsettled[rec.Worker] = true
+			}
 		}
 	}
 	free := 0
 	for _, name := range poolWorkers {
-		if !serving[name] {
+		if !activeInCrew[name] && !runningInTeams[name] && !serving[name] && !unsettled[name] {
 			free++
 		}
 	}
@@ -1631,6 +1679,14 @@ func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
 		return freeTeamWorkers(team, helpers)
 	}
 	return freePoolWorkers(helpers, poolWorkers)
+}
+
+// freeWorkersState counts free workers taking into account the entire state st and optional tasksDir.
+func freeWorkersState(st *State, team *Team, poolWorkers []string, tasksDir ...string) int {
+	if team != nil && teamHasWorkers(team) {
+		return freeTeamWorkers(team, sortedHelpers(st))
+	}
+	return freePoolWorkersState(st, poolWorkers, tasksDir...)
 }
 
 // workerWaits reports whether a worker in state waits for work: only such a worker is given a request by the daemon.

@@ -1,6 +1,7 @@
 //! What `agent status` says of the pool of workers from `[tiers] workers`: each worker, whom it serves (team or task, step) or that it is free.
 
 use agent_core::ids::AgentName;
+use agent_core::kinds::Role;
 use agent_core::protocol::TeamSummary;
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationStatus, HelperEntry};
@@ -54,10 +55,9 @@ fn find_serving(worker: &AgentName, teams: &[TeamSummary], helpers: Option<&[Hel
         }
     }
     for team in teams {
-        if team
-            .members
-            .iter()
-            .any(|m| m.agent.name() == worker.as_str() && m.status == TaskStatus::Running)
+        if let Some(m) = team.members.iter().find(|m| m.agent.name() == worker.as_str())
+            && (m.status == TaskStatus::Running
+                || (m.role == Role::Worker && !matches!(m.status, TaskStatus::Done | TaskStatus::Failed)))
         {
             return Some(team.id.to_string());
         }

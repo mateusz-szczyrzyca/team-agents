@@ -296,6 +296,7 @@ in the order their first worker appears in `[tiers] workers`; within a provider,
 providers without waiting. A worker serves each request in a dedicated task and workspace worktree in the requester's
 repository from the requester's commit (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`), with no
 place in the requester's team crew. A second try after a wrong result goes to another provider where one is free.
+Passing an explicit worker to `agent run` is still accepted: that worker is assigned to the team's crew as a legacy team worker and serves requests of that team alone as before, held exclusively by that team for its lifetime.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
@@ -1058,7 +1059,7 @@ failure, a timeout and a refusal. The command says first where the result is rec
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
 | `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
 | `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
-| `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` routes to a capable node |
+| `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` matches against pool worker capabilities |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |

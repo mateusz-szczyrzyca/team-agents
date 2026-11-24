@@ -609,3 +609,70 @@ fn a_worker_must_declare_every_required_capability() {
         );
     }
 }
+
+// Rule: second try prefers another provider when one is available and meets requirements.
+#[test]
+fn second_try_pool_outcome_table() {
+    let w1_caps: &[&str] = &["build:rust"];
+    let w2_caps: &[&str] = &["build:python"];
+    let w3_caps: &[&str] = &["build:rust"];
+
+    // Case 1: Incompatible alternate provider ("p2" has python), compatible same provider ("p1" has rust).
+    let workers = pool_caps(&[
+        ("w1", "p1", false, w1_caps),
+        ("w2", "p2", false, w2_caps),
+        ("w3", "p1", false, w3_caps),
+    ]);
+    let req = requires(&["build:rust"]);
+    let failed_w = workers[0].name;
+    assert_eq!(
+        second_try_pool_elsewhere(&workers, &req, failed_w, "p1", RunLimit::Unlimited),
+        Elsewhere::SameProvider
+    );
+    assert_eq!(
+        second_try_pool_worker(&workers, &req, failed_w, "p1", RunLimit::Unlimited),
+        Some((workers[2].name, workers[2].provider))
+    );
+
+    // Case 2: Compatible alternate provider ("p2" has rust).
+    let workers_comp = pool_caps(&[
+        ("w1", "p1", false, w1_caps),
+        ("w2", "p2", false, w1_caps),
+        ("w3", "p1", false, w3_caps),
+    ]);
+    let failed_w_comp = workers_comp[0].name;
+    assert_eq!(
+        second_try_pool_elsewhere(&workers_comp, &req, failed_w_comp, "p1", RunLimit::Unlimited),
+        Elsewhere::Free
+    );
+    assert_eq!(
+        second_try_pool_worker(&workers_comp, &req, failed_w_comp, "p1", RunLimit::Unlimited),
+        Some((workers_comp[1].name, workers_comp[1].provider))
+    );
+
+    // Case 3: Incompatible alternate provider and incompatible same provider.
+    let workers_none = pool_caps(&[("w1", "p1", false, w2_caps), ("w2", "p2", false, w2_caps)]);
+    let failed_w_none = workers_none[0].name;
+    assert_eq!(
+        second_try_pool_elsewhere(&workers_none, &req, failed_w_none, "p1", RunLimit::Unlimited),
+        Elsewhere::None
+    );
+    assert_eq!(
+        second_try_pool_worker(&workers_none, &req, failed_w_none, "p1", RunLimit::Unlimited),
+        None
+    );
+
+    // Case 4: Compatible workers exist but all are busy or at run limit.
+    let workers_busy = pool_full(&[("w1", "p1", true, 0, false), ("w2", "p2", false, 1, false)]);
+    let failed_w_busy = workers_busy[0].name;
+    assert_eq!(
+        second_try_pool_elsewhere(
+            &workers_busy,
+            &requires(&[]),
+            failed_w_busy,
+            "p1",
+            RunLimit::AtMost(std::num::NonZeroU32::new(1).unwrap())
+        ),
+        Elsewhere::None
+    );
+}

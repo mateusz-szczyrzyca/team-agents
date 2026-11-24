@@ -19,6 +19,7 @@
 
 use crate::config::ModelName;
 use crate::decide::slot::RunLimit;
+use crate::decide::worker_result::Elsewhere;
 use crate::ids::AgentName;
 use crate::kinds::CliKind;
 
@@ -87,6 +88,49 @@ pub fn next_pool_worker<'a>(
         }
     }
     None
+}
+
+/// The worker of the pool that serves a second try for a request whose first try failed, preferring another provider.
+/// Returns `Some((worker_name, provider))` or `None` if no available worker meets `requires`.
+#[must_use]
+pub fn second_try_pool_worker<'a>(
+    workers: &[PoolWorker<'a>],
+    requires: &Requires<'_>,
+    failed_worker: &AgentName,
+    failed_provider: &str,
+    run_limit: RunLimit,
+) -> Option<(&'a AgentName, &'a str)> {
+    for worker in workers {
+        if worker.name != failed_worker
+            && available(worker, run_limit)
+            && worker.provider != failed_provider
+            && meets(worker, requires)
+        {
+            return Some((worker.name, worker.provider));
+        }
+    }
+    for worker in workers {
+        if worker.name != failed_worker && available(worker, run_limit) && meets(worker, requires) {
+            return Some((worker.name, worker.provider));
+        }
+    }
+    None
+}
+
+/// Evaluates elsewhere availability for a pool worker request based on pool workers, requirements, and failed provider.
+#[must_use]
+pub fn second_try_pool_elsewhere(
+    workers: &[PoolWorker<'_>],
+    requires: &Requires<'_>,
+    failed_worker: &AgentName,
+    failed_provider: &str,
+    run_limit: RunLimit,
+) -> Elsewhere {
+    match second_try_pool_worker(workers, requires, failed_worker, failed_provider, run_limit) {
+        Some((_, provider)) if provider != failed_provider => Elsewhere::Free,
+        Some(_) => Elsewhere::SameProvider,
+        None => Elsewhere::None,
+    }
 }
 
 /// Whether a worker can take a request: not at work, no unsettled finished run, and under its `[limits] runs_per_worker`
