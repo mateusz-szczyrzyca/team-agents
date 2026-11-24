@@ -217,6 +217,8 @@ struct Shown {
     text: String,
     /// The line of runs going per configured CLI, when at least one run is going.
     cli_runs: Option<String>,
+    /// The lines describing pool workers, when configured.
+    pool: Option<String>,
     /// The versions of the daemon that answered; absent from a daemon before it told them.
     daemon: Option<Versions>,
     /// What the history is doing, when it is not whole.
@@ -380,9 +382,17 @@ async fn listing_text(
         &|task| requests.of(task).to_vec(),
         activity.zone,
     );
+    let pool = if let Ok(settings) = Settings::load(&activity.home).await {
+        let workers = settings.config.worker_agents();
+        let helpers = pool::read_helpers(&activity.home);
+        pool::render_pool(workers, &listing.teams, helpers.as_ref())
+    } else {
+        None
+    };
     Ok(Shown {
         text: format!("{text}{}", told.unread()),
         cli_runs,
+        pool,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -420,9 +430,17 @@ async fn running_text(
         );
         format!("{text}{}", told.unread())
     };
+    let pool = if let Ok(settings) = Settings::load(&activity.home).await {
+        let workers = settings.config.worker_agents();
+        let helpers = pool::read_helpers(&activity.home);
+        pool::render_pool(workers, &listed, helpers.as_ref())
+    } else {
+        None
+    };
     Ok(Shown {
         text,
         cli_runs,
+        pool,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -449,9 +467,10 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
 /// and the line about the history when it is not whole.
 fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
     let cli_runs = shown.cli_runs.as_deref().unwrap_or_default();
+    let pool = shown.pool.as_deref().unwrap_or_default();
     write(
         out,
-        &format!("{prefix}{}{cli_runs}", shown.text),
+        &format!("{prefix}{}{cli_runs}{pool}", shown.text),
         shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
@@ -1075,6 +1094,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
 mod members;
+pub(crate) mod pool;
 pub(crate) mod requests;
 mod returned;
 mod reviewer;
