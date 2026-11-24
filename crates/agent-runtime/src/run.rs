@@ -901,7 +901,7 @@ struct Follow<'a> {
     /// The model CLI, which the log of a reminder names.
     cli: CliKind,
     /// The number of the step being fed: the steps of the run before it, then this one.
-    steps: u64,
+    steps: u32,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
     /// Whether a step that calls a tool was recorded in this run.
@@ -929,7 +929,7 @@ impl Follow<'_> {
 
     /// Logs the reminder of the session at the step `number`, after `searches` searches of code without Serena, and
     /// records it in the history of the run's task.
-    fn log_reminder(&self, number: u64, searches: u64) {
+    fn log_reminder(&self, number: u32, searches: u64) {
         tracing::info!(
             event = agent_core::log::LogEvent::SerenaReminded.as_str(),
             task = %self.task,
@@ -944,7 +944,7 @@ impl Follow<'_> {
             self.task,
             self.cli,
             searches,
-            u32::try_from(number).unwrap_or(u32::MAX),
+            number,
             &self.engine.parts.clock,
         );
         self.engine

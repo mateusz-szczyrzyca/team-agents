@@ -672,9 +672,11 @@ impl Collection {
         let bounds = self.context_bounds(home).await;
         let runs: Vec<agent_core::ids::RunId> = records
             .iter()
-            .filter_map(|stored| match &stored.record {
-                agent_core::history::Record::Run(start) => Some(start.run.clone()),
-                _ => None,
+            .filter_map(|stored| {
+                let agent_core::history::Record::Run(start) = &stored.record else {
+                    return None;
+                };
+                Some(start.run.clone())
             })
             .collect();
         let path = home.history_file();
@@ -897,18 +899,21 @@ impl Collection {
         let reminders: Vec<(agent_core::ids::RunId, agent_core::ids::TaskId, u64, u32)> = match read_reminders {
             Ok(records) => records
                 .into_iter()
-                .filter_map(|stored| match stored.record {
-                    agent_core::history::Record::Event(event) => match event.event {
-                        agent_core::history::HistoryEvent::SerenaReminded {
-                            run,
-                            searches,
-                            step,
-                            task,
-                            ..
-                        } => Some((run, task, searches, step)),
-                        _ => None,
-                    },
-                    _ => None,
+                .filter_map(|stored| {
+                    let agent_core::history::Record::Event(event) = stored.record else {
+                        return None;
+                    };
+                    let agent_core::history::HistoryEvent::SerenaReminded {
+                        run,
+                        searches,
+                        step,
+                        task,
+                        ..
+                    } = event.event
+                    else {
+                        return None;
+                    };
+                    Some((run, task, searches, step))
                 })
                 .collect(),
             Err(error) => {

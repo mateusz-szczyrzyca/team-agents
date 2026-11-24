@@ -69,10 +69,6 @@ const SERENA_FOLDER: &str = ".serena/";
 /// the others'.
 const BUS_TOOL_PREFIXES: [&str; 4] = ["mcp__agentbus__", "mcp_agentbus_", "agentbus_", "agentbus."];
 
-/// The prefixes of an MCP tool's name in the CLIs' tool calls, the way [`BUS_TOOL_PREFIXES`] names agentbus's: Claude
-/// Code's `mcp__<server>__<tool>` and `<server>.<tool>` or `<server>_<tool>`, which Codex and Antigravity report.
-const SERENA_TOOL_PREFIXES: [&str; 3] = ["mcp__serena__", "serena.", "serena_"];
-
 /// The names, in lower case, of the tools that run a shell command.
 const COMMAND_TOOLS: [&str; 4] = ["bash", "execute", "run_command", "shell"];
 
@@ -279,11 +275,7 @@ pub fn tool_call(name: &str) -> Option<ToolCall> {
     if bus_tool(name).is_some() {
         return Some(ToolCall::Other(name.to_owned()));
     }
-    if SERENA_TOOL_PREFIXES
-        .iter()
-        .filter_map(|prefix| lower.strip_prefix(prefix))
-        .any(|tool| !tool.is_empty())
-    {
+    if agent_core::serena::is_serena_tool(name) {
         return Some(ToolCall::Serena);
     }
     if COMMAND_TOOLS.contains(&lower.as_str()) || lower.contains("command") {

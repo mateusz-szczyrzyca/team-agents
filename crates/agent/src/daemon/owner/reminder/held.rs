@@ -40,7 +40,15 @@ fn reminder_at(records: &[SequencedRecord], run: &RunId, from: usize) -> Option<
                 }
             }
             Record::Run(start) if start.run != *run && reminder.is_some() => return reminder,
-            _ => {}
+            Record::Team(_)
+            | Record::Round(_)
+            | Record::Run(_)
+            | Record::Launch(_)
+            | Record::Step(_)
+            | Record::RunEnd(_)
+            | Record::Changes(_)
+            | Record::Snapshot(_)
+            | Record::Session(_) => {}
         }
     }
     reminder

@@ -134,21 +134,25 @@ pub struct Counted {
 impl Counted {
     /// Counts the step `event`: one more search of code for a search of code, and Serena once it is called.
     pub fn count(&mut self, event: &ActivityEvent) {
-        match event {
-            ActivityEvent::ToolCall { name, .. } if is_serena(name) => self.used_serena = true,
-            _ => {
-                if code_search(event).is_some() {
-                    self.searches = self.searches.saturating_add(1);
-                }
-            }
+        if let ActivityEvent::ToolCall { name, .. } = event
+            && is_serena_tool(name)
+        {
+            self.used_serena = true;
+        } else if code_search(event).is_some() {
+            self.searches = self.searches.saturating_add(1);
         }
     }
 }
 
-/// Whether the tool `name` is one of Serena's.
-fn is_serena(name: &str) -> bool {
+/// The prefixes of an MCP tool's name of Serena in the CLIs' tool calls: Claude Code's `mcp__<server>__<tool>`, and
+/// `<server>.<tool>` or `<server>_<tool>`, which Codex and Antigravity report.
+const SERENA_TOOL_PREFIXES: [&str; 3] = ["mcp__serena__", "serena.", "serena_"];
+
+/// Whether the tool `name` is one of Serena's, by the name a CLI gives it in a tool call.
+#[must_use]
+pub fn is_serena_tool(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    ["mcp__serena__", "serena.", "serena_"]
+    SERENA_TOOL_PREFIXES
         .iter()
         .filter_map(|prefix| lower.strip_prefix(prefix))
         .any(|tool| !tool.is_empty())
