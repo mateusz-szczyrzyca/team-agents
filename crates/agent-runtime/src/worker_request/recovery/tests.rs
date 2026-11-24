@@ -356,3 +356,30 @@ async fn old_open_workspace_and_request_without_journal_stay_on_legacy_rules() {
     assert_eq!(std::fs::read_to_string(pending_path).unwrap(), pending_text);
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
 }
+
+#[tokio::test]
+async fn oversized_transition_leaves_the_durable_journal_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = workspace();
+    let request = workspace.record().request;
+    prepare(dir.path(), &workspace).await.unwrap();
+    advance(dir.path(), request, start(1)).await.unwrap();
+    let path = journal_path(dir.path(), request);
+    let before = std::fs::read(&path).unwrap();
+    let result = advance(
+        dir.path(),
+        request,
+        Transition::Rejected {
+            run: run(1),
+            wrong: vec![Wrong::NoCheck; MAX_JOURNAL_BYTES],
+            snapshot: snapshot(),
+        },
+    )
+    .await;
+    assert!(matches!(result, Err(StoreError::TooLarge { path: found }) if found == path));
+    assert_eq!(std::fs::read(path).unwrap(), before);
+    assert!(matches!(
+        load(dir.path(), request).await.unwrap().unwrap().phase(),
+        Phase::Running(_)
+    ));
+}
