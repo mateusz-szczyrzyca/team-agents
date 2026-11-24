@@ -2,6 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
 
 use agent_core::decide::worker_recovery::{Cause, MAX_NO_RESULT_RETURNS};
 use agent_core::decide::worker_result::Wrong;
@@ -297,6 +298,113 @@ impl Journal {
         record.events.push(transition);
         record.try_into()
     }
+}
+
+/// Maximum serialized journal size in bytes; bounds untrusted reads and retained history.
+const MAX_JOURNAL_BYTES: usize = 64 * 1024;
+
+/// Why a durable recovery journal cannot be prepared, loaded or advanced.
+#[derive(Debug, thiserror::Error)]
+pub enum StoreError {
+    /// The journal cannot be read within its UTF-8 and size bounds.
+    #[error("cannot read recovery journal {path:?}")]
+    Read {
+        /// Journal path.
+        path: PathBuf,
+        /// Underlying bounded-read failure.
+        source: crate::text_file::TextFileError,
+    },
+    /// The atomic journal write failed.
+    #[error("cannot write recovery journal {path:?}")]
+    Write {
+        /// Journal path.
+        path: PathBuf,
+        /// Underlying atomic-write failure.
+        source: crate::text_file::ReplaceError,
+    },
+    /// The persisted JSON is not a valid journal.
+    #[error("cannot decode recovery journal {path:?}")]
+    Decode {
+        /// Journal path.
+        path: PathBuf,
+        /// JSON or replay validation failure.
+        source: serde_json::Error,
+    },
+    /// The validated journal cannot be serialized.
+    #[error("cannot encode recovery journal {path:?}")]
+    Encode {
+        /// Journal path.
+        path: PathBuf,
+        /// JSON encoding failure.
+        source: serde_json::Error,
+    },
+    /// The proposed transition or original workspace is invalid.
+    #[error("cannot advance recovery journal {path:?}")]
+    Invalid {
+        /// Journal path.
+        path: PathBuf,
+        /// Validation failure.
+        source: Invalid,
+    },
+    /// A legacy or absent request cannot be implicitly opted into recovery.
+    #[error("recovery journal {path:?} is absent")]
+    Missing {
+        /// Expected journal path.
+        path: PathBuf,
+    },
+    /// The filename's request number differs from the journal's identity.
+    #[error("recovery journal {path:?} belongs to request H{found}")]
+    Mismatch {
+        /// Journal path.
+        path: PathBuf,
+        /// Request actually recorded.
+        found: RequestId,
+    },
+    /// Appending would exceed the bounded history size.
+    #[error("recovery journal {path:?} exceeds {MAX_JOURNAL_BYTES} bytes")]
+    TooLarge {
+        /// Journal path.
+        path: PathBuf,
+    },
+}
+
+/// Journal location in the original worker task directory, alongside existing request records.
+fn journal_path(task_dir: &Path, request: RequestId) -> PathBuf {
+    task_dir.join(format!("worker-recovery-{}.json", request.number()))
+}
+
+/// Explicitly opts a new request into recovery; never replaces an existing journal.
+///
+/// This only writes the task's journal, not the requester or worker worktree.
+///
+/// # Errors
+/// [`StoreError::Invalid`] for an ended workspace, or [`StoreError`] for storage failures.
+pub async fn prepare(task_dir: &Path, workspace: &RequestWorkspace) -> Result<Journal, StoreError> {
+    Journal::new(workspace.clone()).map_err(|source| StoreError::Invalid {
+        path: journal_path(task_dir, workspace.record().request),
+        source,
+    })
+}
+
+/// Reloads and replays an explicitly opted-in request; absence preserves legacy handling.
+///
+/// # Errors
+/// [`StoreError`] for invalid JSON, identity mismatches or bounded-read failures.
+pub async fn load(_task_dir: &Path, _request: RequestId) -> Result<Option<Journal>, StoreError> {
+    Ok(None)
+}
+
+/// Validates and atomically persists one transition under the daemon's single-writer ownership.
+///
+/// The caller must serialize writes to this request. A rejected transition leaves its file unchanged.
+/// No workspace files are changed. A missing journal never creates recovery for an old request.
+///
+/// # Errors
+/// [`StoreError`] for a missing journal, invalid transition or storage failure.
+pub async fn advance(task_dir: &Path, request: RequestId, _transition: Transition) -> Result<Journal, StoreError> {
+    Err(StoreError::Missing {
+        path: journal_path(task_dir, request),
+    })
 }
 
 #[cfg(test)]

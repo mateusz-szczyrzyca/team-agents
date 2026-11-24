@@ -200,3 +200,159 @@ fn existing_snapshot_records_supply_the_preserved_identity() {
         Err(Invalid::ZeroSnapshot)
     );
 }
+
+#[tokio::test]
+async fn durable_journal_reloads_counters_and_never_changes_worktree_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let task_dir = dir.path().join("task");
+    std::fs::create_dir(&task_dir).unwrap();
+    let requester = dir.path().join("requester.txt");
+    let work = dir.path().join("worker.txt");
+    std::fs::write(&requester, "uncommitted requester work: café").unwrap();
+    std::fs::write(&work, "uncommitted worker work: こんにちは").unwrap();
+    let original = workspace();
+    let request = original.record().request;
+    let journal = prepare(&task_dir, &original).await.unwrap();
+    assert_eq!(load(&task_dir, request).await.unwrap(), Some(journal));
+    for (n, cause) in [(1, Cause::Died), (2, Cause::RestartRunning)] {
+        advance(&task_dir, request, start(n)).await.unwrap();
+        let journal = advance(&task_dir, request, interrupted(n, cause)).await.unwrap();
+        assert_eq!(load(&task_dir, request).await.unwrap(), Some(journal.clone()));
+        assert_eq!(journal.returns(), n);
+        assert_eq!(journal.wrong_try().get(), 1);
+    }
+    advance(&task_dir, request, start(3)).await.unwrap();
+    let journal = advance(
+        &task_dir,
+        request,
+        Transition::Rejected {
+            run: run(3),
+            wrong: vec![Wrong::EndedOtherwise(WorkerEnding::Cannot)],
+            snapshot: snapshot(),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(journal.wrong_try().get(), 2);
+    assert_eq!(journal.returns(), 2);
+    assert_eq!(journal.workspace(), &original);
+    assert_eq!(load(&task_dir, request).await.unwrap(), Some(journal));
+    assert_eq!(
+        std::fs::read_to_string(requester).unwrap(),
+        "uncommitted requester work: café"
+    );
+    assert_eq!(
+        std::fs::read_to_string(work).unwrap(),
+        "uncommitted worker work: こんにちは"
+    );
+}
+
+#[tokio::test]
+async fn durable_journal_refuses_overwrite_missing_identity_and_invalid_transitions() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = workspace();
+    let request = original.record().request;
+    let path = journal_path(dir.path(), request);
+    assert!(
+        matches!(advance(dir.path(), request, start(1)).await, Err(StoreError::Missing { path: found }) if found == path)
+    );
+    let prepared = prepare(dir.path(), &original).await.unwrap();
+    assert_eq!(load(dir.path(), request).await.unwrap(), Some(prepared));
+    let bytes = std::fs::read(&path).unwrap();
+    assert!(
+        matches!(prepare(dir.path(), &original).await, Err(StoreError::Write { path: found, source: crate::text_file::ReplaceError::Write { source, .. } }) if found == path && source.kind() == std::io::ErrorKind::AlreadyExists)
+    );
+    assert!(
+        matches!(advance(dir.path(), request, interrupted(1, Cause::Died)).await, Err(StoreError::Invalid { path: found, source: Invalid::Transition }) if found == path)
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), bytes);
+    let other = RequestId::new(std::num::NonZeroU64::new(2).unwrap());
+    std::fs::copy(&path, journal_path(dir.path(), other)).unwrap();
+    assert!(matches!(load(dir.path(), other).await, Err(StoreError::Mismatch { found, .. }) if found == request));
+}
+
+#[tokio::test]
+async fn durable_journal_bounds_reads_and_reports_storage_and_validation_failures() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = workspace();
+    let request = original.record().request;
+    let missing_parent = dir.path().join("missing");
+    assert!(matches!(
+        prepare(&missing_parent, &original).await,
+        Err(StoreError::Write { .. })
+    ));
+    let ended: RequestWorkspace = WorkspaceRecord {
+        stage: Stage::Ended,
+        ..original.record().clone()
+    }
+    .try_into()
+    .unwrap();
+    assert!(matches!(
+        prepare(dir.path(), &ended).await,
+        Err(StoreError::Invalid {
+            source: Invalid::Transition,
+            ..
+        })
+    ));
+    let path = journal_path(dir.path(), request);
+    std::fs::create_dir(&path).unwrap();
+    assert!(matches!(
+        load(dir.path(), request).await,
+        Err(StoreError::Read {
+            source: crate::text_file::TextFileError::Read(_),
+            ..
+        })
+    ));
+    std::fs::remove_dir(&path).unwrap();
+    for (bytes, expected) in [
+        (b"{".to_vec(), "json"),
+        (vec![0xff], "utf8"),
+        (vec![b' '; MAX_JOURNAL_BYTES + 1], "size"),
+    ] {
+        std::fs::write(&path, bytes).unwrap();
+        let error = load(dir.path(), request).await.unwrap_err();
+        match expected {
+            "json" => assert!(matches!(error, StoreError::Decode { .. })),
+            "utf8" => assert!(matches!(
+                error,
+                StoreError::Read {
+                    source: crate::text_file::TextFileError::NotUtf8(_),
+                    ..
+                }
+            )),
+            "size" => assert!(matches!(
+                error,
+                StoreError::Read {
+                    source: crate::text_file::TextFileError::TooLarge {
+                        limit: MAX_JOURNAL_BYTES
+                    },
+                    ..
+                }
+            )),
+            _ => panic!("unknown test case"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn old_open_workspace_and_request_without_journal_stay_on_legacy_rules() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace_text = include_str!("../../request_workspace/fixtures/request-workspace-7.json");
+    let pending_text = include_str!("fixtures/worker-request-1.json");
+    let old_workspace: RequestWorkspace = serde_json::from_str(workspace_text).unwrap();
+    let old_pending: super::super::Pending = serde_json::from_str(pending_text).unwrap();
+    let workspace_path = dir.path().join("request-workspace-7.json");
+    let pending_path = dir.path().join("worker-request-1.json");
+    std::fs::write(&workspace_path, workspace_text).unwrap();
+    std::fs::write(&pending_path, pending_text).unwrap();
+    for request in [old_workspace.record().request, old_pending.request] {
+        assert_eq!(load(dir.path(), request).await.unwrap(), None);
+        assert!(matches!(
+            advance(dir.path(), request, start(1)).await,
+            Err(StoreError::Missing { .. })
+        ));
+    }
+    assert_eq!(std::fs::read_to_string(workspace_path).unwrap(), workspace_text);
+    assert_eq!(std::fs::read_to_string(pending_path).unwrap(), pending_text);
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+}
