@@ -1812,3 +1812,18 @@ fn a_history_that_cannot_be_read_is_said_on_the_context_line() {
 
     assert!(line.starts_with("context: cannot be read ("), "{line}");
 }
+
+#[tokio::test]
+async fn pool_scan_marks_unknown_workers_unsettled_when_tasks_cannot_be_listed() {
+    use std::str::FromStr;
+
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    std::fs::write(home.tasks_dir(), "not a directory").unwrap();
+
+    let observations = scan_unsettled_workspaces(&home, &[]).await;
+
+    assert_eq!(observations.len(), 1);
+    assert_eq!(observations[0].worker, None);
+    assert!(observations[0].damaged);
+}
