@@ -508,7 +508,7 @@ impl Owner {
         for team in looks {
             self.look_after(&team).await?;
         }
-        self.serve_pool_requests().await?;
+        Box::pin(self.serve_pool_requests()).await?;
         Ok(())
     }
 
