@@ -828,30 +828,27 @@ impl Owner {
         workspace: Option<&RequestWorkspace>,
     ) -> Result<(String, bool, Vec<String>), Vec<String>> {
         let fail = |reason: String| vec![reason];
-        let git = match workspace {
-            Some(record) => {
-                let worktree = request_workspace::worktree_of(
-                    self.parts.store.home(),
-                    &record.requester_repo,
-                    &record.worker_task,
-                )
-                .map_err(|error| {
-                    fail(format!(
-                        "the worker's worktree cannot be reached: {}",
-                        error_chain(&error)
-                    ))
-                })?;
-                Git::new(
-                    worktree,
-                    CommitIdentity::for_agent(self.parts.settings.config.git(), &pending.worker),
-                )
-            }
-            None => {
-                let Some(git) = self.git_of(&pending.team, &pending.worker_task, &pending.worker) else {
-                    return Err(fail("the worker's worktree cannot be reached".to_owned()));
-                };
-                git
-            }
+        let git = if let Some(record) = workspace {
+            let worktree = request_workspace::worktree_of(
+                self.parts.store.home(),
+                &record.requester_repo,
+                &record.worker_task,
+            )
+            .map_err(|error| {
+                fail(format!(
+                    "the worker's worktree cannot be reached: {}",
+                    error_chain(&error)
+                ))
+            })?;
+            Git::new(
+                worktree,
+                CommitIdentity::for_agent(self.parts.settings.config.git(), &pending.worker),
+            )
+        } else {
+            let Some(git) = self.git_of(&pending.team, &pending.worker_task, &pending.worker) else {
+                return Err(fail("the worker's worktree cannot be reached".to_owned()));
+            };
+            git
         };
         let head = git
             .rev_parse(&Revision::Head)
