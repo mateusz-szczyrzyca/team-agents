@@ -1817,10 +1817,12 @@ impl Owner {
                 base,
             },
         );
-        self.tell_bus(
-            team_id,
-            request_update(request.id, DelegationStatus::Running, Some(task)),
-        );
+        if !self.parts.bus.helper_recovery(request.id).await? {
+            self.tell_bus(
+                team_id,
+                request_update(request.id, DelegationStatus::Running, Some(task)),
+            );
+        }
         tracing::info!(
             event = LogEvent::RequestDelegated.as_str(),
             team = %team_id,

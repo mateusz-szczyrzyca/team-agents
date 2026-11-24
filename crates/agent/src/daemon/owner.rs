@@ -157,6 +157,9 @@ pub(crate) enum OwnerError {
     /// The worker workspace could not be snapshotted before handoff.
     #[error("cannot retain worker request snapshot")]
     RequestSnapshot(#[source] agent_runtime::git::GitError),
+    /// Worker workspace identity could not be retained.
+    #[error("cannot retain worker workspace identity")]
+    RequestWorkspace(#[from] agent_runtime::request_workspace::WorkspaceError),
     /// Another execution owns the claimed request.
     #[error("worker request ownership changed before launch")]
     RequestOwnership,
@@ -1184,6 +1187,7 @@ impl Owner {
                 );
             }
         }
+        self.start_owned_team_request(task, &plan.run).await?;
         self.spawn_job(task.clone(), plan.job, run_span);
         Ok(())
     }
@@ -1252,6 +1256,7 @@ impl Owner {
             }
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
+        let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
             let (ending, summary) = match &outcome {
                 Outcome::Verdict(verdict) => match verdict.as_ref() {
@@ -1286,7 +1291,7 @@ impl Owner {
                     reason.clone(),
                 ),
             };
-            self.observe_owned_request(&task, &run_id, ending, summary).await?;
+            owned = self.observe_owned_request(&task, &run_id, ending, summary).await?;
         }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
@@ -1303,6 +1308,17 @@ impl Owner {
         }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
+                RunVerdict::Finished(run) if owned => {
+                    let located = self.locate(&task)?;
+                    self.finish(
+                        &task,
+                        located,
+                        *run,
+                        Settled::Status(TaskStatus::Waiting),
+                        plan::PlanHeld::No,
+                    )
+                    .await
+                }
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
                 RunVerdict::Interrupted { session } => self.interrupted(&task, session).await,
             },

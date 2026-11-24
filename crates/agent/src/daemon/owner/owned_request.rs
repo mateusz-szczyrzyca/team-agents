@@ -20,6 +20,39 @@ impl Owner {
         Ok(recovery::load(&self.parts.store.home().task_dir(task), request).await?)
     }
 
+    /// Binds a legacy crew worker's existing worktree without creating or releasing it.
+    pub(super) async fn start_owned_team_request(&self, task: &TaskId, run: &RunId) -> Result<(), OwnerError> {
+        let Some(served) = self.serving.get(task) else {
+            return Ok(());
+        };
+        if !self.parts.bus.helper_recovery(served.request).await? {
+            return Ok(());
+        }
+        let found = self.parts.state.find_task(task).ok_or(OwnerError::RequestOwnership)?;
+        let git = self
+            .git_of(found.team.id(), task, &served.worker)
+            .ok_or(OwnerError::RequestOwnership)?;
+        let base = git
+            .rev_parse(&agent_runtime::git::Revision::Head)
+            .await
+            .map_err(OwnerError::RequestSnapshot)?;
+        let workspace = RequestWorkspace::try_from(agent_runtime::request_workspace::WorkspaceRecord {
+            request: served.request,
+            requester: served.requester.clone(),
+            requester_task: served.requester_task.clone(),
+            requester_round: self
+                .requester_round(found.team.id(), &served.requester_task)
+                .ok_or(OwnerError::RequestOwnership)?,
+            requester_repo: found.team.repo().clone(),
+            worker: served.worker.clone(),
+            worker_task: task.clone(),
+            branch: agent_runtime::request_workspace::branch(&served.worker, task)?,
+            base,
+            stage: agent_runtime::request_workspace::Stage::Working,
+        })?;
+        self.start_owned_request(&workspace, run).await
+    }
+
     /// Claims a new opted-in request before its CLI can run.
     pub(super) async fn start_owned_request(
         &self,
