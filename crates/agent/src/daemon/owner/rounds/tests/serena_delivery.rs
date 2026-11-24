@@ -290,3 +290,29 @@ async fn a_reminder_the_history_holds_when_the_daemon_restarts_is_put_on_the_bus
 
     assert_eq!(chats_from_the_harness(&rig), [expected]);
 }
+
+#[tokio::test]
+async fn a_reminder_the_bus_took_before_a_restart_of_the_daemon_is_not_put_there_again() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let task = tasks[0].clone();
+    rig.state_where("the first run of the task", |state| {
+        state
+            .find_task(&task)
+            .is_some_and(|found| found.member.runs().last().is_some())
+    })
+    .await;
+    let run = last_run(&rig, &task);
+    record_reminder(&rig, &team, &task, &run, SEARCHES);
+    // The old daemon put the reminder on the bus and kept the mark in the directory of the run.
+    std::fs::create_dir_all(rig.home.run_dir(&task, &run)).unwrap();
+    std::fs::write(rig.home.run_dir(&task, &run).join("serena-reminder-told"), "").unwrap();
+    rig.stop().await.unwrap();
+
+    rig.start().await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(chats_from_the_harness(&rig), Vec::<String>::new());
+}
