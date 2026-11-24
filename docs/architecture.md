@@ -513,12 +513,28 @@ names, so completion, pending-settlement and second-try lookups of a request's w
 `docs/state.md`. The stage (`working` while the worker works, `ended` once its run ended and the request waits to be
 settled) is written before each next stage.
 
+**The settlement of the owner.** At every look at a team, after the crew's own pending files, the owner reads the
+workspace records from the task directories of the team's members — the requester of such a request is a member — and
+settles each record with its pending (`settle_workspace_results`, `settle_workspace_one`). The stages are the crew's
+own: a `working` record without a pending is a worker still working; a `working` record whose pending is already
+present is completed first (`request_workspace::complete`: the pending is written into the worker's task directory and
+the record saved `ended`, so a daemon that stopped between the two writes never loses the result or forgets the
+workspace), then settled. The check runs in the workspace's worktree, the commit the worker started from falls back to
+the record's base when the pending carries none, and a good commit is brought over to the requester's committed end
+once, leaving the requester's uncommitted files untouched.
+
 **Retention and release.** A workspace lives from the moment its request is given to the worker until the request's
 result is settled, and is then released (`request_workspace::release`): `git worktree remove --force`, the branch
 deleted, and the record removed. A released request has no task, worktree or record of its own left behind; an
-abandoned request keeps its workspace so that a restart of the daemon finds where the worker served it. The new
-serving path that makes and settles these workspaces is wired in part c; this version only prepares it, and
-`serve_requests` still serves team-member workers exactly as before.
+abandoned request keeps its workspace so that a restart of the daemon finds where the worker served it. The workspace
+is released on the durable handoff — the answer taken, or the request given again and no longer this worker's — and a
+request that was answered, or an `ended` record whose pending is gone (a leftover of a settled request), leaves only
+its record, which is released. A release that cannot finish is told once and tried again at the next look, from the
+record that stays. A pending that does not match its record on request, worker task, requester and requester task is a
+damaged file: it is set aside and told once, and its workspace is never released on its behalf; a record file that
+cannot be read is told once and left alone, and one damaged file does not hide the others. The serving path that makes
+these workspaces is wired in part c; this version prepares the settlement path, `serve_requests` still serves
+team-member workers exactly as before, and an older daemon that finds a record leaves it alone.
 
 ### Pull requests, reviews and the merge (the autopilot)
 
