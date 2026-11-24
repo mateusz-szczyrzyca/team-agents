@@ -122,12 +122,26 @@ impl Owner {
                 .collect();
 
             let pending_requires = match self.parts.bus.helper_list(true).await {
-                Ok(helpers) => helpers
-                    .into_iter()
-                    .find(|h| h.id == pending.request)
-                    .map(|h| h.requires)
-                    .unwrap_or_default(),
-                Err(_) => Vec::new(),
+                Ok(helpers) => {
+                    let Some(helper) = helpers.into_iter().find(|h| h.id == pending.request) else {
+                        tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
+                            request = %pending.request,
+                            "pending helper request missing when checking requirements for second try"
+                        );
+                        return Elsewhere::None;
+                    };
+                    helper.requires
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        request = %pending.request,
+                        error = %error_chain(&error),
+                        "cannot read helper list for second try requirements"
+                    );
+                    return Elsewhere::None;
+                }
             };
             let requires = Requires {
                 capabilities: &pending_requires,
