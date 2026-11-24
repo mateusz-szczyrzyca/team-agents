@@ -1,11 +1,11 @@
 //! A reviewer that cannot work: another free investigator takes its review, and when none is free the human is told.
 
-use agent_core::decide::reviewer::{Awaited, replace_now};
+use agent_core::decide::reviewer::{Awaited, quiet_since, replace_now};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
-use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, RunState, Timestamp};
+use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
@@ -19,7 +19,7 @@ use crate::daemon::merge::count;
 use crate::daemon::review::{free_reviewers, select_reviewers};
 
 /// A review that does not come: its reviewer cannot work.
-struct Gone {
+pub(super) struct Gone {
     /// The pull request under review.
     pr: PullRequest,
     /// The items the pull request carries, whose review passes all have the review.
@@ -27,7 +27,7 @@ struct Gone {
     /// The reviewer that cannot work.
     reviewer: InvestigatorName,
     /// Its task.
-    task: TaskId,
+    pub(super) task: TaskId,
     /// What its task is: failed, stopped or paused.
     status: TaskStatus,
     /// The reviewers of the review pass, the one that is gone included: none of them takes the review.
@@ -98,7 +98,7 @@ impl Owner {
     }
 
     /// The reviews of the team `team_id` that are still to come and whose reviewers cannot work, at `now`.
-    fn reviews_that_do_not_come(&self, team_id: &TeamId, now: Timestamp) -> Vec<Gone> {
+    pub(super) fn reviews_that_do_not_come(&self, team_id: &TeamId, now: Timestamp) -> Vec<Gone> {
         let mut found: Vec<Gone> = Vec::new();
         let Some(team) = self.parts.state.team(team_id) else {
             return found;
@@ -122,11 +122,10 @@ impl Owner {
                 let Some(member) = team.reviewers().iter().find(|member| member.task() == &review.task) else {
                     continue;
                 };
-                // A reviewer that has not run was paused or stopped by the human: the time counts from the request.
-                let since = match member.runs().last().map(agent_core::state::Run::state) {
-                    Some(RunState::Ended { at, .. }) => *at,
-                    Some(RunState::Running) | None => review.requested_at,
-                };
+                let since = quiet_since(
+                    member.runs().iter().map(agent_core::state::Run::state),
+                    review.requested_at,
+                );
                 let quiet_for = std::time::Duration::try_from(now.as_utc() - since.as_utc()).unwrap_or_default();
                 let awaited = Awaited {
                     reviewer: member.status(),

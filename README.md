@@ -944,7 +944,8 @@ review and follows the round's usual merge or approval policy.
 
 A failed run, a run without a final status, or a report still missing its opinion after the allowed corrections
 is assigned to another independent investigator. An investigator silent for `[review] replace_after_minutes`
-is replaced too. Replaced queued, waiting or quota-paused tasks are stopped and their scheduled wake is removed,
+is replaced too; runs its provider refused (a rate limit, a used-up quota) do not end the silence, so a reviewer
+refused run after run is replaced that long after the review was asked. Replaced queued, waiting or quota-paused tasks are stopped and their scheduled wake is removed,
 so their investigators become available for other requests. Previous investigators are excluded from subsequent draws. A request has at most three
 assignments (the original and two replacements); when nobody eligible is free it waits until one is available.
 After the third unsuccessful assignment, one human notice lists the round, finding, all three investigators,

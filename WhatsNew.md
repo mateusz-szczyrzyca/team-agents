@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.89.0 — 24.11.2026 — PR #242
+
+### Bug fixes
+- [agent] [agent-core] A reviewer that its provider refuses run after run (a rate limit or a used-up quota) is now given to another investigator once `[review] replace_after_minutes` have passed since the review was asked. Before, every refused run started the wait anew, so short rate limits a few minutes apart kept the review, and the team, waiting until the human stopped the reviewer. A reviewer that did work since the request still waits the full time from its last real run.
+
+### Configuration
+- [agent-core] changed: `[review] replace_after_minutes` (default `15`) — counted from the reviewer's last run that its provider did not refuse, never before the review was asked; before, from its last run of any kind.
+
 ## 0.88.0 — 24.11.2026 — PR #241
 
 ### New features
