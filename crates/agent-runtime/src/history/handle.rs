@@ -625,6 +625,14 @@ impl History {
     /// Records that the run `run` of `task` was told once, after `searches` searches of code without Serena, to find
     /// code with Serena. The record carries the team and rounds the history knows of the run. Best-effort, like every
     /// event of a run: a history without a writer counts the loss.
+    /// The team for `run`, if the run has been started.
+    pub(crate) fn team_for_run(&self, run: &RunId) -> Option<TeamId> {
+        locked(&self.shared.runs)
+            .get(run)
+            .map(|(team, _, _, _)| team.clone())
+    }
+
+    /// Records that a run's session searched code without Serena and was reminded at the step and count given.
     pub fn serena_reminded(
         &self,
         run: &RunId,
@@ -632,20 +640,16 @@ impl History {
         cli: CliKind,
         searches: u64,
         step: u32,
+        team: &TeamId,
         clock: &impl Clock,
     ) {
         if self.is_disabled() {
             return;
         }
-        let (team, rounds) = locked(&self.shared.runs).get(run).map_or_else(
-            || (None, Vec::new()),
-            |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
-        );
-        let Some(team) = team else {
-            // The history never saw the run start: no record to attach the reminder to.
-            self.shared.lose(1);
-            return;
-        };
+        let rounds = locked(&self.shared.runs)
+            .get(run)
+            .map(|(_, _, rounds, _)| rounds.clone())
+            .unwrap_or_default();
         let at = match Timestamp::now(clock) {
             Ok(at) => at,
             Err(error) => {
@@ -657,7 +661,7 @@ impl History {
         };
         self.record(Record::Event(Box::new(EventRecord {
             at,
-            team,
+            team: team.clone(),
             rounds,
             event: HistoryEvent::SerenaReminded {
                 task: task.clone(),

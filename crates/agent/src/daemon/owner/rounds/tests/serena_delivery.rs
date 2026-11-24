@@ -89,6 +89,7 @@ fn record_reminder(rig: &Rig, team: &TeamId, task: &TaskId, run: &RunId, searche
         CliKind::Claude,
         searches,
         3,
+        team,
         &SharedClock::new(rig.clock_of().clone()),
     );
     started.history.flush();
@@ -192,8 +193,7 @@ async fn the_reminder_of_a_run_that_ended_is_a_chat_of_the_harness_on_the_bus() 
     a_look_after(&rig, before).await;
 
     // Signal the run to end so the daemon can record it as ended
-    let run_dir = rig.home.run_dir(&task, &run);
-    std::fs::write(run_dir.join(".fake-continue"), "").unwrap();
+    std::fs::write(rig.worktree(&task).join(".fake-continue"), "").unwrap();
 
     // Wait for the run to actually end
     run_ended(&rig, &task).await;

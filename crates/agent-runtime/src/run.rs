@@ -889,14 +889,18 @@ impl Follow<'_> {
             cli = self.cli.as_str(),
             "the run was told once to find code with Serena"
         );
-        self.engine.history.serena_reminded(
-            self.run,
-            self.task,
-            self.cli,
-            searches,
-            u32::try_from(number).unwrap_or(u32::MAX),
-            &self.engine.parts.clock,
-        );
+        // Get the team for this run from the history's runs map. The run must have been started already.
+        if let Some(team) = self.engine.history.team_for_run(self.run) {
+            self.engine.history.serena_reminded(
+                self.run,
+                self.task,
+                self.cli,
+                searches,
+                u32::try_from(number).unwrap_or(u32::MAX),
+                &team,
+                &self.engine.parts.clock,
+            );
+        }
     }
 
     /// Feeds the lines written since the last call to the parser and its events to the history.
