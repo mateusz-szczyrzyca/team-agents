@@ -1191,6 +1191,7 @@ async fn record_owner_and_runtime_failure_events(dir: &Path, base_daemon: &Daemo
         .unwrap();
     answer.await.unwrap().unwrap_err();
 
+    #[expect(clippy::large_futures, reason = "test helper function")]
     record_config_and_storage_failure_events(dir).await;
 }
 
