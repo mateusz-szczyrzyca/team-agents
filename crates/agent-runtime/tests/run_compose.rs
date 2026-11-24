@@ -356,7 +356,15 @@ mod run_compose {
 
         for role in roles {
             for (kind, with_serena, wanted) in cases {
-                let found = serena_section(role, kind, Serena::of(with_serena));
+                let servers = if with_serena {
+                    std::collections::BTreeMap::from([(
+                        agent_core::cli::McpServerKind::Serena,
+                        agent_core::config::CommandLine::try_from(vec!["/bin/serena".to_owned()]).unwrap(),
+                    )])
+                } else {
+                    std::collections::BTreeMap::new()
+                };
+                let found = serena_section(role, kind, Serena::of(&servers));
                 assert_eq!(
                     found.is_some(),
                     wanted,
