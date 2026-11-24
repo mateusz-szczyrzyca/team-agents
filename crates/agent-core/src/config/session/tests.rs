@@ -130,27 +130,15 @@ fn a_context_of_zero_is_refused_naming_the_agent_and_the_key() {
 }
 
 #[test]
-fn a_context_below_the_agent_s_bound_is_refused_naming_it() {
-    let section = Config::from_toml_str(&with_context("\ncontext = 1000", "")).unwrap_err();
-    assert!(
-        matches!(&section, ConfigError::AgentContextBelowBound { key: ContextKey::Agent, name, context: 1_000, bound: 150_000 }
-            if name.as_str() == "claude-1"),
-        "{section:?}"
-    );
+fn a_context_below_the_bound_of_its_session_is_accepted() {
+    let section = Config::from_toml_str(&with_context("\ncontext = 1000", "")).unwrap();
+    let own = Config::from_toml_str(&with_context("\nmax_context = 5000\ncontext = 4000", "")).unwrap();
 
-    let own = Config::from_toml_str(&with_context("\nmax_context = 5000\ncontext = 4000", "")).unwrap_err();
-    assert!(
-        matches!(
-            &own,
-            ConfigError::AgentContextBelowBound {
-                key: ContextKey::Agent,
-                context: 4_000,
-                bound: 5_000,
-                ..
-            }
-        ),
-        "{own:?}"
+    assert_eq!(
+        section.agent(&"claude-1".parse().unwrap()).unwrap().context,
+        Some(1_000)
     );
+    assert_eq!(own.agent(&"claude-1".parse().unwrap()).unwrap().context, Some(4_000));
 }
 
 #[test]
