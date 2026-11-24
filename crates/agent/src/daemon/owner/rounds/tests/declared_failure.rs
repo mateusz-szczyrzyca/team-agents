@@ -1,8 +1,8 @@
 //! A run that reports `STATUS: FAILED` after it used a tool is not the end of its task: the ladder starts the task in a
 //! new session before anything fails it.
 
-use agent_core::status::TaskStatus;
 use agent_core::state::MergeMode;
+use agent_core::status::TaskStatus;
 
 use super::rig::{ONE, Rig, investigator, normal};
 
@@ -24,12 +24,17 @@ async fn a_declared_failure_after_a_tool_call_goes_on_in_a_new_session() {
     .await;
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.wait_for("the second run to start", || rig.runs(&tasks[0]) >= 2).await;
+    rig.wait_for("the second run to start", || rig.runs(&tasks[0]) >= 2)
+        .await;
     let state = rig.state();
     rig.stop().await.unwrap();
 
     let member = state.find_task(&tasks[0]).unwrap().member;
-    assert_ne!(member.status(), TaskStatus::Failed, "a declared failure is not the end of the task");
+    assert_ne!(
+        member.status(),
+        TaskStatus::Failed,
+        "a declared failure is not the end of the task"
+    );
     assert_ne!(
         member.runs()[1].session(),
         member.runs()[0].session(),
