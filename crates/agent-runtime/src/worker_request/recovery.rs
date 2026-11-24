@@ -380,18 +380,47 @@ fn journal_path(task_dir: &Path, request: RequestId) -> PathBuf {
 /// # Errors
 /// [`StoreError::Invalid`] for an ended workspace, or [`StoreError`] for storage failures.
 pub async fn prepare(task_dir: &Path, workspace: &RequestWorkspace) -> Result<Journal, StoreError> {
-    Journal::new(workspace.clone()).map_err(|source| StoreError::Invalid {
-        path: journal_path(task_dir, workspace.record().request),
+    let path = journal_path(task_dir, workspace.record().request);
+    let journal = Journal::new(workspace.clone()).map_err(|source| StoreError::Invalid {
+        path: path.clone(),
         source,
-    })
+    })?;
+    let text = serde_json::to_string(&journal).map_err(|source| StoreError::Encode {
+        path: path.clone(),
+        source,
+    })?;
+    crate::text_file::create_new_text_file(&path, &text, 0o600)
+        .await
+        .map_err(|source| StoreError::Write { path, source })?;
+    Ok(journal)
 }
 
 /// Reloads and replays an explicitly opted-in request; absence preserves legacy handling.
 ///
 /// # Errors
 /// [`StoreError`] for invalid JSON, identity mismatches or bounded-read failures.
-pub async fn load(_task_dir: &Path, _request: RequestId) -> Result<Option<Journal>, StoreError> {
-    Ok(None)
+pub async fn load(task_dir: &Path, request: RequestId) -> Result<Option<Journal>, StoreError> {
+    let path = journal_path(task_dir, request);
+    let Some(file) = crate::text_file::read_text_file(&path, MAX_JOURNAL_BYTES)
+        .await
+        .map_err(|source| StoreError::Read {
+            path: path.clone(),
+            source,
+        })?
+    else {
+        return Ok(None);
+    };
+    let journal: Journal = serde_json::from_str(&file.text).map_err(|source| StoreError::Decode {
+        path: path.clone(),
+        source,
+    })?;
+    if journal.workspace().record().request != request {
+        return Err(StoreError::Mismatch {
+            path,
+            found: journal.workspace().record().request,
+        });
+    }
+    Ok(Some(journal))
 }
 
 /// Validates and atomically persists one transition under the daemon's single-writer ownership.
@@ -401,10 +430,23 @@ pub async fn load(_task_dir: &Path, _request: RequestId) -> Result<Option<Journa
 ///
 /// # Errors
 /// [`StoreError`] for a missing journal, invalid transition or storage failure.
-pub async fn advance(task_dir: &Path, request: RequestId, _transition: Transition) -> Result<Journal, StoreError> {
-    Err(StoreError::Missing {
-        path: journal_path(task_dir, request),
-    })
+pub async fn advance(task_dir: &Path, request: RequestId, transition: Transition) -> Result<Journal, StoreError> {
+    let path = journal_path(task_dir, request);
+    let current = load(task_dir, request)
+        .await?
+        .ok_or_else(|| StoreError::Missing { path: path.clone() })?;
+    let journal = current.advance(transition).map_err(|source| StoreError::Invalid {
+        path: path.clone(),
+        source,
+    })?;
+    let text = serde_json::to_string(&journal).map_err(|source| StoreError::Encode {
+        path: path.clone(),
+        source,
+    })?;
+    crate::text_file::replace_text_file(&path, &text, 0o600)
+        .await
+        .map_err(|source| StoreError::Write { path, source })?;
+    Ok(journal)
 }
 
 #[cfg(test)]
