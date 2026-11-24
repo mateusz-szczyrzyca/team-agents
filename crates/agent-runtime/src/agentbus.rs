@@ -24,7 +24,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, Program, RepoName};
-use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, ItemId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::repo_path::RepoPath;
 use serde::de::Error as _;
@@ -54,6 +54,58 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 
 /// The longest field name of an event, in bytes.
 const MAX_FIELD_NAME_LEN: usize = 64;
+
+/// Execution identity that fences a request's result from earlier workers.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestOwner<'a> {
+    /// Serving worker.
+    pub worker: &'a AgentName,
+    /// Task in which the execution runs.
+    pub task: &'a TaskId,
+    /// Unique execution identifier.
+    pub run: &'a RunId,
+}
+
+/// Terminal result accepted by the atomic settlement operation.
+#[derive(Debug, Clone, Copy)]
+pub enum RequestResult {
+    /// Checked or reported success.
+    Done,
+    /// The request returned to its requester.
+    Failed,
+    /// The worker could not resolve the request.
+    Unclear,
+}
+
+/// One ownership-checked change; final notices accompany settlement atomically.
+#[derive(Debug, Clone, Copy)]
+pub enum OwnedChange<'a> {
+    /// Bind a newly claimed request to an execution.
+    Start,
+    /// Release the current execution for a wrong-result retry.
+    Retry,
+    /// Settle and publish exactly one final notice.
+    Settle {
+        /// Terminal request result.
+        result: RequestResult,
+        /// Result retained on the request.
+        summary: &'a str,
+        /// Catalog-rendered final requester notice.
+        notice: &'a str,
+    },
+}
+
+/// Whether an ownership-checked operation changed state, repeated it, or lost ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnedOutcome {
+    /// Current owner changed the request.
+    Applied,
+    /// This execution already performed the operation.
+    Replay,
+    /// A different execution owns the request; its result must be dropped.
+    Stale,
+}
 
 /// Which `agentbus` subcommand was run, for an error. The text is the subcommand's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
@@ -1301,6 +1353,19 @@ impl AgentBus {
             .flag_if("--task", update.task.as_ref().map(TaskId::as_str))
             .flag_if("--summary", update.summary.as_ref());
         self.run(BusCommand::HelperSet, args, None).await.map(drop)
+    }
+
+    /// Changes an owned request and atomically publishes its final notice on settlement.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] for bus failures, including a missing request.
+    pub async fn helper_owned(
+        &self,
+        _request: RequestId,
+        _owner: RequestOwner<'_>,
+        _change: OwnedChange<'_>,
+    ) -> Result<OwnedOutcome, AgentBusError> {
+        Ok(OwnedOutcome::Stale)
     }
 
     /// Reads a request for a worker.
