@@ -5,7 +5,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use agent_core::decide::worker_recovery::{Cause, MAX_NO_RESULT_RETURNS};
-use agent_core::decide::worker_result::Wrong;
+use agent_core::decide::worker_result::{WorkerEnding, Wrong};
 use agent_core::history::SnapshotRecord;
 use agent_core::ids::{AgentName, RoundId, RunId, TaskId};
 use agent_core::state::CommitId;
@@ -93,6 +93,13 @@ pub enum Transition {
         wrong: Vec<Wrong>,
         /// Snapshot before handing the workspace to the next execution.
         snapshot: SnapshotIdentity,
+    },
+    /// The current execution produced a declared ending, retained before settlement.
+    Observed {
+        /// Execution whose ending was read.
+        run: RunId,
+        /// Declared result, independent of the check outcome.
+        ending: WorkerEnding,
     },
     /// Settlement finished; subsequent results must be dropped.
     Settled {
@@ -208,6 +215,7 @@ impl TryFrom<Record> for Journal {
                     journal.wrong_try = journal.wrong_try.checked_add(1).ok_or(Invalid::Transition)?;
                     journal.phase = Phase::Queued;
                 }
+                Transition::Observed { .. } => {}
                 Transition::Settled { run } => {
                     journal.require_run(run)?;
                     journal.phase = Phase::Settled;
@@ -257,6 +265,12 @@ impl Journal {
             events: Vec::new(),
         }
         .try_into()
+    }
+
+    /// Ending observed for the current execution, if one was durably recorded.
+    #[must_use]
+    pub fn ending(&self) -> Option<WorkerEnding> {
+        None
     }
 
     /// Original workspace identity, unaffected by later worker assignments.
