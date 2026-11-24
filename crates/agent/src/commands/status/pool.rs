@@ -116,9 +116,7 @@ fn find_serving(
             continue;
         }
         if let Some(m) = team.members.iter().find(|m| m.agent.name() == worker.as_str())
-            && (m.status == TaskStatus::Running
-                || (m.role == Role::Worker
-                    && !matches!(m.status, TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped)))
+            && (m.status == TaskStatus::Running || m.role == Role::Worker)
         {
             return Some(team.id.to_string());
         }

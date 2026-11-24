@@ -479,7 +479,7 @@ async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<
         settings.config.binaries().agentbus.clone(),
         activity.home.absolute_root().clone(),
     );
-    let helpers = bus.helper_list(false).await.map_err(StatusError::Bus)?;
+    let helpers = bus.helper_list(true).await.map_err(StatusError::Bus)?;
     let unsettled = scan_unsettled_workspaces(&activity.home, &helpers).await;
     Ok(pool::render_pool_with_unsettled(
         workers,
