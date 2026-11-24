@@ -781,3 +781,22 @@ fn an_output_without_a_window_writes_no_limit() -> TestResult {
     assert!(!configuration_text(&spec)?.contains("limit"));
     Ok(())
 }
+
+#[test]
+fn an_output_leaves_the_run_of_every_cli_but_opencode_as_it_was_with_the_window_alone() -> TestResult {
+    for kind in [CliKind::Claude, CliKind::Codex, CliKind::Gemini] {
+        let mut window = request(new_run()?, Servers::Bus)?;
+        window.context = Some(200_000);
+        let mut both = request(new_run()?, Servers::Bus)?;
+        both.context = Some(200_000);
+        both.output = Some(16_384);
+        let adapter = adapter_for(kind);
+        let alone = adapter.build_run(&window)?;
+        let with_output = adapter.build_run(&both)?;
+
+        assert_eq!(with_output.args, alone.args, "{kind:?}");
+        assert_eq!(with_output.env, alone.env, "{kind:?}");
+        assert_eq!(with_output.files, alone.files, "{kind:?}");
+    }
+    Ok(())
+}
