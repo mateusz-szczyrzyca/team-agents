@@ -184,6 +184,9 @@ async fn the_reminder_of_a_run_that_ended_is_a_chat_of_the_harness_on_the_bus() 
     let run_dir = rig.home.run_dir(&task, &run);
     std::fs::write(run_dir.join(".fake-continue"), "").unwrap();
 
+    // Wait for the run to actually end
+    run_ended(&rig, &task).await;
+
     rig.wait_for("the reminder of Serena on the bus", || {
         chats_from_the_harness(&rig).contains(&expected)
     })
