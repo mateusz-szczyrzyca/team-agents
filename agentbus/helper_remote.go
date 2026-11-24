@@ -28,7 +28,7 @@ func takeLocalHelper(st *State, worker string, capabilities []string, reqID ...i
 	if len(reqID) > 0 {
 		targetID = reqID[0]
 	}
-	if worker != "" {
+	if targetID != 0 && worker != "" {
 		for _, h := range st.Helpers {
 			if h.Worker == worker && (h.Status == HelperStarting || h.Status == HelperRunning) {
 				return nil
