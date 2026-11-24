@@ -1333,3 +1333,141 @@ async fn a_graceful_stop_and_restart_snapshots_the_worktree_shows_it_in_round_st
         .unwrap();
     assert!(String::from_utf8_lossy(&listed.stdout).contains("uncommitted.txt"));
 }
+
+/// A stepped owner whose team has one item in review, its first reviewer's review still to come, with
+/// `replace_after_minutes = 15`; with the rig, the team, the reviewer's task and when its review was asked.
+async fn a_review_to_come() -> (
+    Rig,
+    Stepped,
+    agent_core::ids::TeamId,
+    agent_core::ids::TaskId,
+    agent_core::state::Timestamp,
+) {
+    use agent_core::state::{ItemPhase, ReviewOutcome};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+            investigator("inv-r3", "sleep"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[review]", "[review]\nreplace_after_minutes = 15"),
+    )
+    .unwrap();
+    rig.start().await;
+    let (team, _) = rig
+        .run(&["claude-1"], super::rig::ONE, MergeMode::Autopilot, None)
+        .await;
+    let in_review = rig
+        .state_where("two reviews asked and both reviewers waiting", |state| {
+            let team = state.team(&team).unwrap();
+            team.reviewers().len() == 2
+                && team
+                    .reviewers()
+                    .iter()
+                    .all(|member| member.status() == TaskStatus::Waiting && member.current_run().is_none())
+                && team.items().iter().any(|item| {
+                    matches!(item.phase(), ItemPhase::InReview { reviews, .. }
+                        if reviews.iter().all(|review| matches!(review.outcome, ReviewOutcome::Pending)))
+                })
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let ItemPhase::InReview { reviews, .. } = in_review
+        .team(&team)
+        .unwrap()
+        .items()
+        .iter()
+        .map(agent_core::state::ItemProgress::phase)
+        .find(|phase| matches!(phase, ItemPhase::InReview { .. }))
+        .unwrap()
+    else {
+        unreachable!("found in review above")
+    };
+    let (task, requested_at) = (reviews[0].task.clone(), reviews[0].requested_at);
+    let mut step = stepped(&rig).await;
+    step.owner.parts.state = in_review;
+    (rig, step, team, task, requested_at)
+}
+
+/// Gives the reviewer `task` one run for each of `ends`, the minutes after `asked` it ended and how, then pauses it as
+/// the harness does after a refusal of its provider.
+fn runs_then_paused(
+    step: &mut Stepped,
+    task: &agent_core::ids::TaskId,
+    asked: agent_core::state::Timestamp,
+    ends: &[(i64, RunEnd)],
+) {
+    let seconds = |n: i64| agent_core::state::Timestamp::from_utc(asked.as_utc() + time::Duration::seconds(n)).unwrap();
+    let (_, mut member) = step.owner.parts.state.find_task_mut(task).unwrap();
+    member.transition(TaskStatus::Queued).unwrap();
+    for (number, (minute, end)) in ends.iter().enumerate() {
+        let id = format!("run-20261123-2140{number:02}-r234").parse().unwrap();
+        member.begin_run(id, seconds(minute * 60 - 30), None).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(seconds(minute * 60), end.clone()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    member.transition(TaskStatus::Paused).unwrap();
+}
+
+/// The tasks of the reviewers whose reviews `step`'s owner gives to another investigator `minutes` after `asked`.
+fn gone_after(
+    step: &Stepped,
+    team: &agent_core::ids::TeamId,
+    asked: agent_core::state::Timestamp,
+    minutes: i64,
+) -> Vec<agent_core::ids::TaskId> {
+    let now = agent_core::state::Timestamp::from_utc(asked.as_utc() + time::Duration::minutes(minutes)).unwrap();
+    step.owner
+        .reviews_that_do_not_come(team, now)
+        .into_iter()
+        .map(|gone| gone.task)
+        .collect()
+}
+
+// Rule: a reviewer that its provider refuses again and again with pauses shorter than `replace_after_minutes` is given
+// to another investigator once the patience since the request is over (issue #234: five rate limits 8 minutes apart
+// kept a review waiting until the human stopped the reviewer).
+#[tokio::test]
+async fn a_reviewer_refused_again_and_again_by_its_provider_is_replaced_after_the_patience() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    let refused = [
+        (1, RunEnd::RateLimited),
+        (9, RunEnd::RateLimited),
+        (17, RunEnd::RateLimited),
+        (26, RunEnd::RateLimited),
+    ];
+    runs_then_paused(&mut step, &task, asked, &refused);
+
+    assert_eq!(gone_after(&step, &team, asked, 27), vec![task]);
+    crate::daemon::history::close(step.writer).await;
+}
+
+// Rule: a reviewer that worked after the request and was refused only since has its patience counted from its work, so
+// it is not replaced before the patience is over.
+#[tokio::test]
+async fn a_reviewer_refused_after_it_worked_waits_the_patience_from_its_work() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    let worked = [
+        (
+            20,
+            RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Sleeping,
+            },
+        ),
+        (24, RunEnd::RateLimited),
+    ];
+    runs_then_paused(&mut step, &task, asked, &worked);
+
+    assert!(gone_after(&step, &team, asked, 30).is_empty());
+    assert_eq!(gone_after(&step, &team, asked, 35), vec![task]);
+    crate::daemon::history::close(step.writer).await;
+}

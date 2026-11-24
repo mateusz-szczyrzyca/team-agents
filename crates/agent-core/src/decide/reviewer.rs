@@ -13,6 +13,7 @@
 
 use std::time::Duration;
 
+use crate::state::{RunState, Timestamp};
 use crate::status::TaskStatus;
 
 /// What is known of a review that is still to come.
@@ -41,6 +42,16 @@ pub fn replace_now(awaited: &Awaited) -> bool {
         TaskStatus::Queued | TaskStatus::Running | TaskStatus::Questions | TaskStatus::Waiting | TaskStatus::Done => {
             false
         }
+    }
+}
+
+/// When the reviewer of a review asked at `requested_at` was last heard of, given its runs `runs`, oldest first: the
+/// end of its last run, or `requested_at` when it has not run or runs now.
+#[must_use]
+pub fn quiet_since<'a>(mut runs: impl DoubleEndedIterator<Item = &'a RunState>, requested_at: Timestamp) -> Timestamp {
+    match runs.next_back() {
+        Some(RunState::Ended { at, .. }) => *at,
+        Some(RunState::Running) | None => requested_at,
     }
 }
 
