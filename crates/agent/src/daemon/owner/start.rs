@@ -377,6 +377,9 @@ pub(super) async fn plan(
     } else {
         Vec::new()
     };
+    // The servers come before the prompt: the section on finding code with Serena follows the servers this run gets, not
+    // the configuration of the home.
+    let mcp_servers = mcp_servers(ctx, team, member, role, &working, &work_branch(team, member)?)?;
     let input = PromptInput {
         kind,
         agent: participant.name(),
@@ -392,7 +395,7 @@ pub(super) async fn plan(
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
-        serena: Serena::of(config.binaries().serena.is_some()),
+        serena: Serena::of(&mcp_servers),
     };
     let texts = PromptTexts {
         harness: ctx.texts,
@@ -414,7 +417,6 @@ pub(super) async fn plan(
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, member, role, &working, &work_branch(team, member)?)?;
     let identity = CommitIdentity::for_agent(config.git(), &participant.name().parse()?);
     Ok(Plan {
         run: run.clone(),

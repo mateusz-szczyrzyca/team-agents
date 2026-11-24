@@ -29,8 +29,12 @@ pub enum Serena {
 impl Serena {
     /// `Given` when a run's own MCP servers, `servers`, hold Serena; `Without` otherwise.
     #[must_use]
-    pub fn of(_servers: &BTreeMap<McpServerKind, CommandLine>) -> Self {
-        Self::Without
+    pub fn of(servers: &BTreeMap<McpServerKind, CommandLine>) -> Self {
+        if servers.contains_key(&McpServerKind::Serena) {
+            Self::Given
+        } else {
+            Self::Without
+        }
     }
 }
 
