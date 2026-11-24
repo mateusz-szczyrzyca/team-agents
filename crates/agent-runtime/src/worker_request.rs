@@ -138,6 +138,48 @@ pub async fn set_aside(path: &Path) -> Result<PathBuf, PendingError> {
     })
 }
 
+/// Whether the pending of `request` in `task_dir` was set aside (kept under a `*.damaged` name) by [`set_aside`]: a
+/// pending that was set aside is what is left of a request whose workspace must never be released on its behalf, and
+/// this is how the owner tells quarantine from a safely settled leftover.
+///
+/// # Errors
+/// [`PendingError::List`] when the directory cannot be listed.
+pub async fn is_set_aside(task_dir: &Path, request: RequestId) -> Result<bool, PendingError> {
+    let mut entries = match tokio::fs::read_dir(task_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(source) => {
+            return Err(PendingError::List {
+                path: task_dir.to_owned(),
+                source,
+            });
+        }
+    };
+    let prefix = format!("{FILE_PREFIX}{}.json", request.number());
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => return Ok(false),
+            Err(source) => {
+                return Err(PendingError::List {
+                    path: task_dir.to_owned(),
+                    source,
+                });
+            }
+        };
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        // A set-aside file keeps the pending's name and adds `.damaged`, `.damaged-2`, ...: it is still the file of
+        // `request`, only the reading does not meet it.
+        if request_of_file(&entry.path()).is_none()
+            && name.starts_with(&prefix)
+            && name.strip_prefix(&prefix).is_some_and(|rest| rest.starts_with(".damaged"))
+        {
+            return Ok(true);
+        }
+    }
+}
+
 /// A request whose worker's run has ended: who asked, who served, what the worker said and how far the harness got.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

@@ -28,8 +28,8 @@ use agent_runtime::process::error_chain;
 use agent_runtime::request_workspace::{self, CompleteError, RequestWorkspace, WorkspaceError};
 use agent_runtime::team_prompts::TeamPrompts;
 use agent_runtime::worker_request::{
-    Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending_each, request_of_file,
-    set_aside, write_pending,
+    Checked, Found, Pending, PendingError, Settlement, Stage, is_set_aside, pending_path, read_pending_each,
+    request_of_file, set_aside, write_pending,
 };
 
 use super::teams::{Outbound, Served, is_transient};
@@ -298,12 +298,18 @@ impl Owner {
         }
         // A `Working` record without a pending is the worker still working: nothing to settle. A record at `Ended`
         // without a pending is a leftover of a settled request, and its workspace is released. A damaged pending is set
-        // aside and told once, and the workspace is never released on its behalf.
+        // aside and told once; the workspace of such a request is quarantined and never released, however long the
+        // quarantine lasts and even after a daemon restart (a missing pending alone never means the workspace may go).
         let Some(pending) = pending else {
             if let Some(error) = damaged {
                 return self.settle_workspace_damaged(record, &error).await;
             }
             if record.stage == request_workspace::Stage::Ended {
+                // A pending that was set aside is kept under a `*.damaged` name in the worker's task directory; that is
+                // the quarantine marker. A leftover of a safely settled request leaves no such file.
+                if is_set_aside(&worker_dir, record.request).await? {
+                    return Ok(());
+                }
                 return self.release_workspace(team, record).await;
             }
             return Ok(());
