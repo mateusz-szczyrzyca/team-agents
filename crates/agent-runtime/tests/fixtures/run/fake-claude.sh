@@ -36,6 +36,8 @@
 #   serena-text           reads forty-two text files as `serena-reads` reads code ones
 #   serena-writes         writes and edits files of code forty-two times, ends like `done`
 #   serena-three          reads three code files, then ends like `done`
+#   work                  prints a message every 0.2 s until it is stopped: a run that does work
+#   hold                  prints its first line and then waits for .fake-continue to appear before it ends like `done`
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -310,6 +312,23 @@ case $scenario in
       done
     fi
     say "working"
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  work)
+    init
+    while true; do
+      say "working"
+      sleep 0.2
+    done
+    ;;
+  hold)
+    init
+    say "working"
+    for _ in $(seq 1 600); do
+      [[ -f .fake-continue ]] && break
+      sleep 0.02
+    done
+    [[ -f .fake-continue ]] || { echo "the test never created .fake-continue" >&2; exit 65; }
     result false 'Finished the item.\nSTATUS: DONE'
     ;;
   *) echo "unknown scenario: $scenario" >&2; exit 64 ;;

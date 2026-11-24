@@ -53,4 +53,10 @@ pub enum ReminderTextError {
         /// What the name refused.
         source: VariablesError,
     },
+    /// The loader of the texts cannot render the text of the reminder with its values.
+    #[error("the text of the reminder of Serena cannot be rendered")]
+    Refused {
+        /// What the loader refused.
+        source: Box<dyn std::error::Error + Send + Sync>,
+    },
 }

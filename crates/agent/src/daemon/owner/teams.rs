@@ -42,7 +42,7 @@ use crate::daemon::team::{
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
-const BUS_SENDER: &str = "agentbus";
+pub(super) const BUS_SENDER: &str = "agentbus";
 
 /// Something that is to be done on the bus, with the team it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
