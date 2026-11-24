@@ -230,3 +230,103 @@ async fn mode_off_keeps_a_declared_failure_final() {
         "the human is told once, when the ladder has no rung left"
     );
 }
+
+// Rule: no file a failed member left uncommitted is lost on the way up the ladder: the new session and the agent that
+// takes the task over are both briefed with the file, and the worktree still holds it.
+#[tokio::test]
+async fn every_holder_after_a_declared_failure_is_told_of_the_uncommitted_file() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "fail-tool-dirty"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the first run to start", || worktree.join(".fake-args-1").exists())
+        .await;
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+
+    rig.item_where("1.1", "merged after the takeover", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    let new_session = rig.prompt(&tasks[0], 2).await;
+    let takeover = rig.prompt(&tasks[0], 3).await;
+    let kept = worktree.join("draft.txt").exists();
+    rig.stop().await.unwrap();
+
+    for (who, briefing) in [("the new session", &new_session), ("the replacement", &takeover)] {
+        assert!(briefing.contains("`failed`"), "{who} is told the reason: {briefing}");
+        assert!(
+            briefing.contains("- draft.txt"),
+            "{who} is told of the uncommitted file: {briefing}"
+        );
+        assert!(
+            briefing.contains("I could not do it."),
+            "{who} gets what the failed run said: {briefing}"
+        );
+    }
+    assert!(kept, "the uncommitted file is still in the worktree");
+}
+
+// Rule: the rung a task is on survives a restart of the daemon: a restart in the middle of the new session of a declared
+// failure does not give the task back its rungs, and it still ends in the hands of the replacement without a word to
+// the human.
+#[tokio::test]
+async fn a_restart_in_the_new_session_of_a_declared_failure_keeps_the_ladder() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "fail-tool-dirty"),
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the new session to start", || worktree.join(".fake-args-2").exists())
+        .await;
+    let before = rig.state();
+    rig.stop().await.unwrap();
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+    rig.start().await;
+
+    let state = rig
+        .item_where("1.1", "merged after the takeover", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    let told = rig.notifications();
+    rig.stop().await.unwrap();
+
+    assert_eq!(
+        before
+            .find_task(&tasks[0])
+            .unwrap()
+            .member
+            .renewals()
+            .map(agent_core::state::Renewals::used),
+        Some(1),
+        "the new session was recorded before the restart"
+    );
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2");
+    assert_eq!(member.past_holders().len(), 1);
+    assert!(
+        told.iter().all(|text| !text.contains("ended with STATUS: FAILED")),
+        "the human is not told while a rung is untried: {told:?}"
+    );
+}

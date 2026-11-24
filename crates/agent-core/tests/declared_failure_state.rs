@@ -27,3 +27,20 @@ fn a_state_written_before_the_declared_failure_reason_still_loads() {
         "the fixture predates the reason, so no renewal of it has it"
     );
 }
+
+// A state written before the ladder took declared failures holds a failed member; it loads as it was and stays failed:
+// the daemon does not send it up the ladder by itself at its next start, only `agent resume` starts it again.
+#[test]
+fn a_failed_member_of_a_state_written_before_the_ladder_loads_as_failed() {
+    let fixture = include_str!("fixtures/state-before-no-tool-call.json");
+
+    let state = State::from_json(fixture).unwrap();
+
+    let failed: Vec<_> = state
+        .teams()
+        .iter()
+        .flat_map(|team| team.crew().roster())
+        .filter(|(_, member)| member.status() == agent_core::status::TaskStatus::Failed)
+        .collect();
+    assert_eq!(failed.len(), 1, "the fixture holds one failed member");
+}

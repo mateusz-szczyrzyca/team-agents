@@ -18,6 +18,8 @@
 #                   before it ends: of two reviewers, exactly one fails after real work, so nobody is retried for it
 #   fail-tool       records a tool call (a streamed bus tool_use line) in every run, then ends with STATUS: FAILED:
 #                   a declared failure after real work that a new session does not change
+#   fail-tool-dirty  like fail-tool, and leaves the file draft.txt uncommitted; its second run waits for `.fake-continue`
+#                   in the worktree first, so a test can stop the daemon while that run goes on
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
@@ -625,6 +627,17 @@ case $action in
   questions) result 'I have to ask.\nSTATUS: QUESTIONS' ;;
   fail-tool)
     # Every run records a tool call before it reports FAILED: a declared failure after real work, whatever session it runs in.
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  fail-tool-dirty)
+    hide_own_files
+    echo "draft of run $n" > draft.txt
+    if ((n == 2)); then
+      while [[ ! -f .fake-continue ]]; do
+        sleep 0.05
+      done
+    fi
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
     result 'I could not do it.\nSTATUS: FAILED'
     ;;
