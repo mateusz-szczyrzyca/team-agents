@@ -595,7 +595,8 @@ times it sent a lead back is not in the state: a daemon that restarts starts ove
 
 **A reviewer that cannot work** (`agent_core::decide::reviewer::replace_now`, `owner/rounds/replace.rs`). A review pass waits
 for every review that was asked. At every look the harness finds the reviews that are still to come and whose reviewer's task
-failed, was stopped, or has been paused for `[review] replace_after_minutes`: each goes to another free investigator that is not
+failed, was stopped, or has been paused for `[review] replace_after_minutes` — counted by `quiet_since` from its last run
+that its provider did not refuse, never before the request —: each goes to another free investigator that is not
 of the team and not of the pass (`ItemMut::replace_review` puts the new review in the place of the old one, so the reviews that
 came stay), with a worktree at the head of the pull request, and the history records it as a review asked. The task of the
 reviewer that was replaced is left as it is: a report it still makes answers no review, is logged (`review_report_late`) and is
