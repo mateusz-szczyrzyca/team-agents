@@ -138,10 +138,7 @@ fn a_context_below_the_agent_s_bound_is_refused_naming_it() {
         "{section:?}"
     );
 
-    let own = Config::from_toml_str(&format!(
-        "[agents.claude-1]\ncli = \"claude\"\nmax_context = 5000\ncontext = 4000\n\n[tiers]\nnormal = [\"claude-1\"]\nworkers = []\n"
-    ))
-    .unwrap_err();
+    let own = Config::from_toml_str(&with_context("\nmax_context = 5000\ncontext = 4000", "")).unwrap_err();
     assert!(
         matches!(
             &own,
