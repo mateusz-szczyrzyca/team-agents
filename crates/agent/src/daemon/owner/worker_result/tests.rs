@@ -327,8 +327,6 @@ async fn pair_daemon() -> (super::super::fixture::Daemon, super::super::Owner) {
 
 #[tokio::test]
 async fn a_completion_whose_record_cannot_be_written_leaves_the_workspace_working_and_is_tried_again() {
-    use std::os::unix::fs::PermissionsExt;
-
     use crate::fixtures::{task, team_id};
     use agent_runtime::request_workspace::save;
     use agent_runtime::worker_request::write_pending;
@@ -680,6 +678,8 @@ async fn elsewhere_of_defers_conservatively_when_helper_request_is_missing() {
 
 #[tokio::test]
 async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_and_retries() {
+    use std::os::unix::fs::PermissionsExt;
+
     use crate::daemon::owner::worker_result::Again;
     use crate::fixtures::team_id;
     use agent_runtime::agentbus::RequestId;
@@ -730,7 +730,6 @@ async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_a
     // fail after allocation, without changing the requester's working files.
     let hook = repo_dir.join(".git/hooks/post-checkout");
     std::fs::write(&hook, "#!/bin/sh\ngit worktree lock \"$PWD\"\n").unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
 
     let res = owner.try_dispatch_pool_request(&worker_name, &req).await;
