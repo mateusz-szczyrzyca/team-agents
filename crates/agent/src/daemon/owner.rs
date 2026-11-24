@@ -1666,15 +1666,16 @@ impl Owner {
             Ok(true) => return,
             Ok(false) => {}
             Err(error) => {
-                // The mark is only a guard against a second reminder: without it the reminder goes out, once more at worst.
+                // A reminder goes out at most once: with the mark in doubt it may have gone out already.
                 tracing::warn!(
                     event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,
                     run = %run,
                     operation = "serena_reminder",
                     error = %error_chain(&error),
-                    "the mark of the reminder of Serena cannot be read: the reminder goes out if the history holds one"
+                    "the mark of the reminder of Serena cannot be looked for: the reminder is not put on the bus"
                 );
+                return;
             }
         }
         let Some((searches, cli)) = self.reminder_of_run(task, team, run).await else {
@@ -1688,41 +1689,70 @@ impl Owner {
         });
     }
 
-    /// Tries every reminder of Serena that waits. The bus's taking one is what makes it delivered; one that fails stays for
-    /// the next turn, and one that failed too often is left to the end of its run, which reads it from the history again.
+    /// Tries every reminder of Serena that waits. A reminder is claimed before the bus is asked ([`reminder::claim`]), so
+    /// that a restart between the two never sends it twice; the bus's taking it is what makes it delivered. One the bus
+    /// refuses gives its claim back and stays for the next turn, and one that failed too often is left to the end of its
+    /// run, which reads it from the history again. One that cannot be claimed is not put on the bus.
     async fn deliver_waiting_reminders(&mut self) {
         for attempt in self.reminders.take() {
+            match reminder::claim(self.parts.store.home(), &attempt.due.task, &attempt.due.run).await {
+                Ok(reminder::Claim::Taken) => {}
+                Ok(reminder::Claim::AlreadyTold) => {
+                    // The run's reminder was claimed before: by an earlier daemon, which may have put it on the bus.
+                    self.reminders.delivered(&attempt);
+                    continue;
+                }
+                Err(error) => {
+                    self.reminder_failed(
+                        attempt,
+                        &error_chain(&error),
+                        "the mark of the reminder of Serena cannot be made: it is not put on the bus",
+                    );
+                    continue;
+                }
+            }
             let Err(error) = self.put_reminder_on_bus(&attempt.due).await else {
                 self.reminders.delivered(&attempt);
-                self.mark_reminder_told(&attempt.due).await;
                 continue;
             };
             error.log(&attempt.due);
-            let (task, run, failures) = (attempt.due.task.clone(), attempt.due.run.clone(), attempt.failures);
-            if self.reminders.failed(attempt) == reminder::Failed::GaveUp {
-                tracing::warn!(
-                    event = LogEvent::DaemonTaskFailed.as_str(),
-                    task = %task,
-                    run = %run,
-                    operation = "serena_reminder",
-                    attempts = failures.saturating_add(1),
-                    "the reminder of Serena was not delivered: the end of its run tries once more"
-                );
-            }
+            self.give_the_claim_back(&attempt.due).await;
+            self.reminder_failed(
+                attempt,
+                "",
+                "the reminder of Serena was not delivered: the end of its run tries once more",
+            );
         }
     }
 
-    /// Keeps in the run's directory that the bus took the reminder `due`, so that a restart does not send it again.
-    async fn mark_reminder_told(&self, due: &DueReminder) {
-        if let Err(error) = reminder::mark_told(self.parts.store.home(), &due.task, &due.run).await {
-            // The reminder is on the bus: all that is lost is the guard against a second one after a restart.
+    /// Records that the reminder `attempt` failed, and logs `reason` with the cause `error` (empty when the bus call logged
+    /// it) when it was the last try.
+    fn reminder_failed(&mut self, attempt: reminder::Attempt, error: &str, reason: &str) {
+        let (task, run, failures) = (attempt.due.task.clone(), attempt.due.run.clone(), attempt.failures);
+        if self.reminders.failed(attempt) == reminder::Failed::GaveUp {
+            tracing::warn!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                task = %task,
+                run = %run,
+                operation = "serena_reminder",
+                attempts = failures.saturating_add(1),
+                error,
+                "{reason}"
+            );
+        }
+    }
+
+    /// Takes the claim of the reminder `due` away after the bus refused it, so that the next try can claim it again.
+    async fn give_the_claim_back(&self, due: &DueReminder) {
+        if let Err(error) = reminder::release(self.parts.store.home(), &due.task, &due.run).await {
+            // Without its claim given back the run's reminder is not tried again: it is lost, never sent twice.
             tracing::warn!(
                 event = LogEvent::DaemonTaskFailed.as_str(),
                 task = %due.task,
                 run = %due.run,
                 operation = "serena_reminder",
                 error = %error_chain(&error),
-                "the reminder of Serena was delivered but its mark is not kept: a restart may send it again"
+                "the claim of the reminder of Serena cannot be given back: the reminder is not tried again"
             );
         }
     }

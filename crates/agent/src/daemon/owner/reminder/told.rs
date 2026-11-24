@@ -67,17 +67,6 @@ pub(crate) async fn is_told(home: &Home, task: &TaskId, run: &RunId) -> Result<b
         .map_err(|source| MarkError::Look { path, source })
 }
 
-/// Marks the reminder of `run` of `task` as taken by the bus.
-///
-/// # Errors
-/// [`MarkError::Write`] when the file cannot be written: the run's directory is gone, or the disk refuses.
-pub(crate) async fn mark_told(home: &Home, task: &TaskId, run: &RunId) -> Result<(), MarkError> {
-    let path = mark_file(home, task, run);
-    tokio::fs::write(&path, b"")
-        .await
-        .map_err(|source| MarkError::Write { path, source })
-}
-
 /// Claims the reminder of `run` of `task`: makes its mark, atomically, before the reminder is put on the bus. A reminder
 /// goes out at most once per session, so a claim whose bus call never came back (a crash between the two) is not
 /// retried: the reminder is lost, never sent twice.
@@ -85,8 +74,17 @@ pub(crate) async fn mark_told(home: &Home, task: &TaskId, run: &RunId) -> Result
 /// # Errors
 /// [`MarkError::Write`] when the mark cannot be made: the run's directory is gone, or the disk refuses.
 pub(crate) async fn claim(home: &Home, task: &TaskId, run: &RunId) -> Result<Claim, MarkError> {
-    let _ = (home, task, run);
-    Ok(Claim::AlreadyTold)
+    let path = mark_file(home, task, run);
+    match tokio::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+        .await
+    {
+        Ok(_) => Ok(Claim::Taken),
+        Err(source) if source.kind() == std::io::ErrorKind::AlreadyExists => Ok(Claim::AlreadyTold),
+        Err(source) => Err(MarkError::Write { path, source }),
+    }
 }
 
 /// Takes the mark of `run` of `task` away after the bus refused its reminder, so that the reminder can be tried again.
@@ -94,6 +92,8 @@ pub(crate) async fn claim(home: &Home, task: &TaskId, run: &RunId) -> Result<Cla
 /// # Errors
 /// [`MarkError::Release`] when the mark cannot be removed: the reminder is then not tried again.
 pub(crate) async fn release(home: &Home, task: &TaskId, run: &RunId) -> Result<(), MarkError> {
-    let _ = (home, task, run);
-    Ok(())
+    let path = mark_file(home, task, run);
+    tokio::fs::remove_file(&path)
+        .await
+        .map_err(|source| MarkError::Release { path, source })
 }

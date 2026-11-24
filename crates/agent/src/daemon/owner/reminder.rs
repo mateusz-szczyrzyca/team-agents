@@ -18,9 +18,9 @@ mod tests;
 mod told;
 
 pub(crate) use agent_runtime::history::ReadError;
-pub(crate) use backlog::{Backlog, Failed};
+pub(crate) use backlog::{Attempt, Backlog, Failed};
 pub(crate) use held::reminder_of;
-pub(crate) use told::{is_told, mark_told};
+pub(crate) use told::{Claim, claim, is_told, release};
 
 /// Why the text of the reminder of Serena cannot be made.
 #[derive(Debug, thiserror::Error)]
