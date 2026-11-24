@@ -203,7 +203,7 @@ func restoreOwnedReceipt(st *State, m Message) *StorageError {
 		return storageErr(verr, "cannot read owned settlement receipt %d", m.ID)
 	}
 	if status != HelperDone && status != HelperFailed && status != HelperUnclear {
-		return storageErr(nil, "nonterminal owned settlement receipt %d", m.ID)
+		return storageErr(valueErr("nonterminal owned settlement status %q", status), "cannot read owned settlement receipt %d", m.ID)
 	}
 	h.Status, h.Summary = status, ev.Fields["summary"]
 	return nil
