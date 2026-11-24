@@ -45,6 +45,12 @@ fn sample_task() -> TaskSummaryFacts {
         last_run_ended: None,
         last_activity: Some(ts("2026-11-17T19:45:00Z")),
         last_run_end_detail: Some("Run 2 running".to_owned()),
+        tools: ToolCalls {
+            serena: 12,
+            shell: 160,
+            other: 42,
+        },
+        earlier_tools: Vec::new(),
         questions: Some(QuestionsSummaryFacts {
             has_unanswered: false,
             content: "All answered".to_owned(),
@@ -1134,4 +1140,107 @@ fn format_time_and_render_summary_write_single_zoned_local_timestamps() {
         rendered.contains("\nCollected at: 2026-11-17 21:00:00 +01:00\n"),
         "{rendered}"
     );
+}
+
+#[test]
+fn a_run_tells_its_tool_calls_by_kind_or_that_it_recorded_none() {
+    let mut input = sample_input();
+    let zone = Zone::Fixed(UtcOffset::UTC);
+
+    let counted = render_summary(&input, zone).expect("mandatory summary facts fit");
+    assert!(
+        counted.contains("- Tool calls: 214 (serena 12, shell 160, other 42)\n- Questions (unanswered: false):"),
+        "{counted}"
+    );
+
+    input.tasks[0].tools = ToolCalls::default();
+    let none = render_summary(&input, zone).expect("mandatory summary facts fit");
+    assert!(
+        none.contains("- Tool calls: none recorded\n- Questions (unanswered: false):"),
+        "{none}"
+    );
+
+    input.tasks[0].tools = ToolCalls {
+        serena: 1,
+        shell: 0,
+        other: 0,
+    };
+    let one = render_summary(&input, zone).expect("mandatory summary facts fit");
+    assert!(one.contains("- Tool calls: 1 (serena 1, shell 0, other 0)\n"), "{one}");
+}
+
+#[test]
+fn the_counted_tool_calls_are_the_sum_of_their_kinds_and_none_when_no_tool_was_named() {
+    let cases = [
+        (
+            ToolCalls {
+                serena: 12,
+                shell: 160,
+                other: 42,
+            },
+            Some(214),
+        ),
+        (
+            ToolCalls {
+                serena: 1,
+                shell: 0,
+                other: 0,
+            },
+            Some(1),
+        ),
+        (
+            ToolCalls {
+                serena: 0,
+                shell: 7,
+                other: 0,
+            },
+            Some(7),
+        ),
+        (
+            ToolCalls {
+                serena: 0,
+                shell: 0,
+                other: 3,
+            },
+            Some(3),
+        ),
+        (ToolCalls::default(), None),
+    ];
+
+    for (tools, expected) in cases {
+        assert_eq!(tools.counted(), expected, "{tools:?}");
+    }
+}
+
+#[test]
+fn each_earlier_run_of_a_task_is_told_with_its_own_tool_calls_before_the_last_run() {
+    let mut input = sample_input();
+    let task = input.tasks.first_mut().expect("first task");
+    task.earlier_tools = vec![
+        RunToolCalls {
+            run: "run-20261117-120001-a1b2".parse().expect("valid run id"),
+            tools: ToolCalls {
+                serena: 1,
+                shell: 2,
+                other: 3,
+            },
+        },
+        RunToolCalls {
+            run: "run-20261117-130001-c3d4".parse().expect("valid run id"),
+            tools: ToolCalls::default(),
+        },
+    ];
+
+    let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
+
+    let first = summary
+        .find("- Tool calls of run `run-20261117-120001-a1b2`: 6 (serena 1, shell 2, other 3)")
+        .expect("the first earlier run is told with its own count");
+    let second = summary
+        .find("- Tool calls of run `run-20261117-130001-c3d4`: none recorded")
+        .expect("an earlier run without steps says none recorded");
+    let last = summary
+        .find("- Tool calls: 214 (serena 12, shell 160, other 42)")
+        .expect("the last run is told after the earlier ones");
+    assert!(first < second && second < last, "{summary}");
 }

@@ -30,7 +30,7 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::RunJob;
 use agent_runtime::run::compose::{
-    ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, TeamItem, compose,
+    ComposeError, PromptInput, PromptKind, PromptTexts, ResumeReason, Serena, TeamItem, compose,
 };
 use agent_runtime::settings::Settings;
 use agent_runtime::store::Home;
@@ -224,6 +224,37 @@ async fn compose_run_prompt(
     }
 }
 
+/// What a run is told after its plan, around the prompt: the plan's rules and the reason of a send-back, a correction of
+/// a split, the reason of a retry, the briefing of its new session, the size that ended the session before and its last
+/// message.
+///
+/// # Errors
+/// [`StartProblem`] when a text of the installation does not take the values given it.
+fn with_run_sections(
+    ctx: &Context<'_>,
+    found: &TaskRef<'_>,
+    kind: PromptKind,
+    prompt: String,
+    briefing: Option<&BriefingDraft>,
+    last_message: Option<&LastMessage>,
+) -> Result<String, StartProblem> {
+    let (team, role, member, task) = (found.team, found.role, found.member, found.member.task());
+    let prompt = with_plan(ctx, role, member, kind, prompt)?;
+    let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
+    // A run retried after its session reported FAILED without a tool call is told why, before its briefing.
+    let prompt = match no_tool_call_note(ctx, member, member.agent())? {
+        Some(note) => format!("{}\n\n{note}", prompt.trim_end()),
+        None => prompt,
+    };
+    let prompt = match briefing {
+        Some(draft) => draft.render(ctx.texts, task, &prompt)?,
+        None => prompt,
+    };
+    // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
+    let prompt = with_size_paragraph(ctx, member, prompt)?;
+    with_last_message(ctx, prompt, last_message)
+}
+
 /// Whether the session of `member` was replaced because it outgrew its agent's bound, and its new session has not begun.
 fn replaced_by_bound(member: &Member) -> bool {
     member
@@ -346,6 +377,9 @@ pub(super) async fn plan(
     } else {
         Vec::new()
     };
+    // The servers come before the prompt: the section on finding code with Serena follows the servers this run gets, not
+    // the configuration of the home.
+    let mcp_servers = mcp_servers(ctx, team, member, role, &working, &work_branch(team, member)?)?;
     let input = PromptInput {
         kind,
         agent: participant.name(),
@@ -361,6 +395,7 @@ pub(super) async fn plan(
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
+        serena: Serena::of(&mcp_servers),
     };
     let texts = PromptTexts {
         harness: ctx.texts,
@@ -368,20 +403,7 @@ pub(super) async fn plan(
     };
     let prompt = compose(&texts, &input)?;
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
-    let prompt = with_plan(ctx, role, member, kind, prompt)?;
-    let prompt = super::split::with_correction(ctx.team_texts, team, role, prompt)?;
-    // A run retried after its session reported FAILED without a tool call is told why, before its briefing.
-    let prompt = match no_tool_call_note(ctx, member, participant)? {
-        Some(note) => format!("{}\n\n{note}", prompt.trim_end()),
-        None => prompt,
-    };
-    let prompt = match briefing {
-        Some(draft) => draft.render(ctx.texts, task, &prompt)?,
-        None => prompt,
-    };
-    // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
-    let prompt = with_size_paragraph(ctx, member, prompt)?;
-    let prompt = with_last_message(ctx, prompt, last_message)?;
+    let prompt = with_run_sections(ctx, &found, kind, prompt, briefing, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
@@ -395,7 +417,6 @@ pub(super) async fn plan(
         };
         (RunMode::New { session_id }, recorded)
     };
-    let mcp_servers = mcp_servers(ctx, team, member, role, &working, &work_branch(team, member)?)?;
     let identity = CommitIdentity::for_agent(config.git(), &participant.name().parse()?);
     Ok(Plan {
         run: run.clone(),

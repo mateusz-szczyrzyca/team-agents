@@ -7,11 +7,14 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use agent_core::cli::ActivityEvent;
 use agent_core::debug_summary::{
     GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
-    RoundSummaryFacts, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    RoundSummaryFacts, RunToolCalls, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    ToolCalls,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
+use agent_core::history::Step;
 use agent_core::ids::{AgentName, BranchName, TaskId};
 use agent_core::kinds::Role;
 use agent_core::questions::QuestionsFile;
@@ -103,6 +106,30 @@ fn context_series(
         }
     }
     text
+}
+
+/// The tool calls `steps` hold, counted by the tool each calls: Serena's, the shell's and another's. A streamed shell
+/// command counts as the shell's, a file edit as another tool's; a message, an error and a control line are not calls.
+fn tool_calls_of(steps: &[Step]) -> ToolCalls {
+    let mut tools = ToolCalls::default();
+    for step in steps {
+        match &step.event {
+            ActivityEvent::ToolCall { name, .. } | ActivityEvent::BusCall { tool: name, .. } => {
+                match crate::cli::tool_call(name) {
+                    Some(crate::cli::ToolCall::Serena) => tools.serena = tools.serena.saturating_add(1),
+                    Some(crate::cli::ToolCall::Shell(_)) => tools.shell = tools.shell.saturating_add(1),
+                    Some(crate::cli::ToolCall::Other(_)) | None => tools.other = tools.other.saturating_add(1),
+                }
+            }
+            ActivityEvent::Command(_) => tools.shell = tools.shell.saturating_add(1),
+            ActivityEvent::FileEdit { .. } => tools.other = tools.other.saturating_add(1),
+            ActivityEvent::Text(_)
+            | ActivityEvent::Error(_)
+            | ActivityEvent::Info(_)
+            | ActivityEvent::Control { .. } => {}
+        }
+    }
+    tools
 }
 
 /// A count of tokens as the summary says it, or "not told".
@@ -349,6 +376,8 @@ impl Collection {
             last_run_ended: ended,
             last_activity: None,
             last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
+            tools: agent_core::debug_summary::ToolCalls::default(),
+            earlier_tools: Vec::new(),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -711,6 +740,7 @@ impl Collection {
                 );
                 self.summary.history_tail = Some(text.clone());
                 self.enrich_last_run_details(&records, team);
+                self.enrich_run_tools(home, team).await?;
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -788,6 +818,62 @@ impl Collection {
                 }
             }
         }
+    }
+
+    /// Counts the tool calls of every run of every member, from the steps the history records for them. Reading the
+    /// history copies its database, so the read runs on a blocking task that is awaited. A run without a recorded
+    /// step names no tool, which the summary says.
+    async fn enrich_run_tools(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
+        let members: Vec<&Member> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers().iter())
+            .collect();
+        let runs: Vec<agent_core::ids::RunId> = members
+            .iter()
+            .flat_map(|member| member.runs().iter().map(|run| run.id().clone()))
+            .collect();
+        if runs.is_empty() {
+            return Ok(());
+        }
+        let path = home.history_file();
+        let read = tokio::task::spawn_blocking(move || super::history::read_live_run_steps(&path, &runs))
+            .await
+            .map_err(DebugRuntimeError::Worker)?;
+        let steps = match read {
+            Ok(steps) => steps,
+            Err(error) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::TaskDetails,
+                    part: "run steps".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return Ok(());
+            }
+        };
+        let counted: std::collections::BTreeMap<agent_core::ids::RunId, ToolCalls> = steps
+            .into_iter()
+            .map(|(run, steps)| (run, tool_calls_of(&steps)))
+            .collect();
+        for member in members {
+            let Some((last_run, earlier_runs)) = member.runs().split_last() else {
+                continue;
+            };
+            let Some(task_summary) = self.summary.tasks.iter_mut().find(|t| t.id == *member.task()) else {
+                continue;
+            };
+            task_summary.earlier_tools = earlier_runs
+                .iter()
+                .map(|run| RunToolCalls {
+                    run: run.id().clone(),
+                    tools: counted.get(run.id()).copied().unwrap_or_default(),
+                })
+                .collect();
+            task_summary.tools = counted.get(last_run.id()).copied().unwrap_or_default();
+        }
+        Ok(())
     }
 
     async fn git(&mut self, home: &Home, team: &Team) {

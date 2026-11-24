@@ -272,3 +272,65 @@ fn propagates_snapshot_io_failure_without_retrying() {
         if failed == path && source.kind() == std::io::ErrorKind::PermissionDenied)
     );
 }
+
+#[test]
+fn reads_the_steps_of_the_runs_it_is_given_and_leaves_out_the_runs_without_one() {
+    use agent_core::cli::ActivityEvent;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let team: TeamId = "team-20261118-060000-a1b2".parse().unwrap();
+    let task: TaskId = "task-20261118-060000-a1b2".parse().unwrap();
+    let counted: RunId = "run-20261118-060000-a1b2".parse().unwrap();
+    let silent: RunId = "run-20261118-060001-a1b2".parse().unwrap();
+    let at = "2026-11-18T06:00:00Z".parse().unwrap();
+    let run_start = |run: &RunId| {
+        Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.clone(),
+            task: task.clone(),
+            at,
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![],
+            why: RunWhy::FirstRun,
+            prompt: "Prompt of the run".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/worktree".to_owned()).unwrap(),
+            branch: "feature".parse().unwrap(),
+            session: None,
+        }))
+    };
+    let mut database = HistoryDb::open(&path, MaxTextBytes::default()).unwrap();
+    database
+        .write(&[
+            run_start(&counted),
+            run_start(&silent),
+            Record::Step(Box::new(Step {
+                run: counted.clone(),
+                number: std::num::NonZeroU32::MIN,
+                at,
+                event: ActivityEvent::ToolCall {
+                    name: "serena.find_symbol".to_owned(),
+                    summary: "Looking for it.".to_owned(),
+                },
+            })),
+        ])
+        .unwrap();
+    drop(database);
+
+    let steps = read_live_run_steps(&path, &[counted.clone(), silent]).unwrap();
+
+    assert_eq!(steps.len(), 1, "{steps:?}");
+    let (run, events) = steps.first().unwrap();
+    assert_eq!(run, &counted);
+    assert_eq!(events.len(), 1);
+    assert!(matches!(
+        events.first().map(|step| &step.event),
+        Some(ActivityEvent::ToolCall { name, .. }) if name == "serena.find_symbol"
+    ));
+}

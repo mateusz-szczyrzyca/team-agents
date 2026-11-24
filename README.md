@@ -309,6 +309,16 @@ when every notice has either been accepted or dropped. Only the agents listed in
 for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
 handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
 
+**Serena: finding code.** With `[binaries] serena` set, every run is given Serena, the MCP server that finds code
+through language servers, and its first prompt says so in a short section (`prompts/harness/run/serena.md`) right after
+the working context: find a symbol with `find_symbol`, its callers with `find_referencing_symbols`, what a file declares
+with `get_symbols_overview`, and read only the body you need; keep `grep` and `rg` for text that is not a symbol — a
+message, a configuration key, a log event, Markdown, a diff — with a narrow path and a limit of lines. Every role gets
+it, a worker with the others (the delegation text names the same tools), and so does a new session; a resumed one does
+not repeat it, and a run without Serena gets the prompt it always got, byte for byte. `agent debug` counts each run's
+tool calls, Serena's and the shell's among them, so you can see whether the agents use it. See
+[configuration](docs/configuration.md#binaries).
+
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
@@ -493,7 +503,11 @@ Task files and git output are bounded to 4 MiB each; task files together to 64 M
 History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
 the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
 source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS +HH:MM`, or `UTC` when the zone cannot be found), as `agent log` does.
-Each task shows its latest run's reason, final message and steps; earlier runs remain in the bundle.
+Each task shows its latest run's reason, final message and steps, and how many tool calls that run made, Serena's and
+the shell's among them (`tools: 214 (serena 12, shell 160, other 42)`, or `tools: none recorded` when its steps name
+no tool): the count comes from the steps the run recorded in the history, so it tells whether the agents reach Serena
+or grep the code. Each earlier run of the task has its own count on a line of its own, before the latest run's. Earlier
+runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
 An unpublished member branch is expected; the coordinator's origin ref is still checked.

@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.88.0 — 24.11.2026 — PR #241
+
+### New features
+- [agent-core] [agent-runtime] A run that has Serena is told in its first prompt how to find code with it. Find a symbol with `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and read only the body you need; `grep` and `rg` stay for text that is not a symbol. Every role gets it, a worker with the others, and so does a new session; a resumed session does not repeat it.
+- [agent] [agent-core] [agent-runtime] `agent debug` counts each run's tool calls, Serena's and the shell's among them, as `tools: 214 (serena 12, shell 160, other 42)` — or `tools: none recorded`. Each earlier run of a task has its own count on a line of its own. With `[binaries] serena` set, you can see whether the agents reach it or grep the code.
+
+### Enhancements
+- [agent-runtime] An `agents.toml` without `serena` runs as before, and its prompts are byte for byte as before.
+
 ## 0.87.0 — 24.11.2026 — PR #240
 
 ### Enhancements

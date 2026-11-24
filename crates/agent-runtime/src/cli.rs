@@ -69,6 +69,10 @@ const SERENA_FOLDER: &str = ".serena/";
 /// the others'.
 const BUS_TOOL_PREFIXES: [&str; 4] = ["mcp__agentbus__", "mcp_agentbus_", "agentbus_", "agentbus."];
 
+/// The prefixes of an MCP tool's name in the CLIs' tool calls, the way [`BUS_TOOL_PREFIXES`] names agentbus's: Claude
+/// Code's `mcp__<server>__<tool>` and `<server>.<tool>` or `<server>_<tool>`, which Codex and Antigravity report.
+const SERENA_TOOL_PREFIXES: [&str; 3] = ["mcp__serena__", "serena.", "serena_"];
+
 /// The names, in lower case, of the tools that run a shell command.
 const COMMAND_TOOLS: [&str; 4] = ["bash", "execute", "run_command", "shell"];
 
@@ -262,6 +266,41 @@ fn bus_tool(name: &str) -> Option<&str> {
         let (head, tool) = name.split_at_checked(prefix.len())?;
         head.eq_ignore_ascii_case(prefix).then_some(tool)
     })
+}
+
+/// The tool call `name` is, when it is one: a call of Serena's tool, a shell command, or another tool. A tool
+/// the CLI does not name is none.
+#[must_use]
+pub fn tool_call(name: &str) -> Option<ToolCall> {
+    if name.is_empty() {
+        return None;
+    }
+    let lower = name.to_ascii_lowercase();
+    if bus_tool(name).is_some() {
+        return Some(ToolCall::Other(name.to_owned()));
+    }
+    if SERENA_TOOL_PREFIXES
+        .iter()
+        .filter_map(|prefix| lower.strip_prefix(prefix))
+        .any(|tool| !tool.is_empty())
+    {
+        return Some(ToolCall::Serena);
+    }
+    if COMMAND_TOOLS.contains(&lower.as_str()) || lower.contains("command") {
+        return Some(ToolCall::Shell(name.to_owned()));
+    }
+    Some(ToolCall::Other(name.to_owned()))
+}
+
+/// A call of a tool, as a summary counts it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ToolCall {
+    /// A call of one of Serena's tools, as `find_symbol`: the tool's name is not counted.
+    Serena,
+    /// A call of a shell command.
+    Shell(String),
+    /// A call of any other tool: agentbus's among them.
+    Other(String),
 }
 
 /// The step that a call of the tool `name` with `input` is: a command, a file change, a call of agentbus, or any other
@@ -533,6 +572,39 @@ mod tests {
         let path = path_under(CliKind::Gemini, &base, ".agents/mcp_config.json").unwrap();
 
         assert_eq!(path.as_path().to_str(), Some("/work/tree/.agents/mcp_config.json"));
+    }
+
+    // Rule: each CLI names a Serena call its own way — Claude Code `mcp__serena__find_symbol`, Codex and Antigravity
+    // `serena.find_symbol`, and a shell call is the shell's, whatever else is a call of another tool.
+    #[test]
+    fn a_tool_call_is_serenas_a_shells_or_anothers_by_the_name_the_cli_gives_it() {
+        let serena = || Some(ToolCall::Serena);
+        let cases = [
+            ("mcp__serena__find_symbol", serena()),
+            ("mcp__serena__find_referencing_symbols", serena()),
+            ("mcp__serena__get_symbols_overview", serena()),
+            ("serena.find_symbol", serena()),
+            ("serena_get_symbols_overview", serena()),
+            (
+                "mcp__agentbus__board_add",
+                Some(ToolCall::Other("mcp__agentbus__board_add".to_owned())),
+            ),
+            (
+                "agentbus.read_messages",
+                Some(ToolCall::Other("agentbus.read_messages".to_owned())),
+            ),
+            ("Read", Some(ToolCall::Other("Read".to_owned()))),
+            ("Grep", Some(ToolCall::Other("Grep".to_owned()))),
+            ("Bash", Some(ToolCall::Shell("Bash".to_owned()))),
+            ("shell", Some(ToolCall::Shell("shell".to_owned()))),
+            ("execute", Some(ToolCall::Shell("execute".to_owned()))),
+            ("run_command", Some(ToolCall::Shell("run_command".to_owned()))),
+            ("", None),
+        ];
+
+        for (name, expected) in cases {
+            assert_eq!(tool_call(name), expected, "{name:?}");
+        }
     }
 
     #[test]
