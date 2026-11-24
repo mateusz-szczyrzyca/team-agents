@@ -101,6 +101,9 @@ func (b *Bus) helperOwned(c ownedCommand) (ownedOutcome, *CmdHelperOwnedError) {
 		result = ownedApplied
 		return nil
 	})
+	if err == nil && result != ownedApplied {
+		logWarn(LogWorkerResultDropped, "request", c.ID, "worker", c.Worker, "task", c.Task, "run", c.Run, "outcome", string(result))
+	}
 	return result, err
 }
 
