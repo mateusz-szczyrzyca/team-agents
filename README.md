@@ -290,13 +290,12 @@ of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is que
 queued task waits — it is not failed — and `agent status` says `queued, waits for claude-1, running in team-…`. It starts
 when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued.
 
-> **Preparing (not active yet):** the decision that shares the agents of `[tiers] workers` as one installation-wide pool —
-> any team or delegating solo task served by the free worker that meets its capabilities, with the providers taking turns —
-> is being built up as a pure `agent-core` decision, with the runtime record of a request served in a workspace of its
-> own (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`). The daemon's owner already reads and
-> settles such a record, and releases its workspace, when it finds one; the serving path that writes them lands in a
-> later part, so none is written yet. Loaded records must name a distinct worker task and its derived branch; invalid
-> records are retained without releasing their worktrees.
+The agents of `[tiers] workers` form one installation-wide pool. Any team or delegating solo task is served by a
+free worker of the pool that meets its `requires`. The workers are chosen alternately across providers (taking turns
+in the order their first worker appears in `[tiers] workers`; within a provider, in configured order), skipping busy
+providers without waiting. A worker serves each request in a dedicated task and workspace worktree in the requester's
+repository from the requester's commit (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`), with no
+place in the requester's team crew. A second try after a wrong result goes to another provider where one is free.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
@@ -564,7 +563,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent remove <team> [--force]` | removes a team after bundling its unmerged work; `--force` first ends its active runs and checks. See the removal details below. |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
-| `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number |
+| `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number. When workers are configured, a `pool:` section shows each worker, whom it serves (team or task, step) or that it is free |
 | `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now and who works on it. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over |
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |

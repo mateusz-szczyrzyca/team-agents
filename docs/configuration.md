@@ -91,8 +91,10 @@ workers = ["deepinfra-glm"]
 ```
 
 `normal`: agents that take task-list items, solo or in a team, and may coordinate a team. `workers`: cheap models that
-never coordinate and take no items; they serve `delegate` requests, **the first free worker in the order of this list**,
-so put the stronger ones first. The order of `normal` is kept as written. Rules, each a typed `ConfigError`:
+never coordinate and take no items; they serve `delegate` requests as an installation-wide pool. The workers are
+chosen alternately across providers (turns taking in configured order of first appearance of each provider; within
+a provider, in configured order), skipping busy providers without waiting. The provider is the part of `model`
+before the first `/` for `cli = "opencode"` and its `cli` otherwise. The order of `normal` is kept as written. Rules, each a typed `ConfigError`:
 
 | Error | When |
 |---|---|
