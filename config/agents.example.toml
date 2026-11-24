@@ -12,6 +12,8 @@ language = "English"
 #   model optional; without it the CLI runs its default model
 #   args  optional extra arguments for the CLI, an array: every element is one argument, nothing is split
 #   max_context  optional bound in tokens of this agent's session: above it the next run starts a new session; without it the [session] bound applies, 0 switches it off
+#   context      optional window in tokens of the model, for an opencode agent of openrouter or deepinfra only: opencode
+#                compacts the session at it (below max_context is allowed, that is what compacts early); without it opencode gets no window, 0 is refused
 
 [agents.claude-1]
 cli = "claude"
@@ -28,6 +30,7 @@ cli = "gemini"
 # [agents.deepinfra-glm]
 # cli = "opencode"
 # model = "deepinfra/zai-org/GLM-5.3-Flash"
+# context = 202752   # the model's window in tokens: opencode compacts the session at it
 
 # --- Investigators (advanced, expensive models) -------------------------------------------------------------------
 # They review every pull request, and lead the teams they are in. Every pull request gets two reviews from

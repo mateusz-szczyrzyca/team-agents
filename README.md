@@ -189,6 +189,11 @@ always UTC. A `--since` or `--until` without a zone is read in the zone of this 
   a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what
   was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before, and so does
   a bound of `0`. The new session is not counted against `[replacement] new_sessions`.
+  An opencode agent may also name its model's window in its own `context` (tokens): opencode then compacts the session
+  at that window, before it grows past the bound, instead of the run failing when the provider refuses it. A window
+  below the bound is allowed — that is what makes opencode compact early. Claude Code, Codex and Antigravity get no
+  window from the harness, and a model that is not registered under `openrouter` or `deepinfra` gets none either:
+  for them `context` changes nothing.
 - Logs and the files of a task can contain secrets printed by commands: restrict who can read them.
 - `agent stop <team>` stops a team; stopping the daemon (`systemctl --user stop agent-daemon`) ends every run at
   once, and nothing starts until it runs again.

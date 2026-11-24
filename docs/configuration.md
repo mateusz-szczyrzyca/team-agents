@@ -74,6 +74,8 @@ branch names, file names and unit names. The two tables have the same keys:
 | `cli` | `claude`, `codex`, `gemini` (Antigravity, the `agy` command), `opencode` | required | the model CLI that runs the agent |
 | `model` | text without whitespace, up to 200 bytes | the CLI's default model | for `opencode`, `provider/model`, such as `deepinfra/zai-org/GLM-5.3-Flash` |
 | `args` | array of texts (at most 64, each up to 4096 bytes, no NUL) | `[]` | extra arguments for the CLI, one array element each |
+| `max_context` | tokens, a nonnegative integer | the `[session]` bound | this agent's own bound on its session; above it the next run starts a new session; `0` switches it off (see `[session]`) |
+| `context` | tokens, a positive integer | none | the model's context window, for an `opencode` agent whose model is `openrouter/…` or `deepinfra/…`: the generated opencode configuration gives it to the model as its `limit.context`, so that opencode compacts the session at that window instead of the run failing when the provider refuses it. A window below the agent's bound is allowed: that is what makes opencode compact first. Without the key opencode gets no window, as before. Claude Code, Codex and Antigravity have no configuration of a window here, and a model of another provider is not registered: for them the key changes nothing. `0` is refused (`ConfigError::AgentContextZero`, naming the agent and the key); no `agents.toml` written before the key has it |
 
 An agent runs one task at a time: add `claude-2` for more parallel work. The investigators review every pull request
 and may coordinate a team. Every pull request gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team.
