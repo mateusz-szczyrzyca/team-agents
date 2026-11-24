@@ -1,4 +1,4 @@
-//! The table of the reminder: when the one reminder of a session is due, and when none is.
+//! The table of the reminder of a session: when the one reminder is due, and when none is.
 
 use crate::cli::ActivityEvent;
 
@@ -17,29 +17,28 @@ fn call(name: &str, summary: &str) -> ActivityEvent {
     }
 }
 
-/// The steps of one session: `searches` searches of code, then the steps of `extra`.
-fn tally_of(searches: u64, extra: &[ActivityEvent], after: RemindAfter) -> SessionTally {
+/// A session after `searches` searches of code, none of them past `after`, and what the searches told: the count has one
+/// per search, told by its own number.
+fn one_reminder(searches: u64, after: RemindAfter) -> Option<Reminder> {
     let mut tally = SessionTally::new();
-    for _ in 0..searches {
-        assert_eq!(tally.note(&command("cat src/main.rs"), after), None);
-    }
-    for event in extra {
-        tally.note(event, after);
-    }
-    tally
+    let told: Vec<Option<Reminder>> = (0..searches)
+        .map(|_| tally.note(&command("cat src/main.rs"), after))
+        .collect();
+    assert_eq!(tally.searches(), searches);
+    let reminders = told.iter().flatten().copied().collect::<Vec<_>>();
+    assert_eq!(reminders.len(), usize::from(searches >= after.get()));
+    reminders.first().copied()
 }
 
 #[test]
 fn a_session_below_the_bound_is_not_reminded_and_one_at_it_is() {
     let after = RemindAfter::new(40).unwrap();
 
-    let below = tally_of(39, &[], after);
-
-    assert_eq!(below.searches(), 39);
-    let mut at = tally_of(39, &[], after);
+    assert_eq!(one_reminder(39, after), None, "39 searches are below 40");
     assert_eq!(
-        at.note(&command("grep -n foo src/lib.rs"), after),
-        Some(Reminder { searches: 40 })
+        one_reminder(40, after),
+        Some(Reminder { searches: 40 }),
+        "40 searches are at the bound"
     );
 }
 
@@ -63,7 +62,7 @@ fn a_session_that_called_serena_is_never_reminded() {
     let after = RemindAfter::new(2).unwrap();
     let mut tally = SessionTally::new();
     assert_eq!(tally.note(&command("cat src/main.rs"), after), None);
-    assert_eq!(tally.note(&command("mcp__serena__find_symbol"), after), None);
+    assert_eq!(tally.note(&call("mcp__serena__find_symbol", "{}"), after), None);
 
     assert_eq!(tally.note(&command("cat src/main.rs"), after), None);
     assert_eq!(tally.note(&command("cat src/lib.rs"), after), None);
@@ -88,8 +87,8 @@ fn a_session_without_serena_is_never_reminded() {
 fn a_new_session_counts_its_searches_anew() {
     let after = RemindAfter::new(2).unwrap();
     let mut first = SessionTally::new();
-    first.note(&command("cat src/main.rs"), after);
-    first.note(&command("cat src/main.rs"), after);
+    let _ = first.note(&command("cat src/main.rs"), after);
+    let _ = first.note(&command("cat src/main.rs"), after);
 
     let mut second = SessionTally::new();
 
@@ -104,10 +103,17 @@ fn a_new_session_counts_its_searches_anew() {
 #[test]
 fn a_session_that_goes_on_keeps_its_count_and_its_reminder() {
     let after = RemindAfter::new(2).unwrap();
-    let mut resumed = tally_of(2, &[], after);
+    let mut tally = SessionTally::new();
+    assert_eq!(tally.note(&command("cat src/main.rs"), after), None);
+    assert_eq!(
+        tally.note(&command("cat src/main.rs"), after),
+        Some(Reminder { searches: 2 })
+    );
+    let count_when_reminded = tally.searches();
 
-    assert_eq!(resumed.searches(), 2);
-    assert_eq!(resumed.note(&command("cat src/main.rs"), after), None);
+    assert_eq!(tally.note(&command("cat src/lib.rs"), after), None);
+    assert_eq!(tally.searches(), 3);
+    assert_eq!(count_when_reminded, 2);
 }
 
 #[test]

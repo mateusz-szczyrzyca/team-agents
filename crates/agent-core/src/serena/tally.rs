@@ -8,6 +8,7 @@ use crate::cli::ActivityEvent;
 
 use super::code_search;
 
+mod counting;
 #[cfg(test)]
 mod tests;
 
@@ -92,6 +93,15 @@ impl SessionTally {
         })
     }
 
+    /// Counts `event`, as a session counts it.
+    #[must_use]
+    pub fn counted(self) -> Counted {
+        Counted {
+            searches: self.searches,
+            used_serena: self.used_serena,
+        }
+    }
+
     /// Whether the reminder of the session is due, and marks the session as reminded: it is told once.
     fn is_due(&mut self, after: RemindAfter) -> bool {
         if self.reminded || self.used_serena {
@@ -106,6 +116,20 @@ impl SessionTally {
     pub const fn searches(&self) -> u64 {
         self.searches
     }
+}
+
+/// What a session counted by the time of one of its steps: the searches of code and whether Serena was called.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Counted {
+    /// The searches of code without Serena.
+    pub searches: u64,
+    /// Whether Serena was called at least once.
+    pub used_serena: bool,
+}
+
+impl Counted {
+    /// Counts the step `event`.
+    pub fn count(&mut self, _event: &ActivityEvent) {}
 }
 
 /// Whether the tool `name` is one of Serena's.

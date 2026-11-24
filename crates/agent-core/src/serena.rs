@@ -13,7 +13,7 @@ use crate::cli::ActivityEvent;
 mod tally;
 #[cfg(test)]
 mod tests;
-pub use tally::{DEFAULT_REMIND_AFTER, RemindAfter, RemindAfterError, Reminder, SessionTally};
+pub use tally::{Counted, DEFAULT_REMIND_AFTER, RemindAfter, RemindAfterError, Reminder, SessionTally};
 
 /// The extensions, without the dot and in lower case, of the files of code: the languages Serena's language servers read —
 /// Rust, Go, Python, TypeScript and JavaScript, Java, C and C++ with their headers, C#, Ruby, PHP, Kotlin and Swift — and
