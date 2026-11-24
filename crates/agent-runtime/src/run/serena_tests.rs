@@ -68,7 +68,7 @@ fn a_step_of_text_is_no_search_of_code() {
 }
 
 #[test]
-fn the_bound_of_zero_reminds_at_the_first_step_that_counts() {
+fn the_bound_of_one_reminds_at_the_first_step_that_counts() {
     let after = RemindAfter::new(1).expect("1 is a bound");
     let mut watch = SessionWatch::new(Some(after)).expect("the run has Serena");
 

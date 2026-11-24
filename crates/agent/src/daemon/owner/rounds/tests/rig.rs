@@ -700,12 +700,12 @@ impl Rig {
 mod tests;
 
 impl Rig {
-    /// Shares the injected daemon clock with the log layer in query tests.
     /// The injected clock of this rig, which another history written in the home reads the same way.
     pub(super) fn clock_of(&self) -> &TickingClock {
         &self.clock
     }
 
+    /// Shares the injected daemon clock with the log layer in query tests.
     pub(super) fn history_test_clock(&self) -> SharedClock {
         SharedClock::new(self.clock.clone())
     }
