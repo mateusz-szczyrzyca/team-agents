@@ -88,7 +88,6 @@ fn a_session_counts_the_searches_of_code_its_steps_make() {
 
 #[test]
 fn every_tool_of_serena_counts_whichever_way_the_cli_names_it() {
-    let mut counted = Counted::default();
     let steps = [
         "mcp__serena__find_symbol",
         "Serena.Find_Symbol",
@@ -98,11 +97,14 @@ fn every_tool_of_serena_counts_whichever_way_the_cli_names_it() {
         "read",
     ];
 
+    // Each step is counted alone: a counter that has read Serena once in an earlier step is no evidence of what a
+    // later step was.
     let told: Vec<bool> = steps
         .iter()
         .map(|name| {
-            counted.count(&call(name, "{}"));
-            counted.used_serena
+            let mut step = Counted::default();
+            step.count(&call(name, "{}"));
+            step.used_serena
         })
         .collect();
 
