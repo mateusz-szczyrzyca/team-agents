@@ -1582,6 +1582,14 @@ impl Owner {
             let cmd = CommandLine::try_from(words)?;
             mcp_servers.insert(McpServerKind::Agentbus, cmd);
 
+            // Everything fallible must finish before a job owns the workspace.
+            let recovery_enabled = self
+                .parts
+                .bus
+                .helper_recovery(request.id)
+                .await
+                .map_err(|error| Box::new(super::OwnerError::from(error)))?;
+            let started = Timestamp::now(&self.parts.clock)?;
             self.start_owned_request(&workspace, &run).await.map_err(Box::new)?;
             let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), worker_name);
             let job = RunJob {
@@ -1599,8 +1607,6 @@ impl Owner {
                 output: setup_output,
             };
 
-            let started = Timestamp::now(&self.parts.clock)?;
-
             self.record_pool_run(
                 worker_task.clone(),
                 Served {
@@ -1617,13 +1623,7 @@ impl Owner {
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
             self.spawn_job(worker_task.clone(), job, run_span);
 
-            if !self
-                .parts
-                .bus
-                .helper_recovery(request.id)
-                .await
-                .map_err(|error| Box::new(super::OwnerError::from(error)))?
-            {
+            if !recovery_enabled {
                 self.tell_bus(
                     team.id(),
                     request_update(request.id, DelegationStatus::Running, Some(worker_task.clone())),

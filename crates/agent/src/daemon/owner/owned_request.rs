@@ -81,15 +81,6 @@ impl Owner {
         if recovery::load(&dir, record.request).await?.is_none() {
             recovery::prepare(&dir, workspace).await?;
         }
-        recovery::advance(
-            &dir,
-            record.request,
-            Transition::Assigned {
-                workspace: workspace.clone(),
-                run: run.clone(),
-            },
-        )
-        .await?;
         let result = self
             .parts
             .bus
@@ -106,6 +97,15 @@ impl Owner {
         if result == OwnedOutcome::Stale {
             return Err(OwnerError::RequestOwnership);
         }
+        recovery::advance(
+            &dir,
+            record.request,
+            Transition::Assigned {
+                workspace: workspace.clone(),
+                run: run.clone(),
+            },
+        )
+        .await?;
         Ok(())
     }
 
