@@ -77,6 +77,10 @@ func (b *Bus) helperOwned(c ownedCommand) (ownedOutcome, *CmdHelperOwnedError) {
 			}
 			return nil
 		}
+		if h.Status == HelperQueued && c.Action == ownedRetry {
+			result = ownedReplay
+			return nil
+		}
 		if h.Status != HelperRunning {
 			return nil
 		}
