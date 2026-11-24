@@ -235,10 +235,17 @@ pub struct ToolCalls {
 
 impl ToolCalls {
     /// How many tool calls the run made, or `None` when its stream named no tool.
+    ///
+    /// A shell command the CLI streams as such, a message, a file edit and an error are not counted: the count is of
+    /// the calls of MCP tools — Serena's and agentbus's — and of the other tools a CLI runs, the steps of kind
+    /// `tool_call` and `bus_call` of the history.
     #[must_use]
-    pub const fn counted(&self) -> Option<usize> {
-        let _ = self;
-        None
+    pub fn counted(&self) -> Option<usize> {
+        let serena = u64::try_from(self.serena).ok()?;
+        let shell = u64::try_from(self.shell).ok()?;
+        let other = u64::try_from(self.other).ok()?;
+        let total = serena.checked_add(shell)?.checked_add(other)?;
+        usize::try_from(total).ok().filter(|total| *total > 0)
     }
 }
 
