@@ -1607,6 +1607,22 @@ func freePoolWorkers(helpers []*Helper, poolWorkers []string) int {
 	return freePoolWorkersState(st, poolWorkers)
 }
 
+// teamIsStopped reports whether a team is finished or all its members are in terminal states.
+func teamIsStopped(t *Team) bool {
+	if t.Done {
+		return true
+	}
+	if len(t.Members) == 0 {
+		return false
+	}
+	for _, m := range t.Members {
+		if m.State != MemberDone && m.State != MemberStopped && m.State != MemberExcluded {
+			return false
+		}
+	}
+	return true
+}
+
 // freePoolWorkersState observes full state (teams, active crews, running members, and unsettled helpers) to count free pool workers.
 func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) int {
 	if len(poolWorkers) == 0 {
@@ -1615,7 +1631,7 @@ func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) i
 	activeInCrew := map[string]bool{}
 	runningInTeams := map[string]bool{}
 	for _, team := range st.Teams {
-		if !team.Done {
+		if !teamIsStopped(team) {
 			for name, m := range team.Members {
 				if m.Tier == TierWorker {
 					activeInCrew[name] = true
@@ -1643,19 +1659,34 @@ func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) i
 		}
 	}
 	if len(tasksDir) > 0 && tasksDir[0] != "" {
-		matches, _ := filepath.Glob(filepath.Join(tasksDir[0], "*", "request-workspace-*.json"))
+		matches, err := filepath.Glob(filepath.Join(tasksDir[0], "*", "request-workspace-*.json"))
+		if err != nil {
+			logWarn(LogSideEffectFailed, "effect", "glob_workspace_records", "error", err.Error())
+			return 0
+		}
 		for _, m := range matches {
 			if strings.HasSuffix(m, ".damaged") {
 				continue
 			}
 			data, err := os.ReadFile(filepath.Clean(m)) //nolint:gosec // G304: reading internal workspace records in tasks directory
 			if err != nil {
-				continue
+				logWarn(LogSideEffectFailed, "effect", "read_workspace_record", "path", m, "error", err.Error())
+				for _, w := range poolWorkers {
+					unsettled[w] = true
+				}
+				break
 			}
 			var rec struct {
 				Worker string `json:"worker"`
 			}
-			if err := json.Unmarshal(data, &rec); err == nil && rec.Worker != "" {
+			if err := json.Unmarshal(data, &rec); err != nil {
+				logWarn(LogSideEffectFailed, "effect", "parse_workspace_record", "path", m, "error", err.Error())
+				for _, w := range poolWorkers {
+					unsettled[w] = true
+				}
+				break
+			}
+			if rec.Worker != "" {
 				unsettled[rec.Worker] = true
 			}
 		}
