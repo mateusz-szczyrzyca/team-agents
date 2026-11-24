@@ -51,6 +51,7 @@ fn sample_task() -> TaskSummaryFacts {
             other: 42,
         },
         earlier_tools: Vec::new(),
+        reminder: None,
         questions: Some(QuestionsSummaryFacts {
             has_unanswered: false,
             content: "All answered".to_owned(),
@@ -1224,10 +1225,12 @@ fn each_earlier_run_of_a_task_is_told_with_its_own_tool_calls_before_the_last_ru
                 shell: 2,
                 other: 3,
             },
+            reminder: None,
         },
         RunToolCalls {
             run: "run-20261117-130001-c3d4".parse().expect("valid run id"),
             tools: ToolCalls::default(),
+            reminder: None,
         },
     ];
 

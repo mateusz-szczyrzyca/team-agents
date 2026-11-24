@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use agent_core::cli::ActivityEvent;
 use agent_core::debug_summary::{
-    GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
+    GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts, ReminderFacts,
     RoundSummaryFacts, RunToolCalls, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
     ToolCalls,
 };
@@ -378,6 +378,7 @@ impl Collection {
             last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
             tools: agent_core::debug_summary::ToolCalls::default(),
             earlier_tools: Vec::new(),
+            reminder: None,
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -869,6 +870,7 @@ impl Collection {
                 .map(|run| RunToolCalls {
                     run: run.id().clone(),
                     tools: counted.get(run.id()).copied().unwrap_or_default(),
+                    reminder: None,
                 })
                 .collect();
             task_summary.tools = counted.get(last_run.id()).copied().unwrap_or_default();
