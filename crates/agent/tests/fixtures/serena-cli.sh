@@ -27,20 +27,19 @@ printf 'The thing.\n\n1. Do\n[x] 1.1 The work\n    Check: exists README.md\n' > 
 
 printf '{"type":"system","subtype":"init","session_id":"fake-session","model":"fake-model"}\n'
 if ((${#tools[@]})); then
-  # The work is a file of its own; the stand-in's files are hidden from git like the other stand-ins' ones.
-  exclude=$(git rev-parse --git-dir)/info/exclude
-  mkdir -p "$(dirname "$exclude")"
-  printf '.fake-*\n' >> "$exclude"
+  # The work is a file of its own, committed like the other stand-ins' work; the plan and this stand-in's files stay out
+  # of git's sight, so that the tree is clean.
+  exclude=$(git rev-parse --git-path info/exclude)
+  printf '%s\n' '.agent/plan.md' >> "$exclude"
   printf 'the work\n' > work.txt
   git add work.txt
-  for tool in "${tools[@]}"; do
-    printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"%s","input":{}}]}}\n' "$tool"
-  done
   git -c commit.gpgsign=false commit -q -m "Do the work"
   if [[ -n $gate ]]; then
     head=$(git rev-parse HEAD)
-    printf '{"head":"%s","tree":"clean","finished_at":"%s","outcome":"passed"}\n' "$head" \
-      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$gate"
+    dir=$(dirname "$gate")
+    mkdir -p "$dir"
+    printf '{"tree":"clean","result":{"head":"%s","finished_at":"%s","outcome":{"kind":"passed"},"log":"%s/gate-1.log"}}\n' "$head" \
+      "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$dir" > "$gate"
   fi
 fi
 printf '{"type":"result","subtype":"success","is_error":false,"result":"Finished.\\n%s","session_id":"fake-session"}\n' "$status"

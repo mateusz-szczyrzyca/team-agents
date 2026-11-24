@@ -5,6 +5,7 @@
 #[cfg(test)]
 mod serena_prompt {
     use std::fmt::Write as _;
+    use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Output, Stdio};
     use std::time::{Duration, Instant};
@@ -303,6 +304,10 @@ mod serena_prompt {
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let task = first_task(&output);
         world.task_ended(&task);
+        // `agent debug` reads the secrets file to redact what it holds; this home has no secret.
+        let secrets = world.home.join("secrets.toml");
+        std::fs::write(&secrets, "").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
         let bundle = tempfile::tempdir().unwrap();
 
         let output = world.agent(&["debug", "--task", &task, "--out", bundle.path().to_str().unwrap()]);
