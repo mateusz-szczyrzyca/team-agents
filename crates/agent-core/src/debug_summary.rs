@@ -661,7 +661,10 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, zone: Zone, out
 /// name no tool.
 fn tool_calls_text(tools: &ToolCalls) -> String {
     match tools.counted() {
-        Some(total) => format!("{total} (serena {}, shell {}, other {})", tools.serena, tools.shell, tools.other),
+        Some(total) => format!(
+            "{total} (serena {}, shell {}, other {})",
+            tools.serena, tools.shell, tools.other
+        ),
         None => "none recorded".to_owned(),
     }
 }
@@ -677,7 +680,11 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
         for earlier in &t.earlier_tools {
             write_line(
                 out,
-                &format!("- Tool calls of run `{}`: {}", earlier.run, tool_calls_text(&earlier.tools)),
+                &format!(
+                    "- Tool calls of run `{}`: {}",
+                    earlier.run,
+                    tool_calls_text(&earlier.tools)
+                ),
             );
         }
         write_line(out, &format!("- Tool calls: {}", tool_calls_text(&t.tools)));
