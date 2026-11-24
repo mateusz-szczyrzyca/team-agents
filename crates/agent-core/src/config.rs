@@ -13,7 +13,8 @@ mod replacement_tests;
 mod restart;
 mod session;
 pub use restart::{Restart, RestartSession};
-pub use session::{ContextKey, DEFAULT_MAX_CONTEXT, Session, check_context, context_bound};
+use session::check_context;
+pub use session::{ContextKey, DEFAULT_MAX_CONTEXT, Session, context_bound};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -1084,6 +1085,10 @@ impl RawConfig {
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
+        replacement::check(replacement.agents(), &agents, &investigators)?;
+        check_list(Tier::Normal, &normal, &agents)?;
+        check_list(Tier::Worker, &worker_names, &agents)?;
+        check_tiers(&normal, &worker_names, &agents, &investigators)?;
         // The key is checked after the lists, so that the first thing a file is refused for is a list that does not
         // fit its agents; no file written before this key had it, so no existing configuration is refused.
         for (name, agent) in &agents {
@@ -1092,10 +1097,6 @@ impl RawConfig {
         for (name, investigator) in &investigators {
             check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
         }
-        replacement::check(replacement.agents(), &agents, &investigators)?;
-        check_list(Tier::Normal, &normal, &agents)?;
-        check_list(Tier::Worker, &worker_names, &agents)?;
-        check_tiers(&normal, &worker_names, &agents, &investigators)?;
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews
             && required.get() > investigators.len()

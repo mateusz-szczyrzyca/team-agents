@@ -60,7 +60,7 @@ impl ContextKey {
 ///
 /// # Errors
 /// [`ConfigError::AgentContextZero`] for `0`, naming the section, the agent and the key.
-pub fn check_context(key: ContextKey, name: &str, context: Option<u64>) -> Result<(), ConfigError> {
+pub(super) fn check_context(key: ContextKey, name: &str, context: Option<u64>) -> Result<(), ConfigError> {
     match context {
         Some(0) => Err(ConfigError::AgentContextZero {
             key,

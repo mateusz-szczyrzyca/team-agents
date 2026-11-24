@@ -142,12 +142,17 @@ struct ModelEntry {
     limit: Option<ModelLimit>,
 }
 
+/// The value opencode itself gives the output limit of a model nobody told it: the published schema requires `output`
+/// next to `context`, and the harness does not know it.
+const UNKNOWN_OUTPUT_LIMIT: u64 = 0;
+
 /// The limit of a model in opencode's configuration: its context window in tokens.
 #[derive(Debug, Serialize)]
 struct ModelLimit {
-    /// The context window in tokens; the schema has `input` and `output` too, both optional, so opencode keeps its
-    /// own for them.
+    /// The context window in tokens.
     context: u64,
+    /// The most tokens the model writes; [`UNKNOWN_OUTPUT_LIMIT`], since the agent's `context` says nothing of it.
+    output: u64,
 }
 
 /// The provider `known` for a run of `model`: the model is registered under it when it is one of its own.
@@ -169,7 +174,10 @@ fn provider(known: &KnownProvider, model: Option<&str>, context: Option<u64>) ->
                     name.to_owned(),
                     ModelEntry {
                         name: name.to_owned(),
-                        limit: context.map(|context| ModelLimit { context }),
+                        limit: context.map(|context| ModelLimit {
+                            context,
+                            output: UNKNOWN_OUTPUT_LIMIT,
+                        }),
                     },
                 )
             })
