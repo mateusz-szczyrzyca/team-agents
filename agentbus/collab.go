@@ -1040,9 +1040,17 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 		s.touch(st)
 		// A request for a step of a plan is checked in the transaction that queues it: two requests at once cannot
 		// both take the last free worker.
-		if team := st.Teams[s.team]; named.Step != "" && team != nil && freeWorkers(team, sortedHelpers(st)) <= 0 {
-			return opErr(DelegateNoFreeWorker, "no worker of your team is free now: do step %s yourself, or ask again "+
-				"for a later step", named.Step)
+		if named.Step != "" {
+			team := st.Teams[s.team]
+			if team != nil || len(s.workers) > 0 {
+				if freeWorkers(team, sortedHelpers(st), s.workers...) <= 0 {
+					msg := fmt.Sprintf("no worker of the pool is free now (no worker of your team is free): do step %s yourself, or ask again for a later step", named.Step)
+					if team != nil && teamHasWorkers(team) {
+						msg = fmt.Sprintf("no worker of your team is free now: do step %s yourself, or ask again for a later step", named.Step)
+					}
+					return opErr(DelegateNoFreeWorker, "%s", msg)
+				}
+			}
 		}
 		st.NextHelperID++
 		if follows != 0 {
@@ -1525,15 +1533,22 @@ func cmdClaimLead(args []string) {
 	fmt.Println(out)
 }
 
-// freeWorkers counts the workers of team or the pool that could take one more request of the team now: the workers whose task
-// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
-// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
-// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
-// the request was given to (while that is not yet recorded, the worker counts as serving here).
-func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
+// teamHasWorkers reports whether team has any members in the worker tier.
+func teamHasWorkers(team *Team) bool {
 	if team == nil {
-		return 0
+		return false
 	}
+	for _, m := range team.Members {
+		if m.Tier == TierWorker {
+			return true
+		}
+	}
+	return false
+}
+
+// freeTeamWorkers counts the workers of team that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them.
+func freeTeamWorkers(team *Team, helpers []*Helper) int {
 	tasks := map[string]bool{}
 	for _, m := range team.Members {
 		tasks[m.Task] = true
@@ -1566,6 +1581,46 @@ func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
 		}
 	}
 	return free - waiting
+}
+
+// freePoolWorkers reports how many pool workers are free to take a request of a step of a plan;
+// zero or below when a new request would wait.
+func freePoolWorkers(helpers []*Helper, poolWorkers []string) int {
+	if len(poolWorkers) == 0 {
+		return 0
+	}
+	serving := map[string]bool{}
+	waiting := 0
+	for _, h := range helpers {
+		switch h.Status {
+		case HelperStarting, HelperRunning:
+			if h.Worker != "" {
+				serving[h.Worker] = true
+			}
+		case HelperQueued:
+			waiting++
+		case HelperDone, HelperFailed, HelperUnclear:
+		}
+	}
+	free := 0
+	for _, name := range poolWorkers {
+		if !serving[name] {
+			free++
+		}
+	}
+	return free - waiting
+}
+
+// freeWorkers counts the workers of team or the pool that could take one more request of the team now: the workers whose task
+// waits (asleep on the bus) and serve no request of the team, less the team's requests still queued for them. It is
+// zero or below when a new request would wait. An agent may be in several teams: a request belongs to the team of its
+// requester's task (a request recorded without one, to the team of its requester), and a worker serves in the task
+// the request was given to (while that is not yet recorded, the worker counts as serving here).
+func freeWorkers(team *Team, helpers []*Helper, poolWorkers ...string) int {
+	if team != nil && teamHasWorkers(team) {
+		return freeTeamWorkers(team, helpers)
+	}
+	return freePoolWorkers(helpers, poolWorkers)
 }
 
 // workerWaits reports whether a worker in state waits for work: only such a worker is given a request by the daemon.

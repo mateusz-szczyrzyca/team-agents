@@ -57,4 +57,3 @@ func TestServeParsesPoolWorkers(t *testing.T) {
 		t.Fatalf("unexpected workers: %+v", s.workers)
 	}
 }
-

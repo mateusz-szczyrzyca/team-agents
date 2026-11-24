@@ -1278,6 +1278,13 @@ func (f serveFlags) server(r Role, tr Tier, out *json.Encoder) *Server {
 	if s.tasksDir == "" {
 		s.tasksDir = filepath.Join(filepath.Dir(*f.dir), "tasks")
 	}
+	if *f.workers != "" {
+		for _, w := range strings.Split(*f.workers, ",") {
+			if w = strings.TrimSpace(w); w != "" {
+				s.workers = append(s.workers, w)
+			}
+		}
+	}
 	return s
 }
 

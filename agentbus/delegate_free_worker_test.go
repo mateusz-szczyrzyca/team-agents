@@ -198,4 +198,3 @@ func TestDelegateWithAPlanSoloRequesterWithPoolWorkers(t *testing.T) {
 		t.Fatalf("expected pool refusal message, got: %q", err.Message)
 	}
 }
-
