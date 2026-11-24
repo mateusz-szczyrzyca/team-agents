@@ -257,7 +257,7 @@ async fn a_committed_step_of_the_workspace_is_brought_over_to_the_requesters_end
 // ---- failure and recovery branches -------------------------------------------------------------------------------
 
 #[tokio::test]
-async fn prepare_leaves_an_orphan_worktree_when_the_record_cannot_be_written() {
+async fn prepare_rolls_the_worktree_and_branch_back_when_the_record_cannot_be_written() {
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
@@ -277,18 +277,18 @@ async fn prepare_leaves_an_orphan_worktree_when_the_record_cannot_be_written() {
         "{refused:?}"
     );
 
-    // The worktree and its branch are left behind: a later release can still clean them up.
+    // The worktree and its branch are rolled back: a failed prepare leaves nothing behind.
     let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
-    assert!(worktree.exists(), "the worktree stays");
+    assert!(!worktree.exists(), "the worktree is rolled back");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
     assert!(
-        branches.lines().any(|line| line == workspace.branch.as_str()),
-        "the branch stays: {branches}"
+        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        "the branch is rolled back: {branches}"
     );
 }
 
 #[tokio::test]
-async fn release_that_cannot_remove_the_record_leaves_the_worktree_gone() {
+async fn a_partial_release_can_be_retried_to_completion() {
     let fixture = Fixture::new();
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
@@ -319,6 +319,18 @@ async fn release_that_cannot_remove_the_record_leaves_the_worktree_gone() {
         "the branch was removed before the failure: {branches}"
     );
     assert!(record.exists(), "the record is still there");
+
+    // A later release retries the release and completes it: the already-removed worktree and branch and the
+    // now-removed record are not failures again.
+    std::fs::remove_dir(&record).unwrap();
+    release_workspace(&home, &requester_git, &workspace).await.unwrap();
+    assert!(!record.exists(), "the retried release removed the record");
+    assert!(!worktree.exists(), "the retried release leaves the worktree gone");
+    let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
+    assert!(
+        !branches.lines().any(|line| line == workspace.branch.as_str()),
+        "the retried release leaves the branch gone: {branches}"
+    );
 }
 
 #[tokio::test]
