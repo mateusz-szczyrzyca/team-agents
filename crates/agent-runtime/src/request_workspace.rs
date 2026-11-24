@@ -15,8 +15,8 @@
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use agent_core::config::{AbsolutePath, RepoName};
-use agent_core::ids::{AgentName, BranchName, RoundId, TaskId};
+use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
+use agent_core::ids::{AgentName, BranchName, InvalidBranchName, RoundId, TaskId};
 use agent_core::state::CommitId;
 use serde::{Deserialize, Serialize};
 
@@ -71,9 +71,36 @@ pub enum WorkspaceError {
         /// The number of the request it holds.
         found: std::num::NonZeroU64,
     },
-    /// A name the workspace needs cannot be read from its text.
-    #[error("cannot read a name: {0:?}")]
-    Name(String),
+    /// A branch of the workspace cannot be read from its text.
+    #[error("the branch of the workspace of {worker} in {task} cannot be read from its text")]
+    Branch {
+        /// The worker.
+        worker: AgentName,
+        /// The worker's task.
+        task: TaskId,
+        /// The failure.
+        source: InvalidBranchName,
+    },
+    /// The worktree of the workspace cannot be read from its path: the path is not UTF-8 text.
+    #[error("the worktree of {task} in {repo} is not UTF-8 text at {path:?}")]
+    NotText {
+        /// The repository.
+        repo: RepoName,
+        /// The task.
+        task: TaskId,
+        /// The path.
+        path: PathBuf,
+    },
+    /// The worktree of the workspace cannot be read from its path: it is not an absolute path.
+    #[error("the worktree of {task} in {repo} is not an absolute path")]
+    NotAbsolute {
+        /// The repository.
+        repo: RepoName,
+        /// The task.
+        task: TaskId,
+        /// The failure.
+        source: InvalidValue,
+    },
     /// A workspace cannot be written as JSON.
     #[error("the workspace cannot be written as JSON")]
     Encode(#[source] serde_json::Error),
@@ -90,23 +117,33 @@ pub enum WorkspaceError {
 /// The branch of the workspace a worker serves a request in, in the requester's repository.
 ///
 /// # Errors
-/// [`WorkspaceError::Name`] when the names make no branch.
+/// [`WorkspaceError::Branch`] when the names make no branch.
 pub fn branch(worker: &AgentName, task: &TaskId) -> Result<BranchName, WorkspaceError> {
     format!("agents/{worker}/{task}")
         .parse()
-        .map_err(|source| WorkspaceError::Name(format!("a branch of a request's workspace: {source}")))
+        .map_err(|source| WorkspaceError::Branch {
+            worker: worker.clone(),
+            task: task.clone(),
+            source,
+        })
 }
 
 /// The absolute path of the worktree of the worker task `task` of the requester's repository `repo` in the `home`.
 ///
 /// # Errors
-/// [`WorkspaceError::Name`] when the path is not UTF-8 text or not absolute.
+/// [`WorkspaceError::NotText`] when the path is not UTF-8 text; [`WorkspaceError::NotAbsolute`] when it is not absolute.
 pub fn worktree_of(home: &Home, repo: &RepoName, task: &TaskId) -> Result<AbsolutePath, WorkspaceError> {
     let path = home.worktree_dir(repo, task);
-    let text = path
-        .to_str()
-        .ok_or_else(|| WorkspaceError::Name(format!("the worktree of {task} in {repo}")))?;
-    AbsolutePath::from_str(text).map_err(|source| WorkspaceError::Name(format!("the worktree of {task}: {source}")))
+    let text = path.to_str().ok_or_else(|| WorkspaceError::NotText {
+        repo: repo.clone(),
+        task: task.clone(),
+        path: path.clone(),
+    })?;
+    AbsolutePath::from_str(text).map_err(|source| WorkspaceError::NotAbsolute {
+        repo: repo.clone(),
+        task: task.clone(),
+        source,
+    })
 }
 
 /// A request's workspace: the worker, its task and worktree, in the requester's repository at the requester's commit.
@@ -135,7 +172,7 @@ pub struct RequestWorkspace {
     /// The branch of the workspace's worktree.
     pub branch: BranchName,
     /// The commit the requester's worktree was at when it was committed; the workspace's worktree starts here.
-    pub base: String,
+    pub base: CommitId,
     /// How far its request's result got; each stage is kept as the harness settles it.
     pub stage: Stage,
 }
@@ -172,14 +209,24 @@ pub fn request_of_file(path: &Path) -> Option<RequestId> {
     digits.parse::<std::num::NonZeroU64>().ok().map(RequestId::new)
 }
 
+/// The file of `workspace` in the requester's task directory `task_dir` and the text written to it.
+///
+/// # Errors
+/// [`WorkspaceError::Encode`] when the workspace cannot be made JSON.
+fn file_and_text(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(PathBuf, String), WorkspaceError> {
+    let path = path_of(task_dir, workspace.request);
+    let text = serde_json::to_string_pretty(workspace).map_err(WorkspaceError::Encode)?;
+    Ok((path, text))
+}
+
 /// Writes `workspace` to its file in the requester's task directory `task_dir`, through a temporary file, so that a
-/// reader never sees half of it.
+/// reader never sees half of it. A blocking write is the simplest that is also atomic; the async [`prepare`] writes
+/// the record of a new workspace with `tokio::fs` the same way.
 ///
 /// # Errors
 /// [`WorkspaceError::Write`] when the file cannot be written; [`WorkspaceError::Encode`] when it cannot be made JSON.
 pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let path = path_of(task_dir, workspace.request);
-    let text = serde_json::to_string_pretty(workspace).map_err(WorkspaceError::Encode)?;
+    let (path, text) = file_and_text(task_dir, workspace)?;
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, text).map_err(|source| WorkspaceError::Write {
         request: workspace.request,
@@ -272,18 +319,12 @@ async fn read_one(path: &Path) -> Result<RequestWorkspace, WorkspaceError> {
 /// # Errors
 /// [`WorkspaceError`] when the worktree cannot be added, or the record cannot be saved.
 pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let base: CommitId = workspace.base.parse().map_err(|source| {
-        WorkspaceError::Name(format!(
-            "the base commit of the workspace of {}: {source}",
-            workspace.request
-        ))
-    })?;
     let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
     git.worktree_add(
         &worktree,
         &WorktreeBranch::New {
             branch: workspace.branch.clone(),
-            start: Revision::Commit(base),
+            start: Revision::Commit(workspace.base.clone()),
         },
     )
     .await
@@ -292,11 +333,26 @@ pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Re
         source,
     })?;
     let task_dir = home.task_dir(&workspace.requester_task);
-    std::fs::create_dir_all(&task_dir).map_err(|source| WorkspaceError::Write {
-        request: workspace.request,
-        source,
-    })?;
-    save(&task_dir, workspace)
+    tokio::fs::create_dir_all(&task_dir)
+        .await
+        .map_err(|source| WorkspaceError::Write {
+            request: workspace.request,
+            source,
+        })?;
+    let (path, text) = file_and_text(&task_dir, workspace)?;
+    let temporary = path.with_extension("json.tmp");
+    tokio::fs::write(&temporary, text)
+        .await
+        .map_err(|source| WorkspaceError::Write {
+            request: workspace.request,
+            source,
+        })?;
+    tokio::fs::rename(&temporary, &path)
+        .await
+        .map_err(|source| WorkspaceError::Write {
+            request: workspace.request,
+            source,
+        })
 }
 
 /// Releases the workspace of `request` in the `home`: removes its worktree and its branch, and the record of it kept in
