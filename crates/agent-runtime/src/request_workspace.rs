@@ -88,11 +88,13 @@ pub enum WorkspaceError {
 }
 
 /// The branch of the workspace a worker serves a request in, in the requester's repository.
-#[must_use]
+///
+/// # Errors
+/// [`WorkspaceError::Name`] when the names make no branch.
 pub fn branch(worker: &AgentName, task: &TaskId) -> Result<BranchName, WorkspaceError> {
     format!("agents/{worker}/{task}")
         .parse()
-        .map_err(|_| WorkspaceError::Name("a branch of a request's workspace".to_owned()))
+        .map_err(|source| WorkspaceError::Name(format!("a branch of a request's workspace: {source}")))
 }
 
 /// The absolute path of the worktree of the worker task `task` of the requester's repository `repo` in the `home`.
@@ -162,7 +164,11 @@ fn is_workspace_name(name: &str) -> bool {
 /// The request whose workspace's file is `path`, from its name alone; `None` when the name is not of the form.
 #[must_use]
 pub fn request_of_file(path: &Path) -> Option<RequestId> {
-    let digits = path.file_name()?.to_str()?.strip_prefix(FILE_PREFIX)?.strip_suffix(".json")?;
+    let digits = path
+        .file_name()?
+        .to_str()?
+        .strip_prefix(FILE_PREFIX)?
+        .strip_suffix(".json")?;
     digits.parse::<std::num::NonZeroU64>().ok().map(RequestId::new)
 }
 
@@ -266,9 +272,12 @@ async fn read_one(path: &Path) -> Result<RequestWorkspace, WorkspaceError> {
 /// # Errors
 /// [`WorkspaceError`] when the worktree cannot be added, or the record cannot be saved.
 pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
-    let base: CommitId = workspace.base
-        .parse()
-        .map_err(|source| WorkspaceError::Name(format!("the base commit of the workspace of {}: {source}", workspace.request)))?;
+    let base: CommitId = workspace.base.parse().map_err(|source| {
+        WorkspaceError::Name(format!(
+            "the base commit of the workspace of {}: {source}",
+            workspace.request
+        ))
+    })?;
     let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
     git.worktree_add(
         &worktree,

@@ -13,7 +13,9 @@ use agent_core::state::CommitId;
 
 use crate::agentbus::RequestId;
 use crate::git::{CommitIdentity, Git};
-use crate::request_workspace::{RequestWorkspace, Stage, branch, prepare as prepare_workspace, read_each, release as release_workspace, save};
+use crate::request_workspace::{
+    RequestWorkspace, Stage, branch, prepare as prepare_workspace, read_each, release as release_workspace, save,
+};
 use crate::store::Home;
 
 const ROUND: &str = "round-20261124-090000-aaaa";
@@ -48,7 +50,10 @@ fn raw(dir: &Path, args: &[&str]) -> String {
         "git {args:?} failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout).expect("git prints text").trim_end_matches('\n').to_owned()
+    String::from_utf8(output.stdout)
+        .expect("git prints text")
+        .trim_end_matches('\n')
+        .to_owned()
 }
 
 fn abs(path: &Path) -> AbsolutePath {
@@ -56,13 +61,16 @@ fn abs(path: &Path) -> AbsolutePath {
 }
 
 fn handle(dir: &Path) -> Git {
-    Git::new(abs(dir), CommitIdentity::new("t".to_owned(), "t@example.com".to_owned(), None))
+    Git::new(
+        abs(dir),
+        CommitIdentity::new("t".to_owned(), "t@example.com".to_owned(), None),
+    )
 }
 
 /// A repository with one commit on `main`, in a temporary directory; the temporary directory keeps it alive.
 struct Fixture {
     /// Keeps the directory alive.
-    _tmp: tempfile::TempDir,
+    tmp: tempfile::TempDir,
     /// The repository.
     repo: PathBuf,
 }
@@ -76,7 +84,7 @@ impl Fixture {
         std::fs::write(repo.join("a.txt"), "one\n").unwrap();
         raw(&repo, &["add", "a.txt"]);
         raw(&repo, &["commit", "-q", "-m", "First"]);
-        Self { _tmp: tmp, repo }
+        Self { tmp, repo }
     }
 
     fn head(&self) -> CommitId {
@@ -105,10 +113,13 @@ fn workspace(number: u64) -> RequestWorkspace {
 #[tokio::test]
 async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository() {
     let fixture = Fixture::new();
-    let home = Home::new(&abs(fixture._tmp.path()));
+    let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
     let workspace = workspace(1);
-    let workspace = RequestWorkspace { base: base.to_string(), ..workspace };
+    let workspace = RequestWorkspace {
+        base: base.to_string(),
+        ..workspace
+    };
 
     // The requester has uncommitted work in its own worktree, which the workspace must not touch.
     let requester_worktree = home.worktree_dir(&workspace.requester_repo, &workspace.requester_task);
@@ -116,9 +127,7 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
     std::fs::write(requester_worktree.join("dirty.txt"), "not committed\n").unwrap();
 
     let requester_git = handle(&fixture.repo);
-    prepare_workspace(&home, &requester_git, &workspace)
-        .await
-        .unwrap();
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
 
     let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
     assert!(worktree.exists(), "the workspace's worktree is there");
@@ -129,7 +138,10 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
         workspace.branch.as_str(),
         "on a branch of its own"
     );
-    assert!(!worktree.join("dirty.txt").exists(), "isolated from the requester's uncommitted files");
+    assert!(
+        !worktree.join("dirty.txt").exists(),
+        "isolated from the requester's uncommitted files"
+    );
     assert!(worktree.join("a.txt").exists(), "has the requester's committed files");
 
     let task_dir = home.task_dir(&workspace.requester_task);
@@ -144,19 +156,18 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
 #[tokio::test]
 async fn releasing_removes_the_worktree_branch_and_record() {
     let fixture = Fixture::new();
-    let home = Home::new(&abs(fixture._tmp.path()));
+    let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
-    let workspace = RequestWorkspace { base: base.to_string(), ..workspace(2) };
+    let workspace = RequestWorkspace {
+        base: base.to_string(),
+        ..workspace(2)
+    };
     let requester_git = handle(&fixture.repo);
-    prepare_workspace(&home, &requester_git, &workspace)
-        .await
-        .unwrap();
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
     let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
     assert!(worktree.exists());
 
-    release_workspace(&home, &requester_git, &workspace)
-        .await
-        .unwrap();
+    release_workspace(&home, &requester_git, &workspace).await.unwrap();
 
     assert!(!worktree.exists(), "the workspace's worktree is gone");
     let branches = raw(&fixture.repo, &["branch", "--format=%(refname:short)"]);
@@ -177,12 +188,6 @@ async fn a_workspace_record_saves_and_reads_back() {
 
     save(&task_dir, &workspace).unwrap();
 
-    let read = read_each(&task_dir)
-        .await
-        .unwrap()
-        .into_iter()
-        .next()
-        .unwrap()
-        .unwrap();
+    let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
     assert_eq!(read, workspace);
 }
