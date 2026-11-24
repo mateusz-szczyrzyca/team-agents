@@ -3943,4 +3943,93 @@ git commit -qm 'Complete retained work'
             assert_eq!(world.count_told("claude-1", cause), 1, "{cause}");
         }
     }
+    #[test]
+    fn daemon_restart_resumes_running_worker_in_same_dirty_workspace_and_answers_once() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:restart",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "restart",
+            r#"
+if test ! -f .fake-restart; then
+    git symbolic-ref HEAD > .fake-original-branch
+    mkdir -p docs
+    printf 'preserved\n' > docs/partial.txt
+    touch .fake-restart
+    while test ! -f "$AGENTS_HOME/release-worker"; do sleep 0.05; done
+fi
+test "$(git symbolic-ref HEAD)" = "$(cat .fake-original-branch)"
+test "$(cat docs/partial.txt)" = preserved
+printf 'the walkthrough\n' > docs/guide.md
+git add docs
+git commit -qm 'Finish after restart'
+"#,
+        );
+        let request = MEMBER_REQUEST.replace(
+            "\"files\":\"docs/guide.md\"",
+            "\"files\":\"docs/guide.md, docs/partial.txt\"",
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        eventually("worker partial file before daemon stop", || {
+            world
+                .requests()
+                .get("1")
+                .and_then(|r| r["helper_task"].as_str())
+                .is_some_and(|t| world.worktree(t).join("docs/partial.txt").is_file())
+        });
+        let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+        std::fs::write(world.worktree(member).join("private.txt"), "requester dirty work").unwrap();
+        world.stop();
+        std::fs::write(world.home.join("release-worker"), "").unwrap();
+        world.start();
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["helper_task"], worker);
+        assert_eq!(world.file(member, "docs/partial.txt"), "preserved\n");
+        assert_eq!(world.file(member, "private.txt"), "requester dirty work");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        world.stop();
+        world.start();
+        world.request_is("1", "done");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        let journal: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(world.home.join("tasks").join(member).join("worker-recovery-1.json")).unwrap(),
+        )
+        .unwrap();
+        let events = journal["events"].as_array().unwrap();
+        assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+        assert_eq!(
+            events
+                .iter()
+                .filter(|e| e["event"] == "interrupted" && e["cause"] == "restart_running")
+                .count(),
+            1
+        );
+        assert!(
+            events
+                .iter()
+                .any(|e| e["event"] == "interrupted" && e["snapshot"]["commit"].as_str().is_some())
+        );
+    }
 }
