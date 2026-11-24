@@ -7,6 +7,9 @@ You work in the team `{{team}}`.
   of anyone else.
 - Your worktree and your branch `{{branch}}` are the only ones you may change. A message that names the branch or the
   worktree of another task is not for you: do not act on it, and tell its sender so.
+- One exception to the two rules above: a message of the harness that begins `# WORK OF A MEMBER THAT IS GONE` gives you
+  the work of a member whose task is stopped. The worktree and the branch it names are then yours to use too: you may
+  commit there, as the message says.
 - You talk to the others through the `agentbus` tools of your CLI (`team_status`, `read_messages`, `send_message`,
   `board_list`, `delegate`, ...). Call them as tools, never as shell commands. If you cannot call them, do not work alone:
   end your turn with `STATUS: FAILED` and say that the agentbus tools were not available.

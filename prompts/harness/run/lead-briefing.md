@@ -3,6 +3,8 @@
 The harness recorded why its last runs went bad as `{{reason}}`: `no_status` — they ended without a `STATUS:` line;
 `hang` — they showed no activity until the watchdog stopped them; `turn_limit` — they used up their turn budget;
 `daemon_down` — the daemon went down while they were going: they were cut from outside, not by the agent's fault.
+`failed` — the member's last run reported `STATUS: FAILED` after it used the bus's tools: it said that it could not finish
+the work, and what it said is given below.
 
 The runs of the member's work, oldest first, each with the agent that ran it and how it ended (none when the list is
 empty):
@@ -40,3 +42,6 @@ The messages to the member that no run of it read, oldest first (none when the l
 {{left_out}}
 
 {{messages}}
+
+The member's worktree and branch are yours to use now: you may commit there. Commit the files listed as uncommitted above
+first, as they are, then integrate the branch into yours.

@@ -107,6 +107,24 @@ pub(super) fn last_message_paragraph(
     Ok(texts.render(heading, &values)?)
 }
 
+/// The section that ends a lead's briefing of a member's work: what the member's last run said at its end, with the note
+/// that the history cut it when it did.
+///
+/// # Errors
+/// [`ComposeError`] when the section cannot be filled.
+pub(super) fn lead_last_message_paragraph(
+    texts: &HarnessPrompts,
+    message: &LastMessage,
+) -> Result<String, ComposeError> {
+    let values = Variables::new().with("message", message.text.as_str())?;
+    let mut paragraph = texts.render(HarnessPrompt::LeadBriefingLastMessage, &values)?;
+    if let MessageSource::History { cut_at: Some(limit) } = message.source {
+        paragraph.push_str("\n\n");
+        paragraph.push_str(&message_cut_paragraph(texts, limit)?);
+    }
+    Ok(paragraph)
+}
+
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
 
@@ -508,7 +526,7 @@ impl Owner {
         for (task, trouble) in owed {
             self.leads_being_told.insert(task.clone());
             let briefing = match self.gather_facts(&task, trouble).await {
-                Ok(Some(draft)) => match draft.render_for_lead(&self.parts.texts, &task) {
+                Ok(Some(draft)) => match self.lead_briefing_text(&draft, &task).await {
                     Ok(text) => Some(text),
                     Err(error) => {
                         tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
@@ -546,6 +564,27 @@ impl Owner {
                 }
             }
         }
+    }
+
+    /// The briefing of `task`'s work for its lead: the facts `draft` holds and, when the history knows one, what the member's
+    /// last run said at its end, whole. A message that cannot be read is left out and logged: the lead still has the rest.
+    ///
+    /// # Errors
+    /// [`ComposeError`] when a text cannot be filled.
+    async fn lead_briefing_text(&self, draft: &BriefingDraft, task: &TaskId) -> Result<String, ComposeError> {
+        let mut text = draft.render_for_lead(&self.parts.texts, task)?;
+        match self.last_final_message(task).await {
+            Ok(Some(message)) => {
+                text.push_str("\n\n");
+                text.push_str(&lead_last_message_paragraph(&self.parts.texts, &message)?);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
+                    error = %error_chain(&error), "what the member's last run said cannot be read for its lead");
+            }
+        }
+        Ok(text)
     }
 
     /// Takes the snapshot of `worktree` for `task` of `round`, records it in the history, and returns its reference.
