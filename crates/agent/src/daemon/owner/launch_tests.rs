@@ -88,3 +88,53 @@ async fn launch_guard_refuses_full_process_slots_and_low_disk_then_recovers() {
     space.set(200 * GIBIBYTE);
     assert!(owner.launch_allowed().await);
 }
+
+#[tokio::test]
+async fn pool_dispatch_keeps_requests_unclaimed_until_launch_guards_allow_them() {
+    use agent_runtime::disk::{FakeFreeSpace, GIBIBYTE, SharedFreeSpace};
+    use std::os::unix::fs::PermissionsExt;
+
+    let scripts = tempfile::tempdir().unwrap();
+    let bus = scripts.path().join("bus");
+    let claimed = scripts.path().join("claimed");
+    std::fs::write(&bus, r#"#!/bin/sh
+case "$*" in
+ *helper-list*) printf '%s\n' '[{"id":1,"from":"claude-1","from_task":"task-20261122-120000-aaaa","repo":"team-agents","branch":"main","status":"queued"}]' ;;
+ *helper-next*) touch "$(dirname "$0")/claimed" ;;
+ *) exit 1 ;;
+esac
+"#).unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let daemon = Daemon::new(&pair_state(), Some(&bus));
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        config.replace(
+            "[tiers]",
+            "[agents.glm-1]\ncli = \"claude\"\n[tiers]\nworkers = [\"glm-1\"]",
+        ),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let space = FakeFreeSpace::new(0);
+    owner.parts.free_space = SharedFreeSpace::new(space.clone());
+
+    owner.serve_pool_requests().await.unwrap();
+    assert!(!claimed.exists(), "low disk must not claim a queued request");
+    assert!(owner.serving.is_empty());
+    space.set(200 * GIBIBYTE);
+    for _ in 0..super::MAX_RUNS.get() {
+        owner.runs.spawn(std::future::pending());
+    }
+    owner.serve_pool_requests().await.unwrap();
+    assert!(!claimed.exists(), "full process slots must not claim a queued request");
+    owner.runs.abort_all();
+    while let Some(joined) = owner.runs.join_next().await {
+        assert!(joined.unwrap_err().is_cancelled());
+    }
+    owner.serve_pool_requests().await.unwrap();
+    assert!(
+        claimed.exists(),
+        "the queued request becomes claimable when both guards recover"
+    );
+}
