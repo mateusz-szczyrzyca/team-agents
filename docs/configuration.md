@@ -139,18 +139,23 @@ Serena's language servers read — `rs`, `go`, `py`, `pyi`, `ts`, `tsx`, `js`, `
 `cc`, `cpp`, `cxx`, `hpp`, `hh`, `cs`, `rb`, `php`, `kt`, `kts`, `swift`, `sh`, `bash`, `zsh`, `sql`, `ex`, `exs`,
 `erl`, `lua`, `pl` — and the shell, SQL, Elixir, Erlang and Lua that a repository of these agents holds too. A search
 over a directory of code counts as well: `.`, or a path with one of `src`, `crates`, `lib`, `cmd`, `pkg`, `internal`,
-`app`, `tests`, `test`, `tools`, `bin`, `agentbus` among its parts (`grep -rn x crates/`, `Grep` over `src`), unless the
-line pipes the result on to another command (`rg x src | sort`) and for `find`, whose directories only say where it
-looks; a `Glob` of `src/**/*.rs` counts by its pattern. Running a script (`python3 x.py`, `awk`) is no search. Markdown,
-TOML, YAML, a log or a diff is text: it never counts, and `grep` stays the tool for it. A call of Serena, agentbus, a
-file edit, a message and an error never count.
+`app`, `tests`, `test`, `tools`, `bin`, `agentbus` among its parts (`grep -rn x crates/`, `rg x src`), and so does the
+CLI's `Grep` over such a directory (`src`) or with no path at all, which searches the whole repository. The line of the
+shell is read command by command, split at `|`, `||`, `&&`, `;` and `&`, with quotes, options and redirections taken off:
+only a command's path operands count, never its pattern (`grep -rn test docs/` searches text), a search that writes into a
+pipe counts what it searched (`rg x src | sort`) and one that reads a pipe names nothing (`git log | grep x`). `find` counts
+only the files of code it is asked for by name (`-name '*.rs'`), because its directories only say where it looks; `sed`
+counts only with `-n` and without `-i`; a `Glob` of `src/**/*.rs` counts by its pattern. A filter that limits a search to
+text (`rg --glob '*.md'`, `rg -t md`, `grep --include=*.md`) makes it no search of code. Running a script (`python3 x.py`,
+`awk`) is no search. Markdown, TOML, YAML, JSON, a log or a diff is text: it never counts, and `grep` stays the tool for it.
+A call of Serena, agentbus, a file edit, a message and an error never count.
 
 **One reminder per session.** At `remind_after` the run engine logs `serena_reminded` and records it in the history, and
 the daemon puts the text of the reminder on the bus for the run's agent in the same look at its runs, as `agent say`
 does: the agent reads it at its next call of the bus while the run goes on, with no stop and no restart, and the run is
 not given a second one. The text is the catalog's, names the count, asks in the imperative to find a symbol with
 `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and to
-keep `grep` for text. A run that called Serena at least once is never reminded, and neither is a session that was
+keep `grep` for text. A reminder the bus refuses, or one that cannot be rendered or addressed, is tried again at the next turn of the daemon, five times at most, and then at the end of the run from the history; only a reminder the bus took marks its run as told. A run that called Serena at least once is never reminded, and neither is a session that was
 reminded once, also after a restart of the daemon: a resumed session reads its count and its reminder from the history. A
 new session counts anew. The default of `40` leaves a short task alone and reaches a run that has settled on `grep` long before it makes hundreds of reads, as the run that made this reminder necessary did (678 reads and 126 greps, no call of Serena).
 No tool is taken away and no command is refused. Each reminder is the log event `serena_reminded` and a record of the
