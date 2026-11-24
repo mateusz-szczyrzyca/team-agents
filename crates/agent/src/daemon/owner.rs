@@ -66,7 +66,7 @@ use agent_runtime::history::{History, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
-use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunVerdict, WatchdogHold};
+use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunJob, RunVerdict, WatchdogHold};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
 use agent_runtime::team_prompts::TeamPrompts;
@@ -593,6 +593,8 @@ pub(super) struct Owner {
     /// The requests whose result was wrong and that wait in the bus's queue for a second try, with what their next worker
     /// and their requester are told.
     again: HashMap<agent_runtime::agentbus::RequestId, worker_result::Again>,
+    /// The provider of the last request the pool of workers served.
+    last_served_provider: Option<String>,
 }
 
 /// The next report of the watch on the questions files; never, when the files are not watched.
@@ -678,6 +680,7 @@ impl Owner {
             again: HashMap::new(),
             aborted_checks: HashSet::new(),
             parked: HashMap::new(),
+            last_served_provider: None,
         }
     }
 
@@ -1115,22 +1118,24 @@ impl Owner {
                 );
             }
         }
+        self.spawn_job(task.clone(), plan.job, run_span);
+        Ok(())
+    }
+
+    /// Spawns `job` for `task` with `run_span`.
+    pub(super) fn spawn_job(&mut self, task: TaskId, job: RunJob, run_span: tracing::Span) {
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
         self.cancels.insert(task.clone(), cancel.clone());
         let hold = WatchdogHold::new();
         self.holds.insert(task.clone(), hold.clone());
-        let job = plan.job;
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
-        // Scoped, not only polled with the subscriber: a run that is aborted is dropped by the runtime, and its spans must
-        // close in the registry that made them.
         let handle = self.runs.spawn(Scoped::new(
             async move { engine.run_held(job, &cancel, &hold).await }.instrument(run_span),
             dispatch,
         ));
         self.running.insert(handle.id(), task.clone());
-        self.in_flight.insert(task.clone());
-        Ok(())
+        self.in_flight.insert(task);
     }
 
     /// Fails `task`, which could not be started, and tells the human why; its team learns it as of a run that ended
@@ -1183,6 +1188,11 @@ impl Owner {
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
+        if self.parts.state.find_task(&task).is_none()
+            && let Some(served) = self.serving.remove(&task)
+        {
+            return self.settle_pool_worker_run(&task, &served, outcome);
+        }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,

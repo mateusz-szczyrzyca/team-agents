@@ -18,15 +18,15 @@ use crate::daemon::team::{BusJob, BusNotice, NoticeRenderError, delegation_again
 #[derive(Debug, Clone)]
 pub(in crate::daemon::owner) struct Again {
     /// The team.
-    pub(super) team: TeamId,
+    pub(in crate::daemon::owner) team: TeamId,
     /// The worker whose result was wrong.
-    pub(super) worker: AgentName,
+    pub(in crate::daemon::owner) worker: AgentName,
     /// The provider of that worker: the second try goes to another provider when one is free.
-    pub(super) failed_cli: CliKind,
+    pub(in crate::daemon::owner) failed_cli: CliKind,
     /// The try the request is on once it is given again, with why each earlier one was wrong.
-    pub(super) tried: Try,
+    pub(in crate::daemon::owner) tried: Try,
     /// Why the result that was wrong did not serve, in the words of the requester's notice.
-    pub(super) reason: String,
+    pub(in crate::daemon::owner) reason: String,
 }
 
 /// The labels of the tries, in the words the requester reads.
@@ -55,8 +55,23 @@ impl Owner {
     /// Which worker, if any, the second try of a request of `pending` can go to: another provider's, else one of the same
     /// provider, else none.
     pub(super) fn elsewhere_of(&self, pending: &Pending) -> Elsewhere {
-        let Ok(Some(workers)) = self.workers_of(&pending.team) else {
-            return Elsewhere::None;
+        let workers = match self.workers_of(&pending.team) {
+            Ok(Some(workers)) if !workers.in_order.is_empty() => workers,
+            _ => {
+                let pool = self.parts.settings.config.worker_agents();
+                if pool.is_empty() {
+                    return Elsewhere::None;
+                }
+                let mut in_order = Vec::new();
+                let mut busy = Vec::new();
+                for name in pool {
+                    if self.serving.values().any(|s| s.worker == *name) {
+                        busy.push(name.clone());
+                    }
+                    in_order.push((name.clone(), pending.worker_task.clone()));
+                }
+                crate::daemon::owner::teams::Workers { in_order, busy }
+            }
         };
         let listed = self.workers_with_cli(&workers.in_order);
         let failed = self.cli_of(&pending.worker);
@@ -74,7 +89,7 @@ impl Owner {
     }
 
     /// The provider of the agent `name`, when the configuration has it.
-    pub(super) fn cli_of(&self, name: &AgentName) -> Option<CliKind> {
+    pub(in crate::daemon::owner) fn cli_of(&self, name: &AgentName) -> Option<CliKind> {
         self.parts.settings.config.agents().get(name).map(|agent| agent.cli)
     }
 

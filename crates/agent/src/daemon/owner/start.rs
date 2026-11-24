@@ -676,7 +676,7 @@ pub(super) fn work_branch(team: &Team, member: &Member) -> Result<BranchName, St
 }
 
 /// A session ID in the form of a version 4 UUID, which Claude Code accepts for `--session-id`.
-fn new_session_id(rng: &mut impl Rng) -> Result<SessionId, InvalidValue> {
+pub(super) fn new_session_id(rng: &mut impl Rng) -> Result<SessionId, InvalidValue> {
     let mut bytes: [u8; 16] = rng.random();
     // The version (4) and the variant (RFC 4122) of a UUID.
     bytes[6] = (bytes[6] & 0x0f) | 0x40;
@@ -747,6 +747,17 @@ fn mcp_servers(
         "--dir".to_owned(),
         text(&bus_dir)?,
     ];
+    let workers = ctx.settings.config.worker_agents();
+    if !workers.is_empty() {
+        words.extend([
+            "--workers".to_owned(),
+            workers
+                .iter()
+                .map(agent_core::ids::AgentName::as_str)
+                .collect::<Vec<_>>()
+                .join(","),
+        ]);
+    }
     // `working` is UTF-8 (`text` above), so the plan file under it is too.
     words.extend(plan_flag::bus_words(
         role,

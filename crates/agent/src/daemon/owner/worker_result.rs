@@ -150,6 +150,9 @@ impl Owner {
             stage: Stage::Ended,
         };
         let task_dir = self.parts.store.home().task_dir(worker_task);
+        if let Err(source) = std::fs::create_dir_all(&task_dir) {
+            return Err(PendingError::Write { path: task_dir, source });
+        }
         write_pending(&task_dir, &pending)
     }
 
@@ -177,7 +180,7 @@ impl Owner {
     }
 
     /// The round the requester's last run worked for, which a snapshot of its worktree is kept under.
-    fn requester_round(&self, team: &TeamId, task: &TaskId) -> Option<agent_core::ids::RoundId> {
+    pub(super) fn requester_round(&self, team: &TeamId, task: &TaskId) -> Option<agent_core::ids::RoundId> {
         let (_, member) = self.parts.state.team(team)?.find(task)?;
         member.runs().last()?.rounds().first().cloned()
     }
