@@ -4103,4 +4103,82 @@ git commit -qm 'Complete retained work'
             );
         }
     }
+    #[test]
+    fn startup_replays_interrupted_transitions_and_returns_queued_exhaustion_once() {
+        for phase in ["retry", "exhausted", "queued_bound"] {
+            let mut world = World::new(&[
+                ("claude-1", "agent", "ask-worker:member,sleep"),
+                ("w-one", "worker", "script:durable-restart"),
+                ("inv-opus", "investigator", "sleep"),
+            ]);
+            world.script(
+                "durable-restart",
+                r#"
+if test ! -f .fake-started; then
+    mkdir -p docs
+    printf 'partial\n' > docs/partial.txt
+    touch .fake-started
+    while test ! -f "$AGENTS_HOME/release-worker"; do sleep 0.05; done
+fi
+test "$(cat docs/partial.txt)" = partial
+printf 'the walkthrough\n' > docs/guide.md
+git add docs
+git commit -qm 'Complete retained work'
+"#,
+            );
+            let request = MEMBER_REQUEST.replace(
+                "\"files\":\"docs/guide.md\"",
+                "\"files\":\"docs/guide.md, docs/partial.txt\"",
+            );
+            world.asks("member", Some(MEMBER_PLAN), &[&request]);
+            world.start();
+            let tasks = world.run(&["claude-1", "inv-opus"]);
+            let member = task(&tasks, "claude-1");
+            world.ended(member, 1);
+            eventually("durable running worker", || {
+                world
+                    .requests()
+                    .get("1")
+                    .and_then(|r| r["helper_task"].as_str())
+                    .is_some_and(|t| world.worktree(t).join(".fake-started").exists())
+            });
+            let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+            let journal_path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+            let running_bus = std::fs::read(world.home.join("bus/state.json")).unwrap();
+            world.stop();
+            let mut journal: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&journal_path).unwrap()).unwrap();
+            if phase != "retry" {
+                let snapshot = journal["events"].as_array().unwrap().last().unwrap()["snapshot"].clone();
+                for _ in 0..if phase == "exhausted" { 3 } else { 2 } {
+                    journal["events"].as_array_mut().unwrap().push(serde_json::json!({
+                        "event": "restarted_queued", "snapshot": snapshot,
+                    }));
+                }
+                std::fs::write(&journal_path, serde_json::to_vec(&journal).unwrap()).unwrap();
+            }
+            if phase != "queued_bound" {
+                // Journal progress survived a crash before the matching bus operation.
+                std::fs::write(world.home.join("bus/state.json"), running_bus).unwrap();
+            }
+            std::fs::write(world.home.join("release-worker"), "").unwrap();
+            world.start();
+            world.request_is("1", if phase == "retry" { "done" } else { "failed" });
+            assert_eq!(world.requests()["1"]["helper_task"], worker);
+            assert_eq!(
+                std::fs::read_to_string(world.worktree(&worker).join("docs/partial.txt")).unwrap(),
+                "partial\n"
+            );
+            if phase == "retry" {
+                assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+            } else {
+                assert_eq!(world.count_told("claude-1", "step 1.1"), 1);
+                assert_eq!(world.count_told("claude-1", "restart_queued"), 1);
+                world.stop();
+                world.start();
+                world.request_is("1", "failed");
+                assert_eq!(world.count_told("claude-1", "step 1.1"), 1);
+            }
+        }
+    }
 }
