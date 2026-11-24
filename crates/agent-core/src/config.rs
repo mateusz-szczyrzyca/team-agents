@@ -119,6 +119,26 @@ pub enum ConfigError {
         /// The agent or investigator that sets the key.
         name: String,
     },
+    /// An agent's or an investigator's `output` is `0`, so the CLI would be told that the model writes nothing.
+    #[error("{} of {name}: `output` is 0 tokens: what a model writes is above 0", key.section())]
+    AgentOutputZero {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the key.
+        name: String,
+    },
+    /// An agent's or an investigator's `output` is above its `context`: a model writes inside its window.
+    #[error("{} of {name}: `output` ({output}) is above `context` ({context})", key.section())]
+    AgentOutputAboveContext {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the keys.
+        name: String,
+        /// The configured output limit in tokens.
+        output: u64,
+        /// The configured window in tokens.
+        context: u64,
+    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
@@ -211,6 +231,10 @@ pub struct AgentConfig {
     /// learns no window.
     #[serde(default)]
     pub context: Option<u64>,
+    /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
+    /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
+    #[serde(default, skip_deserializing)]
+    pub output: Option<u64>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -232,6 +256,10 @@ pub struct InvestigatorConfig {
     /// learns no window.
     #[serde(default)]
     pub context: Option<u64>,
+    /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
+    /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
+    #[serde(default, skip_deserializing)]
+    pub output: Option<u64>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.

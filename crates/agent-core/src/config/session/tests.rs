@@ -161,3 +161,83 @@ fn a_context_is_accepted_when_the_bound_is_off_or_the_window_is_above_it() {
         Some(150_000)
     );
 }
+
+#[test]
+fn an_output_is_read_for_an_agent_and_for_an_investigator_and_is_absent_without_it() {
+    let config = Config::from_toml_str(&with_context(
+        "\ncontext = 200000\noutput = 16000",
+        "\ncontext = 300000\noutput = 32000",
+    ))
+    .unwrap();
+    let plain = Config::from_toml_str(&with_context("\ncontext = 200000", "\ncontext = 300000")).unwrap();
+    let agent: AgentName = "claude-1".parse().unwrap();
+    let investigator: InvestigatorName = "inv-1".parse().unwrap();
+
+    assert_eq!(config.agent(&agent).unwrap().output, Some(16_000));
+    assert_eq!(config.investigator(&investigator).unwrap().output, Some(32_000));
+    assert_eq!(plain.agent(&agent).unwrap().output, None);
+    assert_eq!(plain.investigator(&investigator).unwrap().output, None);
+}
+
+#[test]
+fn an_output_of_zero_is_refused_naming_the_agent_and_the_key() {
+    for (agent, investigator) in [
+        ("\ncontext = 1000\noutput = 0", ""),
+        ("", "\ncontext = 1000\noutput = 0"),
+    ] {
+        let error = Config::from_toml_str(&with_context(agent, investigator)).unwrap_err();
+        let name = if agent.is_empty() { "inv-1" } else { "claude-1" };
+
+        assert!(
+            matches!(&error, ConfigError::AgentOutputZero { name: refused, .. } if refused.as_str() == name),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(text.contains(name) && text.contains("output"), "{text}");
+    }
+}
+
+#[test]
+fn an_output_above_the_context_is_refused_naming_the_agent_and_both_keys() {
+    for (agent, investigator) in [
+        ("\ncontext = 1000\noutput = 1001", ""),
+        ("", "\ncontext = 1000\noutput = 1001"),
+    ] {
+        let error = Config::from_toml_str(&with_context(agent, investigator)).unwrap_err();
+        let name = if agent.is_empty() { "inv-1" } else { "claude-1" };
+
+        assert!(
+            matches!(
+                &error,
+                ConfigError::AgentOutputAboveContext { name: refused, output: 1001, context: 1000, .. }
+                    if refused.as_str() == name
+            ),
+            "{error:?}"
+        );
+        let text = error.to_string();
+        assert!(
+            text.contains(name) && text.contains("output") && text.contains("context"),
+            "{text}"
+        );
+    }
+}
+
+#[test]
+fn an_output_equal_to_the_context_or_given_without_a_context_is_accepted() {
+    let equal = Config::from_toml_str(&with_context("\ncontext = 1000\noutput = 1000", "")).unwrap();
+    let alone = Config::from_toml_str(&with_context("\noutput = 5000", "")).unwrap();
+    let agent: AgentName = "claude-1".parse().unwrap();
+
+    assert_eq!(equal.agent(&agent).unwrap().output, Some(1_000));
+    assert_eq!(alone.agent(&agent).unwrap().output, Some(5_000));
+}
+
+#[test]
+fn an_output_that_is_not_a_number_is_refused() {
+    let error = Config::from_toml_str(&with_context("\ncontext = 1000\noutput = \"big\"", "")).unwrap_err();
+
+    assert!(
+        matches!(&error, ConfigError::Parse(parse) if parse.span().is_some() && parse.message().contains("big")),
+        "{error:?}"
+    );
+}
