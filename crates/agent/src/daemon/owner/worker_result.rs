@@ -150,6 +150,9 @@ impl Owner {
             stage: Stage::Ended,
         };
         let task_dir = self.parts.store.home().task_dir(worker_task);
+        if let Err(source) = std::fs::create_dir_all(&task_dir) {
+            return Err(PendingError::Write { path: task_dir, source });
+        }
         write_pending(&task_dir, &pending)
     }
 
@@ -177,7 +180,7 @@ impl Owner {
     }
 
     /// The round the requester's last run worked for, which a snapshot of its worktree is kept under.
-    fn requester_round(&self, team: &TeamId, task: &TaskId) -> Option<agent_core::ids::RoundId> {
+    pub(super) fn requester_round(&self, team: &TeamId, task: &TaskId) -> Option<agent_core::ids::RoundId> {
         let (_, member) = self.parts.state.team(team)?.find(task)?;
         member.runs().last()?.rounds().first().cloned()
     }
@@ -654,7 +657,9 @@ impl Owner {
                     settlement: Settlement::Again { reasons },
                     ..
                 } => {
-                    if self.give_again(&pending, reasons).await? {
+                    if self.give_again(&pending, reasons).await?
+                        || (workspace.is_some() && self.again.contains_key(&pending.request))
+                    {
                         return self.drop_settled(task_dir, &pending, workspace).await;
                     }
                     return Ok(());
@@ -1051,7 +1056,7 @@ impl Owner {
         let tried = self.try_of(pending);
         facts.try_number = tried.number;
         facts.tries = self.parts.settings.config.workers().tries();
-        facts.elsewhere = self.elsewhere_of(pending);
+        facts.elsewhere = self.elsewhere_of(pending).await;
         match decide(&facts) {
             Verdict::Accept if facts.scope == Scope::Facts => Settlement::Report,
             Verdict::Accept if !checked.committed => {

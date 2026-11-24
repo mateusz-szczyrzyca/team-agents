@@ -5,6 +5,8 @@ package main
 // worker does it again later; a request in the old form still waits in the queue as before.
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -136,5 +138,241 @@ func TestFreeWorkersCountOnlyTheTeamsOwnRequests(t *testing.T) {
 		if got := freeWorkers(teamWithTasks(members), c.helpers); got != c.want {
 			t.Errorf("%s: freeWorkers = %d, want %d", c.name, got, c.want)
 		}
+	}
+}
+
+func TestFreeWorkersOfPool(t *testing.T) {
+	pool := []string{"w1", "w2"}
+	cases := []struct {
+		name    string
+		helpers []*Helper
+		want    int
+	}{
+		{"two workers, no helpers", nil, 2},
+		{"one worker running", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}}, 1},
+		{"one worker starting", []*Helper{{ID: 1, Status: HelperStarting, Worker: "w1"}}, 1},
+		{"one request queued", []*Helper{{ID: 1, Status: HelperQueued}}, 1},
+		{"one running, one queued", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}, {ID: 2, Status: HelperQueued}}, 0},
+		{"two running", []*Helper{{ID: 1, Status: HelperRunning, Worker: "w1"}, {ID: 2, Status: HelperRunning, Worker: "w2"}}, 0},
+		{"finished helpers do not count", []*Helper{
+			{ID: 1, Status: HelperDone, Worker: "w1"},
+			{ID: 2, Status: HelperFailed, Worker: "w2"},
+			{ID: 3, Status: HelperUnclear, Worker: "w1"},
+		}, 2},
+	}
+	for _, c := range cases {
+		if got := freeWorkers(nil, c.helpers, pool...); got != c.want {
+			t.Errorf("%s: freeWorkers(nil, helpers, pool...) = %d, want %d", c.name, got, c.want)
+		}
+	}
+	if got := freeWorkers(nil, nil); got != 0 {
+		t.Errorf("empty pool: freeWorkers(nil, nil) = %d, want 0", got)
+	}
+}
+
+func TestDelegateWithAPlanIsQueuedWhenPoolWorkerIsFree(t *testing.T) {
+	b := newBus(t)
+	// Team without workers: pool workers passed via s.workers.
+	m := planMember(t, b, map[string][3]string{"m": {"normal", "a", "active"}})
+	m.workers = []string{"pool-w1"}
+
+	chk(t).ok(toolResult(m.delegateFields(namedFields(t.TempDir()))))
+	err := failure(t, DelegateNoFreeWorker)(m.delegateFields(namedFields(t.TempDir())))
+	if !strings.Contains(err.Message, "no worker of the pool is free") {
+		t.Fatalf("expected pool refusal message, got: %q", err.Message)
+	}
+}
+
+func TestDelegateWithAPlanSoloRequesterWithPoolWorkers(t *testing.T) {
+	b := newBus(t)
+	m := server(b, "solo")
+	m.plan = planPath(t)
+	m.agentCmd, m.home = "agent", "/home/fake"
+	m.workers = []string{"pool-w1"}
+	harnessCheck(t, func(string) string { return acceptedAnswer })
+	old := agentCmdFn
+	agentCmdFn = func(_, _ string, _ ...string) {}
+	t.Cleanup(func() { agentCmdFn = old })
+
+	chk(t).ok(toolResult(m.delegateFields(namedFields(t.TempDir()))))
+	err := failure(t, DelegateNoFreeWorker)(m.delegateFields(namedFields(t.TempDir())))
+	if !strings.Contains(err.Message, "no worker of the pool is free") {
+		t.Fatalf("expected pool refusal message, got: %q", err.Message)
+	}
+}
+
+func TestHelperListJSONAndHelperNextSpecificID(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"] = &Helper{ID: 1, Status: HelperQueued, Request: "req1"}
+		st.Helpers["2"] = &Helper{ID: 2, Status: HelperQueued, Request: "req2"}
+	})
+	// Take specific helper ID 2
+	mustWith(t, b, func(st *State) {
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h == nil || h.ID != 2 || h.Status != HelperStarting || h.Worker != "worker-1" {
+			t.Fatalf("expected helper 2 to be taken, got: %+v", h)
+		}
+	})
+}
+
+func TestTakeLocalHelperRefusesAlreadyServingWorker(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"] = &Helper{ID: 1, Status: HelperStarting, Worker: "worker-1", Request: "req1"}
+		st.Helpers["2"] = &Helper{ID: 2, Status: HelperQueued, Request: "req2"}
+	})
+	mustWith(t, b, func(st *State) {
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h != nil {
+			t.Fatalf("expected nil when worker-1 is already starting helper 1, got %+v", h)
+		}
+	})
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"].Status = HelperRunning
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h != nil {
+			t.Fatalf("expected nil when worker-1 is already running helper 1, got %+v", h)
+		}
+	})
+}
+
+func TestFreePoolWorkersObservationCauses(t *testing.T) {
+	b := newBus(t)
+	// 1. Worker in active legacy crew
+	mustWith(t, b, func(st *State) {
+		st.Teams["team-1"] = &Team{
+			ID:   "team-1",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"w1": {Agent: "w1", Tier: TierWorker, State: MemberSleeping},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 is in active legacy crew, got %d", free)
+		}
+	})
+
+	// 2. Worker in active ordinary/manual run
+	mustWith(t, b, func(st *State) {
+		delete(st.Teams, "team-1")
+		st.Teams["team-2"] = &Team{
+			ID:   "team-2",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"w1": {Agent: "w1", Tier: TierNormal, State: MemberActive},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 is active in team-2, got %d", free)
+		}
+	})
+
+	// 3. Worker with unsettled workspace record in tasksDir
+	tasksDir := t.TempDir()
+	taskPath := filepath.Join(tasksDir, "task-requester")
+	if err := os.MkdirAll(taskPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	recordPath := filepath.Join(taskPath, "request-workspace-1.json")
+	if err := os.WriteFile(recordPath, []byte(`{"worker":"w1","stage":"working"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustWith(t, b, func(st *State) {
+		delete(st.Teams, "team-2")
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when w1 has unsettled workspace, got %d", free)
+		}
+	})
+
+	// 4. Truly free worker
+	mustWith(t, b, func(st *State) {
+		if err := os.Remove(recordPath); err != nil {
+			t.Fatal(err)
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 1 {
+			t.Fatalf("expected 1 free worker when w1 is clear, got %d", free)
+		}
+	})
+}
+
+func TestFreePoolWorkersDamagedOrUnreadableRecord(t *testing.T) {
+	b := newBus(t)
+	tasksDir := t.TempDir()
+	taskPath := filepath.Join(tasksDir, "task-requester")
+	if err := os.MkdirAll(taskPath, 0o750); err != nil {
+		t.Fatal(err)
+	}
+
+	// 1. Malformed JSON workspace record conservatively marks pool workers unsettled
+	malformedPath := filepath.Join(taskPath, "request-workspace-bad.json")
+	if err := os.WriteFile(malformedPath, []byte(`{not valid json`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustWith(t, b, func(st *State) {
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when malformed workspace record exists, got %d", free)
+		}
+	})
+	if err := os.Remove(malformedPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Unreadable workspace record conservatively marks pool workers unsettled
+	unreadablePath := filepath.Join(taskPath, "request-workspace-unreadable.json")
+	if err := os.WriteFile(unreadablePath, []byte(`{"worker":"w1"}`), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chmod(unreadablePath, 0o600); err != nil {
+			t.Error(err)
+		}
+	})
+	mustWith(t, b, func(st *State) {
+		if free := freePoolWorkersState(st, []string{"w1"}, tasksDir); free != 0 {
+			t.Fatalf("expected 0 free workers when unreadable workspace record exists, got %d", free)
+		}
+	})
+}
+
+func TestFreePoolWorkersStoppedTeam(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Teams["team-stopped"] = &Team{
+			ID:   "team-stopped",
+			Done: false,
+			Members: map[string]*TeamMember{
+				"lead": {Agent: "lead", Tier: TierNormal, State: MemberStopped},
+				"w1":   {Agent: "w1", Tier: TierWorker, State: MemberStopped},
+			},
+		}
+		if free := freePoolWorkersState(st, []string{"w1"}); free != 1 {
+			t.Fatalf("expected 1 free worker when team is stopped (all members stopped), got %d", free)
+		}
+	})
+}
+
+func TestFreePoolWorkersRefuseUnknownWorkspaceOwnership(t *testing.T) {
+	for _, kind := range []string{"tasks-file", "missing-worker"} {
+		t.Run(kind, func(t *testing.T) {
+			tasks := filepath.Join(t.TempDir(), "tasks")
+			if kind == "tasks-file" {
+				if err := os.WriteFile(tasks, []byte("not a directory"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				task := filepath.Join(tasks, "requester")
+				if err := os.MkdirAll(task, 0o750); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(filepath.Join(task, "request-workspace-1.json"), []byte(`{}`), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			st := &State{}
+			if got := freePoolWorkersState(st, []string{"w1"}, tasks); got != 0 {
+				t.Fatalf("unknown workspace ownership: free workers = %d, want 0", got)
+			}
+		})
 	}
 }

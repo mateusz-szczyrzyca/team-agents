@@ -9,32 +9,42 @@
 //! for workers and closes the team when its work is over. What cannot be done because the bus is down is kept and tried
 //! again at the next look; a failure of the bus never ends the daemon.
 
+use std::collections::BTreeMap;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
-use agent_core::config::{AbsolutePath, Config};
+use agent_core::cli::{McpServerKind, RunMode};
+use agent_core::config::{AbsolutePath, CommandLine, Config};
 use agent_core::decide::assign::first_free_worker;
+use agent_core::decide::pool::{LastServed, PoolWorker, Requires, next_pool_worker, provider_of};
 use agent_core::history::HistoryEvent;
-use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
+use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::plan::PLAN_FILE;
 use agent_core::protocol::{EventKind, Failure, FailureKind, Reply, RunRequest};
 use agent_core::state::{ItemPhase, RunEnd, Timestamp};
 use agent_core::status::{ItemStatus, RunOutcome, TaskStatus};
 use agent_runtime::agentbus::{
-    AgentBusError, DelegationStatus, DelegationUpdate, FailureClass, MemberState, Outgoing, Recipient, RequestId, Woken,
+    AgentBus, AgentBusError, DelegationRequest, DelegationStatus, DelegationUpdate, FailureClass, MemberState,
+    Outgoing, Recipient, RequestId, Woken,
 };
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::git::{CommitIdentity, DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
+use agent_runtime::request_workspace::{self, RequestWorkspace, WorkspaceRecord};
+use agent_runtime::run::compose::{PromptInput, PromptKind, PromptTexts, Serena, compose};
 use agent_runtime::run::keep_out_of_git;
+use agent_runtime::run::{RunJob, RunVerdict};
 use agent_runtime::team_prompts::TeamPrompts;
 use serde_json::json;
 use tracing::Instrument;
 
+use super::round_state;
 use super::wakes::Wake;
-use super::{Located, Owner, OwnerError};
+use super::{Located, Outcome, Owner, OwnerError};
+use crate::daemon::team::WorkerEnd;
 use crate::daemon::team::{
     Assigned, BusJob, BusNotice, FormError, Formed, NoticeRenderError, RequestOutcome, Why, Workspace,
     assignable_with_candidates, closing_transitions, failure_reason, form, is_finished, item_in_flight, notice_for,
@@ -78,6 +88,33 @@ pub(super) struct Workers {
     pub(super) busy: Vec<AgentName>,
 }
 
+/// What is known of a worker agent's availability across the whole installation.
+pub(in crate::daemon::owner) struct WorkerAvailability {
+    /// Whether the worker has a run going installation-wide.
+    pub(in crate::daemon::owner) busy: bool,
+    /// How many runs the worker has going installation-wide.
+    pub(in crate::daemon::owner) runs: u32,
+    /// Whether the worker has an unsettled finished run.
+    pub(in crate::daemon::owner) unsettled: bool,
+}
+
+/// An owned snapshot used while dispatch mutates the daemon state.
+#[derive(Debug)]
+struct OwnedPoolWorker {
+    /// Configured worker identity.
+    name: AgentName,
+    /// Provider used for installation-wide rotation.
+    provider: String,
+    /// Declared requirements this worker can satisfy.
+    capabilities: Vec<String>,
+    /// Whether another request already reserves this worker.
+    busy: bool,
+    /// Ordinary runs counted against the configured limit.
+    runs: u32,
+    /// Whether a result or cleanup still needs settlement.
+    unsettled: bool,
+}
+
 /// What taking a request from the bus for a worker came to.
 enum Taken {
     /// The worker was given a request.
@@ -95,6 +132,41 @@ pub(super) struct Look {
     pub(super) events: Vec<EventKind>,
     /// Whether the state changed and is to be saved.
     pub(super) changed: bool,
+}
+
+/// Why a pool worker request cannot be dispatched.
+#[derive(Debug, thiserror::Error)]
+pub(super) enum PoolDispatchError {
+    /// The requester task was not found in daemon state.
+    #[error("requester task {0} not found in state")]
+    RequesterNotFound(TaskId),
+    /// A task, run, or session ID could not be generated.
+    #[error("cannot generate id for pool worker: {0}")]
+    GenerateId(#[from] agent_core::ids::GenerateIdError),
+    /// A path is invalid or cannot be parsed as an absolute path.
+    #[error("invalid path for pool worker: {0}")]
+    InvalidPath(#[from] agent_core::config::InvalidValue),
+    /// A path is not valid UTF-8.
+    #[error("path is not valid UTF-8: {0:?}")]
+    NonUtf8Path(std::path::PathBuf),
+    /// A git operation on the requester worktree failed.
+    #[error("git operation failed on requester worktree: {0}")]
+    Git(#[from] agent_runtime::git::GitError),
+    /// A request workspace operation failed.
+    #[error("workspace error for pool worker: {0}")]
+    Workspace(#[from] agent_runtime::request_workspace::WorkspaceError),
+    /// The worker agent configuration was not found.
+    #[error("worker agent configuration for {0} not found")]
+    WorkerConfigNotFound(AgentName),
+    /// Prompt composition failed.
+    #[error("cannot compose prompt for pool worker: {0}")]
+    PromptCompose(#[from] agent_runtime::run::compose::ComposeError),
+    /// Prompt shaping failed.
+    #[error("cannot shape prompt for pool worker: {0}")]
+    PromptShape(#[from] crate::daemon::team::TeamPromptError),
+    /// Timestamp retrieval failed.
+    #[error("cannot get current timestamp: {0}")]
+    Timestamp(#[from] agent_core::state::InvalidTimestamp),
 }
 
 impl Owner {
@@ -436,6 +508,7 @@ impl Owner {
         for team in looks {
             self.look_after(&team).await?;
         }
+        Box::pin(self.serve_pool_requests()).await?;
         Ok(())
     }
 
@@ -1027,6 +1100,661 @@ impl Owner {
         Ok(())
     }
 
+    /// Whether the agent `name` is a worker in an active (not stopped) team crew.
+    pub(in crate::daemon::owner) fn is_in_active_crew(&self, name: &AgentName) -> bool {
+        self.parts.state.teams().iter().any(|t| {
+            !round_state::is_stopped(t)
+                && t.crew()
+                    .roster()
+                    .iter()
+                    .any(|(role, m)| *role == Role::Worker && m.agent().name() == name.as_str())
+        })
+    }
+
+    /// Evaluates the busy state, total runs and unsettled status of a worker agent across all teams.
+    pub(in crate::daemon::owner) async fn worker_availability(&self, name: &AgentName) -> WorkerAvailability {
+        self.worker_availability_except(name, None).await
+    }
+
+    /// Checks capacity while allowing the current result to be considered for its own retry.
+    pub(in crate::daemon::owner) async fn worker_availability_except(
+        &self,
+        name: &AgentName,
+        request: Option<RequestId>,
+    ) -> WorkerAvailability {
+        let running_in_teams = agent_core::decide::slot::runs_going(self.parts.state.teams())
+            .into_iter()
+            .filter(|g| g.agent == *name)
+            .count();
+        let serving_runs = self.serving.values().filter(|s| s.worker == *name).count();
+        let total_runs = u32::try_from(running_in_teams)
+            .unwrap_or(u32::MAX)
+            .saturating_add(u32::try_from(serving_runs).unwrap_or(u32::MAX));
+        let busy = serving_runs > 0;
+        let mut unsettled = false;
+
+        for team in self.parts.state.teams() {
+            for (_, member) in team.crew().roster() {
+                let task_dir = self.parts.store.home().task_dir(member.task());
+                match request_workspace::read_each(&task_dir).await {
+                    Ok(read) => {
+                        for res in read {
+                            match res {
+                                Ok(workspace) => {
+                                    if workspace.record().worker == *name && Some(workspace.record().request) != request
+                                    {
+                                        unsettled = true;
+                                        break;
+                                    }
+                                }
+                                Err(error) => {
+                                    tracing::warn!(
+                                        event = LogEvent::WorkerRequestDamaged.as_str(),
+                                        task = %member.task(),
+                                        error = %error_chain(&error),
+                                        "workspace record cannot be read: conservatively treating worker as unsettled"
+                                    );
+                                    unsettled = true;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            event = LogEvent::WorkerRequestDamaged.as_str(),
+                            task = %member.task(),
+                            error = %error_chain(&error),
+                            "workspace dir cannot be read: conservatively treating worker as unsettled"
+                        );
+                        unsettled = true;
+                    }
+                }
+                if unsettled {
+                    break;
+                }
+            }
+            if unsettled {
+                break;
+            }
+        }
+
+        if self
+            .cleanup_obligations
+            .iter()
+            .any(|o| o.workspace.record().worker == *name)
+        {
+            unsettled = true;
+        }
+
+        WorkerAvailability {
+            busy,
+            runs: total_runs,
+            unsettled,
+        }
+    }
+
+    /// Serves queued requests for workers with free workers of the installation pool.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "loop checks busy state across teams, selects provider turn, dispatches, and handles held requests"
+    )]
+    pub(super) async fn serve_pool_requests(&mut self) -> Result<(), OwnerError> {
+        self.retry_cleanup_obligations().await;
+        let pool = self.parts.settings.config.worker_agents().to_vec();
+        if pool.is_empty() {
+            return Ok(());
+        }
+        let run_limit = agent_core::decide::slot::limit_for(self.parts.settings.config.limits(), Tier::Worker);
+
+        let open_requests = match self.parts.bus.helper_list(false).await {
+            Ok(list) => list,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    error = %error_chain(&error),
+                    "the queue of requests for pool workers cannot be read"
+                );
+                return Ok(());
+            }
+        };
+        if open_requests.is_empty() {
+            return Ok(());
+        }
+
+        // Recover stranded Starting helpers that have no active serving task
+        for req in &open_requests {
+            if req.status == DelegationStatus::Starting
+                && req
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| pool.contains(worker) && !self.is_in_active_crew(worker))
+                && !self.serving.values().any(|s| s.request == req.id)
+            {
+                let update = DelegationUpdate {
+                    status: Some(DelegationStatus::Queued),
+                    task: None,
+                    summary: None,
+                };
+                if let Err(err) = self.parts.bus.helper_set(req.id, &update).await {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        request = %req.id,
+                        error = %error_chain(&err),
+                        "cannot reset stranded starting request to queued"
+                    );
+                }
+            }
+        }
+
+        let mut pool_workers_data = Vec::new();
+        for name in &pool {
+            let Some(agent_conf) = self.parts.settings.config.agent(name) else {
+                continue;
+            };
+            let provider = provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
+            let capabilities = agent_conf.capabilities.clone();
+            let avail = self.worker_availability(name).await;
+            pool_workers_data.push(OwnedPoolWorker {
+                name: name.clone(),
+                provider,
+                capabilities,
+                busy: avail.busy || self.is_in_active_crew(name),
+                runs: avail.runs,
+                unsettled: avail.unsettled,
+            });
+        }
+
+        for req in open_requests {
+            if req.status != DelegationStatus::Queued {
+                continue;
+            }
+            let requester_team_id = self
+                .parts
+                .state
+                .teams()
+                .iter()
+                .find(|t| t.find(&req.from_task).is_some())
+                .map(|t| t.id().clone());
+            let team_has_workers = requester_team_id.as_ref().is_some_and(|team_id| {
+                self.parts
+                    .state
+                    .team(team_id)
+                    .is_some_and(|t| t.crew().roster().iter().any(|(role, _)| *role == Role::Worker))
+            });
+            if team_has_workers {
+                if let Some(ref team_id) = requester_team_id {
+                    self.look_at(team_id);
+                }
+                continue;
+            }
+
+            if !self.launch_allowed().await {
+                break;
+            }
+            let requires = Requires {
+                capabilities: &req.requires,
+            };
+
+            let chosen = {
+                let pool_workers: Vec<PoolWorker<'_>> = pool_workers_data
+                    .iter()
+                    .map(|w| PoolWorker {
+                        name: &w.name,
+                        provider: &w.provider,
+                        capabilities: w.capabilities.as_slice(),
+                        busy: w.busy,
+                        runs: w.runs,
+                        unsettled: w.unsettled,
+                    })
+                    .collect();
+
+                if let Some(again) = self.again.get(&req.id) {
+                    agent_core::decide::pool::second_try_pool_worker(
+                        &pool_workers,
+                        &requires,
+                        &again.worker,
+                        &again.failed_provider,
+                        run_limit,
+                    )
+                    .map(|(name, prov)| (name.clone(), prov.to_owned()))
+                } else {
+                    let last_served = LastServed(self.pool_dispatch.last_served_provider.as_deref());
+                    next_pool_worker(&pool_workers, &requires, last_served, run_limit)
+                        .map(|(name, prov)| (name.clone(), prov.to_owned()))
+                }
+            };
+
+            let Some((worker_name, provider)) = chosen else {
+                continue;
+            };
+
+            // Immediately reserve the chosen worker in pool_workers_data to avoid double dispatch in same pass
+            if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
+                entry.busy = true;
+                entry.runs = entry.runs.saturating_add(1);
+            }
+
+            let worker_caps = self
+                .parts
+                .settings
+                .config
+                .agent(&worker_name)
+                .map(|a| a.capabilities.clone())
+                .unwrap_or_default();
+
+            let request = match self
+                .parts
+                .bus
+                .helper_next_with(&worker_name, &worker_caps, Some(req.id))
+                .await
+            {
+                Ok(Some(request)) => request,
+                Ok(None) => {
+                    let avail = self.worker_availability(&worker_name).await;
+                    if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
+                        entry.busy = avail.busy;
+                        entry.runs = avail.runs;
+                        entry.unsettled = avail.unsettled;
+                    }
+                    continue;
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        worker = %worker_name,
+                        request = %req.id,
+                        error = %error_chain(&error),
+                        "the request cannot be claimed from the bus"
+                    );
+                    let avail = self.worker_availability(&worker_name).await;
+                    if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
+                        entry.busy = avail.busy;
+                        entry.runs = avail.runs;
+                        entry.unsettled = avail.unsettled;
+                    }
+                    continue;
+                }
+            };
+
+            if let Taken::Served = self.dispatch_pool_request(&worker_name, request).await {
+                self.pool_dispatch.last_served_provider = Some(provider);
+            }
+
+            let avail = self.worker_availability(&worker_name).await;
+            if let Some(entry) = pool_workers_data.iter_mut().find(|w| w.name == worker_name) {
+                entry.busy = avail.busy;
+                entry.runs = avail.runs;
+                entry.unsettled = avail.unsettled;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Dispatches a single request to a dedicated pool worker workspace.
+    async fn dispatch_pool_request(&mut self, worker_name: &AgentName, request: DelegationRequest) -> Taken {
+        if let Err(error) = self.try_dispatch_pool_request(worker_name, &request).await {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %request.id,
+                worker = %worker_name,
+                error = %error_chain(&error),
+                "failed to dispatch pool worker request; returning request to queue"
+            );
+            let update = DelegationUpdate {
+                status: Some(DelegationStatus::Queued),
+                task: None,
+                summary: None,
+            };
+            if let Err(bus_err) = self.parts.bus.helper_set(request.id, &update).await {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    request = %request.id,
+                    error = %error_chain(&bus_err),
+                    "cannot reset request status to queued after dispatch failure"
+                );
+            }
+            return Taken::Held;
+        }
+        Taken::Served
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "dispatching a pool worker prepares the dedicated workspace, derives the branch, shapes the prompt, configures MCP, and spawns the job"
+    )]
+    pub(in crate::daemon::owner) async fn try_dispatch_pool_request(
+        &mut self,
+        worker_name: &AgentName,
+        request: &DelegationRequest,
+    ) -> Result<(), PoolDispatchError> {
+        let Some(found) = self.parts.state.find_task(&request.from_task) else {
+            return Err(PoolDispatchError::RequesterNotFound(request.from_task.clone()));
+        };
+        let team = found.team.clone();
+        let requester_task = request.from_task.clone();
+        let requester_repo = team.repo().clone();
+
+        let worker_task = TaskId::generate(&self.parts.clock, &mut self.parts.rng)?;
+        let run = RunId::generate(&self.parts.clock, &mut self.parts.rng)?;
+
+        let requester_worktree = self.parts.store.home().worktree_dir(&requester_repo, &requester_task);
+        let requester_path_str = requester_worktree
+            .to_str()
+            .ok_or_else(|| PoolDispatchError::NonUtf8Path(requester_worktree.clone()))?;
+        let requester_abs = AbsolutePath::from_str(requester_path_str)?;
+        let requester_git = Git::new(
+            requester_abs,
+            CommitIdentity::for_agent(self.parts.settings.config.git(), &request.from),
+        );
+
+        let base_commit = requester_git.rev_parse(&Revision::Head).await?;
+
+        let requester_round = match self.requester_round(team.id(), &requester_task) {
+            Some(r) => r,
+            None => RoundId::generate(&self.parts.clock, &mut self.parts.rng)?,
+        };
+        let branch = request_workspace::branch(worker_name, &worker_task)?;
+
+        let workspace = RequestWorkspace::try_from(WorkspaceRecord {
+            request: request.id,
+            requester: request.from.clone(),
+            requester_task: requester_task.clone(),
+            requester_round,
+            requester_repo: requester_repo.clone(),
+            worker: worker_name.clone(),
+            worker_task: worker_task.clone(),
+            branch: branch.clone(),
+            base: base_commit.clone(),
+            stage: request_workspace::Stage::Working,
+        })?;
+
+        request_workspace::prepare(self.parts.store.home(), &requester_git, &workspace).await?;
+
+        let again_saved = self.again.get(&request.id).cloned();
+
+        let step_result: Result<(), PoolDispatchError> = async {
+            let worker_worktree_path =
+                request_workspace::worktree_of(self.parts.store.home(), &requester_repo, &worker_task)?;
+            let working_dir = worker_worktree_path.clone();
+
+            let Some(agent_conf) = self.parts.settings.config.agent(worker_name) else {
+                return Err(PoolDispatchError::WorkerConfigNotFound(worker_name.clone()));
+            };
+            let setup_cli = agent_conf.cli;
+            let setup_model = agent_conf.model.clone();
+            let setup_args = agent_conf.args.clone();
+            let setup_context = agent_conf.context;
+            let setup_output = agent_conf.output;
+
+            let questions_file = self.parts.store.home().questions_file(&worker_task, NonZeroU32::MIN);
+            let session_id = super::start::new_session_id(&mut self.parts.rng)?;
+            let mode = RunMode::New { session_id };
+
+            let given = self.given_again(team.id(), request, worker_name, &worker_task);
+
+            let input = PromptInput {
+                kind: PromptKind::First,
+                agent: worker_name.as_str(),
+                tier: Tier::Worker,
+                role: Role::Worker,
+                task: &worker_task,
+                repo: &requester_repo,
+                worktree: worker_worktree_path.as_path(),
+                questions_file: &questions_file,
+                number: NonZeroU32::MIN,
+                brief: "",
+                item: None,
+                team_items: &[],
+                checkpoint: None,
+                serena: Serena::Without,
+            };
+            let texts = PromptTexts {
+                harness: &self.parts.texts,
+                rules: &self.parts.rules,
+            };
+            let composed = compose(&texts, &input)?;
+
+            let prompt = crate::daemon::team::shape_pool_worker(&self.parts.team_texts, &composed, &given)?;
+
+            let binaries = self.parts.settings.config.binaries();
+            let home_abs = self.parts.store.home().absolute_root().clone();
+            let bus_dir = AgentBus::new(binaries.agentbus.clone(), home_abs.clone()).bus_dir();
+
+            let agentbus_bin = binaries
+                .agentbus
+                .as_path()
+                .to_str()
+                .ok_or_else(|| PoolDispatchError::NonUtf8Path(binaries.agentbus.as_path().to_path_buf()))?
+                .to_owned();
+            let task_dir_buf = self.parts.store.home().task_dir(&worker_task);
+            let task_dir_str = task_dir_buf
+                .to_str()
+                .ok_or_else(|| PoolDispatchError::NonUtf8Path(task_dir_buf.clone()))?
+                .to_owned();
+            let worktree_str = worker_worktree_path
+                .as_path()
+                .to_str()
+                .ok_or_else(|| PoolDispatchError::NonUtf8Path(worker_worktree_path.as_path().to_path_buf()))?
+                .to_owned();
+            let home_str = home_abs
+                .as_path()
+                .to_str()
+                .ok_or_else(|| PoolDispatchError::NonUtf8Path(home_abs.as_path().to_path_buf()))?
+                .to_owned();
+            let bus_dir_str = bus_dir
+                .to_str()
+                .ok_or_else(|| PoolDispatchError::NonUtf8Path(bus_dir.clone()))?
+                .to_owned();
+
+            let mut words = vec![
+                agentbus_bin,
+                "serve".to_owned(),
+                "--agent".to_owned(),
+                worker_name.to_string(),
+                "--task".to_owned(),
+                worker_task.to_string(),
+                "--task-dir".to_owned(),
+                task_dir_str,
+                "--repo".to_owned(),
+                requester_repo.to_string(),
+                "--worktree".to_owned(),
+                worktree_str,
+                "--branch".to_owned(),
+                branch.to_string(),
+                "--tier".to_owned(),
+                "worker".to_owned(),
+                "--home".to_owned(),
+                home_str,
+                "--dir".to_owned(),
+                bus_dir_str,
+            ];
+            let workers = self.parts.settings.config.worker_agents();
+            if !workers.is_empty() {
+                let names: Vec<&str> = workers.iter().map(AgentName::as_str).collect();
+                words.extend(["--workers".to_owned(), names.join(",")]);
+            }
+            let mut mcp_servers = BTreeMap::new();
+            let cmd = CommandLine::try_from(words)?;
+            mcp_servers.insert(McpServerKind::Agentbus, cmd);
+
+            let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), worker_name);
+            let job = RunJob {
+                task: worker_task.clone(),
+                run,
+                cli: setup_cli,
+                model: setup_model,
+                extra_args: setup_args,
+                mode,
+                prompt,
+                working_dir,
+                identity,
+                mcp_servers,
+                context: setup_context,
+                output: setup_output,
+            };
+
+            let started = Timestamp::now(&self.parts.clock)?;
+
+            self.record_pool_run(
+                worker_task.clone(),
+                Served {
+                    request: request.id,
+                    requester: request.from.clone(),
+                    requester_task,
+                    worker: worker_name.clone(),
+                    started,
+                    base: Some(base_commit.to_string()),
+                },
+                team.id().clone(),
+            );
+
+            let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
+            self.spawn_job(worker_task.clone(), job, run_span);
+
+            self.tell_bus(
+                team.id(),
+                request_update(request.id, DelegationStatus::Running, Some(worker_task.clone())),
+            );
+            tracing::info!(
+                event = LogEvent::RequestDelegated.as_str(),
+                team = %team.id(),
+                request = %request.id,
+                %worker_name,
+                "a request is given to a pool worker"
+            );
+            Ok(())
+        }
+        .await;
+
+        if let Err(err) = step_result {
+            if let Some(again) = again_saved {
+                self.again.insert(request.id, again);
+            }
+            if let Err(cleanup_err) =
+                request_workspace::release(self.parts.store.home(), &requester_git, &workspace).await
+            {
+                tracing::warn!(
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
+                    request = %request.id,
+                    error = %error_chain(&cleanup_err),
+                    "cannot release workspace after failed dispatch"
+                );
+                self.cleanup_obligations.push(CleanupObligation {
+                    requester_git,
+                    workspace,
+                });
+            }
+            return Err(err);
+        }
+
+        Ok(())
+    }
+
+    /// Retries outstanding cleanup obligations, freeing workers whose workspace release failed earlier.
+    pub(in crate::daemon::owner) async fn retry_cleanup_obligations(&mut self) {
+        if self.cleanup_obligations.is_empty() {
+            return;
+        }
+        let mut remaining = Vec::new();
+        for obligation in std::mem::take(&mut self.cleanup_obligations) {
+            match request_workspace::release(
+                self.parts.store.home(),
+                &obligation.requester_git,
+                &obligation.workspace,
+            )
+            .await
+            {
+                Ok(()) => {
+                    tracing::info!(
+                        event = LogEvent::RequestDelegated.as_str(),
+                        request = %obligation.workspace.record().request,
+                        worker = %obligation.workspace.record().worker,
+                        "cleaned up pending workspace obligation after earlier release failure"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        event = LogEvent::WorkerRequestDamaged.as_str(),
+                        request = %obligation.workspace.record().request,
+                        error = %error_chain(&err),
+                        "retrying workspace release failed; retaining cleanup obligation"
+                    );
+                    remaining.push(obligation);
+                }
+            }
+        }
+        self.cleanup_obligations = remaining;
+    }
+
+    /// A run of a pool worker that ended.
+    pub(super) fn settle_pool_worker_run(
+        &mut self,
+        task: &TaskId,
+        served: &Served,
+        outcome: Outcome,
+    ) -> Result<(), OwnerError> {
+        let team_id = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .map(|f| f.team.id().clone());
+        let req_outcome = match outcome {
+            Outcome::Verdict(verdict) => match *verdict {
+                RunVerdict::Finished(run) => {
+                    request_outcome(&run.classified.end, TaskStatus::Done, run.final_message.as_deref())
+                }
+                RunVerdict::Interrupted { .. } => Some(RequestOutcome::Failed {
+                    how: WorkerEnd::Stopped,
+                    said: None,
+                }),
+            },
+            Outcome::Failed(reason) => Some(RequestOutcome::Failed {
+                how: WorkerEnd::NoStatus,
+                said: Some(reason),
+            }),
+        };
+        if let Some(team_id) = team_id {
+            match req_outcome {
+                Some(RequestOutcome::Done { summary }) => {
+                    if let Err(error) = self.keep_worker_result(&team_id, served, task, summary.clone()) {
+                        tracing::warn!(
+                            event = LogEvent::WorkerRequestDamaged.as_str(),
+                            request = %served.request,
+                            error = %error_chain(&error),
+                            "the result of a pool worker cannot be kept: the requester is given the worker's report unchecked"
+                        );
+                        Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
+                        for job in answer_jobs(&self.parts.team_texts, served, RequestOutcome::Done { summary })? {
+                            self.outbox.push_back(Outbound {
+                                team: team_id.clone(),
+                                job,
+                            });
+                        }
+                        self.answered_requests.insert(served.request);
+                    }
+                    self.look_at(&team_id);
+                }
+                Some(outcome @ RequestOutcome::Failed { .. }) => {
+                    Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
+                    for job in answer_jobs(&self.parts.team_texts, served, outcome)? {
+                        self.outbox.push_back(Outbound {
+                            team: team_id.clone(),
+                            job,
+                        });
+                    }
+                    self.answered_requests.insert(served.request);
+                    self.look_at(&team_id);
+                }
+                None => {
+                    self.look_at(&team_id);
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Takes the oldest queued request for `worker` from the bus and starts the worker's run on it.
     async fn take_request(
         &mut self,
@@ -1572,6 +2300,13 @@ fn answer_jobs(
             notice,
         },
     ])
+}
+
+/// An unfulfilled workspace release obligation after dispatch failure.
+#[derive(Debug, Clone)]
+pub(in crate::daemon::owner) struct CleanupObligation {
+    pub(in crate::daemon::owner) requester_git: Git,
+    pub(in crate::daemon::owner) workspace: RequestWorkspace,
 }
 
 #[cfg(test)]

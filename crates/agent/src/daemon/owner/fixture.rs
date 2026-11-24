@@ -42,7 +42,7 @@ use crate::testing::ManualClock;
 pub(super) const PATIENCE: Duration = Duration::from_secs(30);
 
 /// The fake CLI, the one of the tests of the run engine.
-fn fake_cli() -> String {
+pub(super) fn fake_cli() -> String {
     format!(
         "{}/../agent-runtime/tests/fixtures/run/fake-claude.sh",
         env!("CARGO_MANIFEST_DIR")

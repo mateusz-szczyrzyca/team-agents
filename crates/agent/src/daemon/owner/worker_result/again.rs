@@ -3,6 +3,7 @@
 
 use std::path::Path;
 
+use agent_core::decide::pool::{PoolWorker, Requires, second_try_pool_elsewhere};
 use agent_core::decide::worker_result::{Elsewhere, worker_for_second_try};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
@@ -18,15 +19,17 @@ use crate::daemon::team::{BusJob, BusNotice, NoticeRenderError, delegation_again
 #[derive(Debug, Clone)]
 pub(in crate::daemon::owner) struct Again {
     /// The team.
-    pub(super) team: TeamId,
+    pub(in crate::daemon::owner) team: TeamId,
     /// The worker whose result was wrong.
-    pub(super) worker: AgentName,
+    pub(in crate::daemon::owner) worker: AgentName,
     /// The provider of that worker: the second try goes to another provider when one is free.
-    pub(super) failed_cli: CliKind,
+    pub(in crate::daemon::owner) failed_cli: CliKind,
+    /// The provider of that worker computed via `provider_of`.
+    pub(in crate::daemon::owner) failed_provider: String,
     /// The try the request is on once it is given again, with why each earlier one was wrong.
-    pub(super) tried: Try,
+    pub(in crate::daemon::owner) tried: Try,
     /// Why the result that was wrong did not serve, in the words of the requester's notice.
-    pub(super) reason: String,
+    pub(in crate::daemon::owner) reason: String,
 }
 
 /// The labels of the tries, in the words the requester reads.
@@ -54,27 +57,110 @@ pub(super) fn reasons_by_try(tried: &Try, this: &[String]) -> Vec<String> {
 impl Owner {
     /// Which worker, if any, the second try of a request of `pending` can go to: another provider's, else one of the same
     /// provider, else none.
-    pub(super) fn elsewhere_of(&self, pending: &Pending) -> Elsewhere {
-        let Ok(Some(workers)) = self.workers_of(&pending.team) else {
-            return Elsewhere::None;
-        };
-        let listed = self.workers_with_cli(&workers.in_order);
-        let failed = self.cli_of(&pending.worker);
-        let as_refs: Vec<(&AgentName, CliKind)> = listed.iter().map(|(name, cli)| (name, *cli)).collect();
-        match (
-            failed,
-            worker_for_second_try(&as_refs, failed.unwrap_or(CliKind::Claude), &workers.busy),
-        ) {
-            (_, None) => Elsewhere::None,
-            (Some(failed), Some(name)) if listed.iter().any(|(listed, cli)| listed == name && *cli == failed) => {
-                Elsewhere::SameProvider
+    pub(super) async fn elsewhere_of(&self, pending: &Pending) -> Elsewhere {
+        let workers = match self.workers_of(&pending.team) {
+            Ok(Some(workers)) if !workers.in_order.is_empty() => Some(workers),
+            Ok(_) => None,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    team = %pending.team,
+                    error = %error_chain(&error),
+                    "cannot read workers of team for second try"
+                );
+                return Elsewhere::None;
             }
-            _ => Elsewhere::Free,
+        };
+        if let Some(workers) = workers {
+            let listed = self.workers_with_cli(&workers.in_order);
+            let failed = self.cli_of(&pending.worker);
+            let as_refs: Vec<(&AgentName, CliKind)> = listed.iter().map(|(name, cli)| (name, *cli)).collect();
+            match (
+                failed,
+                worker_for_second_try(&as_refs, failed.unwrap_or(CliKind::Claude), &workers.busy),
+            ) {
+                (_, None) => Elsewhere::None,
+                (Some(failed), Some(name)) if listed.iter().any(|(listed, cli)| listed == name && *cli == failed) => {
+                    Elsewhere::SameProvider
+                }
+                _ => Elsewhere::Free,
+            }
+        } else {
+            let pool = self.parts.settings.config.worker_agents();
+            if pool.is_empty() {
+                return Elsewhere::None;
+            }
+            let failed_provider = self.provider_of_agent(&pending.worker);
+            let run_limit = agent_core::decide::slot::limit_for(
+                self.parts.settings.config.limits(),
+                agent_core::kinds::Tier::Worker,
+            );
+            let mut pool_workers_data = Vec::new();
+            for name in pool {
+                let Some(agent_conf) = self.parts.settings.config.agent(name) else {
+                    continue;
+                };
+                if self.is_in_active_crew(name) {
+                    continue;
+                }
+                let provider =
+                    agent_core::decide::pool::provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
+                let capabilities = agent_conf.capabilities.clone();
+                let avail = self.worker_availability_except(name, Some(pending.request)).await;
+                pool_workers_data.push((name, provider, capabilities, avail.busy, avail.runs, avail.unsettled));
+            }
+            let workers: Vec<PoolWorker<'_>> = pool_workers_data
+                .iter()
+                .map(|(name, provider, capabilities, busy, runs, unsettled)| PoolWorker {
+                    name,
+                    provider,
+                    capabilities: capabilities.as_slice(),
+                    busy: *busy,
+                    runs: *runs,
+                    unsettled: *unsettled,
+                })
+                .collect();
+
+            let pending_requires = match self.parts.bus.helper_list(true).await {
+                Ok(helpers) => {
+                    let Some(helper) = helpers.into_iter().find(|h| h.id == pending.request) else {
+                        tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
+                            request = %pending.request,
+                            "pending helper request missing when checking requirements for second try"
+                        );
+                        return Elsewhere::None;
+                    };
+                    helper.requires
+                }
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        request = %pending.request,
+                        error = %error_chain(&error),
+                        "cannot read helper list for second try requirements"
+                    );
+                    return Elsewhere::None;
+                }
+            };
+            let requires = Requires {
+                capabilities: &pending_requires,
+            };
+
+            second_try_pool_elsewhere(&workers, &requires, &pending.worker, &failed_provider, run_limit)
         }
     }
 
+    /// The provider of the agent `name` computed via `provider_of`.
+    pub(in crate::daemon::owner) fn provider_of_agent(&self, name: &AgentName) -> String {
+        self.parts.settings.config.agent(name).map_or_else(
+            || name.as_str().to_owned(),
+            |agent| agent_core::decide::pool::provider_of(agent.cli, agent.model.as_ref()).to_owned(),
+        )
+    }
+
     /// The provider of the agent `name`, when the configuration has it.
-    pub(super) fn cli_of(&self, name: &AgentName) -> Option<CliKind> {
+    pub(in crate::daemon::owner) fn cli_of(&self, name: &AgentName) -> Option<CliKind> {
         self.parts.settings.config.agents().get(name).map(|agent| agent.cli)
     }
 
@@ -174,12 +260,14 @@ impl Owner {
         let reason = reasons.join("; ");
         earlier.push(reason.clone());
         let failed_cli = self.cli_of(&pending.worker).unwrap_or(CliKind::Claude);
+        let failed_provider = self.provider_of_agent(&pending.worker);
         self.again.insert(
             pending.request,
             Again {
                 team: pending.team.clone(),
                 worker: pending.worker.clone(),
                 failed_cli,
+                failed_provider,
                 tried: Try {
                     number: tried.number + 1,
                     earlier,

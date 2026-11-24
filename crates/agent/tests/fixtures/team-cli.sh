@@ -301,6 +301,25 @@ case $action in
     if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
     printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: %s"}}\n' "$n" "$status"
     ;;
+  opencode-script:*)
+    fake_script="$home/fake-scripts/${action#opencode-script:}.sh"
+    [[ -f "$fake_script" ]] || { echo "script $fake_script does not exist" >&2; exit 64; }
+    bash "$fake_script"
+    record_gate
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: DONE"}}\n' "$n"
+    ;;
+  opencode-sleep)
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: SLEEPING"}}\n' "$n"
+    ;;
+  opencode-hold)
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: SLEEPING"}}\n' "$n"
+    ;;
+  opencode-done)
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: DONE"}}\n' "$n"
+    ;;
   proposal:*)
     task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
     cp "$home/fake-proposals/${action#proposal:}.json" "$home/tasks/$task/split-proposal-1.1.json"

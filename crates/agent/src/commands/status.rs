@@ -18,6 +18,7 @@ use agent_core::protocol::{
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::{AgentBus, AgentBusError};
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
@@ -52,6 +53,9 @@ pub(crate) enum StatusError {
         /// The I/O failure, kept as the cause.
         source: io::Error,
     },
+    /// The bus could not be queried.
+    #[error("cannot read worker requests from the bus")]
+    Bus(#[source] AgentBusError),
     /// The configuration file is not valid.
     #[error("cannot parse the configuration file {path:?}")]
     ConfigParse {
@@ -217,6 +221,8 @@ struct Shown {
     text: String,
     /// The line of runs going per configured CLI, when at least one run is going.
     cli_runs: Option<String>,
+    /// The lines describing pool workers, when configured.
+    pool: Option<String>,
     /// The versions of the daemon that answered; absent from a daemon before it told them.
     daemon: Option<Versions>,
     /// What the history is doing, when it is not whole.
@@ -365,8 +371,9 @@ async fn listing_text(
     detail: Detail,
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
+    let is_targeted = target.is_some();
     // A team or a task is shown with its tasks, as it always was.
-    let detail = if target.is_some() { Detail::Tasks } else { detail };
+    let detail = if is_targeted { Detail::Tasks } else { detail };
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
@@ -380,9 +387,15 @@ async fn listing_text(
         &|task| requests.of(task).to_vec(),
         activity.zone,
     );
+    let pool = if !is_targeted && detail == Detail::Short {
+        pool_line(activity, &listing.teams).await?
+    } else {
+        None
+    };
     Ok(Shown {
         text: format!("{text}{}", told.unread()),
         cli_runs,
+        pool,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -397,6 +410,11 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let pool = if detail == Detail::Short {
+        pool_line(activity, &listing.teams).await?
+    } else {
+        None
+    };
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -423,6 +441,7 @@ async fn running_text(
     Ok(Shown {
         text,
         cli_runs,
+        pool,
         daemon: listing.daemon,
         history: listing.history,
     })
@@ -445,13 +464,112 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
     }
 }
 
+/// Observes the configured pool of workers and reads helper requests asynchronously.
+async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+    let settings = match Settings::load(&activity.home).await {
+        Ok(s) => s,
+        Err(SettingsError::MissingConfig { .. }) => return Ok(None),
+        Err(err) => return Err(StatusError::Settings(err)),
+    };
+    let workers = settings.config.worker_agents();
+    if workers.is_empty() {
+        return Ok(None);
+    }
+    let bus = AgentBus::new(
+        settings.config.binaries().agentbus.clone(),
+        activity.home.absolute_root().clone(),
+    );
+    let helpers = bus.helper_list(true).await.map_err(StatusError::Bus)?;
+    let unsettled = scan_unsettled_workspaces(&activity.home, &helpers).await;
+    Ok(pool::render_pool_with_unsettled(
+        workers,
+        teams,
+        Some(&helpers),
+        Some(&unsettled),
+    ))
+}
+
+/// Scans task directories in `home` for unsettled workspace records and records damaged entries.
+async fn scan_unsettled_workspaces(
+    home: &Home,
+    helpers: &[agent_runtime::agentbus::HelperEntry],
+) -> Vec<pool::UnsettledWorker> {
+    let tasks_dir = home.tasks_dir();
+    let mut entries = match tokio::fs::read_dir(&tasks_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(source) => return vec![damaged_pool_workspace(&tasks_dir, &source)],
+    };
+    let mut result = Vec::new();
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(source) => {
+                result.push(damaged_pool_workspace(&tasks_dir, &source));
+                break;
+            }
+        };
+        let task_path = entry.path();
+        match entry.file_type().await {
+            Ok(kind) if !kind.is_dir() => continue,
+            Ok(_) => {}
+            Err(source) => {
+                result.push(damaged_pool_workspace(&task_path, &source));
+                continue;
+            }
+        }
+        match agent_runtime::request_workspace::read_each(&task_path).await {
+            Ok(records) => {
+                for rec_res in records {
+                    match rec_res {
+                        Ok(ws) => {
+                            let rec = ws.record();
+                            let step = helpers
+                                .iter()
+                                .find(|h| h.id == rec.request)
+                                .and_then(|h| h.step.clone());
+                            result.push(pool::UnsettledWorker {
+                                worker: Some(rec.worker.clone()),
+                                from_task: rec.requester_task.to_string(),
+                                step,
+                                damaged: false,
+                            });
+                        }
+                        Err(source) => result.push(damaged_pool_workspace(&task_path, &source)),
+                    }
+                }
+            }
+            Err(source) => result.push(damaged_pool_workspace(&task_path, &source)),
+        }
+    }
+    result
+}
+
+/// A damaged record cannot prove any worker free; report the cause and retain that uncertainty.
+fn damaged_pool_workspace(path: &std::path::Path, source: &dyn std::error::Error) -> pool::UnsettledWorker {
+    tracing::warn!(
+        event = agent_core::log::LogEvent::WorkerRequestDamaged.as_str(),
+        path = %path.display(),
+        error = %error_chain(source),
+        "cannot scan worker workspace: pool availability is unknown"
+    );
+    pool::UnsettledWorker {
+        worker: None,
+        from_task: String::new(),
+        step: None,
+        damaged: true,
+    }
+}
+
 /// Writes `prefix`, then what `shown` says, then the line of runs per CLI if any, the line about low disk space if any
 /// and the line about the history when it is not whole.
 fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
     let cli_runs = shown.cli_runs.as_deref().unwrap_or_default();
+    let pool = shown.pool.as_deref().unwrap_or_default();
     write(
         out,
-        &format!("{prefix}{}{cli_runs}", shown.text),
+        &format!("{prefix}{}{cli_runs}{pool}", shown.text),
         shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
@@ -1075,6 +1193,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
 mod investigators;
 mod members;
+pub(crate) mod pool;
 pub(crate) mod requests;
 mod returned;
 mod reviewer;

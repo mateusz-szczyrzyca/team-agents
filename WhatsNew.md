@@ -5,6 +5,20 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.90.0 — 24.11.2026 — PR #243
+
+### New features
+- [agent] [agent-core] [agent-runtime] [agentbus] Teams and solo tasks can delegate to the installation's configured workers without adding them to their crew. Requests alternate providers, skipping busy providers; second tries prefer another eligible provider and can reuse the only eligible worker. Workers use isolated worktrees at the requester's commit.
+- [agent] `agent status` shows each pool worker's requester and step, or whether it is free. Workers awaiting workspace release and workers in active legacy crews stay unavailable.
+
+### Bug fixes
+- [agent] [agentbus] Legacy crew requests keep their own workers without consuming unrelated pool capacity or changing the configured provider order.
+- [agent] Pool runs share worker limits, the global run ceiling and disk checks with ordinary runs, including after their requester is removed. Failed preparation leaves the provider's turn available.
+- [agent] `agent status --running` keeps workers assigned to active legacy crews even when those crews have no open rounds.
+
+### Configuration
+- [agent-core] new: `[agents.NAME] capabilities` and `[investigators.NAME] capabilities` (default `[]`) — capabilities matched against worker request `requires`, written as `<namespace>:<value>` with namespaces `os`, `arch`, `build`, `test`, `hw`, `net`.
+
 ## 0.89.0 — 24.11.2026 — PR #242
 
 ### Bug fixes
