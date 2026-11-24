@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.90.0 — 24.11.2026 — PR #243
+
+### New features
+- [agent-core] Foundation for soft enforcement: agents are reminded once per session when they search code too much without using Serena. Detects code searches via shell commands (`grep`, `rg`, `sed`, `cat`, `head`, `tail`, `find`) and CLI tools (opencode, claude-code) on code files, while ignoring text files (Markdown, TOML, YAML, JSON, etc.). Tracks reminder state per session with a configurable threshold.
+
+### Configuration
+- [agent-core] new: `[serena] remind_after` (default `40`) — when a run has Serena available but unused, send a one-time reminder after this many code searches without Serena in the same session; `0` disables reminders.
+
 ## 0.89.0 — 24.11.2026 — PR #242
 
 ### Bug fixes
