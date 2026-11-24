@@ -1,6 +1,6 @@
 //! A run that has Serena, the `agent` binary as a process in a temporary `AGENTS_HOME`: with `[binaries] serena` the
 //! first prompt the stand-in CLI is given holds the section on finding code with Serena, and without it the prompt is
-//! the one of every run before it.
+//! the one of every run before it. The summary `agent debug` writes counts the tool calls of the run.
 
 #[cfg(test)]
 mod serena_prompt {
@@ -9,6 +9,9 @@ mod serena_prompt {
     use std::process::{Child, Command, Output, Stdio};
     use std::time::{Duration, Instant};
 
+    use agent_core::state::{RunEnd, State};
+    use agent_core::status::RunOutcome;
+    use agent_runtime::history::Reader;
     use rustix::process::{Pid, Signal};
 
     /// The longest any wait of these tests lasts.
@@ -59,16 +62,19 @@ mod serena_prompt {
     }
 
     impl World {
-        /// A world whose `agents.toml` names `serena` when `with_serena`. Its value is a program no run of these tests
-        /// starts: the stand-in CLI calls no tool.
-        fn new(with_serena: bool) -> Self {
+        /// A world whose `agents.toml` names `serena` when `with_serena`, and whose stand-in CLI calls `tools` and then
+        /// commits a file of its own and records the gate it passes for it. The value of `serena` is a program no run of
+        /// these tests starts: the stand-in only prints the call of a tool, as its stream does.
+        fn new(with_serena: bool, tools: &[&str]) -> Self {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
             let home = root.join("home");
             std::fs::create_dir(&home).unwrap();
             let mut config = String::new();
-            // Two investigators outside a team of one review its pull request at the default of `[review]`; a team of two
-            // needs a third.
+            let calls = tools.iter().fold(String::new(), |mut calls, tool| {
+                write!(calls, ", \"--tool\", \"{tool}\"").unwrap();
+                calls
+            });
             for (table, name) in [
                 ("agents", "claude-1"),
                 ("investigators", "inv-opus"),
@@ -78,7 +84,7 @@ mod serena_prompt {
                 write!(
                     config,
                     "[{table}.{name}]\ncli = \"claude\"\nargs = [\"--prompt-file\", \"{home}/{name}-prompt.txt\", \
-                     \"--status\", \"STATUS: DONE\"]\n",
+                     \"--gate\", \"{home}/tasks/{name}/gate.json\"{calls}, \"--status\", \"STATUS: DONE\"]\n",
                     home = home.display(),
                 )
                 .unwrap();
@@ -115,6 +121,8 @@ mod serena_prompt {
             git(&repo, &["add", "README.md"]);
             git(&repo, &["commit", "-q", "-m", "First"]);
             git(&repo, &["push", "-q", "origin", "main"]);
+            // Two investigators outside a team of one review its pull request at the default of `[review]`; a team of
+            // two needs a third.
             Self {
                 _dir: dir,
                 home,
@@ -155,6 +163,57 @@ mod serena_prompt {
                 .unwrap()
         }
 
+        fn state(&self) -> State {
+            State::from_json(&std::fs::read_to_string(self.home.join("state.json")).unwrap()).unwrap()
+        }
+
+        /// The team the task `task` is in.
+        fn team_of(&self, task: &str) -> agent_core::ids::TeamId {
+            let id: agent_core::ids::TaskId = task.parse().unwrap();
+            self.state()
+                .teams()
+                .iter()
+                .find(|team| {
+                    team.crew().roster().iter().any(|(_, member)| member.task() == &id)
+                        || team.reviewers().iter().any(|member| member.task() == &id)
+                })
+                .unwrap()
+                .id()
+                .clone()
+        }
+
+        /// How the task `task` stands in the state, for a message when a test waits too long for it.
+        fn task_state(&self, task: &str) -> String {
+            let id: agent_core::ids::TaskId = task.parse().unwrap();
+            let state = self.state();
+            state.teams().iter().find_map(|team| team.find(&id)).map_or_else(
+                || "not in the state".to_owned(),
+                |(role, member)| format!("{role:?} {:?} runs {}", member.status(), member.runs().len()),
+            )
+        }
+
+        /// Waits until the history records that the task `task` ended, which it does only when the run's steps are in
+        /// the database too.
+        fn task_ended(&self, task: &str) {
+            let team = self.team_of(task);
+            let deadline = Instant::now() + PATIENCE;
+            while Instant::now() < deadline {
+                let ended = Reader::open(&self.home.join("history.db")).is_ok_and(|reader| {
+                    reader.team_records(&team).is_ok_and(|records| {
+                        records.iter().any(|row| {
+                            matches!(&row.record, agent_core::history::Record::RunEnd(end)
+                                if end.end == RunEnd::Reported { outcome: RunOutcome::Done })
+                        })
+                    })
+                });
+                if ended {
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            panic!("the task {task} did not end in the history: {}", self.task_state(task));
+        }
+
         /// The first prompt the runs of `agent` were given.
         fn first_prompt(&self, agent: &str) -> String {
             let file = self.home.join(format!("{agent}-prompt.txt"));
@@ -184,7 +243,7 @@ mod serena_prompt {
 
     #[test]
     fn a_solo_run_with_serena_is_told_how_to_find_code_right_after_its_context() {
-        let mut world = World::new(true);
+        let mut world = World::new(true, &[]);
         world.start();
         let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -208,7 +267,7 @@ mod serena_prompt {
 
     #[test]
     fn a_reviewer_with_serena_is_told_how_to_find_code() {
-        let mut world = World::new(true);
+        let mut world = World::new(true, &[]);
         world.start();
         let output = world.agent(&["run", "inv-opus", "Review the pull request."]);
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -221,7 +280,7 @@ mod serena_prompt {
 
     #[test]
     fn a_run_without_serena_is_not_told_how_to_find_code() {
-        let mut world = World::new(false);
+        let mut world = World::new(false, &[]);
         world.start();
         let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -231,5 +290,46 @@ mod serena_prompt {
         assert!(prompt.contains(CONTEXT), "{prompt}");
         assert!(!prompt.contains(SECTION), "{prompt}");
         assert!(!prompt.to_ascii_lowercase().contains("serena"), "{prompt}");
+    }
+
+    #[test]
+    fn agent_debug_counts_the_serena_and_shell_calls_of_a_run_with_serena() {
+        let mut world = World::new(
+            true,
+            &["mcp__serena__find_symbol", "mcp__serena__find_referencing_symbols"],
+        );
+        world.start();
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let task = first_task(&output);
+        world.task_ended(&task);
+        let bundle = tempfile::tempdir().unwrap();
+
+        let output = world.agent(&["debug", "--task", &task, "--out", bundle.path().to_str().unwrap()]);
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let dir = std::fs::read_dir(bundle.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let summary = std::fs::read_to_string(dir.join("SUMMARY.md")).unwrap();
+        assert!(
+            summary.contains("- Tool calls: 2 (serena 2, shell 0, other 0)\n"),
+            "{summary}"
+        );
+    }
+
+    /// The task `agent run` printed on its second line.
+    fn first_task(output: &Output) -> String {
+        let text = String::from_utf8(output.stdout.clone()).unwrap();
+        text.lines()
+            .nth(1)
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned()
     }
 }
