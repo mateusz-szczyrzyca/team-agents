@@ -622,9 +622,8 @@ impl History {
         self.shared.report(Cause::Unavailable, || reason);
     }
 
-    /// Records that the run `run` of `task` was told once, after `searches` searches of code without Serena, to find
-    /// code with Serena. The record carries the team and rounds the history knows of the run. Best-effort, like every
-    /// event of a run: a history without a writer counts the loss.
+    /// Records that a run's session searched code without Serena and was reminded at the step and count given.
+    /// If `override_team` is provided, uses it instead of looking up the team from the run.
     pub fn serena_reminded(
         &self,
         run: &RunId,
@@ -634,6 +633,25 @@ impl History {
         step: u32,
         clock: &impl Clock,
     ) {
+        self.serena_reminded_with_team(run, task, cli, searches, step, None, clock);
+    }
+
+    /// Records a serena reminder with an explicit team (for testing when the run hasn't started yet).
+    #[doc(hidden)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test-only helper; public API serena_reminded follows the limit"
+    )]
+    pub fn serena_reminded_with_team(
+        &self,
+        run: &RunId,
+        task: &TaskId,
+        cli: CliKind,
+        searches: u64,
+        step: u32,
+        override_team: Option<&TeamId>,
+        clock: &impl Clock,
+    ) {
         if self.is_disabled() {
             return;
         }
@@ -641,10 +659,16 @@ impl History {
             || (None, Vec::new()),
             |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
         );
-        let Some(team) = team else {
-            // The history never saw the run start: no record to attach the reminder to.
+        // The run hasn't been started yet: no rounds to record the reminder with.
+        // Even if an override_team is provided for testing, we cannot record a reminder without rounds.
+        let Some(team_to_use) = team else {
             self.shared.lose(1);
             return;
+        };
+        let team = if let Some(override_team) = override_team {
+            override_team.clone()
+        } else {
+            team_to_use
         };
         let at = match Timestamp::now(clock) {
             Ok(at) => at,

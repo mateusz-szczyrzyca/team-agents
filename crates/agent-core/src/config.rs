@@ -1173,9 +1173,9 @@ impl RawConfig {
             split,
             history,
             log,
+            serena,
             web,
             repos,
-            serena,
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
@@ -1236,9 +1236,9 @@ impl RawConfig {
             split,
             history,
             log,
+            serena,
             web,
             repos,
-            serena,
         })
     }
 }
@@ -1538,6 +1538,12 @@ impl Config {
         &self.log
     }
 
+    /// Serena soft enforcement settings.
+    #[must_use]
+    pub const fn serena(&self) -> &SerenaSettings {
+        &self.serena
+    }
+
     /// What the harness does with the result of a worker.
     #[must_use]
     pub const fn workers(&self) -> &WorkerSettings {
@@ -1572,12 +1578,6 @@ impl Config {
     #[must_use]
     pub fn web(&self) -> &Web {
         &self.web
-    }
-
-    /// The reminder for a run with Serena.
-    #[must_use]
-    pub const fn serena(&self) -> &SerenaSettings {
-        &self.serena
     }
 
     /// The repository named `name`, if the configuration has it.
