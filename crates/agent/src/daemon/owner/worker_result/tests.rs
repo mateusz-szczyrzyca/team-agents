@@ -240,15 +240,14 @@ async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_rec
         task: task(2),
         path: "/tmp/example".into(),
     });
-    let found = run_request_check(RequestCheck {
-        worktree: None,
-        worktree_fault: Some(cause.clone()),
-        task_dir: "/tmp/example".into(),
-        step: "1.1".parse().unwrap(),
-        text: "test -s docs/count.txt".to_owned(),
-        seconds: 60,
-        refuse: vec![],
-    })
+    let found = run_request_check(RequestCheck::new(
+        Err(cause.clone()),
+        "/tmp/example".into(),
+        "1.1".parse().unwrap(),
+        "test -s docs/count.txt".to_owned(),
+        60,
+        vec![],
+    ))
     .await;
 
     assert_eq!(found.outcome, CheckOutcome::Failed);
