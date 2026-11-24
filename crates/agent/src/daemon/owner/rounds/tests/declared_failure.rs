@@ -420,3 +420,232 @@ async fn the_lead_commits_the_failed_members_file_in_its_worktree_and_finishes_w
     );
     assert!(!asked, "the lead did not ask the human for leave");
 }
+
+// Rule: with `[replacement] mode = "auto"` and no rung left — the new session and the replacement both failed too — the
+// human is told exactly once, at the last rung, and the notice says that the ladder is out of rungs and how to go on.
+#[tokio::test]
+async fn the_human_is_told_once_when_the_automatic_ladder_has_no_rung_left() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "fail-tool"),
+            normal("claude-2", "fail-tool"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    let notice = rig.notification_with("ended with STATUS: FAILED").await;
+    let state = rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    let told: Vec<String> = rig
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("ended with STATUS: FAILED"))
+        .collect();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2", "the replacement held it last");
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(told.len(), 1, "told once, and not before the last rung: {told:?}");
+    assert!(
+        notice.contains("the ladder has no rung left"),
+        "the notice says no rung is left: {notice}"
+    );
+    assert!(
+        notice.contains(&format!("agent resume {}", tasks[1])),
+        "the notice says how to go on: {notice}"
+    );
+}
+
+// Rule: the rung a task is on survives a restart of the daemon while a replacement holds it: the replacement still holds it,
+// the file the member left is still in the worktree, and nobody is told of a failure.
+#[tokio::test]
+async fn a_restart_while_a_replacement_holds_the_task_keeps_the_rung_and_the_work() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "fail-tool-committed-dirty"),
+            normal("claude-2", "hold"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let worktree = rig.worktree(&tasks[1]);
+    rig.wait_for("the replacement to hold the task", || {
+        worktree.join(".fake-args-3").exists()
+    })
+    .await;
+    let before = rig.state();
+    rig.stop().await.unwrap();
+    std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
+    rig.start().await;
+
+    let state = rig
+        .state_where("the replacement ended a run after the restart", |state| {
+            state
+                .find_task(&tasks[1])
+                .is_some_and(|found| found.member.runs().len() >= 4 && found.member.current_run().is_none())
+        })
+        .await;
+    let told = rig.notifications();
+    let kept = worktree.join("draft.txt").exists();
+    rig.stop().await.unwrap();
+
+    let held = before.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(
+        held.agent().name(),
+        "claude-2",
+        "the hand-over was recorded before the restart"
+    );
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.agent().name(), "claude-2");
+    assert_eq!(member.past_holders().len(), 1);
+    assert_ne!(member.status(), TaskStatus::Failed);
+    assert!(kept, "the member's uncommitted file survived the restart");
+    assert!(
+        told.iter().all(|text| !text.contains("ended with STATUS: FAILED")),
+        "nobody is told of a failure while a rung holds: {told:?}"
+    );
+}
+
+// Rule: the work given to the lead survives a restart of the daemon while the lead holds it: the member's task stays stopped
+// — not failed, not started again — and the lead is told of the work once.
+#[tokio::test]
+async fn a_restart_while_the_lead_holds_the_members_work_keeps_the_rung() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,hold"),
+            normal("claude-1", "fail-tool-committed-dirty"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let lead_tree = rig.worktree(&tasks[0]);
+    rig.wait_for("the lead to hold the member's work", || {
+        lead_tree.join(".fake-args-2").exists()
+    })
+    .await;
+    rig.stop().await.unwrap();
+    std::fs::write(lead_tree.join(".fake-continue"), b"").unwrap();
+    rig.start().await;
+
+    let state = rig
+        .state_where("the lead ended a run after the restart", |state| {
+            state
+                .find_task(&tasks[0])
+                .is_some_and(|found| found.member.runs().len() >= 3 && found.member.current_run().is_none())
+        })
+        .await;
+    let sent = std::fs::read_to_string(rig.home.root().join("bus").join("messages.jsonl")).unwrap();
+    let told = rig.notifications();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Stopped, "the member's task stays stopped");
+    assert_eq!(member.runs().len(), 2, "it is not started again");
+    assert_eq!(
+        sent.lines()
+            .filter(|line| line.contains("WORK OF A MEMBER THAT IS GONE"))
+            .count(),
+        1,
+        "the lead is told of the work once"
+    );
+    assert!(
+        told.iter().all(|text| !text.contains("ended with STATUS: FAILED")),
+        "nobody is told of a failure while the lead holds the work: {told:?}"
+    );
+}
+
+/// Asks the daemon of `rig` to stop `task`.
+async fn stop_task(rig: &Rig, task: &TaskId) -> agent_core::protocol::Reply {
+    use agent_core::protocol::{Client, Command, ControlRequest, Target};
+    crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Stop(ControlRequest {
+                target: Target::Task(task.clone()),
+            }),
+        )
+        .await
+        .unwrap()
+}
+
+// Rule: a state written before the ladder took declared failures — a team whose member is failed, as `[replacement]
+// mode = "off"` leaves it — starts as it was: the member stays failed and the daemon does not send it up the ladder by
+// itself; `agent resume` starts it again, and `agent stop` still stops it.
+#[tokio::test]
+async fn a_failed_member_of_an_older_state_stays_failed_until_resumed_and_can_be_stopped() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "fail-tool"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nmode = \"off\"\n");
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+    // The installation now runs with no `[replacement]` section: its defaults apply to what happens next.
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[replacement]\nmode = \"off\"\n", ""),
+    )
+    .unwrap();
+    rig.start().await;
+
+    let after_start = rig.state();
+    rig.resume(&tasks[1]).await;
+    rig.wait_for("the resumed task to start a run", || rig.runs(&tasks[1]) >= 2)
+        .await;
+    let stopped = stop_task(&rig, &tasks[1]).await;
+    let state = rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.stop().await.unwrap();
+
+    let waiting = after_start.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(
+        waiting.status(),
+        TaskStatus::Failed,
+        "the daemon leaves it failed at its start"
+    );
+    assert_eq!(waiting.runs().len(), 1, "and starts no run of it by itself");
+    assert!(
+        matches!(stopped, agent_core::protocol::Reply::Applied { .. }),
+        "agent stop answers as it did: {stopped:?}"
+    );
+    assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
+}
