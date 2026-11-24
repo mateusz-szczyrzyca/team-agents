@@ -605,3 +605,48 @@ async fn starting_a_workspace_check_preserves_the_joined_path_length_error() {
     assert_eq!(found.outcome, CheckOutcome::Failed);
     assert_eq!(found.reason.as_deref(), Some(reason.as_str()));
 }
+
+#[tokio::test]
+async fn mismatched_pending_worker_or_team_quarantines_the_workspace() {
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::worker_request::{is_set_aside, write_pending};
+
+    for wrong_worker in [true, false] {
+        let (daemon, mut owner) = pair_daemon().await;
+        let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+        let mut pending = a_matching_pending();
+        if wrong_worker {
+            pending.worker = "claude-3".parse().unwrap();
+        } else {
+            pending.team = team_id(1);
+        }
+        let worker_dir = daemon.home.task_dir(&task(2));
+        std::fs::create_dir_all(&worker_dir).unwrap();
+        write_pending(&worker_dir, &pending).unwrap();
+
+        owner.settle_workspace_one(&team_id(0), &record).await.unwrap();
+
+        assert!(
+            is_set_aside(&worker_dir, pending.request).await.unwrap(),
+            "a mismatched worker ({wrong_worker}) or team must be quarantined"
+        );
+        assert_eq!(owner.answered_requests.len(), 0);
+    }
+}
+
+#[tokio::test]
+async fn releasing_without_requester_git_records_one_warning_per_request() {
+    use crate::fixtures::team_id;
+
+    let (_daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+
+    for _ in 0..2 {
+        owner.release_workspace(&team_id(9), &record).await.unwrap();
+    }
+
+    assert_eq!(
+        owner.unreadable_requests,
+        ["release 1".to_owned()].into_iter().collect()
+    );
+}
