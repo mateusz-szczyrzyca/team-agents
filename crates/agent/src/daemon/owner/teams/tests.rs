@@ -212,12 +212,11 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
     }
     write!(
         text,
-        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nopencode = \"{}\"\nagentbus = \"{}\"\n\
+        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
          [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
         normals.join(", "),
         workers.join(", "),
-        fixture_script("team-cli.sh").display(),
         fixture_script("team-cli.sh").display(),
         agentbus.display(),
     )
