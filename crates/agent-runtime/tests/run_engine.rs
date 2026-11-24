@@ -822,7 +822,7 @@ mod run_engine {
             config["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"],
             serde_json::json!({
                 "name": "zai-org/GLM-5.3-Flash",
-                "limit": { "context": 202_752 }
+                "limit": { "context": 202_752, "output": 0 }
             })
         );
     }

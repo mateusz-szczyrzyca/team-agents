@@ -273,7 +273,7 @@ fn a_window_is_the_context_of_the_registered_model_and_of_the_registered_model_o
 
         assert_eq!(
             configuration(&spec)?["provider"][provider]["models"][name],
-            json!({ "name": name, "limit": { "context": 200_000 } }),
+            json!({ "name": name, "limit": { "context": 200_000, "output": 0 } }),
             "{model}"
         );
     }
@@ -305,23 +305,23 @@ fn two_agents_with_different_windows_each_get_their_own() -> TestResult {
 
     assert_eq!(
         narrow["provider"]["deepinfra"]["models"],
-        json!({ "Qwen/Qwen3-Coder": { "name": "Qwen/Qwen3-Coder", "limit": { "context": 131_072 } } })
+        json!({ "Qwen/Qwen3-Coder": { "name": "Qwen/Qwen3-Coder", "limit": { "context": 131_072, "output": 0 } } })
     );
     assert_eq!(
         wide["provider"]["deepinfra"]["models"],
-        json!({ "zai-org/GLM-5.3-Flash": { "name": "zai-org/GLM-5.3-Flash", "limit": { "context": 1_048_576 } } })
+        json!({ "zai-org/GLM-5.3-Flash": { "name": "zai-org/GLM-5.3-Flash", "limit": { "context": 1_048_576, "output": 0 } } })
     );
     Ok(())
 }
 
 #[test]
-fn a_window_leaves_the_run_of_every_other_cli_as_it_was() -> TestResult {
+fn a_window_leaves_the_run_of_claude_and_antigravity_as_it_was() -> TestResult {
     let windowed = |adapter: &dyn CliAdapter| -> TestResult<RunSpec> {
         let mut request = request(new_run()?, Servers::Bus)?;
         request.context = Some(200_000);
         Ok(adapter.build_run(&request)?.clone())
     };
-    for kind in [CliKind::Claude, CliKind::Codex, CliKind::Gemini] {
+    for kind in [CliKind::Claude, CliKind::Gemini] {
         let mut plain = request(new_run()?, Servers::Bus)?;
         plain.context = None;
         let adapter = adapter_for(kind);

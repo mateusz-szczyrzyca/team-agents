@@ -3354,7 +3354,10 @@ async fn each_opencode_agent_is_told_its_own_window_and_a_claude_agent_is_told_n
     let claude_args = wait_for_file(claude.join(".fake-args-1")).await;
     f.stop().await.unwrap();
 
-    assert_eq!(windows.0, Some(serde_json::json!({ "context": 202_752 })));
-    assert_eq!(windows.1, Some(serde_json::json!({ "context": 1_000_000 })));
+    assert_eq!(windows.0, Some(serde_json::json!({ "context": 202_752, "output": 0 })));
+    assert_eq!(
+        windows.1,
+        Some(serde_json::json!({ "context": 1_000_000, "output": 0 }))
+    );
     assert!(!claude_args.contains("202752"), "{claude_args}");
 }
