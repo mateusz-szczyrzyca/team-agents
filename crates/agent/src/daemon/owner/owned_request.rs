@@ -113,7 +113,6 @@ impl Owner {
             && &journal.current_workspace().record().worker_task == task;
         if !current {
             tracing::warn!(event = "worker_result_dropped", request = %served.request, %run, "late worker result dropped: execution no longer owns the request");
-            self.serving.remove(task);
             return Ok(true);
         }
         let dir = self.parts.store.home().task_dir(&served.requester_task);
