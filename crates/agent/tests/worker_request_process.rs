@@ -2107,4 +2107,53 @@ Integrate the guide.
                 && world.git_output(&member, &["branch", "--list", &branch]).is_empty()
         });
     }
+
+    #[test]
+    fn a_team_without_a_worker_delegates_a_step_to_a_pool_worker() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        std::fs::write(world.worktree(member).join("scratch.txt"), "my notes\n").unwrap();
+
+        world.ended(member, 1);
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.file(member, "scratch.txt"), "my notes\n");
+        let message = world.git_output(member, &["log", "-1", "--format=%B"]);
+        assert!(message.contains("Write the walkthrough"), "{message}");
+        assert!(message.contains("Brought over from"), "{message}");
+    }
+
+    #[test]
+    fn a_solo_task_delegates_a_step_to_a_pool_worker() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "ask-worker:solo,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.asks("solo", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+
+        let tasks = world.run(&["claude-1"]);
+        let member = task(&tasks, "claude-1");
+        std::fs::write(world.worktree(member).join("scratch.txt"), "my notes\n").unwrap();
+
+        world.ended(member, 1);
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.file(member, "scratch.txt"), "my notes\n");
+        let message = world.git_output(member, &["log", "-1", "--format=%B"]);
+        assert!(message.contains("Write the walkthrough"), "{message}");
+        assert!(message.contains("Brought over from"), "{message}");
+    }
 }
