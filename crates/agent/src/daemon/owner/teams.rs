@@ -1597,7 +1597,7 @@ impl Owner {
 
             let started = Timestamp::now(&self.parts.clock)?;
 
-            self.serving.insert(
+            self.record_pool_run(
                 worker_task.clone(),
                 Served {
                     request: request.id,
@@ -1607,6 +1607,7 @@ impl Owner {
                     started,
                     base: Some(base_commit.to_string()),
                 },
+                team.id().clone(),
             );
 
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);

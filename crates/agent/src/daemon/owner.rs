@@ -528,6 +528,8 @@ pub(super) struct Owner {
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
     serving: HashMap<TaskId, Served>,
+    /// Original teams of request-owned runs, retained until settlement even after requester removal.
+    pool_run_teams: HashMap<TaskId, TeamId>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
@@ -653,6 +655,7 @@ impl Owner {
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
+            pool_run_teams: HashMap::new(),
             closed: HashSet::new(),
             looks: BTreeSet::new(),
             watcher,
@@ -902,7 +905,8 @@ impl Owner {
     }
 
     /// Keeps the run's team identity while its requester may be removed.
-    fn record_pool_run(&mut self, task: TaskId, served: Served, _team: TeamId) {
+    fn record_pool_run(&mut self, task: TaskId, served: Served, team: TeamId) {
+        self.pool_run_teams.insert(task.clone(), team);
         self.serving.insert(task, served);
     }
 
@@ -914,11 +918,20 @@ impl Owner {
                 .iter()
                 .filter(|(task, _)| self.parts.state.find_task(task).is_none())
                 .filter_map(|(task, served)| {
-                    self.parts.state.find_task(&served.requester_task).map(|found| Going {
-                        agent: served.worker.clone(),
-                        team: found.team.id().clone(),
-                        task: task.clone(),
-                    })
+                    self.pool_run_teams
+                        .get(task)
+                        .cloned()
+                        .or_else(|| {
+                            self.parts
+                                .state
+                                .find_task(&served.requester_task)
+                                .map(|found| found.team.id().clone())
+                        })
+                        .map(|team| Going {
+                            agent: served.worker.clone(),
+                            team,
+                            task: task.clone(),
+                        })
                 }),
         );
         going
@@ -1221,6 +1234,7 @@ impl Owner {
         if self.parts.state.find_task(&task).is_none()
             && let Some(served) = self.serving.remove(&task)
         {
+            self.pool_run_teams.remove(&task);
             return self.settle_pool_worker_run(&task, &served, outcome);
         }
         let result = match outcome {
