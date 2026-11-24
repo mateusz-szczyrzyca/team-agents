@@ -5,7 +5,6 @@
 use agent_core::decide::busy::{self, Availability, Decision, Offer, TaskWait, Waiting};
 use agent_core::decide::ladder::Trouble;
 use agent_core::decide::replacement::{Activity, Candidate, Handover, ReplacementMode, choose};
-use agent_core::decide::slot::runs_going;
 use agent_core::ids::{AgentName, ItemId, TaskId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::state::{ItemPhase, Participant, Team, Timestamp};
@@ -477,7 +476,8 @@ impl Owner {
         let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
         let names: Vec<AgentName> = replacement.agents().to_vec();
         let teams = self.parts.state.teams();
-        let going = runs_going(teams);
+        let going = self.all_runs_going();
+        let busy: std::collections::HashSet<_> = going.iter().map(|run| &run.agent).collect();
         let in_team: Vec<&str> = found
             .team
             .crew()
@@ -498,7 +498,11 @@ impl Owner {
                 name,
                 participant.tier(),
                 in_team.contains(&name.as_str()),
-                availability_of(teams, name),
+                if busy.contains(name) {
+                    Availability::Busy
+                } else {
+                    availability_of(teams, name)
+                },
                 u32::try_from(cli_runs).unwrap_or(u32::MAX),
             ));
         }
@@ -586,6 +590,7 @@ impl Owner {
             })
             .filter(|member| member.status() == TaskStatus::Running || member.current_run().is_some())
             .map(|member| member.agent().name())
+            .chain(self.serving.values().map(|served| served.worker.as_str()))
             .collect()
     }
 }

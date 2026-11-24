@@ -614,7 +614,7 @@ impl Owner {
     fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
         let mut summary = TeamSummary::described(team)
             .with_rejection_limit(self.parts.settings.config.replacement().rejections().get());
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         mark_runs_elsewhere(&mut summary.members, &going, self.parts.settings.config.limits());
         summary
     }
@@ -880,14 +880,11 @@ impl Owner {
         if !self.space_allows_run().await {
             return Ok(());
         }
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         let decisions = plan_starts(&queued, &going, self.parts.settings.config.limits());
         for (task, slot) in decisions {
-            if self.runs.len() >= MAX_RUNS.get() {
-                break;
-            }
             // Each launch is measured on its own: the space may have fallen since the last one started.
-            if !self.space_allows_run().await {
+            if !self.launch_allowed().await {
                 break;
             }
             // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
@@ -904,10 +901,29 @@ impl Owner {
         Ok(())
     }
 
+    /// Active team and request-owned runs, with legacy team workers counted once.
+    fn all_runs_going(&self) -> Vec<Going> {
+        let mut going = runs_going(self.parts.state.teams());
+        let known: HashSet<_> = going.iter().map(|run| run.task.clone()).collect();
+        going.extend(
+            self.serving
+                .iter()
+                .filter(|(task, _)| !known.contains(*task))
+                .filter_map(|(task, served)| {
+                    self.parts.state.find_task(&served.requester_task).map(|found| Going {
+                        agent: served.worker.clone(),
+                        team: found.team.id().clone(),
+                        task: task.clone(),
+                    })
+                }),
+        );
+        going
+    }
+
     /// The run that holds `agent` at its limit of runs over all teams, `None` when `agent` may run another task now.
     pub(super) fn run_holding(&self, agent: &Participant) -> Option<Going> {
         let limit = limit_for(self.parts.settings.config.limits(), agent.tier());
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         busy_run(&agent.agent_name(), limit, &going).cloned()
     }
 
@@ -931,7 +947,7 @@ impl Owner {
 
     /// Whether the shared process ceiling and disk reserve permit another launch.
     async fn launch_allowed(&mut self) -> bool {
-        true
+        self.runs.len() < MAX_RUNS.get() && self.space_allows_run().await
     }
 
     /// Whether a new run may start now: the free space is measured and is at least `disk.min_free_gb`. A refusal
