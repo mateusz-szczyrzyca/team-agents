@@ -9,6 +9,15 @@ use agent_runtime::agentbus::{DelegationStatus, HelperEntry};
 #[cfg(test)]
 mod tests;
 
+/// An unsettled workspace observation for a pool worker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UnsettledWorker {
+    pub(crate) worker: AgentName,
+    pub(crate) from_task: String,
+    pub(crate) step: Option<String>,
+    pub(crate) damaged: bool,
+}
+
 /// The lines describing the pool workers of `configured`: each worker, whom it serves (team or task, step) or that it is free.
 ///
 /// Returns `None` if `configured` is empty.
@@ -17,12 +26,24 @@ pub(crate) fn render_pool(
     teams: &[TeamSummary],
     helpers: Option<&[HelperEntry]>,
 ) -> Option<String> {
+    render_pool_with_unsettled(configured, teams, helpers, None)
+}
+
+/// The lines describing the pool workers of `configured`, also taking unsettled workspace observations into account.
+///
+/// Returns `None` if `configured` is empty.
+pub(crate) fn render_pool_with_unsettled(
+    configured: &[AgentName],
+    teams: &[TeamSummary],
+    helpers: Option<&[HelperEntry]>,
+    unsettled: Option<&[UnsettledWorker]>,
+) -> Option<String> {
     if configured.is_empty() {
         return None;
     }
     let mut lines = vec!["pool:".to_owned()];
     for worker in configured {
-        let served = find_serving(worker, teams, helpers);
+        let served = find_serving(worker, teams, helpers, unsettled);
         lines.push(format!("  {}  {}", worker, served.unwrap_or_else(|| "free".to_owned())));
     }
     let mut text = lines.join("\n");
@@ -30,7 +51,12 @@ pub(crate) fn render_pool(
     Some(text)
 }
 
-fn find_serving(worker: &AgentName, teams: &[TeamSummary], helpers: Option<&[HelperEntry]>) -> Option<String> {
+fn find_serving(
+    worker: &AgentName,
+    teams: &[TeamSummary],
+    helpers: Option<&[HelperEntry]>,
+    _unsettled: Option<&[UnsettledWorker]>,
+) -> Option<String> {
     if let Some(helpers) = helpers {
         for helper in helpers {
             if !matches!(helper.status, DelegationStatus::Running | DelegationStatus::Starting) {
