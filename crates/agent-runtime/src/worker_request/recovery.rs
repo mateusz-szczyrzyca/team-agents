@@ -187,7 +187,26 @@ impl TryFrom<Record> for Journal {
         let mut generation = 0_u32;
         for event in record.events {
             match &event {
-                Transition::Assigned { .. } => return Err(Invalid::Transition),
+                Transition::Assigned { workspace, run } => {
+                    let original = journal.workspace().record();
+                    let next = workspace.record();
+                    if journal.phase != Phase::Queued
+                        || !runs.insert(run.clone())
+                        || next.request != original.request
+                        || next.requester_task != original.requester_task
+                        || next.requester_repo != original.requester_repo
+                        || next.requester != original.requester
+                        || next.stage != Stage::Working
+                    {
+                        return Err(Invalid::Transition);
+                    }
+                    generation = generation.checked_add(1).ok_or(Invalid::Transition)?;
+                    journal.phase = Phase::Running(Attempt {
+                        number: NonZeroU32::new(generation).ok_or(Invalid::Transition)?,
+                        worker: next.worker.clone(),
+                        run: run.clone(),
+                    });
+                }
                 Transition::Started { worker, run } => {
                     if journal.phase != Phase::Queued || !runs.insert(run.clone()) {
                         return Err(Invalid::Transition);
@@ -251,7 +270,7 @@ impl Journal {
 
     /// A snapshot must preserve this request's workspace, never the requester's files.
     fn require_snapshot(&self, snapshot: &SnapshotIdentity) -> Result<(), Invalid> {
-        if snapshot.task == self.record.workspace.record().worker_task {
+        if snapshot.task == self.current_workspace().record().worker_task {
             Ok(())
         } else {
             Err(Invalid::Transition)
@@ -295,7 +314,15 @@ impl Journal {
     /// Workspace used by the latest execution.
     #[must_use]
     pub fn current_workspace(&self) -> &RequestWorkspace {
-        &self.record.workspace
+        self.record
+            .events
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Transition::Assigned { workspace, .. } => Some(workspace),
+                _ => None,
+            })
+            .unwrap_or(&self.record.workspace)
     }
 
     /// Original workspace identity, unaffected by later worker assignments.
