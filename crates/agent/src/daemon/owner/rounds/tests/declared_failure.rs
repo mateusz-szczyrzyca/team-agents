@@ -54,13 +54,13 @@ fn configure(rig: &Rig, table: &str) {
     std::fs::write(rig.home.config_file(), config).unwrap();
 }
 
-/// Waits until `claude-2`, the replacement, has taken `task` over and ended its run: the third of the task, after the
-/// two of `claude-1`.
+/// Waits until `claude-2`, the replacement, has taken `task` over and ended a run: at least the third of the task, after
+/// the two of `claude-1` (a daemon that restarts in the middle of the second one cuts it and counts one more).
 async fn replacement_ended_a_run(rig: &Rig, task: &TaskId) -> State {
     rig.state_where("the replacement ended a run of the task", |state| {
         state.find_task(task).is_some_and(|found| {
             found.member.agent().name() == "claude-2"
-                && found.member.runs().len() == 3
+                && found.member.runs().len() >= 3
                 && found.member.current_run().is_none()
         })
     })
