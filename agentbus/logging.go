@@ -38,33 +38,34 @@ import (
 type LogEvent string
 
 const (
-	LogServerStarted      LogEvent = "server_started"         // an MCP server started for an agent run
-	LogServerStopping     LogEvent = "server_stopping"        // an MCP server is exiting (signal or stdin closed)
-	LogToolCall           LogEvent = "tool_call"              // an MCP tool call succeeded
-	LogToolCallFailed     LogEvent = "tool_call_failed"       // an MCP tool call returned an error
-	LogMessagePosted      LogEvent = "message_posted"         // a message was appended to the bus
-	LogAgentGone          LogEvent = "agent_gone"             // a presence of a dead agentbus process was removed
-	LogMemberWaking       LogEvent = "member_waking"          // a sleeping team member is being woken
-	LogMemberWokenBy      LogEvent = "member_woken_by"        // what woke a sleeping member: a message (its id, kind, sender), an unread one, new work on the board
-	LogSideEffectFailed   LogEvent = "side_effect_failed"     // an auxiliary step failed; the operation went on
-	LogCommandFailed      LogEvent = "command_failed"         // a CLI subcommand failed
-	LogJSONRPCError       LogEvent = "jsonrpc_error"          // a protocol-level error was sent to the MCP client
-	LogJSONRPCWriteFailed LogEvent = "jsonrpc_write_failed"   // a response could not be written to the MCP client
-	LogClientReadFailed   LogEvent = "client_read_failed"     // reading requests from the MCP client failed
-	LogCorruptMessageLine LogEvent = "corrupt_message_line"   // a line of messages.jsonl could not be decoded
-	LogCorruptNoteLine    LogEvent = "corrupt_notebook_line"  // a line of a notebook log could not be decoded
-	LogNonJSONCLILine     LogEvent = "non_json_cli_line"      // the CLI event stream contained a non-JSON line
-	LogUnencodableInput   LogEvent = "tool_input_unencodable" // a tool input of a CLI event could not be encoded
-	LogLeadSyncRejected   LogEvent = "lead_sync_rejected"     // a task mirror sync was refused or could not be stored
-	LogLeadListening      LogEvent = "lead_listening"         // the lead started listening on an address
-	LogLeadMCPCall        LogEvent = "lead_mcp_call"          // a remote member's MCP message ran on the lead
-	LogRemoteMemberEvent  LogEvent = "remote_member_event"    // a remote member's change handed to the agent script
-	LogDoorbellRing       LogEvent = "doorbell_ring"          // the lead rang a node: something waits for it
-	LogDoorbellLost       LogEvent = "doorbell_lost"          // a node's doorbell stream broke or was refused (it reconnects)
-	LogRelayLeadFailed    LogEvent = "relay_lead_failed"      // a remote member's relay could not reach the lead, or was refused
-	LogLeadStopped        LogEvent = "lead_stopped"           // the lead shut down its listeners
-	LogLeadHTTPError      LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic
-	LogLeadPeerRejected   LogEvent = "lead_peer_rejected"     // the lead refused a socket peer; the error says why
+	LogWorkerResultDropped LogEvent = "worker_result_dropped"  // a stale execution or replay could not publish a second result
+	LogServerStarted       LogEvent = "server_started"         // an MCP server started for an agent run
+	LogServerStopping      LogEvent = "server_stopping"        // an MCP server is exiting (signal or stdin closed)
+	LogToolCall            LogEvent = "tool_call"              // an MCP tool call succeeded
+	LogToolCallFailed      LogEvent = "tool_call_failed"       // an MCP tool call returned an error
+	LogMessagePosted       LogEvent = "message_posted"         // a message was appended to the bus
+	LogAgentGone           LogEvent = "agent_gone"             // a presence of a dead agentbus process was removed
+	LogMemberWaking        LogEvent = "member_waking"          // a sleeping team member is being woken
+	LogMemberWokenBy       LogEvent = "member_woken_by"        // what woke a sleeping member: a message (its id, kind, sender), an unread one, new work on the board
+	LogSideEffectFailed    LogEvent = "side_effect_failed"     // an auxiliary step failed; the operation went on
+	LogCommandFailed       LogEvent = "command_failed"         // a CLI subcommand failed
+	LogJSONRPCError        LogEvent = "jsonrpc_error"          // a protocol-level error was sent to the MCP client
+	LogJSONRPCWriteFailed  LogEvent = "jsonrpc_write_failed"   // a response could not be written to the MCP client
+	LogClientReadFailed    LogEvent = "client_read_failed"     // reading requests from the MCP client failed
+	LogCorruptMessageLine  LogEvent = "corrupt_message_line"   // a line of messages.jsonl could not be decoded
+	LogCorruptNoteLine     LogEvent = "corrupt_notebook_line"  // a line of a notebook log could not be decoded
+	LogNonJSONCLILine      LogEvent = "non_json_cli_line"      // the CLI event stream contained a non-JSON line
+	LogUnencodableInput    LogEvent = "tool_input_unencodable" // a tool input of a CLI event could not be encoded
+	LogLeadSyncRejected    LogEvent = "lead_sync_rejected"     // a task mirror sync was refused or could not be stored
+	LogLeadListening       LogEvent = "lead_listening"         // the lead started listening on an address
+	LogLeadMCPCall         LogEvent = "lead_mcp_call"          // a remote member's MCP message ran on the lead
+	LogRemoteMemberEvent   LogEvent = "remote_member_event"    // a remote member's change handed to the agent script
+	LogDoorbellRing        LogEvent = "doorbell_ring"          // the lead rang a node: something waits for it
+	LogDoorbellLost        LogEvent = "doorbell_lost"          // a node's doorbell stream broke or was refused (it reconnects)
+	LogRelayLeadFailed     LogEvent = "relay_lead_failed"      // a remote member's relay could not reach the lead, or was refused
+	LogLeadStopped         LogEvent = "lead_stopped"           // the lead shut down its listeners
+	LogLeadHTTPError       LogEvent = "lead_http_error"        // net/http emitted a connection or handler diagnostic
+	LogLeadPeerRejected    LogEvent = "lead_peer_rejected"     // the lead refused a socket peer; the error says why
 )
 
 // logInfo, logWarn and logError write a record with the given event name.

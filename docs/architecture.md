@@ -886,9 +886,25 @@ callers cannot deserialize an arbitrary owner or counter. The daemon owner must 
 The APIs use the existing bounded UTF-8 reader and atomic file writer, and never write requester worktree files.
 See [the durable format](state.md) for events, limits and compatibility.
 
-This is preparation for recovery dispatch and fenced settlement. No daemon path calls these APIs in this version;
-existing open requests continue using their previous settlement rules. Automatic restart recovery and suppression
-of late answers in the live dispatcher are delivered by later parts of the worker recovery work.
+New local requests opt into owned settlement. Before launch the daemon resolves fallible metadata and time, then calls
+`agentbus helper-owned --dir <bus> --input <json>` with `action: start`, request `id`, `worker`, `task` and `run`.
+An accepted claim is recorded in the durable assignment journal before spawning the CLI. A failed claim leaves
+the journal queued and dispatchable; all launch-failure cleanup finishes before a job owns the workspace.
+The same ownership tuple fences `retry` and `settle`; settlement also supplies terminal `status`, `summary` and
+rendered `notice`. The typed runtime interface returns `applied`, `replay` or `stale`. Invalid arguments and missing
+requests are errors. The bus serializes the ownership check, receipt publication and state update under its lock.
+The receipt in the append-only message log is the commit point: loading repairs an interrupted state save, and a
+replay never posts a second final notice. A persisted byte cursor advances with the repaired bus state under
+the same lock, including read-only loads. Recovery reads only the unconsumed suffix; older states without a
+cursor scan once from zero. Late observations cannot remove a newer serving assignment or enter
+validation and commit bring-over; stale settlement is logged and ignored.
+
+The daemon records observed endings before creating pending results. Declared FAILED and QUESTIONS endings use
+the existing wrong-result tries, including partial uncommitted work. Before retry it snapshots the failed work,
+records the rejection and releases the bus queue. Pool retries use a new workspace from the original requester's
+commit, retaining the original identity and failed-work snapshot. Old open requests without the explicit marker
+keep legacy settlement; loading alone never opts them in. Automatic no-result and running-request restart requeue
+remain disabled until the next part.
 
 ### The history
 

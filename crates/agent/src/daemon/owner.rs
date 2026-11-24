@@ -18,6 +18,7 @@ mod idle;
 mod last_step;
 #[cfg(test)]
 mod launch_tests;
+mod owned_request;
 mod plan;
 mod removal;
 mod returned;
@@ -47,7 +48,7 @@ use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::ids::{GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
@@ -147,6 +148,21 @@ struct RunTaskFailed(#[source] JoinError);
 /// Why the owner stopped with an error: something it cannot go on without.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum OwnerError {
+    /// Durable worker ownership could not be retained.
+    #[error("cannot retain worker request ownership")]
+    RequestRecovery(#[from] agent_runtime::worker_request::recovery::StoreError),
+    /// The bus could not record ownership or settlement.
+    #[error("cannot change owned worker request")]
+    RequestBus(#[from] agent_runtime::agentbus::AgentBusError),
+    /// The worker workspace could not be snapshotted before handoff.
+    #[error("cannot retain worker request snapshot")]
+    RequestSnapshot(#[source] agent_runtime::git::GitError),
+    /// Worker workspace identity could not be retained.
+    #[error("cannot retain worker workspace identity")]
+    RequestWorkspace(#[from] agent_runtime::request_workspace::WorkspaceError),
+    /// Another execution owns the claimed request.
+    #[error("worker request ownership changed before launch")]
+    RequestOwnership,
     /// A gate answer task failed before its completion could be recorded.
     #[error("cannot settle a gate answer")]
     GateAnswer(#[source] JoinError),
@@ -504,6 +520,8 @@ pub(super) struct Owner {
     runs: JoinSet<Result<RunVerdict, EngineError>>,
     /// The task of each run that is going, by the run's task in the runtime.
     running: HashMap<JoinId, TaskId>,
+    /// Execution identity retained until its join is settled.
+    request_runs: HashMap<TaskId, RunId>,
     /// The tasks that have a run going.
     in_flight: HashSet<TaskId>,
     /// The queued tasks that wait for their agent to finish a run in another task; the wait is logged once per task.
@@ -648,6 +666,7 @@ impl Owner {
             parts,
             runs: JoinSet::new(),
             running: HashMap::new(),
+            request_runs: HashMap::new(),
             in_flight: HashSet::new(),
             agent_waits: HashSet::new(),
             cancels: HashMap::new(),
@@ -905,7 +924,7 @@ impl Owner {
                 }
             }
             self.agent_waits.remove(&task);
-            self.start(task).await?;
+            Box::pin(self.start(task)).await?;
         }
         Ok(())
     }
@@ -1168,12 +1187,14 @@ impl Owner {
                 );
             }
         }
+        Box::pin(self.start_owned_team_request(task, &plan.run)).await?;
         self.spawn_job(task.clone(), plan.job, run_span);
         Ok(())
     }
 
     /// Spawns `job` for `task` with `run_span`.
     pub(super) fn spawn_job(&mut self, task: TaskId, job: RunJob, run_span: tracing::Span) {
+        self.request_runs.insert(task.clone(), job.run.clone());
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
         self.cancels.insert(task.clone(), cancel.clone());
@@ -1235,9 +1256,50 @@ impl Owner {
             }
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
+        let mut owned = false;
+        if let Some(run_id) = self.request_runs.remove(&task) {
+            let (ending, summary) = match &outcome {
+                Outcome::Verdict(verdict) => match verdict.as_ref() {
+                    RunVerdict::Finished(run) => {
+                        let ending = match &run.classified.end {
+                            RunEnd::Reported {
+                                outcome: RunOutcome::Done,
+                            } => agent_core::decide::worker_result::WorkerEnding::Done,
+                            RunEnd::Reported {
+                                outcome: RunOutcome::Failed,
+                            } => agent_core::decide::worker_result::WorkerEnding::Failed,
+                            RunEnd::Reported {
+                                outcome: RunOutcome::Questions,
+                            } => agent_core::decide::worker_result::WorkerEnding::Cannot,
+                            RunEnd::Reported { .. }
+                            | RunEnd::NoStatus { .. }
+                            | RunEnd::QuotaExhausted { .. }
+                            | RunEnd::RateLimited
+                            | RunEnd::Hung
+                            | RunEnd::TurnLimit
+                            | RunEnd::Stopped => agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                        };
+                        (ending, run.final_message.clone().unwrap_or_default())
+                    }
+                    RunVerdict::Interrupted { .. } => (
+                        agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                        "worker interrupted".to_owned(),
+                    ),
+                },
+                Outcome::Failed(reason) => (
+                    agent_core::decide::worker_result::WorkerEnding::NoStatus,
+                    reason.clone(),
+                ),
+            };
+            owned = self.observe_owned_request(&task, &run_id, ending, summary).await?;
+        }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
         self.holds.remove(&task);
+        if self.parts.state.find_task(&task).is_none() && !self.serving.contains_key(&task) {
+            self.pool_dispatch.run_teams.remove(&task);
+            return Ok(());
+        }
         if self.parts.state.find_task(&task).is_none()
             && let Some(served) = self.serving.remove(&task)
         {
@@ -1246,6 +1308,17 @@ impl Owner {
         }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
+                RunVerdict::Finished(run) if owned => {
+                    let located = self.locate(&task)?;
+                    self.finish(
+                        &task,
+                        located,
+                        *run,
+                        Settled::Status(TaskStatus::Waiting),
+                        plan::PlanHeld::No,
+                    )
+                    .await
+                }
                 RunVerdict::Finished(run) => self.finished(&task, *run).await,
                 RunVerdict::Interrupted { session } => self.interrupted(&task, session).await,
             },

@@ -24,7 +24,7 @@ use std::string::FromUtf8Error;
 use std::time::Duration;
 
 use agent_core::config::{AbsolutePath, Program, RepoName};
-use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
+use agent_core::ids::{AgentName, BranchName, ItemId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::repo_path::RepoPath;
 use serde::de::Error as _;
@@ -55,6 +55,58 @@ const MAX_DIAGNOSTIC_CHARS: usize = 2048;
 /// The longest field name of an event, in bytes.
 const MAX_FIELD_NAME_LEN: usize = 64;
 
+/// Execution identity that fences a request's result from earlier workers.
+#[derive(Debug, Clone, Copy)]
+pub struct RequestOwner<'a> {
+    /// Serving worker.
+    pub worker: &'a AgentName,
+    /// Task in which the execution runs.
+    pub task: &'a TaskId,
+    /// Unique execution identifier.
+    pub run: &'a RunId,
+}
+
+/// Terminal result accepted by the atomic settlement operation.
+#[derive(Debug, Clone, Copy)]
+pub enum RequestResult {
+    /// Checked or reported success.
+    Done,
+    /// The request returned to its requester.
+    Failed,
+    /// The worker could not resolve the request.
+    Unclear,
+}
+
+/// One ownership-checked change; final notices accompany settlement atomically.
+#[derive(Debug, Clone, Copy)]
+pub enum OwnedChange<'a> {
+    /// Bind a newly claimed request to an execution.
+    Start,
+    /// Release the current execution for a wrong-result retry.
+    Retry,
+    /// Settle and publish exactly one final notice.
+    Settle {
+        /// Terminal request result.
+        result: RequestResult,
+        /// Result retained on the request.
+        summary: &'a str,
+        /// Catalog-rendered final requester notice.
+        notice: &'a str,
+    },
+}
+
+/// Whether an ownership-checked operation changed state, repeated it, or lost ownership.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OwnedOutcome {
+    /// Current owner changed the request.
+    Applied,
+    /// This execution already performed the operation.
+    Replay,
+    /// A different execution owns the request; its result must be dropped.
+    Stale,
+}
+
 /// Which `agentbus` subcommand was run, for an error. The text is the subcommand's name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::Display)]
 #[strum(serialize_all = "kebab-case")]
@@ -81,6 +133,8 @@ pub enum BusCommand {
     HelperNext,
     /// `helper-set`.
     HelperSet,
+    /// `helper-owned`.
+    HelperOwned,
     /// `helper-get`.
     HelperGet,
     /// `helper-dump`.
@@ -1301,6 +1355,72 @@ impl AgentBus {
             .flag_if("--task", update.task.as_ref().map(TaskId::as_str))
             .flag_if("--summary", update.summary.as_ref());
         self.run(BusCommand::HelperSet, args, None).await.map(drop)
+    }
+
+    /// Changes an owned request and atomically publishes its final notice on settlement.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] for bus failures, including a missing request.
+    pub async fn helper_owned(
+        &self,
+        request: RequestId,
+        owner: RequestOwner<'_>,
+        change: OwnedChange<'_>,
+    ) -> Result<OwnedOutcome, AgentBusError> {
+        let (action, status, summary, notice) = match change {
+            OwnedChange::Start => ("start", None, None, None),
+            OwnedChange::Retry => ("retry", None, None, None),
+            OwnedChange::Settle {
+                result,
+                summary,
+                notice,
+            } => (
+                "settle",
+                Some(match result {
+                    RequestResult::Done => "done",
+                    RequestResult::Failed => "failed",
+                    RequestResult::Unclear => "unclear",
+                }),
+                Some(summary),
+                Some(notice),
+            ),
+        };
+        let mut input = serde_json::Map::from_iter([
+            ("id".to_owned(), json!(request.number())),
+            ("worker".to_owned(), json!(owner.worker.as_str())),
+            ("task".to_owned(), json!(owner.task.as_str())),
+            ("run".to_owned(), json!(owner.run.as_str())),
+            ("action".to_owned(), json!(action)),
+        ]);
+        for (key, value) in [("status", status), ("summary", summary), ("notice", notice)] {
+            if let Some(value) = value {
+                input.insert(key.to_owned(), json!(value));
+            }
+        }
+        let input = serde_json::Value::Object(input);
+        let command = BusCommand::HelperOwned;
+        let output = self
+            .run(command, Args::new().flag("--input", input.to_string()), None)
+            .await?;
+        decode_json(command, &output)
+    }
+
+    /// Whether a request was created with durable execution ownership enabled.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] when the request cannot be read or decoded.
+    pub async fn helper_recovery(&self, request: RequestId) -> Result<bool, AgentBusError> {
+        #[derive(Deserialize)]
+        struct Metadata {
+            #[serde(default)]
+            recovery: bool,
+        }
+        let command = BusCommand::HelperGet;
+        let output = self
+            .run(command, Args::new().flag("--id", request.number().to_string()), None)
+            .await?;
+        let metadata: Metadata = decode_json(command, &output)?;
+        Ok(metadata.recovery)
     }
 
     /// Reads a request for a worker.

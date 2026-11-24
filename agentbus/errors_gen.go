@@ -2719,3 +2719,33 @@ func (c LeadSyncCause) info() causeInfo { return leadSyncCauses[c] }
 
 // String returns the cause name.
 func (c LeadSyncCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- helper-owned
+
+// CmdHelperOwnedCause is a reason why the subcommand helper-owned failed.
+type CmdHelperOwnedCause int
+
+const (
+	CmdHelperOwnedInvalidArgument CmdHelperOwnedCause = iota // the ownership command is malformed [InvalidArgument]
+	CmdHelperOwnedNoSuchRequest                              // the worker request does not exist [NotFound]
+	CmdHelperOwnedStorage                                    // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdHelperOwnedError is the error of the subcommand helper-owned.
+type CmdHelperOwnedError = OpError[CmdHelperOwnedCause]
+
+// cmdHelperOwnedCauses describes the CmdHelperOwnedCause values (same order as the constants).
+var cmdHelperOwnedCauses = [...]causeInfo{
+	{"InvalidArgument", ClassInvalidArgument},
+	{"NoSuchRequest", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdHelperOwnedCause) op() string { return "helper-owned" }
+
+// info implements opCause.
+func (c CmdHelperOwnedCause) info() causeInfo { return cmdHelperOwnedCauses[c] }
+
+// String returns the cause name.
+func (c CmdHelperOwnedCause) String() string { return c.info().name }
