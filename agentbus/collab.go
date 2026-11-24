@@ -1659,10 +1659,31 @@ func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) i
 		}
 	}
 	if len(tasksDir) > 0 && tasksDir[0] != "" {
-		matches, err := filepath.Glob(filepath.Join(tasksDir[0], "*", "request-workspace-*.json"))
-		if err != nil {
-			logWarn(LogSideEffectFailed, "effect", "glob_workspace_records", "error", err.Error())
+		// Task enumeration must report I/O errors: Glob silently skips unreadable directories.
+		entries, err := os.ReadDir(tasksDir[0])
+		if err != nil && !os.IsNotExist(err) {
+			logWarn(LogSideEffectFailed, "effect", "list_workspace_tasks", "error", err.Error())
 			return 0
+		}
+		// matches holds only request records in immediate task directories.
+		var matches []string
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			// taskPath is the internal task directory being examined.
+			taskPath := filepath.Join(tasksDir[0], entry.Name())
+			// records enumerates its entries without suppressing filesystem errors.
+			records, err := os.ReadDir(taskPath)
+			if err != nil {
+				logWarn(LogSideEffectFailed, "effect", "list_workspace_records", "path", taskPath, "error", err.Error())
+				return 0
+			}
+			for _, record := range records {
+				if strings.HasPrefix(record.Name(), "request-workspace-") && strings.HasSuffix(record.Name(), ".json") {
+					matches = append(matches, filepath.Join(taskPath, record.Name()))
+				}
+			}
 		}
 		for _, m := range matches {
 			if strings.HasSuffix(m, ".damaged") {
@@ -1686,9 +1707,11 @@ func freePoolWorkersState(st *State, poolWorkers []string, tasksDir ...string) i
 				}
 				break
 			}
-			if rec.Worker != "" {
-				unsettled[rec.Worker] = true
+			if rec.Worker == "" {
+				logWarn(LogSideEffectFailed, "effect", "identify_workspace_worker", "path", m, "reason", "missing worker")
+				return 0
 			}
+			unsettled[rec.Worker] = true
 		}
 	}
 	free := 0
