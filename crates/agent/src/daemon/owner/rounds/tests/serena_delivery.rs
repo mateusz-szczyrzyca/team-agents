@@ -264,3 +264,29 @@ async fn the_reminder_is_on_the_bus_while_the_run_goes_on_and_the_run_ends_done(
 
     assert_eq!(chats_from_the_harness(&rig), [expected]);
 }
+
+#[tokio::test]
+async fn a_reminder_the_history_holds_when_the_daemon_restarts_is_put_on_the_bus_once() {
+    let mut rig = rig().await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let task = tasks[0].clone();
+    let expected = reminder_text(SEARCHES).await;
+    // The engine recorded the reminder and the daemon went down before it put it on the bus.
+    record_reminder(&rig, &team, &task, &last_run(&rig, &task), SEARCHES);
+    rig.stop().await.unwrap();
+    assert_eq!(chats_from_the_harness(&rig), Vec::<String>::new());
+
+    rig.start().await;
+    rig.wait_for("the reminder of Serena on the bus after the restart", || {
+        chats_from_the_harness(&rig).contains(&expected)
+    })
+    .await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(chats_from_the_harness(&rig), [expected]);
+}
