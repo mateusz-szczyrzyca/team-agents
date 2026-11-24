@@ -125,3 +125,28 @@ func TestOwnedReceiptRecoveryReportsANonterminalReceipt(t *testing.T) {
 		t.Fatal("accepted a nonterminal final receipt")
 	}
 }
+
+func TestOwnedRequestBeforeTheReceiptCursorStillSettlesOnce(t *testing.T) {
+	b := newBus(t)
+	data, err := os.ReadFile("testdata/state-owned-before-cursor.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(b.path("state.json"), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := ownedCommand{ID: 1, Action: "settle", Worker: "worker", Task: "worker-task", Run: "run-1", Status: HelperDone, Notice: "served"}
+	for _, want := range []ownedOutcome{ownedApplied, ownedReplay} {
+		got, err := (&Bus{dir: b.dir}).helperOwned(cmd)
+		if err != nil || got != want {
+			t.Fatalf("settle = %s, %v; want %s", got, err, want)
+		}
+	}
+	messages, serr := b.messages()
+	if serr != nil {
+		t.Fatal(serr)
+	}
+	if len(messages) != 1 || messages[0].To != "lead" || messages[0].Task != "requester-task" {
+		t.Fatalf("requester notices = %+v", messages)
+	}
+}
