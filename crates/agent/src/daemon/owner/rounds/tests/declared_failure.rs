@@ -348,3 +348,75 @@ async fn a_restart_in_the_new_session_of_a_declared_failure_keeps_the_ladder() {
         "the human is not told while a rung is untried: {told:?}"
     );
 }
+
+/// The output of `git` with `args` in `dir`.
+fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "git {args:?} failed in {dir:?}");
+    String::from_utf8(output.stdout).unwrap()
+}
+
+// Rule: the lead that is given the work of a failed member, which committed one file and left another uncommitted, is told
+// what the failed run said, whole, and where the worktree and the branch are; it commits the uncommitted file there as it
+// is, takes the branch into its own and finishes — the member's task is stopped, not failed, and the human is not asked.
+#[tokio::test]
+async fn the_lead_commits_the_failed_members_file_in_its_worktree_and_finishes_without_asking() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep,take-gone-members-work"),
+            normal("claude-1", "fail-tool-committed-dirty"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+
+    let state = rig
+        .item_where("1.1", "published by the lead", |phase| {
+            matches!(
+                phase,
+                ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+            )
+        })
+        .await;
+    let bus = bus_texts(&rig);
+    let member_tree = rig.worktree(&tasks[1]);
+    let lead_tree = rig.worktree(&tasks[0]);
+    let member_log = git_out(&member_tree, &["log", "--format=%s", "-n", "3"]);
+    let member_dirty = git_out(&member_tree, &["status", "--porcelain"]);
+    let lead_files = git_out(&lead_tree, &["ls-files"]);
+    let asked = rig.home.questions_file(&tasks[0], std::num::NonZeroU32::MIN).exists();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(
+        member.status(),
+        TaskStatus::Stopped,
+        "the member's task is taken over, not failed"
+    );
+    assert!(
+        bus.contains("I could not do it."),
+        "the lead is given what the failed run said: {bus}"
+    );
+    assert!(
+        member_log.contains("Commit the files the failed member left, as they are"),
+        "the lead committed the member's file on the member's branch: {member_log}"
+    );
+    assert_eq!(member_dirty, "", "nothing of the member is left uncommitted");
+    assert!(
+        lead_files.lines().any(|file| file == "draft.txt"),
+        "the file reached the lead's branch: {lead_files}"
+    );
+    assert!(!asked, "the lead did not ask the human for leave");
+}

@@ -20,6 +20,12 @@
 #                   a declared failure after real work that a new session does not change
 #   fail-tool-dirty  like fail-tool, and leaves the file draft.txt uncommitted; its second run waits for `.fake-continue`
 #                   in the worktree first, so a test can stop the daemon while that run goes on
+#   fail-tool-committed-dirty  like fail-tool, after it committed a file (`work-N.txt`) and left draft.txt uncommitted: a
+#                   member that fails with real work done, part of it on its branch and part of it not
+#   take-gone-members-work  as the lead of a member that is gone: reads the text the harness gave it on the bus, takes the
+#                   worktree it names, commits the files left uncommitted there as they are (no question to the human),
+#                   merges the member's branch into its own, records the gate and ends with STATUS: DONE; it fails when the
+#                   text does not name a worktree
 #   slowdone        waits a second, then ends with STATUS: DONE
 #   slowfail        waits a second, then ends with STATUS: FAILED
 #   gated           commits a file in the worktree, excludes its own `.fake-*` files from git, creates `.fake-committed-N` and waits
@@ -640,6 +646,30 @@ case $action in
     fi
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
     result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  fail-tool-committed-dirty)
+    hide_own_files
+    commit_work
+    echo "draft of run $n" > draft.txt
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  take-gone-members-work)
+    # The text the harness wrote for the lead is on the bus; the worktree and the branch of the gone member are read from it,
+    # as an agent that follows its instructions would, and nothing is asked of the human.
+    gone=$(grep -rl 'WORK OF A MEMBER THAT IS GONE' "$bus_dir" | head -n 1)
+    text=$(sed 's/\\n/\n/g' "$gone" | grep -A8 'WORK OF A MEMBER THAT IS GONE' | head -n 9)
+    member_tree=$(grep -A1 'in the worktree$' <<< "$text" | sed -n 's/^`\([^`]*\)`.*/\1/p' | head -n 1)
+    member_branch=$(sed -n 's/.*The work is on branch `\([^`]*\)`.*/\1/p' <<< "$text" | head -n 1)
+    if [[ -z $member_tree || -z $member_branch ]]; then
+      result 'The text does not say where the work of the member is.\nSTATUS: FAILED'
+    else
+      git -C "$member_tree" add -A
+      git -C "$member_tree" "${GIT_FIXTURE[@]}" commit -q -m "Commit the files the failed member left, as they are"
+      git "${GIT_FIXTURE[@]}" merge --no-edit "$member_branch" > /dev/null
+      record_gate
+      result 'Took the work of the member and finished.\nSTATUS: DONE'
+    fi
     ;;
   slowdone) sleep 1; result 'Finished the work.\nSTATUS: DONE' ;;
   slowfail) sleep 1; result 'I could not do it.\nSTATUS: FAILED' ;;
