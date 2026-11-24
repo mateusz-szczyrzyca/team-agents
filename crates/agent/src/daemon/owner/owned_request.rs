@@ -29,20 +29,19 @@ impl Owner {
             };
             let workspace = journal.current_workspace().record();
             let task = workspace.worker_task.clone();
+            let worker = entry.worker.as_ref().ok_or(OwnerError::RequestOwnership)?;
+            let served = super::teams::Served {
+                request: entry.id,
+                requester: entry.from.clone(),
+                requester_task: entry.from_task.clone(),
+                worker: worker.clone(),
+                started: agent_core::state::Timestamp::now(&self.parts.clock)?,
+                base: Some(workspace.base.to_string()),
+            };
             match journal.phase() {
                 Phase::Running(attempt) if journal.ending().is_none() => {
                     let run = attempt.run.clone();
-                    self.serving.insert(
-                        task.clone(),
-                        super::teams::Served {
-                            request: entry.id,
-                            requester: entry.from,
-                            requester_task: entry.from_task,
-                            worker: attempt.worker.clone(),
-                            started: agent_core::state::Timestamp::now(&self.parts.clock)?,
-                            base: Some(workspace.base.to_string()),
-                        },
-                    );
+                    self.serving.insert(task.clone(), served);
                     self.interrupt_owned_request(
                         &task,
                         &run,
@@ -56,38 +55,47 @@ impl Owner {
                         Some(Transition::Interrupted { .. } | Transition::RestartedQueued { .. })
                     ) =>
                 {
-                    let worker = entry.worker.as_ref().ok_or(OwnerError::RequestOwnership)?;
-                    let team = self
-                        .parts
-                        .state
-                        .find_task(&entry.from_task)
-                        .ok_or(OwnerError::RequestOwnership)?
-                        .team
-                        .id()
-                        .clone();
-                    let git = self.git_of(&team, &task, worker).ok_or(OwnerError::RequestOwnership)?;
-                    let snapshot = git
-                        .snapshot(&workspace.requester_round, &task)
-                        .await
-                        .map_err(OwnerError::RequestSnapshot)?;
-                    recovery::advance(
-                        &self.parts.store.home().task_dir(&entry.from_task),
-                        entry.id,
-                        Transition::RestartedQueued {
-                            snapshot: recovery::SnapshotIdentity {
-                                round: workspace.requester_round.clone(),
-                                task,
-                                number: std::num::NonZeroU32::new(snapshot.number)
-                                    .ok_or(OwnerError::RequestOwnership)?,
-                                commit: snapshot.commit,
-                                head: snapshot.head,
+                    let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
+                    if entry.status == DelegationStatus::Running {
+                        // The journal write survived but its bus update did not. Replay without charging another return.
+                        self.finish_owned_interruption(&journal, &served, &task, run).await?;
+                    } else {
+                        let team = self
+                            .parts
+                            .state
+                            .find_task(&entry.from_task)
+                            .ok_or(OwnerError::RequestOwnership)?
+                            .team
+                            .id()
+                            .clone();
+                        let git = self.git_of(&team, &task, worker).ok_or(OwnerError::RequestOwnership)?;
+                        let snapshot = git
+                            .snapshot(&workspace.requester_round, &task)
+                            .await
+                            .map_err(OwnerError::RequestSnapshot)?;
+                        let updated = recovery::advance(
+                            &self.parts.store.home().task_dir(&entry.from_task),
+                            entry.id,
+                            Transition::RestartedQueued {
+                                snapshot: recovery::SnapshotIdentity {
+                                    round: workspace.requester_round.clone(),
+                                    task: task.clone(),
+                                    number: std::num::NonZeroU32::new(snapshot.number)
+                                        .ok_or(OwnerError::RequestOwnership)?,
+                                    commit: snapshot.commit,
+                                    head: snapshot.head,
+                                },
                             },
-                        },
-                    )
-                    .await?;
-                    self.look_at(&team);
+                        )
+                        .await?;
+                        self.finish_owned_interruption(&updated, &served, &task, run).await?;
+                    }
                 }
-                Phase::Running(_) | Phase::Queued | Phase::Exhausted | Phase::Settled { .. } => {}
+                Phase::Exhausted => {
+                    let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
+                    self.finish_owned_interruption(&journal, &served, &task, run).await?;
+                }
+                Phase::Running(_) | Phase::Queued | Phase::Settled { .. } => {}
             }
         }
         Ok(())
@@ -257,6 +265,26 @@ impl Owner {
             },
         )
         .await?;
+        self.finish_owned_interruption(&updated, &served, task, run).await?;
+        Ok(true)
+    }
+
+    /// Replays the bus half of a durable interruption, including a final bounded return.
+    async fn finish_owned_interruption(
+        &mut self,
+        updated: &Journal,
+        served: &super::teams::Served,
+        task: &TaskId,
+        run: &RunId,
+    ) -> Result<(), OwnerError> {
+        let team = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .ok_or(OwnerError::RequestOwnership)?
+            .team
+            .id()
+            .clone();
         let causes;
         let notice;
         let change = if updated.phase() == &Phase::Exhausted {
@@ -272,9 +300,9 @@ impl Owner {
                         agent_core::decide::worker_recovery::Cause::RestartQueued => "restart_queued",
                         agent_core::decide::worker_recovery::Cause::RestartRunning => "restart_running",
                     }),
+                    Transition::RestartedQueued { .. } => Some("restart_queued"),
                     Transition::Started { .. }
                     | Transition::Assigned { .. }
-                    | Transition::RestartedQueued { .. }
                     | Transition::Rejected { .. }
                     | Transition::Observed { .. }
                     | Transition::Settled { .. } => None,
@@ -330,8 +358,12 @@ impl Owner {
         }
         self.serving.remove(task);
         self.look_at(&team);
-        tracing::info!(event = "worker_request_requeued", request = %served.request, %run, ?cause, "worker request retained for another execution");
-        Ok(true)
+        if updated.phase() == &Phase::Exhausted {
+            tracing::info!(event = "worker_request_returned", request = %served.request, %run, "worker request exhausted its interruption bound");
+        } else {
+            tracing::info!(event = "worker_request_requeued", request = %served.request, %run, "worker request retained for another execution");
+        }
+        Ok(())
     }
 
     /// Keeps a declared ending only for the execution that still owns this request.
