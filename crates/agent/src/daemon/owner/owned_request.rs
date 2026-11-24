@@ -207,7 +207,7 @@ impl Owner {
                 }
             }
             OwnedOutcome::Stale => {
-                tracing::warn!(event = "worker_result_dropped", request = %pending.request, %run, "late settlement dropped")
+                tracing::warn!(event = "worker_result_dropped", request = %pending.request, %run, "late settlement dropped");
             }
         }
         Ok(true)

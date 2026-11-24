@@ -1187,7 +1187,7 @@ impl Owner {
                 );
             }
         }
-        self.start_owned_team_request(task, &plan.run).await?;
+        Box::pin(self.start_owned_team_request(task, &plan.run)).await?;
         self.spawn_job(task.clone(), plan.job, run_span);
         Ok(())
     }
