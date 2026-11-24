@@ -355,6 +355,35 @@ fn a_member_given_to_its_lead_is_remembered_to_be_so_after_the_lead_is_told() {
 }
 
 #[test]
+fn a_member_given_to_its_lead_is_not_so_any_more_once_it_runs_again() {
+    let mut state = old_state();
+    state
+        .owe_lead(&task(), crate::decide::ladder::Trouble::NoStatus, at())
+        .unwrap();
+    state.lead_told(&task()).unwrap();
+    assert!(state.find_task(&task()).unwrap().member.given_to_lead());
+
+    {
+        let (_, mut member) = state.find_task_mut(&task()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(
+                "run-20261121-010000-b2b2".parse().unwrap(),
+                "2026-11-21T01:00:00Z".parse().unwrap(),
+                None,
+            )
+            .unwrap();
+    }
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    assert!(
+        !loaded.find_task(&task()).unwrap().member.given_to_lead(),
+        "work done after the hand-over is not the lead's: the member is looked at again"
+    );
+}
+
+#[test]
 fn a_member_started_in_a_new_session_was_not_given_to_its_lead() {
     let mut state = old_state();
 
