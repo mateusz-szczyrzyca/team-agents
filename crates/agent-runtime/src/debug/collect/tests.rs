@@ -1242,3 +1242,144 @@ async fn untracked_observation_preserves_a_task_artifact_with_the_same_name() {
     let paths: std::collections::BTreeSet<_> = collection.artifacts.iter().map(|(path, _)| path).collect();
     assert_eq!(paths.len(), collection.artifacts.len());
 }
+
+#[tokio::test]
+async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() {
+    use crate::history::Store as _;
+    use agent_core::cli::ActivityEvent;
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{AgentIdentity, Cut, MaxTextBytes, Record, RunStart, RunWhy, SequencedRecord, Step};
+    use agent_core::kinds::{CliKind, Tier};
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    team.begin_run(
+        &task,
+        agent_core::state::NewRun {
+            id: run.clone(),
+            at,
+            session: None,
+            rounds: vec![],
+        },
+    )
+    .unwrap();
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    let call = |number: u32, name: &str| {
+        Record::Step(Box::new(Step {
+            run: run.clone(),
+            number: std::num::NonZeroU32::new(number).unwrap(),
+            at,
+            event: ActivityEvent::ToolCall {
+                name: name.to_owned(),
+                summary: "doing it".to_owned(),
+            },
+        }))
+    };
+    database
+        .write(&[
+            Record::Run(Box::new(RunStart {
+                run: run.clone(),
+                team: team.id().clone(),
+                task: task.clone(),
+                at,
+                agent: AgentIdentity {
+                    name: "codex-1".to_owned(),
+                    tier: Tier::Normal,
+                    cli: CliKind::Codex,
+                    model: None,
+                },
+                role: Role::Solo,
+                rounds: vec![],
+                why: RunWhy::WakeUp,
+                prompt: "Please continue".to_owned(),
+                worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+                branch: "feature".parse().unwrap(),
+                session: None,
+            })),
+            call(1, "mcp__serena__find_symbol"),
+            call(2, "serena.find_referencing_symbols"),
+            call(3, "Bash"),
+            call(4, "mcp__agentbus__read_messages"),
+        ])
+        .unwrap();
+    drop(database);
+    let records = [SequencedRecord {
+        sequence: 1,
+        at,
+        team: team.id().clone(),
+        rounds: vec![],
+        record: Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.id().clone(),
+            task: task.clone(),
+            at,
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Solo,
+            rounds: vec![],
+            why: RunWhy::WakeUp,
+            prompt: "Please continue".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+            branch: "feature".parse().unwrap(),
+            session: None,
+        })),
+        cut: Cut::default(),
+    }];
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.enrich_last_run_details(&home, &records, &team);
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(
+        summary.contains("- Tool calls: 4 (serena 2, shell 1, other 1)"),
+        "{summary}"
+    );
+}
+
+#[tokio::test]
+async fn the_summary_says_no_tool_when_the_steps_of_a_tasks_last_run_name_none() {
+    use agent_core::config::AbsolutePath;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    team.begin_run(
+        &task,
+        agent_core::state::NewRun {
+            id: run,
+            at,
+            session: None,
+            rounds: vec![],
+        },
+    )
+    .unwrap();
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.enrich_last_run_details(&home, &[], &team);
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
+    assert!(summary.contains("- Tool calls: none recorded"), "{summary}");
+}
