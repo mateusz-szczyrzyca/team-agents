@@ -1896,3 +1896,62 @@ agentbus = "{}"
         Some("pool:\n  glm-1  task-20261124-114140-lead (step 1.7)\n".to_owned())
     );
 }
+
+#[tokio::test]
+async fn running_view_keeps_legacy_pool_assignment_without_open_rounds() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let activity = no_activity(dir.path());
+    let bus = dir.path().join("bus");
+    std::fs::write(&bus, "#!/bin/sh\nprintf '[]\\n'\n").unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        dir.path().join("agents.toml"),
+        format!(
+            r#"
+[agents.claude-1]
+cli = "claude"
+[agents.glm-1]
+cli = "claude"
+[investigators.inv-opus]
+cli = "claude"
+[tiers]
+normal = ["claude-1"]
+workers = ["glm-1"]
+[repos.example]
+base_branch = "main"
+gate = ["true"]
+[binaries]
+agentbus = "{}"
+"#,
+            bus.display()
+        ),
+    )
+    .unwrap();
+    let mut team = sample().remove(0);
+    team.rounds.clear();
+    team.members[0].status = TaskStatus::Running;
+    team.members[2].status = TaskStatus::Done;
+    let expected_pool = format!("pool:\n  glm-1  {}\n", team.id);
+    let daemon = FakeDaemon::serve(&socket(&dir), move |request| {
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(
+                request.id,
+                Reply::Teams {
+                    teams: vec![team.clone()],
+                },
+            ))
+            .to_line()
+            .unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+
+    let shown = running_text(&mut connection, &activity, Detail::Short, VersionsQuery::Omit)
+        .await
+        .unwrap();
+
+    assert_eq!(shown.text, NO_OPEN_ROUNDS);
+    assert_eq!(shown.pool, Some(expected_pool));
+}
