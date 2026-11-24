@@ -160,9 +160,10 @@ impl Owner {
             if member.status() == TaskStatus::Failed && !member.runs().iter().any(agent_core::state::Run::used_tool) {
                 continue;
             }
-            // A stopped member the ladder climbed for was given to the lead with its files listed and a snapshot of them: the
-            // lead was told, and its work is the lead's. Only a member the human stopped by hand is looked at here.
-            if member.status() == TaskStatus::Stopped && member.renewals().is_some() {
+            // A stopped member the ladder gave to the lead had its files listed and snapshotted for the lead: the lead was
+            // told, and its work is the lead's. A member that was only started in a new session before the human stopped it
+            // was not given to anyone, and is looked at like any other.
+            if member.status() == TaskStatus::Stopped && member.given_to_lead() {
                 continue;
             }
             let Ok(agent) = agent_name_of(member.agent().name()) else {

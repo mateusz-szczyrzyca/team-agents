@@ -551,8 +551,8 @@ impl Member {
 
     /// Whether the ladder gave the work of this member's task to its team's lead, also after the lead was told of it.
     #[must_use]
-    pub const fn given_to_lead(&self) -> bool {
-        false
+    pub fn given_to_lead(&self) -> bool {
+        self.renewals.as_ref().is_some_and(renewal::Renewals::given_to_lead)
     }
 
     /// Whether the team is still owed notice of this task's busy hand-over.
