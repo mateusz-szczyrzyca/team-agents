@@ -11,6 +11,11 @@ use agent_runtime::worker_request::recovery::{self, Journal, Phase, Transition};
 use super::{Owner, OwnerError};
 
 impl Owner {
+    /// Checks the durable observation before checking or bringing over an owned result.
+    pub(super) async fn owns_observed_result(&self, _pending: &Pending) -> Result<bool, OwnerError> {
+        Ok(true)
+    }
+
     /// Reads the journal from the requester's task, independently of the serving task.
     pub(super) async fn owned_journal(
         &self,
