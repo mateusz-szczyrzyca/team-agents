@@ -180,7 +180,10 @@ async fn pool_recovery_does_not_requeue_a_starting_request_owned_by_a_state_team
     let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
     std::fs::write(
         daemon.home.config_file(),
-        config.replace("[tiers]", "[tiers]\nworkers = [\"claude-2\"]"),
+        config.replace(
+            "[tiers]",
+            "[agents.glm-1]\ncli = \"claude\"\n[tiers]\nworkers = [\"glm-1\"]",
+        ),
     )
     .unwrap();
     let (mut owner, _sinks) = daemon.bare_owner().await;
