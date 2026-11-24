@@ -62,22 +62,34 @@ impl CliTool {
         }
     }
 
-    /// The files and directories of code the call of the tool with the `summary` its stream gives names. A CLI gives the
-    /// path of a search, or its pattern when it has no path: a summary that names no place at all is a pattern, and a
-    /// search with no path searches the repository (`.`).
+    /// The files and directories of code the call of the tool with the `summary` its stream gives names. A search that was
+    /// given a path has a summary that ends with [`SEARCH_PATH_MARK`]: it names that path. A search without the mark is a
+    /// pattern, and it searches the repository (`.`).
     fn names(self, summary: &str) -> Vec<String> {
-        let words: Vec<&str> = summary.split_whitespace().flat_map(one_of_its_words).collect();
-        let mut names: Vec<String> = words
-            .iter()
+        let path = match (self, summary.strip_suffix(SEARCH_PATH_MARK)) {
+            (Self::Searches, None) => {
+                return if summary.trim().is_empty() {
+                    Vec::new()
+                } else {
+                    vec![".".to_owned()]
+                };
+            }
+            (Self::Reads | Self::Searches, Some(path)) => path,
+            (Self::Reads, None) => summary,
+        };
+        path.split_whitespace()
+            .flat_map(one_of_its_words)
             .filter(|word| is_code_file(word) || (self == Self::Searches && is_code_directory(word)))
-            .map(|word| (*word).to_owned())
-            .collect();
-        let names_a_place = words.iter().any(|word| word.contains('/') || has_text_extension(word));
-        if self == Self::Searches && names.is_empty() && !words.is_empty() && !names_a_place {
-            names.push(".".to_owned());
-        }
-        names
+            .map(str::to_owned)
+            .collect()
     }
+}
+
+/// Whether the tool called `name` is a CLI's own search (`Grep`, `grep`): the one whose summary says by
+/// [`SEARCH_PATH_MARK`] that it names a path and not a pattern.
+#[must_use]
+pub fn is_search_tool(name: &str) -> bool {
+    CliTool::named(name) == Some(CliTool::Searches)
 }
 
 /// The files a step searched or read, when it searched or read code without Serena; `None` for a step that is not
