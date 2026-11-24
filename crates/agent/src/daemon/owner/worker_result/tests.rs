@@ -8,7 +8,7 @@ use agent_runtime::worker_request::{Checked, Found};
 use agent_core::ids::{AgentName, TaskId};
 use agent_runtime::agentbus::{DelegationRequest, DelegationStatus};
 
-use super::{facts_of, is_running_for, reasons_of, scope_of};
+use super::{RequestCheck, facts_of, is_running_for, reasons_of, run_request_check, scope_of};
 
 fn found(outcome: CheckOutcome) -> Found {
     Found {
@@ -204,6 +204,28 @@ fn a_request_is_the_workers_while_the_bus_has_it_running_for_its_task_or_for_its
         assert_eq!(is_running_for(&request, &task, &glm1), expected, "{why}");
     }
     assert_eq!(known("running", None, None).status, DelegationStatus::Running);
+}
+
+#[tokio::test]
+async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_recorded_reason() {
+    let found = run_request_check(RequestCheck {
+        worktree: None,
+        worktree_fault: Some("the worktree path is not UTF-8 text".to_owned()),
+        task_dir: "/tmp/example".into(),
+        step: "1.1".parse().unwrap(),
+        text: "test -s docs/count.txt".to_owned(),
+        seconds: 60,
+        refuse: vec![],
+    })
+    .await;
+
+    assert_eq!(found.outcome, CheckOutcome::Failed);
+    assert_eq!(found.line, "test -s docs/count.txt");
+    assert_eq!(
+        found.reason.as_deref(),
+        Some("the worktree path is not UTF-8 text"),
+        "the recorded failed check keeps the worktree_of cause, not a generic message"
+    );
 }
 
 #[tokio::test]

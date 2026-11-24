@@ -329,12 +329,27 @@ impl Owner {
         // A `Working` record whose pending is already present is completed before it is settled: a daemon stopped
         // between the completion's two writes, or the record of the old open form.
         let workspace = if record.stage == request_workspace::Stage::Working {
+            // The completion writes files; it must not run on the async worker thread, so it is moved to a blocking
+            // thread over owned values. A failure of the completion (an I/O error, or a panic on the blocking thread)
+            // is told once and leaves the record `Working` to be tried again at the next look.
+            let home = self.parts.store.home().clone();
             let mut completed = record.clone();
-            if let Err(error) = request_workspace::complete(self.parts.store.home(), &mut completed, &pending) {
-                self.tell_complete_once(record.request, &error);
-                return Ok(());
+            let pending = pending.clone();
+            let joined = tokio::task::spawn_blocking(move || {
+                request_workspace::complete(&home, &mut completed, &pending).map(|()| completed)
+            })
+            .await;
+            match joined {
+                Ok(Ok(completed)) => completed,
+                Ok(Err(error)) => {
+                    self.tell_complete_once(record.request, &error);
+                    return Ok(());
+                }
+                Err(error) => {
+                    self.tell_complete_panic_once(record.request, &error);
+                    return Ok(());
+                }
             }
-            completed
         } else {
             record.clone()
         };
@@ -409,6 +424,20 @@ impl Owner {
                 request = %request,
                 error = %error_chain(error),
                 "a request's workspace cannot be completed: it is tried again at the next look"
+            );
+        }
+    }
+
+    /// Tells once, for `request`, that its completion on a blocking thread panicked: nothing was completed, so the
+    /// record stays `Working` and the request is tried again at the next look, without panicking the owner.
+    fn tell_complete_panic_once(&mut self, request: RequestId, error: &tokio::task::JoinError) {
+        let reason = format!("the completion of the workspace of {request} panicked: {error}");
+        if self.unreadable_requests.insert(reason.clone()) {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %request,
+                error = %reason,
+                "a request's workspace completion panicked: it is tried again at the next look"
             );
         }
     }
@@ -923,16 +952,22 @@ impl Owner {
         workspace: Option<&RequestWorkspace>,
     ) {
         let config = &self.parts.settings.config;
-        let worktree = match workspace {
+        let (worktree, worktree_fault) = match workspace {
             Some(record) => {
-                request_workspace::worktree_of(self.parts.store.home(), &record.requester_repo, &record.worker_task)
-                    .ok()
-                    .map(|worktree| worktree.as_path().to_path_buf())
+                match request_workspace::worktree_of(
+                    self.parts.store.home(),
+                    &record.requester_repo,
+                    &record.worker_task,
+                ) {
+                    Ok(worktree) => (Some(worktree.as_path().to_path_buf()), None),
+                    Err(error) => (None, Some(error_chain(&error))),
+                }
             }
-            None => self.worker_worktree(&pending.team, &pending.worker_task),
+            None => (self.worker_worktree(&pending.team, &pending.worker_task), None),
         };
         let job = RequestCheck {
             worktree,
+            worktree_fault,
             task_dir: task_dir.to_owned(),
             step,
             text,
@@ -1315,6 +1350,8 @@ fn is_running_for(known: &DelegationRequest, worker_task: &TaskId, worker: &Agen
 struct RequestCheck {
     /// The worker's worktree; `None` when it is not there.
     worktree: Option<PathBuf>,
+    /// Why the workspace's worktree is not there, for the requester's benefit; `None` when there is no workspace.
+    worktree_fault: Option<String>,
     /// The worker's task directory, where the output is kept.
     task_dir: PathBuf,
     /// The step of the requester's plan the request is for.
@@ -1341,7 +1378,8 @@ async fn run_request_check(job: RequestCheck) -> Found {
         return failed("the check is not one the harness can run".to_owned());
     };
     let Some(worktree) = &job.worktree else {
-        return failed("the worker's worktree cannot be reached".to_owned());
+        let reason = job.worktree_fault.unwrap_or_else(|| "the worker's worktree cannot be reached".to_owned());
+        return failed(reason);
     };
     let context = CheckContext {
         worktree,
