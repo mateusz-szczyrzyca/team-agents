@@ -64,12 +64,25 @@ pub enum Delivered {
 /// What the harness does about the failed member described by `delivery`.
 #[must_use]
 pub fn delivered_step(delivery: &Delivery<'_>) -> Delivered {
-    if !delivery.commits.is_empty() {
-        Delivered::Release
-    } else if !delivery.files.is_empty() {
-        Delivered::AskHuman
-    } else {
-        Delivered::TellLead
+    if delivery.member != TaskStatus::Failed || !delivery.lead_done || !delivery.gate_passed {
+        return Delivered::Nothing;
+    }
+    let (told_commits, told_files) = delivery
+        .told
+        .map_or((&[][..], &[][..]), |told| (told.commits, told.files));
+    // A file the lead was told of is kept in the snapshot the lead was given; it does not hold the round. Commits do.
+    let untold = delivery.commits.iter().any(|commit| !told_commits.contains(commit))
+        || delivery.files.iter().any(|file| !told_files.contains(file));
+    if untold {
+        return Delivered::TellLead;
+    }
+    if delivery.commits.is_empty() {
+        return Delivered::Release;
+    }
+    // Every lacking commit was told of: the lead's answer decides, and the human is asked once.
+    match delivery.told {
+        Some(told) if told.answered && !delivery.asked => Delivered::AskHuman,
+        Some(_) | None => Delivered::Nothing,
     }
 }
 
