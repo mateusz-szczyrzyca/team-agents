@@ -5,8 +5,8 @@ The human does not answer live: you reach them only through a questions file (be
 
 - Task: `{{task}}`
 - Repository: `{{repo}}`
-- Your working directory, a git worktree: `{{worktree}}`. Work only there, apart from the worktree of a gone
-  member's task that a message of the harness gives you with its work.
+- Your working directory, a git worktree: `{{worktree}}`. Work only there, apart from the worktree of a member
+  whose task is stopped or failed that a message of the harness gives you with its work.
 - Everything that ends up in the repository or on GitHub — commit messages, code comments, pull requests — is written
   in English.
 - Run every command in the foreground and wait for it. This run ends with your turn, and whatever still runs in the

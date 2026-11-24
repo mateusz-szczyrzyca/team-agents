@@ -33,6 +33,10 @@ pub struct Renewals {
     /// when nothing is owed, and in a state written before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     lead_owed: Option<Timestamp>,
+    /// Whether the ladder gave the work of the member's task to its team's lead; kept after the lead was told, so that the
+    /// task is not taken for one the human stopped by hand. Absent when not, and in a state written before.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    given_to_lead: bool,
     /// Whether the team is still owed notice of a busy hand-over, including across a restart.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     busy_notice_owed: bool,
@@ -91,9 +95,21 @@ impl Renewals {
         self.lead_owed.is_some()
     }
 
-    /// Records that the work of the member's task is owed to its team's lead from `at`, or nothing any more (`None`).
+    /// Whether the ladder gave the work of the member's task, which has `runs` runs, to its team's lead, told or not yet; a
+    /// state written before the gift was kept still says so while the lead is owed. The gift ends with the first run the
+    /// task begins after it: what the task does then is not the lead's.
+    #[must_use]
+    pub const fn given_to_lead(&self, runs: usize) -> bool {
+        (self.given_to_lead || self.lead_owed.is_some()) && self.awaits_run(runs)
+    }
+
+    /// Records that the work of the member's task is owed to its team's lead from `at`, or nothing any more (`None`); the
+    /// gift itself stays recorded.
     pub(super) const fn owe_lead(&mut self, at: Option<Timestamp>) {
         self.lead_owed = at;
+        if at.is_some() {
+            self.given_to_lead = true;
+        }
     }
 
     /// Whether the team is still owed notice of the busy hand-over.
@@ -121,6 +137,7 @@ impl Renewals {
             after_runs,
             asked: None,
             lead_owed: None,
+            given_to_lead: false,
             busy_notice_owed: false,
             context_tokens: None,
         }
@@ -136,6 +153,7 @@ impl Renewals {
             after_runs,
             asked: None,
             lead_owed: None,
+            given_to_lead: false,
             busy_notice_owed: false,
             context_tokens: None,
         }
@@ -144,6 +162,7 @@ impl Renewals {
     /// The session boundary a hand-over records at `at`, for `reason`, after the first `after_runs` runs: the count of
     /// new sessions stays.
     pub(super) const fn hand_over(&mut self, at: Timestamp, reason: Trouble, after_runs: usize) {
+        self.given_to_lead = false;
         self.at = at;
         self.reason = reason;
         self.after_runs = after_runs;
@@ -151,6 +170,7 @@ impl Renewals {
 
     /// The renewal the member records: one more was used, at `at`, for `reason`, after its first `after_runs` runs.
     pub(super) fn record(&mut self, at: Timestamp, reason: Trouble, after_runs: usize) {
+        self.given_to_lead = false;
         self.used = self.used.saturating_add(1);
         self.at = at;
         self.reason = reason;
