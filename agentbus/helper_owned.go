@@ -1,7 +1,13 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
 )
 
 // ownedCommand identifies the execution allowed to change a request or deliver its final notice.
@@ -107,8 +113,9 @@ func (b *Bus) helperOwned(c ownedCommand) (ownedOutcome, *CmdHelperOwnedError) {
 	return result, err
 }
 
-// restoreOwnedSettlements repairs a notice appended just before an interrupted state replacement.
-// Only opted-in requests need a receipt scan; legacy requests retain their previous loading behavior.
+// restoreOwnedSettlements repairs receipts appended before an interrupted state replacement.
+// The cursor and repaired state are saved together under the bus lock. A load reads
+// only the suffix appended since that save; old states scan once from offset zero.
 func (b *Bus) restoreOwnedSettlements(st *State) *StorageError {
 	needed := false
 	for _, h := range st.Helpers {
@@ -120,37 +127,85 @@ func (b *Bus) restoreOwnedSettlements(st *State) *StorageError {
 	if !needed {
 		return nil
 	}
-	messages, serr := b.messages()
-	if serr != nil {
-		return serr
+	f, err := os.Open(b.path("messages.jsonl"))
+	if errors.Is(err, os.ErrNotExist) && st.OwnedReceiptOffset == 0 {
+		return nil
 	}
-	for _, m := range messages {
-		if m.ID >= st.NextID {
-			st.NextID = m.ID + 1
-		}
-		if m.Kind != KindScript || m.From != "agent" {
-			continue
-		}
-		var ev EventScript
-		if err := json.Unmarshal(m.Data, &ev); err != nil {
-			return storageErr(err, "cannot read owned settlement receipt %d", m.ID)
-		}
-		if ev.Notice != NoticeHelperResult || ev.Fields["owned_request"] == "" {
-			continue
-		}
-		h := st.Helpers[ev.Fields["owned_request"]]
-		if h == nil || h.AttemptRun != ev.Fields["run"] || h.HelperTask != ev.Fields["task"] || h.Worker != ev.Fields["worker"] {
-			continue
-		}
-		status, verr := parseEnum[HelperStatus](ev.Fields["status"], "owned settlement status")
-		if verr != nil {
-			return storageErr(verr, "cannot read owned settlement receipt %d", m.ID)
-		}
-		if status != HelperDone && status != HelperFailed && status != HelperUnclear {
-			return storageErr(nil, "nonterminal owned settlement receipt %d", m.ID)
-		}
-		h.Status, h.Summary = status, ev.Fields["summary"]
+	if err != nil {
+		return storageErr(err, "cannot open settlement receipt log")
 	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			warnSideEffect("close settlement receipt log", storageErr(err, "cannot close settlement receipt log"))
+		}
+	}()
+	info, err := f.Stat()
+	if err != nil {
+		return storageErr(err, "cannot inspect settlement receipt log")
+	}
+	if st.OwnedReceiptOffset < 0 || st.OwnedReceiptOffset > info.Size() {
+		return storageErr(valueErr("receipt offset %d outside 0..%d", st.OwnedReceiptOffset, info.Size()), "invalid settlement receipt cursor")
+	}
+	if _, err := f.Seek(st.OwnedReceiptOffset, io.SeekStart); err != nil {
+		return storageErr(err, "cannot seek settlement receipt log")
+	}
+	offset := st.OwnedReceiptOffset
+	r := bufio.NewReader(f)
+	for {
+		line, rerr := r.ReadBytes('\n')
+		offset += int64(len(line))
+		if len(bytes.TrimSpace(line)) > 0 {
+			var m Message
+			if err := json.Unmarshal(line, &m); err != nil {
+				// Match the message reader: a corrupt line must not hide later receipts.
+				warnOnce(fmt.Sprintf("receipts:%d", offset), LogCorruptMessageLine, storageErr(err, "cannot decode settlement receipt ending at byte %d", offset))
+			} else if serr := restoreOwnedReceipt(st, m); serr != nil {
+				return serr
+			}
+		}
+		if errors.Is(rerr, io.EOF) {
+			break
+		}
+		if rerr != nil {
+			return storageErr(rerr, "cannot read settlement receipt log")
+		}
+	}
+	if offset == st.OwnedReceiptOffset {
+		return nil
+	}
+	st.OwnedReceiptOffset = offset
+	// Even read-only operations must persist progress, so unrelated traffic cannot
+	// cause repeated receipt scans. A failed save leaves the old cursor replayable.
+	return b.save(st)
+}
+
+// restoreOwnedReceipt applies a receipt only to the execution that still owns its request.
+func restoreOwnedReceipt(st *State, m Message) *StorageError {
+	if m.ID >= st.NextID {
+		st.NextID = m.ID + 1
+	}
+	if m.Kind != KindScript || m.From != "agent" {
+		return nil
+	}
+	var ev EventScript
+	if err := json.Unmarshal(m.Data, &ev); err != nil {
+		return storageErr(err, "cannot read owned settlement receipt %d", m.ID)
+	}
+	if ev.Notice != NoticeHelperResult || ev.Fields["owned_request"] == "" {
+		return nil
+	}
+	h := st.Helpers[ev.Fields["owned_request"]]
+	if h == nil || h.AttemptRun != ev.Fields["run"] || h.HelperTask != ev.Fields["task"] || h.Worker != ev.Fields["worker"] {
+		return nil
+	}
+	status, verr := parseEnum[HelperStatus](ev.Fields["status"], "owned settlement status")
+	if verr != nil {
+		return storageErr(verr, "cannot read owned settlement receipt %d", m.ID)
+	}
+	if status != HelperDone && status != HelperFailed && status != HelperUnclear {
+		return storageErr(nil, "nonterminal owned settlement receipt %d", m.ID)
+	}
+	h.Status, h.Summary = status, ev.Fields["summary"]
 	return nil
 }
 

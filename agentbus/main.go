@@ -131,6 +131,8 @@ type Investigation struct {
 // State is the whole shared bus state, persisted in state.json and always accessed under
 // the bus lock (Bus.with). Map keys are IDs/names as strings.
 type State struct {
+	OwnedReceiptOffset int64 `json:"owned_receipt_offset,omitempty"` // bytes already replayed from messages.jsonl; absent in older states
+
 	NextID       int64                   `json:"next_id"`      // next message ID
 	Agents       map[string]*Presence    `json:"agents"`       // running agents by name
 	Reservations map[string]*Reservation `json:"reservations"` // taken resources by resource name
