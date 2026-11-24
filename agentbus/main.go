@@ -193,6 +193,9 @@ func (b *Bus) load() (*State, *StorageError) {
 	if st.NextID == 0 {
 		st.NextID = 1
 	}
+	if serr := b.restoreOwnedSettlements(st); serr != nil {
+		return nil, serr
+	}
 	return st, nil
 }
 
@@ -1678,6 +1681,8 @@ func main() {
 		cmdHelperRemoteFinish(os.Args[2:])
 	case "helper-next":
 		cmdHelperNext(os.Args[2:])
+	case "helper-owned":
+		cmdHelperOwned(os.Args[2:])
 	case "helper-set":
 		cmdHelperSet(os.Args[2:])
 	case "helper-get":
