@@ -908,6 +908,12 @@ fn all_event_kinds(world: &World, text: &str) -> Vec<HistoryEvent> {
             },
             tasks: vec![task.clone()],
         },
+        HistoryEvent::SerenaReminded {
+            task: task.clone(),
+            run: world.runs[0].start.run.clone(),
+            searches: 40,
+            cli: agent_core::kinds::CliKind::Claude,
+        },
         HistoryEvent::Notified {
             task: Some(task.clone()),
             title: text.to_owned(),

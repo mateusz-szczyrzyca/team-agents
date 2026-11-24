@@ -84,3 +84,5 @@ mod team_removal;
 
 #[cfg(test)]
 mod no_tool_events;
+
+mod serena_reminded;
