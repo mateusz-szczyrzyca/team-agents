@@ -392,9 +392,11 @@ A member that failed after it called a bus tool does not hold the round either w
 work: when the lead ends `STATUS: DONE` with a passed gate at the tip of its branch, the member's branch has no commit the
 lead's branch lacks and its worktree holds no uncommitted file the lead was not told of, the member's task is closed as
 taken over and the item is published, with no hand. A member that never called a tool did no work: it keeps holding the
-round and the human is told, as before. Work the lead's branch lacks is never dropped: the lead is told once which commits
-and files (`prompts/harness/pr/member-work-lacks.md`; the files are kept in a snapshot), and when it ends `STATUS: DONE`
-again without the commits, the human is asked once with the list (`prompts/harness/pr/notice-member-work-left.md`).
+round and the human is told, as before. Work the lead's branch lacks is never dropped, also that of a member the human
+stopped: the lead is told once, in one message for all members, which commits and files
+(`prompts/harness/pr/member-work-lacks.md`; the files are kept in a snapshot, and a file that changed afterwards is told
+again), and when it ends `STATUS: DONE` again without the commits, the human is asked once with the list, also after a
+restart of the daemon (`prompts/harness/pr/notice-member-work-left.md`).
 
 Snapshots keep a worktree's work when its run was cut. When the daemon starts, it takes a snapshot of every task whose run did not end, if the round that run worked for is still open: everything in the worktree (uncommitted, staged, deleted, untracked and binary files; ignored files are left out) becomes a commit under `refs/agents/snapshots/<round>/<task>/<n>` in the repository, and the worktree, its index and its files do not change. `agent status <round>` shows the last snapshot of each task with its number, time and size. A snapshot above `[snapshot] warn_mb` (default `200`) is still taken and logged as `snapshot_large`; a snapshot that fails is logged as `snapshot_failed` and the daemon goes on. Snapshots are never pushed and never pruned yet: remove the references with `git update-ref -d` when you no longer need them. Two events and one history table (`snapshots`, migration `12`) describe them, see [`docs/history.md`](docs/history.md).
 
