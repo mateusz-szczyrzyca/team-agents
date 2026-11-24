@@ -1,6 +1,7 @@
 //! `[session]` and each agent's `max_context`: the default, the values, the refusals, and the bound an agent gets.
 
-use super::super::{AgentName, Config, ConfigError, InvestigatorName};
+use super::super::InvestigatorName;
+use super::super::{AgentName, Config, ConfigError};
 use super::{DEFAULT_MAX_CONTEXT, context_bound};
 
 /// The smallest configuration: one normal agent, which is all a task needs.

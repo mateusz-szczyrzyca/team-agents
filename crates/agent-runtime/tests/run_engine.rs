@@ -104,7 +104,7 @@ mod run_engine {
         let home = Home::new(&abs(home_dir.path()));
         let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
         let config = Config::from_toml_str(&format!(
-            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{binary}\"\nopencode = \"{binary}\"\n"
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{binary}\"\n"
         ))
         .unwrap();
         let texts = HarnessPrompts::load(
@@ -137,6 +137,42 @@ mod run_engine {
         env_with(&fake_cli(), "", timings()).await
     }
 
+    /// An environment whose agent `claude-1` runs the stand-in CLI as `opencode`, with its own configuration file.
+    async fn env_for_opencode() -> Env {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let binary = fake_cli();
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"opencode\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nopencode = \"{binary}\"\n"
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        let engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::parse("", 0o600).unwrap()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(FixedClock(now().as_utc())),
+            local_offset: time::UtcOffset::UTC,
+            timings: timings(),
+            agent_binary_dir: abs(Path::new("/usr/local/bin")),
+        });
+        Env {
+            home,
+            _home_dir: home_dir,
+            worktree: tempfile::tempdir().unwrap(),
+            engine,
+            task: TaskId::from_str("task-20261112-100000-t1t1").unwrap(),
+        }
+    }
+
     async fn env_with_paths(binary_dir: AbsolutePath, agent_path: &[AbsolutePath]) -> Env {
         let home_dir = tempfile::tempdir().unwrap();
         let home = Home::new(&abs(home_dir.path()));
@@ -147,8 +183,7 @@ mod run_engine {
             .collect::<Vec<_>>()
             .join(", ");
         let config = Config::from_toml_str(&format!(
-            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\nopencode = \"{}\"\nagent_path = [{path_list}]\n",
-            fake_cli(),
+            "[agents.claude-1]\ncli = \"claude\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nclaude = \"{}\"\nagent_path = [{path_list}]\n",
             fake_cli(),
         ))
         .unwrap();
@@ -756,7 +791,7 @@ mod run_engine {
 
     #[tokio::test]
     async fn a_job_without_a_window_writes_no_limit_for_its_model() {
-        let env = env().await;
+        let env = env_for_opencode().await;
         let mut job = env.job("done", Env::new_session());
         job.cli = CliKind::Opencode;
         job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
@@ -773,7 +808,7 @@ mod run_engine {
 
     #[tokio::test]
     async fn the_window_of_the_job_reaches_the_configuration_of_an_opencode_run() {
-        let env = env().await;
+        let env = env_for_opencode().await;
         let mut job = env.job("done", Env::new_session());
         job.cli = CliKind::Opencode;
         job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
@@ -794,7 +829,7 @@ mod run_engine {
 
     #[tokio::test]
     async fn a_command_line_of_an_opencode_run_names_no_window() {
-        let env = env().await;
+        let env = env_for_opencode().await;
         let mut job = env.job("done", Env::new_session());
         job.cli = CliKind::Opencode;
         job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());

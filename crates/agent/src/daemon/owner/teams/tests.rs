@@ -142,8 +142,6 @@ struct Agent {
     name: &'static str,
     kind: Kind,
     scenario: &'static str,
-    /// The CLI of its table.
-    cli: &'static str,
 }
 
 fn normal(name: &'static str, scenario: &'static str) -> Agent {
@@ -151,7 +149,6 @@ fn normal(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Normal,
         scenario,
-        cli: "claude",
     }
 }
 
@@ -160,7 +157,6 @@ fn worker(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Worker,
         scenario,
-        cli: "claude",
     }
 }
 
@@ -169,15 +165,6 @@ fn investigator(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Investigator,
         scenario,
-        cli: "claude",
-    }
-}
-
-/// A normal agent run by `opencode`.
-fn opencode(name: &'static str, scenario: &'static str) -> Agent {
-    Agent {
-        cli: "opencode",
-        ..normal(name, scenario)
     }
 }
 
@@ -193,10 +180,9 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
         };
         write!(
             text,
-            "[{table}.{}]\ncli = \"{}\"\nargs = [\"--scenario\", \"{}\", \"--as\", \"{}\", \"--bus-bin\", \"{}\", \
+            "[{table}.{}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{}\", \"--as\", \"{}\", \"--bus-bin\", \"{}\", \
              \"--bus-dir\", \"{}/bus\", \"--home\", \"{}\"]\n",
             agent.name,
-            agent.cli,
             agent.scenario,
             agent.name,
             agentbus_binary().display(),
@@ -3321,19 +3307,27 @@ async fn each_opencode_agent_is_told_its_own_window_and_a_claude_agent_is_told_n
         investigator("inv-opus", "sleep"),
         investigator("inv-codex", "sleep"),
         investigator("inv-gemini", "sleep"),
-        opencode("glm-1", "sleep"),
-        opencode("glm-2", "sleep"),
+        normal("glm-1", "sleep"),
+        normal("glm-2", "sleep"),
         normal("claude-1", "sleep"),
     ]);
     let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    // The two agents run the stand-in CLI as opencode; the other agents of the fixture are Claude Code.
     let config = config
         .replace(
-            "[agents.glm-1]\n",
-            "[agents.glm-1]\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+            "[agents.glm-1]\ncli = \"claude\"\n",
+            "[agents.glm-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
         )
         .replace(
-            "[agents.glm-2]\n",
-            "[agents.glm-2]\nmodel = \"openrouter/anthropic/claude-4\"\n",
+            "[agents.glm-2]\ncli = \"claude\"\n",
+            "[agents.glm-2]\ncli = \"opencode\"\nmodel = \"openrouter/anthropic/claude-4\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
         );
     let config = with_context(&config, &[("agents", "glm-1", 202_752), ("agents", "glm-2", 1_000_000)]);
     std::fs::write(f.home.config_file(), config).unwrap();
