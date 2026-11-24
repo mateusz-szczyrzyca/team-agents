@@ -11,6 +11,7 @@
 #   changed-session-fail  as a run whose CLI changed mid-task: reports a changed session identity and ends with
 #                   STATUS: FAILED without calling a tool, as the first run of the changed CLI that cannot work
 #   nostatus        ends without a STATUS line
+#   serena-hold     reads forty-two files of code with `Read`, holds until `.fake-continue` exists, then ends with STATUS: DONE
 #   questions       ends with STATUS: QUESTIONS and writes no questions file
 #   fail-first:TEXT  the first task of the home to run this action ends with STATUS: FAILED; every other one ends with
 #                   TEXT, a line break and STATUS: DONE: of two reviewers, exactly one cannot work
@@ -613,6 +614,18 @@ case $action in
       sleep 0.05
     done
     result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
+  serena-hold)
+    # A run that reads forty-two files of code with its own `Read` tool, none with Serena, and then holds until the test
+    # creates `.fake-continue`: the reminder of Serena comes due while the run goes on. It ends with STATUS: DONE.
+    init
+    for i in $(seq 0 41); do
+      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t%d","name":"Read","input":{"file_path":"src/module-%d.rs"}}]}}\n' "$i" "$((i % 3))"
+    done
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    result 'Finished the item.\nSTATUS: DONE'
     ;;
   fail) result 'I could not do it.\nSTATUS: FAILED' ;;
   changed-session-fail)

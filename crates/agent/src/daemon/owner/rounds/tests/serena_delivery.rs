@@ -214,3 +214,54 @@ async fn the_reminder_of_a_run_that_ended_is_a_chat_of_the_harness_on_the_bus() 
 
     assert_eq!(chats_from_the_harness(&rig), [expected]);
 }
+
+/// Whether the last run of `task` has not ended in the state the daemon keeps.
+fn run_goes_on(rig: &Rig, task: &TaskId) -> bool {
+    let Ok(text) = std::fs::read_to_string(rig.home.state_file()) else {
+        return false;
+    };
+    let state = agent_core::state::State::from_json(&text).unwrap();
+    state
+        .find_task(task)
+        .and_then(|found| found.member.runs().last().map(|last| last.state().clone()))
+        .is_some_and(|run| !matches!(run, agent_core::state::RunState::Ended { .. }))
+}
+
+#[tokio::test]
+async fn the_reminder_is_on_the_bus_while_the_run_goes_on_and_the_run_ends_done() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "serena-hold"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    // The run is given Serena: its program is a name, the stand-in never starts it.
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace("[binaries]\n", "[binaries]\nserena = \"serena\"\n"),
+    )
+    .unwrap();
+    rig.start().await;
+    let (_team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
+    let task = tasks[0].clone();
+    let expected = reminder_text(SEARCHES).await;
+
+    rig.wait_for("the reminder of Serena on the bus", || {
+        chats_from_the_harness(&rig).contains(&expected)
+    })
+    .await;
+    // The stand-in holds until it is told to go on: the agent reads the reminder in the run that made the searches.
+    assert!(run_goes_on(&rig, &task), "the reminder came after the run ended");
+
+    std::fs::write(rig.worktree(&task).join(".fake-continue"), "").unwrap();
+    run_ended(&rig, &task).await;
+    beyond_this_run(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert_eq!(chats_from_the_harness(&rig), [expected]);
+}
