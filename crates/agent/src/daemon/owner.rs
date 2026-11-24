@@ -1297,9 +1297,19 @@ impl Owner {
                         RunVerdict::Finished(run) => match &run.classified.end {
                             RunEnd::QuotaExhausted { .. } => agent_core::decide::worker_recovery::Cause::Quota,
                             RunEnd::RateLimited => agent_core::decide::worker_recovery::Cause::Refused,
-                            _ => agent_core::decide::worker_recovery::Cause::NoStatus,
+                            RunEnd::Reported { .. }
+                            | RunEnd::NoStatus { .. }
+                            | RunEnd::Hung
+                            | RunEnd::TurnLimit
+                            | RunEnd::Stopped => agent_core::decide::worker_recovery::Cause::NoStatus,
                         },
-                        RunVerdict::Interrupted { .. } => agent_core::decide::worker_recovery::Cause::NoStatus,
+                        RunVerdict::Interrupted { .. } => {
+                            if self.shutdown.is_cancelled() {
+                                agent_core::decide::worker_recovery::Cause::RestartRunning
+                            } else {
+                                agent_core::decide::worker_recovery::Cause::NoStatus
+                            }
+                        }
                     },
                     Outcome::Failed(_) => agent_core::decide::worker_recovery::Cause::Died,
                 };
