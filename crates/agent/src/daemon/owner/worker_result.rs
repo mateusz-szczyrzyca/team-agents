@@ -1358,10 +1358,8 @@ fn is_running_for(known: &DelegationRequest, worker_task: &TaskId, worker: &Agen
 /// What a check in the background needs: it runs without the owner.
 #[derive(Debug)]
 struct RequestCheck {
-    /// The worker's worktree; `None` when it is not there.
-    worktree: Option<PathBuf>,
-    /// Why the workspace's worktree is not there, for the requester's benefit; `None` when there is no workspace.
-    worktree_fault: Option<String>,
+    /// The worker's worktree, or the cause retained in the failed check result.
+    worktree: Result<PathBuf, String>,
     /// The worker's task directory, where the output is kept.
     task_dir: PathBuf,
     /// The step of the requester's plan the request is for.
@@ -1384,13 +1382,8 @@ impl RequestCheck {
         seconds: u64,
         refuse: Vec<String>,
     ) -> Self {
-        let (worktree, worktree_fault) = match worktree {
-            Ok(path) => (Some(path), None),
-            Err(cause) => (None, Some(cause)),
-        };
         Self {
             worktree,
-            worktree_fault,
             task_dir,
             step,
             text,
@@ -1413,11 +1406,9 @@ async fn run_request_check(job: RequestCheck) -> Found {
     let Ok(check) = Check::from_str(&job.text) else {
         return failed("the check is not one the harness can run".to_owned());
     };
-    let Some(worktree) = &job.worktree else {
-        let reason = job
-            .worktree_fault
-            .unwrap_or_else(|| "the worker's worktree cannot be reached".to_owned());
-        return failed(reason);
+    let worktree = match &job.worktree {
+        Ok(path) => path,
+        Err(reason) => return failed(reason.clone()),
     };
     let context = CheckContext {
         worktree,
