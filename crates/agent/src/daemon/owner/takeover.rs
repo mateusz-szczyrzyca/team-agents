@@ -590,7 +590,12 @@ impl Owner {
             })
             .filter(|member| member.status() == TaskStatus::Running || member.current_run().is_some())
             .map(|member| member.agent().name())
-            .chain(self.serving.values().map(|served| served.worker.as_str()))
+            .chain(
+                self.serving
+                    .iter()
+                    .filter(|(task, _)| self.parts.state.find_task(task).is_none())
+                    .map(|(_, served)| served.worker.as_str()),
+            )
             .collect()
     }
 }

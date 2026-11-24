@@ -904,11 +904,10 @@ impl Owner {
     /// Active team and request-owned runs, with legacy team workers counted once.
     fn all_runs_going(&self) -> Vec<Going> {
         let mut going = runs_going(self.parts.state.teams());
-        let known: HashSet<_> = going.iter().map(|run| run.task.clone()).collect();
         going.extend(
             self.serving
                 .iter()
-                .filter(|(task, _)| !known.contains(*task))
+                .filter(|(task, _)| self.parts.state.find_task(task).is_none())
                 .filter_map(|(task, served)| {
                     self.parts.state.find_task(&served.requester_task).map(|found| Going {
                         agent: served.worker.clone(),
