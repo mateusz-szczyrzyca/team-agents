@@ -622,14 +622,6 @@ impl History {
         self.shared.report(Cause::Unavailable, || reason);
     }
 
-    /// Records that the run `run` of `task` was told once, after `searches` searches of code without Serena, to find
-    /// code with Serena. The record carries the team and rounds the history knows of the run. Best-effort, like every
-    /// event of a run: a history without a writer counts the loss.
-    /// The team for `run`, if the run has been started.
-    pub(crate) fn team_for_run(&self, run: &RunId) -> Option<TeamId> {
-        locked(&self.shared.runs).get(run).map(|(team, _, _, _)| team.clone())
-    }
-
     /// Records that a run's session searched code without Serena and was reminded at the step and count given.
     /// If `override_team` is provided, uses it instead of looking up the team from the run.
     pub fn serena_reminded(
@@ -646,6 +638,10 @@ impl History {
 
     /// Records a serena reminder with an explicit team (for testing when the run hasn't started yet).
     #[doc(hidden)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "test-only helper; public API serena_reminded follows the limit"
+    )]
     pub fn serena_reminded_with_team(
         &self,
         run: &RunId,
