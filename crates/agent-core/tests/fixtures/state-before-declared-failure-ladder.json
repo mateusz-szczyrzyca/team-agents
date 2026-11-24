@@ -1,0 +1,91 @@
+{
+  "schema_version": 14,
+  "teams": [
+    {
+      "id": "team-20261121-120000-dfl1",
+      "repo": "example",
+      "created_at": "2026-11-21T12:00:00Z",
+      "merge": "autopilot",
+      "task_list": "Coordinator: inv-lead\n\nBuild the thing.\n\n1. Work\n[ ] 1.1 The item\n    Expected result:\n    - it works\n    Checks:\n    - true\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "rounds": [
+        {
+          "id": "round-20261121-120001-r001",
+          "item": "1.1",
+          "opened_at": "2026-11-21T12:00:05Z",
+          "state": {
+            "status": "open"
+          }
+        }
+      ],
+      "crew": {
+        "kind": "team",
+        "coordinator": {
+          "task": "task-20261121-120001-dfl1",
+          "agent": {
+            "tier": "investigator",
+            "name": "inv-lead"
+          },
+          "status": "waiting",
+          "runs": [
+            {
+              "id": "run-20261121-120001-r001",
+              "started_at": "2026-11-21T12:00:05Z",
+              "rounds": [
+                "round-20261121-120001-r001"
+              ],
+              "state": {
+                "status": "ended",
+                "at": "2026-11-21T12:00:50Z",
+                "end": {
+                  "kind": "reported",
+                  "outcome": "SLEEPING"
+                }
+              }
+            }
+          ],
+          "questions": []
+        },
+        "members": [
+          {
+            "task": "task-20261121-120002-dfl1",
+            "agent": {
+              "tier": "normal",
+              "name": "claude-1"
+            },
+            "status": "failed",
+            "runs": [
+              {
+                "id": "run-20261121-120002-r001",
+                "started_at": "2026-11-21T12:01:00Z",
+                "session": "5f3c9a3e-86f3-4b0e-9d2c-0a8f1c7d5b21",
+                "rounds": [
+                  "round-20261121-120001-r001"
+                ],
+                "state": {
+                  "status": "ended",
+                  "at": "2026-11-21T12:05:00Z",
+                  "end": {
+                    "kind": "reported",
+                    "outcome": "FAILED"
+                  }
+                }
+              }
+            ],
+            "questions": []
+          }
+        ],
+        "workers": []
+      },
+      "reviewers": [],
+      "activities": []
+    }
+  ]
+}

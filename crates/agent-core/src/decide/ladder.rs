@@ -38,6 +38,9 @@ pub enum Trouble {
     DaemonDown,
     /// The session outgrew its agent's bound: no run went bad, the session is started anew for its size.
     ContextBound,
+    /// The run reported `STATUS: FAILED` after it used the bus's tools: the agent itself gave up on the work. It is never
+    /// resumed in its session; it goes to a new session once, then up the rest of the ladder.
+    Failed,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -82,7 +85,9 @@ pub fn next_step(
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
         // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
-        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound => false,
+        // A declared failure is the agent's own verdict on its work: its session is not resumed, the new session comes
+        // from the rung below.
+        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound | Trouble::Failed => false,
     };
     if retried {
         return LadderStep::SameSession;
