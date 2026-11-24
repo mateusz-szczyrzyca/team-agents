@@ -138,3 +138,23 @@ esac
         "the queued request becomes claimable when both guards recover"
     );
 }
+
+#[tokio::test]
+async fn claimed_legacy_request_does_not_hold_a_run_slot_before_its_worker_starts() {
+    let daemon = Daemon::new(&pair_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.serving.insert(
+        task(2),
+        Served {
+            request: RequestId::new(NonZeroU64::new(1).unwrap()),
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            worker: "claude-2".parse().unwrap(),
+            started: at(0),
+            base: None,
+        },
+    );
+
+    assert_eq!(owner.run_holding(&worker("claude-2")), None);
+    assert!(!owner.agents_in_runs().contains(&"claude-2"));
+}
