@@ -20,3 +20,5 @@ Before you end your turn with `STATUS: DONE`, get the repository's gate green on
 in your worktree: it waits for its turn, runs the gate and records the result. The harness opens the pull request
 itself, and only for a branch whose recorded gate passed at its tip on a clean tree. A gate run in any other way is
 not recorded, and nothing is published. Do not open a pull request yourself.
+
+Before you end a turn, keep in `.agent/plan.md` and in the notebook (`notebook_append`) what the next session of this task will need: what is done and checked, the decisions and why, and what is left.

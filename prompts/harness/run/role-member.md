@@ -38,3 +38,5 @@ An accepted claim waits for that pull request to merge, then completes your item
 If the harness sees it closed without a merge, the claim ends and you resume the same item on your branch in a
 fresh round. Finish the deliverable and report to your coordinator normally so it can get its own pull request.
 Only the coordinator reports the exact `DELIVERED: #N` line.
+
+Before you end a turn, keep in `.agent/plan.md` and in the notebook (`notebook_append`) what the next session of this task will need: what is done and checked, the decisions and why, and what is left.

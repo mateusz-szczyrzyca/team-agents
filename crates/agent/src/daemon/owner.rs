@@ -6,6 +6,7 @@
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
 mod answers;
+mod bound;
 mod briefing;
 mod controls;
 mod disk;
@@ -944,8 +945,16 @@ impl Owner {
             .wake_notes
             .remove(&task)
             .filter(|_| matches!(why, Some(Why::Woken)));
+        // A session above its agent's bound is started anew first, so that the briefing below is of the new session.
+        if let Err(problem) = self.renew_for_context(&task).await {
+            return self.fail_to_start(&task, error_chain(&problem)).await;
+        }
         let briefing = match self.briefing_facts(&task).await {
             Ok(briefing) => briefing,
+            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
+        };
+        let last_message = match self.briefed_last_message(&task, briefing.is_some()).await {
+            Ok(message) => message,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
         let planned = {
@@ -962,7 +971,15 @@ impl Owner {
                 autopilot: self.pulls.as_ref().map(Pulls::texts),
                 checks: self.pulls.as_ref().map(Pulls::checks),
             };
-            plan(&context, self.parts.zone, &mut self.parts.rng, &task, briefing.as_ref()).await
+            plan(
+                &context,
+                self.parts.zone,
+                &mut self.parts.rng,
+                &task,
+                briefing.as_ref(),
+                last_message.as_ref(),
+            )
+            .await
         };
         let plan = match planned {
             Ok(plan) => plan,

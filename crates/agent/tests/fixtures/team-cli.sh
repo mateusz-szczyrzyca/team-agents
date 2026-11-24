@@ -46,6 +46,16 @@
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
 #                   records the gate as `work` does and ends with STATUS: DONE: a test writes the script, which commits
 #                   whatever the run is to have done
+#   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
+#                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
+#   work-if-briefed:N1|N2|...  like `work`, when the prompt holds each needle N1, N2, ... (each a line of text the test names); else ends
+#                   with STATUS: FAILED, so that a briefing without one of its parts cannot finish the item
+#   nostatus-stream:NAME  like `stream:NAME`, and ends without a STATUS line
+#   sleep-stream:NAME  like `stream:NAME`, and ends with STATUS: SLEEPING
+#   ask-stream:NAME  like `ask-here` after the stream of `stream:NAME`: asks in questions-1.md, leaves the file `draft.txt`
+#                   uncommitted, and ends with STATUS: QUESTIONS
+#   leave-stream:NAME  like `stream:NAME`, and leaves the file `draft.txt` uncommitted in the worktree (hidden from the
+#                   fake's own files) and ends with STATUS: DONE, so that a briefing of the next session can name the file
 #   stream:NAME     prints the lines of the file `fake-scripts/NAME.jsonl` of the home the configuration names — events of Claude
 #                   Code's stream JSON, which a test writes — and ends with STATUS: DONE: the steps the history is to record
 #   fix-held:K      like `fix-work:K`, but first creates `.fake-started-N` and waits for the test to create `.fake-release-N` (N is
@@ -775,6 +785,63 @@ case $action in
   stream:*)
     cat "$home/fake-scripts/${action#stream:}.jsonl"
     result 'Streamed.\nSTATUS: DONE'
+    ;;
+  work-stream:*)
+    commit_work
+    record_gate
+    cat "$home/fake-scripts/${action#work-stream:}.jsonl"
+    result 'Finished the item.\nSTATUS: DONE'
+    ;;
+  ask-stream:*)
+    # Like `ask-here` after the stream of `stream:NAME`: asks in questions-1.md of this task, and ends with STATUS: QUESTIONS.
+    file="$home/tasks/$(basename "$PWD")/questions-1.md"
+    mkdir -p "$(dirname "$file")"
+    printf '# Questions — fake\n\n## 1. Continue the part?\na) continue — finish the document\nb) stop — leave it open\n\n**Recommended:** a) — finish the independent part (fake)\n\n**Verdict:**\n' > "$file"
+    hide_own_files
+    printf 'a draft the run did not commit\n' > draft.txt
+    cat "$home/fake-scripts/${action#ask-stream:}.jsonl"
+    # The final message is the one line of `fake-scripts/NAME.final.txt` when the test writes it, else a short line.
+    final=$home/fake-scripts/${action#ask-stream:}.final.txt
+    if [[ -f $final ]]; then
+      text=$(< "$final")
+      text=${text//\\/\\\\}
+      text=${text//\"/\\\"}
+      result "$text\nSTATUS: QUESTIONS"
+    else
+      result 'I have to ask.\nSTATUS: QUESTIONS'
+    fi
+    ;;
+  work-if-briefed:*)
+    # Like `work`, only when the prompt holds every needle of the list `|`-separated in the action; otherwise it ends FAILED,
+    # so that a briefing without one of its parts cannot finish the item.
+    IFS='|' read -r -a needles <<< "${action#work-if-briefed:}"
+    missing=0
+    for needle in "${needles[@]}"; do
+      grep -qF -- "$needle" <<< "$prompt" || missing=1
+    done
+    if (( missing )); then
+      result 'The briefing does not say what I need.\nSTATUS: FAILED'
+    else
+      commit_work
+      record_gate
+      result 'Finished the item.\nSTATUS: DONE'
+    fi
+    ;;
+  nostatus-stream:*)
+    # Like `stream:NAME`, and ends without a STATUS line: the run the harness retries after a no-status ending.
+    cat "$home/fake-scripts/${action#nostatus-stream:}.jsonl"
+    result 'I think that is all.'
+    ;;
+  sleep-stream:*)
+    # Like `stream:NAME`, and ends sleeping: the task waits for a message, its round closed, with nothing left in the worktree.
+    cat "$home/fake-scripts/${action#sleep-stream:}.jsonl"
+    result 'Streamed and sleeping.\nSTATUS: SLEEPING'
+    ;;
+  leave-stream:*)
+    hide_own_files
+    printf 'a draft the run did not commit\n' > draft.txt
+    cat "$home/fake-scripts/${action#leave-stream:}.jsonl"
+    result 'Left a draft.\nSTATUS: DONE'
     ;;
   split-line:*)
     spec=${action#split-line:}

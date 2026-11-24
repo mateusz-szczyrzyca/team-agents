@@ -57,8 +57,8 @@ Top-level key and tables:
 | `[log]` | table | `level = "info"`, `keep_days = 0` | the daemon's own log (`stderr` and `history.db`) |
 | `[snapshot]` | table | `warn_mb = 200` | the snapshots of worktrees |
 | `[restart]` | table | `session = "new"` | the session a run that a restart of the daemon cut goes on in |
-| `[session]` | table | `max_context = 150000` | the bound in tokens of a session's context, for an agent without its own `max_context`; `0` switches it off; `agent debug` names a session above it |
-| `agents.NAME.max_context` | optional tokens | the `[session]` bound | this agent's own bound on its session (and of `[investigators.NAME]`); `0` switches it off |
+| `[session]` | table | `max_context = 150000` | the bound in tokens of a session's context, for an agent without its own `max_context`; `0` switches it off; a session whose last run reached more tokens (the size of its run's outcome file, else the history) is not resumed, its next run starts a new one |
+| `agents.NAME.max_context` | optional tokens | the `[session]` bound | this agent's own bound on its session (and of `[investigators.NAME]`); above it the next run starts a new session; `0` switches it off |
 | `[merge]` | table | `conflict_passes = 3` | what happens when GitHub refuses an approved pull request for a conflict |
 | `[publish]` | table | `tries = 3` | what happens when a branch cannot be published to GitHub |
 | `[web]` | table | loopback, nobody let in | the dashboard |
@@ -355,7 +355,7 @@ Neither text may contain `<`, `>` or control characters.
 | Key | Default | Meaning |
 |---|---|---|
 | `history.enabled` | `true` | whether the daemon writes `history.db` in `AGENTS_HOME` ([`history.md`](history.md)); `false` records nothing and loses nothing |
-| `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut |
+| `history.max_text_bytes` | `1048576` (1 MiB) | the longest text one field of the history keeps, in bytes, `1` to `268435456`: a longer text (a prompt, a final message) is cut at a character boundary and the record says which field was cut; a final message cut this way is given to the next session with a note naming the limit, unless its run wrote the outcome file (`outcome.json`), which keeps it whole |
 | `history.keep_days` | `0` | days to retain closed rounds; `0` keeps all; an open round is never deleted |
 
 A history that cannot be written — the file is a directory, the disk is full, the database is of a newer version — never stops

@@ -215,6 +215,11 @@ impl CheckedMut<'_, Member> {
         self.value.renew(trouble, at)
     }
 
+    /// Records the size in tokens that ended the session of the renewal the member has; nothing when it has none.
+    pub(crate) fn keep_context_tokens(&mut self, tokens: u64) {
+        self.value.keep_context_tokens(tokens);
+    }
+
     /// See [`Member::begin_holder_session`].
     ///
     /// # Errors
@@ -722,6 +727,13 @@ impl Member {
     /// [`NotAfterTheLastRun`](super::RenewalError::NotAfterTheLastRun) when no run of the task started before `at`.
     pub(crate) fn renew(&mut self, trouble: ladder::Trouble, at: Timestamp) -> Result<bool, renewal::RenewalError> {
         self.begin_session(trouble, at, SessionStart::Renewal)
+    }
+
+    /// Records the size in tokens that ended the session of the renewal, when there is one.
+    pub(crate) fn keep_context_tokens(&mut self, tokens: u64) {
+        if let Some(renewals) = self.renewals.as_mut() {
+            renewals.keep_context_tokens(tokens);
+        }
     }
 
     /// Records that the agent that holds the task now begins its own session, after `trouble` made the runs of the
