@@ -71,10 +71,7 @@ const BUS_TOOL_PREFIXES: [&str; 4] = ["mcp__agentbus__", "mcp_agentbus_", "agent
 
 /// The prefixes of an MCP tool's name in the CLIs' tool calls, the way [`BUS_TOOL_PREFIXES`] names agentbus's: Claude
 /// Code's `mcp__<server>__<tool>` and `<server>.<tool>` or `<server>_<tool>`, which Codex and Antigravity report.
-const SERVER_TOOL_PREFIXES: [&str; 3] = ["mcp__", "serena.", "serena_"];
-
-/// The name of Serena in the CLIs' tool calls, once its prefix is off.
-const SERENA: &str = "serena";
+const SERVER_TOOL_PREFIXES: [&str; 3] = ["mcp__serena__", "serena.", "serena_"];
 
 /// The names, in lower case, of the tools that run a shell command.
 const COMMAND_TOOLS: [&str; 4] = ["bash", "execute", "run_command", "shell"];
@@ -275,17 +272,19 @@ fn bus_tool(name: &str) -> Option<&str> {
 /// the CLI does not name is none.
 #[must_use]
 pub fn tool_call(name: &str) -> Option<ToolCall> {
-    let _ = name;
-    return None;
-    #[expect(unreachable_code, reason = "the stub of the RED commit returns none for every name")]
+    if name.is_empty() {
+        return None;
+    }
     let lower = name.to_ascii_lowercase();
+    if bus_tool(name).is_some() {
+        return Some(ToolCall::Other(name.to_owned()));
+    }
     if let Some(tool) = SERVER_TOOL_PREFIXES
         .iter()
         .filter_map(|prefix| lower.strip_prefix(prefix))
-        .filter_map(|rest| rest.strip_prefix(SERENA))
-        .find_map(|rest| rest.strip_prefix("__").or_else(|| rest.strip_prefix('.')))
+        .find(|tool| !tool.is_empty())
     {
-        return Some(ToolCall::Serena(tool.to_owned()));
+        return Some(ToolCall::Serena((*tool).to_owned()));
     }
     if COMMAND_TOOLS.contains(&lower.as_str()) || lower.contains("command") {
         return Some(ToolCall::Shell(name.to_owned()));
