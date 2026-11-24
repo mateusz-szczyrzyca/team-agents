@@ -771,3 +771,61 @@ async fn dispatch_pool_request_preserves_cleanup_obligation_on_release_failure_a
         "again retry history must remain preserved"
     );
 }
+
+#[tokio::test]
+async fn answered_request_keeps_worker_reserved_until_workspace_release() {
+    use crate::fixtures::{repo, task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    agent_runtime::request_workspace::save(&requester_dir, &record).unwrap();
+    owner.answered_requests.insert(record.record().request);
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(owner.unreadable_requests.contains(&"release 1".to_owned()));
+    assert!(requester_dir.join("request-workspace-1.json").exists());
+    assert!(
+        owner.worker_availability(&record.record().worker).await.unsettled,
+        "an answered request still owns its worker while release fails"
+    );
+
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(checkout.path().join("README.md"), "read me\n").unwrap();
+    git(checkout.path(), &["add", "README.md"]);
+    git(checkout.path(), &["commit", "-q", "-m", "first"]);
+    let requester_worktree = daemon.home.worktree_dir(&repo(), &task(1));
+    let worker_worktree = daemon.home.worktree_dir(&repo(), &task(2));
+    let requester_branch =
+        agent_runtime::request_workspace::branch(&record.record().requester, &record.record().requester_task).unwrap();
+    for (path, branch) in [
+        (requester_worktree, requester_branch),
+        (worker_worktree.clone(), record.record().branch.clone()),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(
+            checkout.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch.as_str(),
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+    }
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(!requester_dir.join("request-workspace-1.json").exists());
+    assert!(!worker_worktree.exists());
+    assert!(
+        !owner.worker_availability(&record.record().worker).await.unsettled,
+        "successful release makes the worker eligible again"
+    );
+}
