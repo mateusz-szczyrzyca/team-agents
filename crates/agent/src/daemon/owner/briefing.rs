@@ -588,7 +588,7 @@ impl Owner {
     }
 
     /// Takes the snapshot of `worktree` for `task` of `round`, records it in the history, and returns its reference.
-    async fn snapshot(
+    pub(super) async fn snapshot(
         &mut self,
         worktree: &AbsolutePath,
         round: &RoundId,

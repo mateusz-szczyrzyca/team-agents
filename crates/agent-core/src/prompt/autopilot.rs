@@ -118,6 +118,10 @@ pub enum AutopilotPrompt {
     NoticeTeamAsleep,
     /// The notification that a team waits for a standing item behind a failed member while its lead is done.
     NoticeStandingItem,
+    /// What the lead is told when it is done, its gate passed, and a failed member has work its branch lacks.
+    MemberWorkLacks,
+    /// The notification that a failed member has work the lead's branch lacks, and the lead ended without it.
+    NoticeMemberWorkLeft,
     /// The notification that a pull request is approved and waits for the human to merge it.
     NoticeApproved,
     /// The notification that a pull request could not be opened or updated.
@@ -308,6 +312,8 @@ impl AutopilotPrompt {
         Self::TeamAsleep,
         Self::NoticeTeamAsleep,
         Self::NoticeStandingItem,
+        Self::MemberWorkLacks,
+        Self::NoticeMemberWorkLeft,
         Self::NoticeApproved,
         Self::NoticePublishFailed,
         Self::NoticeResponseRefused,
@@ -385,6 +391,7 @@ impl AutopilotPrompt {
             Self::NoticeHandoverHeld
                 | Self::NoticeTeamAsleep
                 | Self::NoticeStandingItem
+                | Self::NoticeMemberWorkLeft
                 | Self::NoticeApproved
                 | Self::NoticeResponseRefused
                 | Self::NoticeReportRefused
@@ -471,6 +478,8 @@ impl AutopilotPrompt {
             Self::TeamAsleep => "harness/pr/team-asleep.md",
             Self::NoticeTeamAsleep => "harness/pr/notice-team-asleep.md",
             Self::NoticeStandingItem => "harness/pr/notice-standing-item.md",
+            Self::MemberWorkLacks => "harness/pr/member-work-lacks.md",
+            Self::NoticeMemberWorkLeft => "harness/pr/notice-member-work-left.md",
             Self::NoticeApproved => "harness/pr/notice-approved.md",
             Self::NoticePublishFailed => "harness/pr/notice-publish-failed.md",
             Self::NoticeResponseRefused => "harness/pr/notice-response-refused.md",
@@ -616,6 +625,8 @@ impl AutopilotPrompt {
             Self::TeamAsleep => &["team", "items", "minutes", "tasks", "woken", "limit"],
             Self::NoticeTeamAsleep => &["team", "items", "minutes", "tasks", "woken", "lead"],
             Self::NoticeStandingItem => &["team", "item", "member", "task", "line"],
+            Self::MemberWorkLacks => &["member", "branch", "worktree", "commits", "files", "snapshot"],
+            Self::NoticeMemberWorkLeft => &["team", "item", "member", "task", "commits", "files"],
             Self::NoticeApproved => &["team", "repo", "pr", "url"],
             Self::NoticePublishFailed => &["team", "items", "reason"],
             Self::NoticeResponseRefused | Self::NoticeReportRefused => {

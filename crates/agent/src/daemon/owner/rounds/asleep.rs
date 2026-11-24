@@ -16,6 +16,7 @@ use agent_runtime::notify::{MAX_BODY_BYTES, MAX_TITLE_BYTES};
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
+use super::delivered;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::team::Why;
 
@@ -244,6 +245,15 @@ impl Owner {
             );
         let now = Timestamp::now(&self.parts.clock)?;
         for standing in &found.standings {
+            // The human was told of the member's work the lead left, with its list: the item stands behind it already.
+            if self
+                .watch
+                .delivered
+                .get(&standing.task)
+                .is_some_and(delivered::ToldWork::asked)
+            {
+                continue;
+            }
             if blocked_item_step(lead.done, lead_status, TaskStatus::Failed) == BlockedItemStep::TellHuman {
                 let announcement = Announcement::ItemBlocked {
                     team: team_id.clone(),

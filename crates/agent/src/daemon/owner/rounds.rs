@@ -10,6 +10,7 @@ mod asleep;
 mod checks;
 mod cleanup;
 mod conflicts;
+mod delivered;
 mod delivery;
 mod findings;
 pub(crate) use delivery::DeliveryDaemonError;
@@ -151,6 +152,8 @@ pub(super) struct PullWatch {
     own_gates: HashMap<TaskId, publish::OwnGate>,
     /// How many times in a row the lead of each team was woken because the whole team slept.
     asleep_wakes: HashMap<TeamId, u32>,
+    /// What each lead was told of the work a failed member has that its branch lacks, by the member's task.
+    delivered: Box<delivered::ToldWorks>,
     /// How many times in a row each lead was sent back because the gate had not passed at the tip of its branch.
     gate_sent_back: HashMap<TaskId, u32>,
     /// How many times in a row each coordinator ended a run with a `SPLIT:` line the harness refused: it is told as often
@@ -428,6 +431,8 @@ pub(super) enum AutopilotNotice {
     HandoverHeld,
     /// Team asleep.
     TeamAsleep,
+    /// A failed member has work the lead's branch lacks, and the lead ended without it.
+    MemberWorkLeft,
     /// Standing item behind a failed member while lead is done.
     StandingItem,
     /// Pull request closed without merge.
@@ -455,6 +460,7 @@ impl AutopilotNotice {
             Self::PublishFailed => AutopilotPrompt::NoticePublishFailed,
             Self::HandoverHeld => AutopilotPrompt::NoticeHandoverHeld,
             Self::TeamAsleep => AutopilotPrompt::NoticeTeamAsleep,
+            Self::MemberWorkLeft => AutopilotPrompt::NoticeMemberWorkLeft,
             Self::StandingItem => AutopilotPrompt::NoticeStandingItem,
             Self::Closed => AutopilotPrompt::NoticeClosed,
             Self::Approved => AutopilotPrompt::NoticeApproved,
@@ -472,7 +478,7 @@ impl AutopilotNotice {
             Self::NoVerdict => NoticeKind::NoVerdict,
             Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed | Self::HandoverHeld | Self::GithubRefused => NoticeKind::PublishFailed,
-            Self::TeamAsleep | Self::StandingItem => NoticeKind::TeamAsleep,
+            Self::TeamAsleep | Self::StandingItem | Self::MemberWorkLeft => NoticeKind::TeamAsleep,
             Self::Closed => NoticeKind::Closed,
             Self::Approved => NoticeKind::Approved,
             Self::MergeFailed => NoticeKind::MergeFailed,
@@ -530,6 +536,7 @@ impl Owner {
         // While the merge of an approved pull request waits to read the lead's commit, its item stays as it is: a
         // publication would take the unread commit for a new fix and ask for another review.
         if !self.watch.github_waits.holds(team, WaitingStep::ReadMergeHead) {
+            self.settle_failed_members(&pulls, team, look).await?;
             self.publish_branches(&pulls, team, look).await?;
         }
         self.ask_for_reviews(team, look).await?;
