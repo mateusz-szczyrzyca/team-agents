@@ -44,18 +44,36 @@ pub(crate) struct Backlog {
 
 impl Backlog {
     /// Adds the reminder `due` unless its run was told already or it waits already.
-    pub(crate) fn offer(&mut self, _due: DueReminder) {}
+    pub(crate) fn offer(&mut self, due: DueReminder) {
+        let told = self.delivered.contains(&(due.task.clone(), due.run.clone()));
+        let waits = self
+            .waiting
+            .iter()
+            .any(|attempt| attempt.due.task == due.task && attempt.due.run == due.run);
+        if !told && !waits {
+            self.waiting.push(Attempt { due, failures: 0 });
+        }
+    }
 
     /// The reminders to try now: they leave the backlog, and come back through [`Backlog::failed`] when they fail.
     pub(crate) fn take(&mut self) -> Vec<Attempt> {
-        Vec::new()
+        std::mem::take(&mut self.waiting)
     }
 
     /// Notes that the bus took the reminder of `attempt`.
-    pub(crate) fn delivered(&mut self, _attempt: &Attempt) {}
+    pub(crate) fn delivered(&mut self, attempt: &Attempt) {
+        self.delivered
+            .insert((attempt.due.task.clone(), attempt.due.run.clone()));
+    }
 
-    /// Notes that the reminder of `attempt` failed once more.
-    pub(crate) fn failed(&mut self, _attempt: Attempt) -> Failed {
-        Failed::GaveUp
+    /// Notes that the reminder of `attempt` failed once more: it waits for the next turn, until it has failed
+    /// [`MAX_ATTEMPTS`] times.
+    pub(crate) fn failed(&mut self, attempt: Attempt) -> Failed {
+        let failures = attempt.failures.saturating_add(1);
+        if failures >= MAX_ATTEMPTS {
+            return Failed::GaveUp;
+        }
+        self.waiting.push(Attempt { failures, ..attempt });
+        Failed::Retry
     }
 }
