@@ -133,6 +133,8 @@ pub enum BusCommand {
     HelperNext,
     /// `helper-set`.
     HelperSet,
+    /// `helper-owned`.
+    HelperOwned,
     /// `helper-get`.
     HelperGet,
     /// `helper-dump`.
@@ -1361,11 +1363,37 @@ impl AgentBus {
     /// [`AgentBusError`] for bus failures, including a missing request.
     pub async fn helper_owned(
         &self,
-        _request: RequestId,
-        _owner: RequestOwner<'_>,
-        _change: OwnedChange<'_>,
+        request: RequestId,
+        owner: RequestOwner<'_>,
+        change: OwnedChange<'_>,
     ) -> Result<OwnedOutcome, AgentBusError> {
-        Ok(OwnedOutcome::Stale)
+        let mut input = json!({
+            "id": request.number(), "worker": owner.worker.as_str(),
+            "task": owner.task.as_str(), "run": owner.run.as_str(),
+        });
+        match change {
+            OwnedChange::Start => input["action"] = json!("start"),
+            OwnedChange::Retry => input["action"] = json!("retry"),
+            OwnedChange::Settle {
+                result,
+                summary,
+                notice,
+            } => {
+                input["action"] = json!("settle");
+                input["status"] = json!(match result {
+                    RequestResult::Done => "done",
+                    RequestResult::Failed => "failed",
+                    RequestResult::Unclear => "unclear",
+                });
+                input["summary"] = json!(summary);
+                input["notice"] = json!(notice);
+            }
+        }
+        let command = BusCommand::HelperOwned;
+        let output = self
+            .run(command, Args::new().flag("--input", input.to_string()), None)
+            .await?;
+        decode_json(command, &output)
     }
 
     /// Reads a request for a worker.
