@@ -13,8 +13,8 @@ mod replacement_tests;
 mod restart;
 mod session;
 pub use restart::{Restart, RestartSession};
-use session::check_context;
 pub use session::{ContextKey, DEFAULT_MAX_CONTEXT, Session, context_bound};
+use session::{check_context, check_output};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -233,7 +233,7 @@ pub struct AgentConfig {
     pub context: Option<u64>,
     /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
     /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
-    #[serde(default, skip_deserializing)]
+    #[serde(default)]
     pub output: Option<u64>,
 }
 
@@ -258,7 +258,7 @@ pub struct InvestigatorConfig {
     pub context: Option<u64>,
     /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
     /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
-    #[serde(default, skip_deserializing)]
+    #[serde(default)]
     pub output: Option<u64>,
 }
 
@@ -1118,12 +1118,19 @@ impl RawConfig {
         check_list(Tier::Worker, &worker_names, &agents)?;
         check_tiers(&normal, &worker_names, &agents, &investigators)?;
         // The key is checked after the lists, so that the first thing a file is refused for is a list that does not
-        // fit its agents; no file written before this key had it, so no existing configuration is refused.
+        // fit its agents; no file written before these keys had them, so no existing configuration is refused.
         for (name, agent) in &agents {
             check_context(ContextKey::Agent, name.as_str(), agent.context)?;
+            check_output(ContextKey::Agent, name.as_str(), agent.context, agent.output)?;
         }
         for (name, investigator) in &investigators {
             check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
+            check_output(
+                ContextKey::Investigator,
+                name.as_str(),
+                investigator.context,
+                investigator.output,
+            )?;
         }
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews

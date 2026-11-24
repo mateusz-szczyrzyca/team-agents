@@ -70,5 +70,33 @@ pub(super) fn check_context(key: ContextKey, name: &str, context: Option<u64>) -
     }
 }
 
+/// Checks the `output` limit `output` of the agent or investigator `name` of `key` against its `context`. `0` is refused
+/// for the reason `context` of `0` is; an `output` above the window is refused, because a model writes inside its
+/// window. An `output` without a `context` is accepted: nothing is written for it, and the other key may come later.
+///
+/// # Errors
+/// [`ConfigError::AgentOutputZero`] for `0`, [`ConfigError::AgentOutputAboveContext`] above the window, each naming the
+/// section, the agent and the keys.
+pub(super) fn check_output(
+    key: ContextKey,
+    name: &str,
+    context: Option<u64>,
+    output: Option<u64>,
+) -> Result<(), ConfigError> {
+    match (context, output) {
+        (_, Some(0)) => Err(ConfigError::AgentOutputZero {
+            key,
+            name: name.to_owned(),
+        }),
+        (Some(context), Some(output)) if output > context => Err(ConfigError::AgentOutputAboveContext {
+            key,
+            name: name.to_owned(),
+            output,
+            context,
+        }),
+        (_, Some(_) | None) => Ok(()),
+    }
+}
+
 #[cfg(test)]
 mod tests;
