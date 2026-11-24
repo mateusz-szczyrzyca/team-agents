@@ -63,7 +63,7 @@ fn a_shell_command_over_text_is_no_search_of_code() {
 fn a_shell_command_with_a_pipe_reads_the_text_the_pipe_gives_not_a_file() {
     table(vec![
         (command("git log --oneline | head -5"), None),
-        (command("rg TODO src | sort"), None),
+        (command("rg TODO src | sort"), Some(vec!["src"])),
         (command("ps aux | grep serena"), None),
     ]);
 }
@@ -78,7 +78,7 @@ fn a_cli_tool_that_reads_a_file_of_code_is_a_search_of_code() {
         (call("Grep", "fn main src/lib.rs"), Some(vec!["src/lib.rs"])),
         (call("glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
         (call("read", "lib/handler.py"), Some(vec!["lib/handler.py"])),
-        (call("grep", "src"), None),
+        (call("grep", "src"), Some(vec!["src"])),
     ]);
 }
 
