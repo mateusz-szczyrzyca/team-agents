@@ -361,7 +361,7 @@ pub(super) async fn plan(
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
-        serena: Serena::Without,
+        serena: Serena::of(config.binaries().serena.is_some()),
     };
     let texts = PromptTexts {
         harness: ctx.texts,
