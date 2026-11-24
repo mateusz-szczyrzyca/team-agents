@@ -1482,7 +1482,7 @@ async fn every_run_of_a_task_is_told_with_its_own_tool_calls() {
 }
 
 #[tokio::test]
-async fn a_run_that_was_reminded_is_told_where_and_with_how_many_serena_calls_after_it() {
+async fn a_run_that_was_reminded_is_told_where_and_with_only_the_serena_calls_after_it() {
     use crate::history::Store as _;
     use agent_core::cli::ActivityEvent;
     use agent_core::config::AbsolutePath;
@@ -1523,6 +1523,7 @@ async fn a_run_that_was_reminded_is_told_where_and_with_how_many_serena_calls_af
             task: task.clone(),
             run: run.clone(),
             searches: 40,
+            step: 2,
             cli: CliKind::Claude,
         },
     }));
@@ -1531,10 +1532,11 @@ async fn a_run_that_was_reminded_is_told_where_and_with_how_many_serena_calls_af
         .write(&[
             run_start(&team, &task, &run, at),
             call(1, "Bash"),
+            call(2, "mcp__serena__list_dir"),
             reminder,
-            call(2, "mcp__serena__find_symbol"),
-            call(3, "Read"),
-            call(4, "mcp__serena__get_symbols_overview"),
+            call(3, "mcp__serena__find_symbol"),
+            call(4, "Read"),
+            call(5, "mcp__serena__get_symbols_overview"),
         ])
         .unwrap();
     drop(database);

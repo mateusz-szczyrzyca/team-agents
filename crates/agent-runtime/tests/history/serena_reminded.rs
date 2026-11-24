@@ -55,6 +55,7 @@ fn the_upgraded_history_reads_back_a_record_of_a_reminder() {
         task: TaskId::try_from("task-20261124-100000-t1t1".to_owned()).unwrap(),
         run: RunId::try_from("run-20261124-100001-r1r1".to_owned()).unwrap(),
         searches: 40,
+        step: 40,
         cli: CliKind::Claude,
     };
     let record = Record::Event(Box::new(agent_core::history::EventRecord {

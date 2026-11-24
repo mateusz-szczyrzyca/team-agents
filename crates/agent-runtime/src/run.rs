@@ -889,9 +889,14 @@ impl Follow<'_> {
             cli = self.cli.as_str(),
             "the run was told once to find code with Serena"
         );
-        self.engine
-            .history
-            .serena_reminded(self.run, self.task, self.cli, searches, &self.engine.parts.clock);
+        self.engine.history.serena_reminded(
+            self.run,
+            self.task,
+            self.cli,
+            searches,
+            u32::try_from(number).unwrap_or(u32::MAX),
+            &self.engine.parts.clock,
+        );
     }
 
     /// Feeds the lines written since the last call to the parser and its events to the history.

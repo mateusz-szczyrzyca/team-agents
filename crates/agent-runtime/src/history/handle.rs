@@ -625,7 +625,15 @@ impl History {
     /// Records that the run `run` of `task` was told once, after `searches` searches of code without Serena, to find
     /// code with Serena. The record carries the team and rounds the history knows of the run. Best-effort, like every
     /// event of a run: a history without a writer counts the loss.
-    pub fn serena_reminded(&self, run: &RunId, task: &TaskId, cli: CliKind, searches: u64, clock: &impl Clock) {
+    pub fn serena_reminded(
+        &self,
+        run: &RunId,
+        task: &TaskId,
+        cli: CliKind,
+        searches: u64,
+        step: u32,
+        clock: &impl Clock,
+    ) {
         if self.is_disabled() {
             return;
         }
@@ -655,6 +663,7 @@ impl History {
                 task: task.clone(),
                 run: run.clone(),
                 searches,
+                step,
                 cli,
             },
         })));

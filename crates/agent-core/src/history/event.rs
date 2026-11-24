@@ -583,6 +583,8 @@ pub enum HistoryEvent {
         run: RunId,
         /// The searches of code without Serena the session had made when it was told.
         searches: u64,
+        /// The number of the run's step at which it was told; the calls of Serena after it are the ones from there on.
+        step: u32,
         /// The model CLI that made them.
         cli: CliKind,
     },
