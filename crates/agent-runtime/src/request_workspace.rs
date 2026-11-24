@@ -390,7 +390,7 @@ pub async fn read_each(task_dir: &Path) -> Result<Vec<Result<RequestWorkspace, W
             paths.push(entry.path());
         }
     }
-    paths.sort_by_key(|path| request_of_file(path).map(|request| request.number()));
+    paths.sort_by_key(|path| request_of_file(path).map(RequestId::number));
     let mut read = Vec::new();
     for path in paths {
         read.push(read_one(&path).await);
