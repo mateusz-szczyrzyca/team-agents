@@ -235,6 +235,9 @@ pub struct AgentConfig {
     /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
     #[serde(default)]
     pub output: Option<u64>,
+    /// The capabilities the agent declares (e.g. for worker pool matching); empty when none are declared.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -260,6 +263,9 @@ pub struct InvestigatorConfig {
     /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
     #[serde(default)]
     pub output: Option<u64>,
+    /// The capabilities the agent declares (e.g. for worker pool matching); empty when none are declared.
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.

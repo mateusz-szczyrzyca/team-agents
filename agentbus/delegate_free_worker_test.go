@@ -198,3 +198,19 @@ func TestDelegateWithAPlanSoloRequesterWithPoolWorkers(t *testing.T) {
 		t.Fatalf("expected pool refusal message, got: %q", err.Message)
 	}
 }
+
+func TestHelperListJSONAndHelperNextSpecificID(t *testing.T) {
+	b := newBus(t)
+	mustWith(t, b, func(st *State) {
+		st.Helpers["1"] = &Helper{ID: 1, Status: HelperQueued, Request: "req1"}
+		st.Helpers["2"] = &Helper{ID: 2, Status: HelperQueued, Request: "req2"}
+	})
+	// Take specific helper ID 2
+	mustWith(t, b, func(st *State) {
+		h := takeLocalHelper(st, "worker-1", nil, 2)
+		if h == nil || h.ID != 2 || h.Status != HelperStarting || h.Worker != "worker-1" {
+			t.Fatalf("expected helper 2 to be taken, got: %+v", h)
+		}
+	})
+}
+

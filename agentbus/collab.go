@@ -1044,7 +1044,7 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 			team := st.Teams[s.team]
 			if team != nil || len(s.workers) > 0 {
 				if freeWorkers(team, sortedHelpers(st), s.workers...) <= 0 {
-					msg := fmt.Sprintf("no worker of the pool is free now (no worker of your team is free): do step %s yourself, or ask again for a later step", named.Step)
+					msg := fmt.Sprintf("no worker of the pool is free now: do step %s yourself, or ask again for a later step", named.Step)
 					if team != nil && teamHasWorkers(team) {
 						msg = fmt.Sprintf("no worker of your team is free now: do step %s yourself, or ask again for a later step", named.Step)
 					}
@@ -1247,6 +1247,7 @@ func cmdHelperNext(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	worker := fs.String("worker", "", "worker that gets it")
 	caps := fs.String("capabilities", "[]", "local capabilities JSON array")
+	reqID := fs.Int64("id", 0, "request number to take; 0 for oldest")
 	parseFlags(fs, args)
 	capabilities, cerr := helperCapabilities(*caps)
 	if cerr != nil {
@@ -1255,7 +1256,7 @@ func cmdHelperNext(args []string) {
 	}
 	b := &Bus{dir: *dir}
 	exitOn(transact(b, CmdHelperNextStorage, func(st *State) *CmdHelperNextError {
-		if h := takeLocalHelper(st, *worker, capabilities); h != nil {
+		if h := takeLocalHelper(st, *worker, capabilities, *reqID); h != nil {
 			return fromStorage(CmdHelperNextStorage, printJSON(h))
 		}
 		return nil
@@ -1312,28 +1313,37 @@ func cmdHelperGet(args []string) {
 	}).asError())
 }
 
-// helper-list: human-readable list of worker requests.
+// helper-list: list of worker requests (human-readable text, or JSON array with --json).
 func cmdHelperList(args []string) {
 	fs := newFlagSet("helper-list")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	all := fs.Bool("all", false, "include finished")
+	jsonOut := fs.Bool("json", false, "output JSON array")
 	parseFlags(fs, args)
 	b := &Bus{dir: *dir}
-	var out cliWriter
 	exitOn(transact(b, CmdHelperListStorage, func(st *State) *CmdHelperListError {
-		n := 0
+		var list []*Helper
 		for _, h := range sortedHelpers(st) {
 			if !*all && !h.Status.Open() {
 				continue
 			}
-			n++
+			list = append(list, h)
+		}
+		if *jsonOut {
+			if list == nil {
+				list = []*Helper{}
+			}
+			return fromStorage(CmdHelperListStorage, printJSON(list))
+		}
+		var out cliWriter
+		for _, h := range list {
 			w := ""
 			if h.Worker != "" {
 				w = " → " + h.Worker
 			}
 			out.printf("H%d [%s%s]%s from %s (%s): %s\n", h.ID, h.Status, w, rated(h), h.From, h.FromTask, trunc(h.Request, 100))
 		}
-		if n == 0 {
+		if len(list) == 0 {
 			out.println("No worker requests.")
 		}
 		return fromStorage(CmdHelperListStorage, out.err)
