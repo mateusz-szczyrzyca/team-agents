@@ -899,12 +899,6 @@ pub struct Web {
     pub allowed_logins: Vec<TailscaleLogin>,
 }
 
-/// `[serena]`: soft enforcement settings for Serena tool use.
-///
-/// A reminder is sent to the agent when it searches code too many times without using Serena,
-/// once per session if Serena is available (configured and connected).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(deny_unknown_fields, default)]
 /// The validated contents of `agents.toml`.
 ///
 /// Made only by [`Config::from_toml_str`], so every value is valid and the lists are consistent: each name in
