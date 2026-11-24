@@ -3688,4 +3688,74 @@ fi
             0
         );
     }
+    #[test]
+    fn metadata_read_failure_before_launch_preserves_single_execution_and_answer() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "only",
+                    kind: "worker",
+                    scenario: "script:guide",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        let wrapper = world.home.join("fault-bus");
+        let counter = world.home.join("metadata-reads");
+        std::fs::write(&wrapper, format!(
+            "#!/bin/sh\nset -eu\nif test \"$1\" = helper-get; then\n n=0\n if test -f '{}'; then n=$(cat '{}'); fi\n n=$((n + 1))\n echo \"$n\" > '{}'\n if test \"$n\" = 2; then exit 1; fi\nfi\nexec '{}' \"$@\"\n",
+            counter.display(), counter.display(), counter.display(), agentbus_binary().display(),
+        )).unwrap();
+        std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let config_path = world.home.join("agents.toml");
+        let config = std::fs::read_to_string(&config_path).unwrap();
+        let config = config.replace(
+            &format!("agentbus = \"{}\"", agentbus_binary().display()),
+            &format!("agentbus = \"{}\"", wrapper.display()),
+        );
+        std::fs::write(config_path, config).unwrap();
+        let executions = world.home.join("worker-executions");
+        world.script(
+            "guide",
+            &format!(
+                "test -d \"$PWD\"\nprintf 'execution\\n' >> '{}'\n{}",
+                executions.display(),
+                commit_script("the walkthrough", &[]),
+            ),
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "done");
+        assert!(std::fs::read_to_string(counter).unwrap().trim().parse::<u32>().unwrap() >= 2);
+        assert_eq!(std::fs::read_to_string(executions).unwrap(), "execution\n");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        let journal_path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+        let journal: serde_json::Value = serde_json::from_slice(&std::fs::read(journal_path).unwrap()).unwrap();
+        assert_eq!(
+            journal["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|e| e["event"] == "assigned")
+                .count(),
+            1
+        );
+    }
 }
