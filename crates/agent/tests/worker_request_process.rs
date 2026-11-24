@@ -3405,4 +3405,89 @@ fi
         );
         assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
     }
+    #[test]
+    fn questions_after_work_retries_without_asking_the_requester() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-questions:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
+
+    #[test]
+    fn declared_failures_exhaust_tries_and_return_the_step_once() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script-declared:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "failed");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 0);
+        assert!(!world.worktree(task(&tasks, "claude-1")).join("docs/guide.md").exists());
+    }
+
+    #[test]
+    fn settlement_replay_after_restart_and_late_owner_deliver_no_second_notice() {
+        let (mut world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        let request = world.requests()["1"].clone();
+        world.stop();
+        let member = task(&tasks, "claude-1");
+        let worker = task(&tasks, "glm-2");
+        let pending = world.settled_file(1, member, worker);
+        std::fs::write(
+            world.home.join("tasks").join(worker).join("worker-request-1.json"),
+            serde_json::to_vec(&pending).unwrap(),
+        )
+        .unwrap();
+        world.start();
+        eventually("the replayed settlement file to be removed", || {
+            !world
+                .home
+                .join("tasks")
+                .join(worker)
+                .join("worker-request-1.json")
+                .exists()
+        });
+        let input = serde_json::json!({"id":1,"action":"settle","worker":"glm-1","task":task(&tasks,"glm-1"),"run":"late-run","status":"failed","notice":"late failure","summary":"late failure"}).to_string();
+        let output = Command::new(agentbus_binary())
+            .env("AGENTS_HOME", &world.home)
+            .args(["helper-owned", "--dir"])
+            .arg(world.home.join("bus"))
+            .args(["--input", &input])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(serde_json::from_slice::<String>(&output.stdout).unwrap(), "stale");
+        assert!(
+            std::fs::read_to_string(world.home.join("logs/agentbus.jsonl"))
+                .unwrap()
+                .contains("worker_result_dropped")
+        );
+        assert_eq!(world.requests()["1"], request);
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        assert_eq!(world.count_told("claude-1", "late failure"), 0);
+    }
 }
