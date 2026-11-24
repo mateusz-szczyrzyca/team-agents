@@ -10,6 +10,15 @@ use agent_runtime::worker_request::recovery::{self, Journal, Phase, Transition};
 
 use super::{Owner, OwnerError};
 
+/// Whether dispatch owns a newly prepared workspace or a retained one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum WorkspaceUse {
+    /// Prepared for a first or wrong-result try.
+    New,
+    /// Preserved across an interruption.
+    Retained,
+}
+
 impl Owner {
     /// Checks the durable observation before checking or bringing over an owned result.
     pub(super) async fn owns_observed_result(&self, pending: &Pending) -> Result<bool, OwnerError> {
@@ -73,6 +82,18 @@ impl Owner {
         workspace: &RequestWorkspace,
         run: &RunId,
     ) -> Result<(), OwnerError> {
+        self.start_owned_attempt(workspace, &workspace.record().worker, run, WorkspaceUse::New)
+            .await
+    }
+
+    /// Claims a fresh execution while preserving the original workspace branch identity.
+    pub(super) async fn start_owned_attempt(
+        &self,
+        workspace: &RequestWorkspace,
+        worker: &agent_core::ids::AgentName,
+        run: &RunId,
+        usage: WorkspaceUse,
+    ) -> Result<(), OwnerError> {
         let record = workspace.record();
         if !self.parts.bus.helper_recovery(record.request).await? {
             return Ok(());
@@ -87,7 +108,7 @@ impl Owner {
             .helper_owned(
                 record.request,
                 RequestOwner {
-                    worker: &record.worker,
+                    worker,
                     task: &record.worker_task,
                     run,
                 },
@@ -100,13 +121,85 @@ impl Owner {
         recovery::advance(
             &dir,
             record.request,
-            Transition::Assigned {
-                workspace: workspace.clone(),
-                run: run.clone(),
+            if usage == WorkspaceUse::Retained {
+                Transition::Started {
+                    worker: worker.clone(),
+                    run: run.clone(),
+                }
+            } else {
+                Transition::Assigned {
+                    workspace: workspace.clone(),
+                    run: run.clone(),
+                }
             },
         )
         .await?;
         Ok(())
+    }
+
+    /// Snapshots a missing result before releasing ownership back to the queue.
+    pub(super) async fn interrupt_owned_request(
+        &mut self,
+        task: &TaskId,
+        run: &RunId,
+        cause: agent_core::decide::worker_recovery::Cause,
+    ) -> Result<bool, OwnerError> {
+        let Some(served) = self.serving.get(task).cloned() else {
+            return Ok(false);
+        };
+        let Some(journal) = self.owned_journal(&served.requester_task, served.request).await? else {
+            return Ok(false);
+        };
+        if !matches!(journal.phase(), Phase::Running(attempt) if &attempt.run == run && attempt.worker == served.worker)
+        {
+            tracing::warn!(event = "worker_result_dropped", request = %served.request, %run, "interrupted execution no longer owns request");
+            return Ok(true);
+        }
+        let team = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .ok_or(OwnerError::RequestOwnership)?
+            .team
+            .id()
+            .clone();
+        let git = self
+            .git_of(&team, task, &served.worker)
+            .ok_or(OwnerError::RequestOwnership)?;
+        let round = &journal.current_workspace().record().requester_round;
+        let snapshot = git.snapshot(round, task).await.map_err(OwnerError::RequestSnapshot)?;
+        recovery::advance(
+            &self.parts.store.home().task_dir(&served.requester_task),
+            served.request,
+            Transition::Interrupted {
+                run: run.clone(),
+                cause,
+                snapshot: recovery::SnapshotIdentity {
+                    round: round.clone(),
+                    task: task.clone(),
+                    number: std::num::NonZeroU32::new(snapshot.number).ok_or(OwnerError::RequestOwnership)?,
+                    commit: snapshot.commit,
+                    head: snapshot.head,
+                },
+            },
+        )
+        .await?;
+        self.parts
+            .bus
+            .helper_owned(
+                served.request,
+                RequestOwner {
+                    worker: &served.worker,
+                    task,
+                    run,
+                },
+                OwnedChange::Retry,
+            )
+            .await?;
+        self.serving.remove(task);
+        self.look_at(&team);
+        tracing::info!(event = "worker_request_requeued", request = %served.request, %run, ?cause, "worker request retained for another execution");
+        Ok(true)
     }
 
     /// Keeps a declared ending only for the execution that still owns this request.
@@ -288,7 +381,7 @@ fn assigned_run<'a>(journal: &'a Journal, task: &TaskId, worker: &agent_core::id
                     .then_some(run);
             }
             Transition::Started { worker: owner, run } => {
-                return (owner == worker && &journal.workspace().record().worker_task == task).then_some(run);
+                return (owner == worker && &journal.current_workspace().record().worker_task == task).then_some(run);
             }
             Transition::Interrupted { .. }
             | Transition::RestartedQueued { .. }

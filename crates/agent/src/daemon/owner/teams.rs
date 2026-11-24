@@ -1295,6 +1295,27 @@ impl Owner {
             if !self.launch_allowed().await {
                 break;
             }
+            let recovering = self
+                .owned_journal(&req.from_task, req.id)
+                .await?
+                .is_some_and(|journal| {
+                    journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
+                        && matches!(
+                            journal.events().last(),
+                            Some(
+                                agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
+                                    | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
+                            )
+                        )
+                });
+            if recovering {
+                for worker in &mut pool_workers_data {
+                    let availability = self.worker_availability_except(&worker.name, Some(req.id)).await;
+                    worker.busy = availability.busy || self.is_in_active_crew(&worker.name);
+                    worker.runs = availability.runs;
+                    worker.unsettled = availability.unsettled;
+                }
+            }
             let requires = Requires {
                 capabilities: &req.requires,
             };
@@ -1322,7 +1343,11 @@ impl Owner {
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 } else {
-                    let last_served = LastServed(self.pool_dispatch.last_served_provider.as_deref());
+                    let last_served = LastServed(if recovering {
+                        None
+                    } else {
+                        self.pool_dispatch.last_served_provider.as_deref()
+                    });
                     next_pool_worker(&pool_workers, &requires, last_served, run_limit)
                         .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 }
@@ -1439,7 +1464,25 @@ impl Owner {
         let requester_task = request.from_task.clone();
         let requester_repo = team.repo().clone();
 
-        let worker_task = TaskId::generate(&self.parts.clock, &mut self.parts.rng)?;
+        let retained = self
+            .owned_journal(&request.from_task, request.id)
+            .await
+            .map_err(Box::new)?
+            .filter(|journal| {
+                journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
+                    && matches!(
+                        journal.events().last(),
+                        Some(
+                            agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
+                                | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
+                        )
+                    )
+            })
+            .map(|journal| journal.current_workspace().clone());
+        let worker_task = match &retained {
+            Some(workspace) => workspace.record().worker_task.clone(),
+            None => TaskId::generate(&self.parts.clock, &mut self.parts.rng)?,
+        };
         let run = RunId::generate(&self.parts.clock, &mut self.parts.rng)?;
 
         let requester_worktree = self.parts.store.home().worktree_dir(&requester_repo, &requester_task);
@@ -1452,28 +1495,39 @@ impl Owner {
             CommitIdentity::for_agent(self.parts.settings.config.git(), &request.from),
         );
 
-        let base_commit = requester_git.rev_parse(&Revision::Head).await?;
+        let base_commit = match &retained {
+            Some(workspace) => workspace.record().base.clone(),
+            None => requester_git.rev_parse(&Revision::Head).await?,
+        };
 
         let requester_round = match self.requester_round(team.id(), &requester_task) {
             Some(r) => r,
             None => RoundId::generate(&self.parts.clock, &mut self.parts.rng)?,
         };
-        let branch = request_workspace::branch(worker_name, &worker_task)?;
+        let branch = match &retained {
+            Some(workspace) => workspace.record().branch.clone(),
+            None => request_workspace::branch(worker_name, &worker_task)?,
+        };
 
-        let workspace = RequestWorkspace::try_from(WorkspaceRecord {
-            request: request.id,
-            requester: request.from.clone(),
-            requester_task: requester_task.clone(),
-            requester_round,
-            requester_repo: requester_repo.clone(),
-            worker: worker_name.clone(),
-            worker_task: worker_task.clone(),
-            branch: branch.clone(),
-            base: base_commit.clone(),
-            stage: request_workspace::Stage::Working,
-        })?;
+        let workspace = match &retained {
+            Some(workspace) => workspace.clone(),
+            None => RequestWorkspace::try_from(WorkspaceRecord {
+                request: request.id,
+                requester: request.from.clone(),
+                requester_task: requester_task.clone(),
+                requester_round,
+                requester_repo: requester_repo.clone(),
+                worker: worker_name.clone(),
+                worker_task: worker_task.clone(),
+                branch: branch.clone(),
+                base: base_commit.clone(),
+                stage: request_workspace::Stage::Working,
+            })?,
+        };
 
-        request_workspace::prepare(self.parts.store.home(), &requester_git, &workspace).await?;
+        if retained.is_none() {
+            request_workspace::prepare(self.parts.store.home(), &requester_git, &workspace).await?;
+        }
 
         let again_saved = self.again.get(&request.id).cloned();
 
@@ -1590,7 +1644,14 @@ impl Owner {
                 .await
                 .map_err(|error| Box::new(super::OwnerError::from(error)))?;
             let started = Timestamp::now(&self.parts.clock)?;
-            self.start_owned_request(&workspace, &run).await.map_err(Box::new)?;
+            let usage = if retained.is_some() {
+                super::owned_request::WorkspaceUse::Retained
+            } else {
+                super::owned_request::WorkspaceUse::New
+            };
+            self.start_owned_attempt(&workspace, worker_name, &run, usage)
+                .await
+                .map_err(Box::new)?;
             let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), worker_name);
             let job = RunJob {
                 task: worker_task.clone(),
@@ -1644,8 +1705,9 @@ impl Owner {
             if let Some(again) = again_saved {
                 self.again.insert(request.id, again);
             }
-            if let Err(cleanup_err) =
-                request_workspace::release(self.parts.store.home(), &requester_git, &workspace).await
+            if retained.is_none()
+                && let Err(cleanup_err) =
+                    request_workspace::release(self.parts.store.home(), &requester_git, &workspace).await
             {
                 tracing::warn!(
                     event = LogEvent::WorkerRequestDamaged.as_str(),

@@ -1291,7 +1291,12 @@ impl Owner {
                     reason.clone(),
                 ),
             };
-            owned = self.observe_owned_request(&task, &run_id, ending, summary).await?;
+            owned = if ending == agent_core::decide::worker_result::WorkerEnding::NoStatus {
+                self.interrupt_owned_request(&task, &run_id, agent_core::decide::worker_recovery::Cause::NoStatus)
+                    .await?
+            } else {
+                self.observe_owned_request(&task, &run_id, ending, summary).await?
+            };
         }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
