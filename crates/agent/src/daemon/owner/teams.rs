@@ -1039,12 +1039,17 @@ impl Owner {
     }
 
     /// Serves queued requests for workers with free workers of the installation pool.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "loop checks busy state across teams, selects provider turn, dispatches, and handles held requests"
+    )]
     pub(super) async fn serve_pool_requests(&mut self) -> Result<(), OwnerError> {
         let pool = self.parts.settings.config.worker_agents().to_vec();
         if pool.is_empty() {
             return Ok(());
         }
         let run_limit = agent_core::decide::slot::limit_for(self.parts.settings.config.limits(), Tier::Worker);
+        let mut held = Vec::new();
 
         loop {
             let mut pool_workers = Vec::new();
@@ -1052,14 +1057,17 @@ impl Owner {
                 let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                     continue;
                 };
+                let in_team = self.parts.state.teams().iter().any(|t| {
+                    t.crew()
+                        .roster()
+                        .iter()
+                        .any(|(role, m)| *role == Role::Worker && m.agent().name() == name.as_str())
+                });
+                if in_team {
+                    continue;
+                }
                 let provider = provider_of(agent_conf.cli, agent_conf.model.as_ref());
-                let busy = self.serving.values().any(|s| s.worker == *name)
-                    || self.parts.state.teams().iter().any(|t| {
-                        t.crew()
-                            .roster()
-                            .iter()
-                            .any(|(_, m)| m.agent().name() == name.as_str() && m.status() != TaskStatus::Waiting)
-                    });
+                let busy = self.serving.values().any(|s| s.worker == *name);
                 let runs =
                     u32::try_from(self.serving.values().filter(|s| s.worker == *name).count()).unwrap_or(u32::MAX);
                 let mut unsettled = false;
@@ -1121,10 +1129,48 @@ impl Owner {
                 }
             };
 
+            let requester_team_id = self
+                .parts
+                .state
+                .teams()
+                .iter()
+                .find(|t| t.find(&request.from_task).is_some())
+                .map(|t| t.id().clone());
+            let team_has_workers = requester_team_id.as_ref().is_some_and(|team_id| {
+                self.parts
+                    .state
+                    .team(team_id)
+                    .is_some_and(|t| t.crew().roster().iter().any(|(role, _)| *role == Role::Worker))
+            });
+            if team_has_workers {
+                if let Some(ref team_id) = requester_team_id {
+                    self.look_at(team_id);
+                }
+                held.push(request.id);
+                break;
+            }
+
             self.last_served_provider = Some(provider);
 
             self.dispatch_pool_request(&worker_name, request).await;
         }
+
+        for req_id in held {
+            let update = DelegationUpdate {
+                status: Some(DelegationStatus::Queued),
+                task: None,
+                summary: None,
+            };
+            if let Err(error) = self.parts.bus.helper_set(req_id, &update).await {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    %req_id,
+                    error = %error_chain(&error),
+                    "a request held by pool serving cannot be put back now"
+                );
+            }
+        }
+
         Ok(())
     }
 
