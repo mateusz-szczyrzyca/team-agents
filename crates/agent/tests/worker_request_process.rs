@@ -3279,4 +3279,68 @@ Integrate the guide.
         assert_eq!(world.requests()["1"]["worker"], "only");
         assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
     }
+    #[test]
+    fn failed_pool_preparation_does_not_advance_the_provider_turn() {
+        use std::os::unix::fs::PermissionsExt;
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("deepinfra/model"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:guide",
+                    cli: "opencode",
+                    model: Some("openrouter/model"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        let hooks = world.home.join("hooks");
+        std::fs::create_dir_all(&hooks).unwrap();
+        let hook = hooks.join("post-checkout");
+        std::fs::write(
+            &hook,
+            r#"#!/bin/sh
+marker="$(dirname "$0")/failed"
+if ! test -e "$marker"; then
+    touch "$marker"
+    exit 1
+fi
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(
+            &world.worktree(member),
+            &["config", "core.hooksPath", hooks.to_str().unwrap()],
+        );
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        let reply = world.delegate_as(member, MEMBER_REQUEST);
+        assert!(!answers(&reply)[0].0, "{reply}");
+        world.request_is("1", "done");
+        assert!(hooks.join("failed").exists(), "the preparation failure was injected");
+        assert_eq!(world.requests()["1"]["worker"], "w-di");
+    }
 }
