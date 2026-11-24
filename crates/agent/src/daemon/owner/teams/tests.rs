@@ -142,6 +142,8 @@ struct Agent {
     name: &'static str,
     kind: Kind,
     scenario: &'static str,
+    /// The CLI of its table.
+    cli: &'static str,
 }
 
 fn normal(name: &'static str, scenario: &'static str) -> Agent {
@@ -149,6 +151,7 @@ fn normal(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Normal,
         scenario,
+        cli: "claude",
     }
 }
 
@@ -157,6 +160,7 @@ fn worker(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Worker,
         scenario,
+        cli: "claude",
     }
 }
 
@@ -165,6 +169,15 @@ fn investigator(name: &'static str, scenario: &'static str) -> Agent {
         name,
         kind: Kind::Investigator,
         scenario,
+        cli: "claude",
+    }
+}
+
+/// A normal agent run by `opencode`.
+fn opencode(name: &'static str, scenario: &'static str) -> Agent {
+    Agent {
+        cli: "opencode",
+        ..normal(name, scenario)
     }
 }
 
@@ -180,9 +193,10 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
         };
         write!(
             text,
-            "[{table}.{}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{}\", \"--as\", \"{}\", \"--bus-bin\", \"{}\", \
+            "[{table}.{}]\ncli = \"{}\"\nargs = [\"--scenario\", \"{}\", \"--as\", \"{}\", \"--bus-bin\", \"{}\", \
              \"--bus-dir\", \"{}/bus\", \"--home\", \"{}\"]\n",
             agent.name,
+            agent.cli,
             agent.scenario,
             agent.name,
             agentbus_binary().display(),
@@ -198,11 +212,12 @@ fn config(agents: &[Agent], agentbus: &Path, home: &Home) -> String {
     }
     write!(
         text,
-        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
+        "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nopencode = \"{}\"\nagentbus = \"{}\"\n\
          [watchdog]\nhang_minutes = 1\nhang_strikes = 3\n\
          [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
         normals.join(", "),
         workers.join(", "),
+        fixture_script("team-cli.sh").display(),
         fixture_script("team-cli.sh").display(),
         agentbus.display(),
     )
@@ -3248,4 +3263,105 @@ async fn no_tool_retry_and_final_failure_have_named_logs_with_the_agent_configur
             );
         }
     }
+}
+
+/// The configuration as written, with a `context` key at the end of every named table.
+fn with_context(text: &str, keys: &[(&str, &str, u64)]) -> String {
+    keys.iter().fold(text.to_owned(), |text, (table, name, tokens)| {
+        text.replacen(
+            &format!("[{table}.{name}]\n"),
+            &format!("[{table}.{name}]\ncontext = {tokens}\n"),
+            1,
+        )
+    })
+}
+
+/// The directory of the first run of `task`, waited for: the team starts the run of a member at once.
+async fn first_run(f: &Fixture, task: &TaskId) -> PathBuf {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        // Yielding, never blocking: the daemon of the test runs on this thread too.
+        tokio::task::yield_now().await;
+        let runs = f.home.runs_dir(task);
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&runs)
+            .map(|runs| runs.map(|run| run.unwrap().path()).collect())
+            .unwrap_or_default();
+        dirs.sort();
+        if let Some(first) = dirs.first() {
+            return first.clone();
+        }
+        assert!(Instant::now() < deadline, "no run of {task} started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// The text of `path`, waited for: a run writes its files once it has started.
+async fn wait_for_file(path: PathBuf) -> String {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => return text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline => {
+                // Yielding, never blocking: the daemon of the test runs on this thread too.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot read {path:?}: {error}"),
+        }
+    }
+}
+
+/// The window the opencode configuration file `written` gives the model `provider/name`, if it gives one.
+async fn window_at(written: PathBuf, provider: &str, name: &str) -> Option<serde_json::Value> {
+    let config: serde_json::Value = serde_json::from_str(&wait_for_file(written).await).unwrap();
+    config["provider"][provider]["models"].get(name)?.get("limit").cloned()
+}
+
+#[tokio::test]
+async fn each_opencode_agent_is_told_its_own_window_and_a_claude_agent_is_told_none() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        opencode("glm-1", "sleep"),
+        opencode("glm-2", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config
+        .replace(
+            "[agents.glm-1]\n",
+            "[agents.glm-1]\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[agents.glm-2]\n",
+            "[agents.glm-2]\nmodel = \"openrouter/anthropic/claude-4\"\n",
+        );
+    let config = with_context(&config, &[("agents", "glm-1", 202_752), ("agents", "glm-2", 1_000_000)]);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f
+        .start_team(&["inv-opus", "glm-1", "glm-2", "claude-1"], PARALLEL)
+        .await;
+    let mut runs: Vec<PathBuf> = Vec::new();
+    for task in &tasks[1..] {
+        runs.push(first_run(&f, task).await);
+    }
+    let windows = (
+        window_at(
+            runs[0].join("opencode-config.json"),
+            "deepinfra",
+            "zai-org/GLM-5.3-Flash",
+        )
+        .await,
+        window_at(runs[1].join("opencode-config.json"), "openrouter", "anthropic/claude-4").await,
+    );
+    let claude = f.worktree(&tasks[3]);
+    assert!(!claude.join("opencode-config.json").exists());
+    let claude_args = wait_for_file(claude.join(".fake-args-1")).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(windows.0, Some(serde_json::json!({ "context": 202_752 })));
+    assert_eq!(windows.1, Some(serde_json::json!({ "context": 1_000_000 })));
+    assert!(!claude_args.contains("202752"), "{claude_args}");
 }
