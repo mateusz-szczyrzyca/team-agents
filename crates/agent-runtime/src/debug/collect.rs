@@ -107,22 +107,22 @@ fn context_series(
     text
 }
 
-/// The tool calls `steps` hold, counted by the tool each calls: Serena's, the shell's and another's. A message, a file
-/// edit, a streamed shell command and an error are not counted here.
+/// The tool calls `steps` hold, counted by the tool each calls: Serena's, the shell's and another's. A streamed shell
+/// command counts as the shell's, a file edit as another tool's; a message, an error and a control line are not calls.
 fn tool_calls_of(steps: &[Step]) -> ToolCalls {
     let mut tools = ToolCalls::default();
     for step in steps {
         match &step.event {
             ActivityEvent::ToolCall { name, .. } | ActivityEvent::BusCall { tool: name, .. } => {
                 match crate::cli::tool_call(name) {
-                    Some(crate::cli::ToolCall::Serena(_)) => tools.serena = tools.serena.saturating_add(1),
+                    Some(crate::cli::ToolCall::Serena) => tools.serena = tools.serena.saturating_add(1),
                     Some(crate::cli::ToolCall::Shell(_)) => tools.shell = tools.shell.saturating_add(1),
                     Some(crate::cli::ToolCall::Other(_)) | None => tools.other = tools.other.saturating_add(1),
                 }
             }
+            ActivityEvent::Command(_) => tools.shell = tools.shell.saturating_add(1),
+            ActivityEvent::FileEdit { .. } => tools.other = tools.other.saturating_add(1),
             ActivityEvent::Text(_)
-            | ActivityEvent::Command(_)
-            | ActivityEvent::FileEdit { .. }
             | ActivityEvent::Error(_)
             | ActivityEvent::Info(_)
             | ActivityEvent::Control { .. } => {}

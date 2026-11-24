@@ -2,7 +2,7 @@
 
 You have Serena, an MCP server that finds code through language servers.
 
-- Find a symbol of the code with Serena: its definition with `find_symbol` (with `body: true`, for the body you need),
+- Find a symbol of the code with Serena: its definition with `find_symbol` (with `include_body: true`, for the body you need),
   who uses it with `find_referencing_symbols`, what a file declares with `get_symbols_overview`. Read only the body you
   need, not the whole file.
 - Use `grep` and `rg` for text that is not a symbol: a message, a key of a configuration, a log event, Markdown, a
