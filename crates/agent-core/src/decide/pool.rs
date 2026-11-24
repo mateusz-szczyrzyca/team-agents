@@ -114,7 +114,10 @@ pub fn second_try_pool_worker<'a>(
             return Some((worker.name, worker.provider));
         }
     }
-    None
+    workers
+        .iter()
+        .find(|worker| worker.name == failed_worker && available(worker, run_limit) && meets(worker, requires))
+        .map(|worker| (worker.name, worker.provider))
 }
 
 /// Evaluates elsewhere availability for a pool worker request based on pool workers, requirements, and failed provider.

@@ -657,7 +657,9 @@ impl Owner {
                     settlement: Settlement::Again { reasons },
                     ..
                 } => {
-                    if self.give_again(&pending, reasons).await? {
+                    if self.give_again(&pending, reasons).await?
+                        || (workspace.is_some() && self.again.contains_key(&pending.request))
+                    {
                         return self.drop_settled(task_dir, &pending, workspace).await;
                     }
                     return Ok(());

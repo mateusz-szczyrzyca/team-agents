@@ -1113,6 +1113,15 @@ impl Owner {
 
     /// Evaluates the busy state, total runs and unsettled status of a worker agent across all teams.
     pub(in crate::daemon::owner) async fn worker_availability(&self, name: &AgentName) -> WorkerAvailability {
+        self.worker_availability_except(name, None).await
+    }
+
+    /// Checks capacity while allowing the current result to be considered for its own retry.
+    pub(in crate::daemon::owner) async fn worker_availability_except(
+        &self,
+        name: &AgentName,
+        request: Option<RequestId>,
+    ) -> WorkerAvailability {
         let running_in_teams = agent_core::decide::slot::runs_going(self.parts.state.teams())
             .into_iter()
             .filter(|g| g.agent == *name)
@@ -1133,6 +1142,7 @@ impl Owner {
                             match res {
                                 Ok(workspace) => {
                                     if workspace.record().worker == *name
+                                        && Some(workspace.record().request) != request
                                         && !self.answered_requests.contains(&workspace.record().request)
                                     {
                                         unsettled = true;
@@ -1238,9 +1248,6 @@ impl Owner {
             let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                 continue;
             };
-            if self.is_in_active_crew(name) {
-                continue;
-            }
             let provider = provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
             let capabilities = agent_conf.capabilities.clone();
             let avail = self.worker_availability(name).await;
@@ -1248,7 +1255,7 @@ impl Owner {
                 name: name.clone(),
                 provider,
                 capabilities,
-                busy: avail.busy,
+                busy: avail.busy || self.is_in_active_crew(name),
                 runs: avail.runs,
                 unsettled: avail.unsettled,
             });

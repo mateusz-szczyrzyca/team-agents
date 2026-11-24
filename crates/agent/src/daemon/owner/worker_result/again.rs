@@ -106,7 +106,7 @@ impl Owner {
                 let provider =
                     agent_core::decide::pool::provider_of(agent_conf.cli, agent_conf.model.as_ref()).to_owned();
                 let capabilities = agent_conf.capabilities.clone();
-                let avail = self.worker_availability(name).await;
+                let avail = self.worker_availability_except(name, Some(pending.request)).await;
                 pool_workers_data.push((name, provider, capabilities, avail.busy, avail.runs, avail.unsettled));
             }
             let workers: Vec<PoolWorker<'_>> = pool_workers_data
