@@ -156,13 +156,13 @@ impl Owner {
         status: DelegationStatus,
         summary: &str,
         notice: &BusNotice,
-    ) -> Result<bool, OwnerError> {
+    ) -> Result<Option<OwnedOutcome>, OwnerError> {
         let Some(journal) = self.owned_journal(&pending.requester_task, pending.request).await? else {
-            return Ok(false);
+            return Ok(None);
         };
         let Some(run) = assigned_run(&journal, &pending.worker_task, &pending.worker) else {
             tracing::warn!(event = "worker_result_dropped", request = %pending.request, "stale settlement dropped");
-            return Ok(true);
+            return Ok(Some(OwnedOutcome::Stale));
         };
         let result = match status {
             DelegationStatus::Done => RequestResult::Done,
@@ -210,7 +210,7 @@ impl Owner {
                 tracing::warn!(event = "worker_result_dropped", request = %pending.request, %run, "late settlement dropped");
             }
         }
-        Ok(true)
+        Ok(Some(outcome))
     }
 
     /// Retains a snapshot and advances wrong-result ownership before the queue is released.

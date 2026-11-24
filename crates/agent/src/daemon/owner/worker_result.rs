@@ -21,7 +21,9 @@ use agent_core::log::LogEvent;
 use agent_core::plan::Check;
 use agent_core::plan::judge::JudgementState;
 use agent_core::state::{CommitId, Timestamp};
-use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpdate, FailureClass, RequestId};
+use agent_runtime::agentbus::{
+    DelegationRequest, DelegationStatus, DelegationUpdate, FailureClass, OwnedOutcome, RequestId,
+};
 use agent_runtime::git::{BringOver, CommitIdentity, Git, Revision};
 use agent_runtime::plan::check::{CheckContext, execute_request_check, read_check_tail, request_check_outcome};
 use agent_runtime::process::error_chain;
@@ -1204,7 +1206,12 @@ impl Owner {
                 )
             }
         };
-        if self.settle_owned_request(pending, status, &summary, &notice).await? {
+        if let Some(outcome) = self.settle_owned_request(pending, status, &summary, &notice).await? {
+            if matches!(outcome, OwnedOutcome::Applied | OwnedOutcome::Replay)
+                && let (Settlement::Brought { commit }, Some(step)) = (settlement, checked.step)
+            {
+                self.record_confirmed(pending, checked, step, commit).await?;
+            }
             return Ok(true);
         }
         tracing::info!(
