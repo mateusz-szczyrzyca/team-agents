@@ -228,3 +228,21 @@ fn a_type_of_text_and_a_type_named_by_its_language_are_told_apart() {
         paths(&["src/*.go"])
     );
 }
+
+#[test]
+fn a_glob_with_a_brace_group_names_each_of_its_alternatives_under_the_path() {
+    for name in ["Glob", "glob"] {
+        let glob = |pattern: &'static str, path: Option<&'static str>| SearchInput {
+            pattern: Some(pattern),
+            path,
+            ..SearchInput::default()
+        };
+        assert_eq!(
+            told(name, &glob("*.{ts,tsx}", Some("src"))),
+            paths(&["src/*.ts", "src/*.tsx"]),
+            "{name}"
+        );
+        assert_eq!(told(name, &glob("**/*.{rs,toml}", None)), paths(&["**/*.rs"]), "{name}");
+        assert_eq!(told(name, &glob("*.{md,toml}", Some("docs"))), None, "{name}");
+    }
+}
