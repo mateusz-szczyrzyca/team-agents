@@ -203,3 +203,87 @@ fn an_empty_path_is_no_search() {
     assert_eq!(found, None);
     assert_eq!(CodeSearch { paths: Vec::new() }.paths, Vec::<String>::new());
 }
+
+#[test]
+fn the_pattern_of_a_search_and_the_words_of_other_commands_are_no_directory_of_code() {
+    table(vec![
+        (command("grep -rn test docs/"), None),
+        (command("grep -rn app config/agents.example.toml"), None),
+        (command("rg lib README.md"), None),
+        (command("cat Cargo.toml && cargo test -p agent-core"), None),
+        (command("head -5 notes.md && ls src"), None),
+        (command("grep -rn src docs/"), None),
+        (command("grep -e src -e lib docs"), None),
+        (command("grep -rn 'use src' docs/"), None),
+    ]);
+}
+
+#[test]
+fn a_search_that_writes_into_a_pipe_counts_what_it_searched() {
+    table(vec![
+        (command("grep -rn foo crates/ | head -30"), Some(vec!["crates/"])),
+        (command("rg TODO src | sort | uniq -c"), Some(vec!["src"])),
+        (command("cat src/main.rs | wc -l"), Some(vec!["src/main.rs"])),
+        (command("echo x | grep foo src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("git log | grep -rn foo"), None),
+    ]);
+}
+
+#[test]
+fn only_sed_with_n_reads_a_file() {
+    table(vec![
+        (command("sed -i 's/a/b/' src/main.rs"), None),
+        (command("sed -n '1,5p' src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("sed -ne 5p src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("sed 's/a/b/' src/main.rs"), None),
+        (command("sed -n -i 5p src/main.rs"), None),
+    ]);
+}
+
+#[test]
+fn a_search_filtered_to_text_is_no_search_of_code() {
+    table(vec![
+        (command("rg --glob '*.md' Serena src"), None),
+        (command("rg -g '*.toml' Serena ."), None),
+        (command("grep -rn --include=*.md foo src"), None),
+        (command("rg -t md foo src"), None),
+        (command("rg --type=yaml foo ."), None),
+        (command("rg -g '*.rs' foo src"), Some(vec!["*.rs", "src"])),
+        (command("rg -g '!*.md' foo src"), Some(vec!["src"])),
+    ]);
+}
+
+#[test]
+fn the_options_of_a_search_are_no_files_and_their_values_neither() {
+    table(vec![
+        (command("grep -A 3 foo src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("grep -e foo -e bar src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("grep -n -- -x src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("tail -n 5 src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("rg -m 5 foo src/lib.rs 2>&1"), Some(vec!["src/lib.rs"])),
+        (command("cat src/lib.rs > out.rs"), Some(vec!["src/lib.rs"])),
+        (command("find src -name '*.md'"), None),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_a_directory_or_the_whole_repository_is_a_search_of_code() {
+    table(vec![
+        (call("Grep", "src"), Some(vec!["src"])),
+        (call("grep", "src"), Some(vec!["src"])),
+        (call("Grep", "."), Some(vec!["."])),
+        (call("Grep", "fn main"), Some(vec!["."])),
+        (call("grep", "TODO"), Some(vec!["."])),
+        (call("Grep", "crates/agent-core"), Some(vec!["crates/agent-core"])),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_text_is_no_search_of_code() {
+    table(vec![
+        (call("Grep", "docs/"), None),
+        (call("Grep", "TODO README.md"), None),
+        (call("Read", "src"), None),
+        (call("Glob", "docs/**/*.md"), None),
+    ]);
+}
