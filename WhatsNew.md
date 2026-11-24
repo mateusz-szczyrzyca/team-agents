@@ -5,15 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.90.0 — 24.11.2026 — PR #243
-
-### New features
-- [agent] [agent-core] [agent-runtime] [agentbus] Teams and solo tasks can delegate to the installation's configured workers without adding them to their crew. Requests alternate providers, skipping busy providers; second tries prefer another eligible provider. Workers use isolated worktrees at the requester's commit.
-- [agent] `agent status` shows each pool worker's requester and step, or whether it is free. Workers awaiting result settlement stay unavailable.
-
-### Configuration
-- [agent-core] new: `[agents.NAME] capabilities` and `[investigators.NAME] capabilities` (default `[]`) — capabilities matched against worker request `requires`, written as `<namespace>:<value>` with namespaces `os`, `arch`, `build`, `test`, `hw`, `net`.
-
 ## 0.89.0 — 24.11.2026 — PR #242
 
 ### Bug fixes
