@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.82.0 — 23.11.2026 — PR #
+## 0.82.0 — 24.11.2026 — PR #
 
 ### Enhancements
 - [agent-core] Prepares the decision that will share the agents of `[tiers] workers` as one installation-wide pool. Nothing on a serving path uses it yet; a later part wires it in.
