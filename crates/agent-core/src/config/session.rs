@@ -54,17 +54,32 @@ impl ContextKey {
     }
 }
 
-/// Checks the `context` window `context` of the agent named `name` of `key` against the bound `bound` of its session.
+/// Checks the `context` window `context` of the agent or investigator `name` of `key` against the bound `bound` of its
+/// session. A window at or below the bound would be compacted away by the harness before the CLI came near it, and `0`
+/// is no window at all.
 ///
 /// # Errors
-/// None yet.
-pub fn check_context(
-    _key: ContextKey,
-    _name: &str,
-    _context: Option<u64>,
-    _bound: Option<u64>,
-) -> Result<(), ConfigError> {
-    Ok(())
+/// [`ConfigError::AgentContextZero`] for `0`; [`ConfigError::AgentContextBelowBound`] for a window below the bound, with
+/// the agent and the key named.
+pub fn check_context(key: ContextKey, name: &str, context: Option<u64>, bound: Option<u64>) -> Result<(), ConfigError> {
+    let Some(context) = context else {
+        return Ok(());
+    };
+    if context == 0 {
+        return Err(ConfigError::AgentContextZero {
+            key,
+            name: name.to_owned(),
+        });
+    }
+    match bound {
+        Some(bound) if context < bound => Err(ConfigError::AgentContextBelowBound {
+            key,
+            name: name.to_owned(),
+            context,
+            bound,
+        }),
+        Some(_) | None => Ok(()),
+    }
 }
 
 #[cfg(test)]
