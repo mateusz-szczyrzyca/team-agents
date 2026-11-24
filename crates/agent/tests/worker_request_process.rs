@@ -3583,4 +3583,44 @@ fi
             .collect();
         assert_eq!(confirmations.len(), 1, "{records:?}");
     }
+    #[test]
+    fn declared_failure_reuses_the_only_pool_worker_and_exhausts_tries() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "only",
+                    kind: "worker",
+                    scenario: "script-declared:retry",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.allow_tries(2);
+        // Retry selection is independent of the discarded worktree of the wrong first result.
+        world.script("retry", &format!("if test -f \"$AGENTS_HOME/first-worker-try\"; then\n{}\nelse\ntouch \"$AGENTS_HOME/first-worker-try\"\nmkdir -p docs\necho first > docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Record first try'\nfi\n", commit_script("the walkthrough", &[])));
+        let plan = MEMBER_PLAN.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        let request = MEMBER_REQUEST.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
+        world.asks("member", Some(&plan), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        world.request_is("1", "failed");
+        assert_eq!(world.requests()["1"]["worker"], "only");
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            1
+        );
+    }
 }
