@@ -63,7 +63,7 @@ fn a_shell_command_over_text_is_no_search_of_code() {
 fn a_shell_command_with_a_pipe_reads_the_text_the_pipe_gives_not_a_file() {
     table(vec![
         (command("git log --oneline | head -5"), None),
-        (command("grep -rn TODO src | wc -l"), Some(vec!["src"])),
+        (command("rg TODO src | sort"), None),
         (command("ps aux | grep serena"), None),
     ]);
 }
