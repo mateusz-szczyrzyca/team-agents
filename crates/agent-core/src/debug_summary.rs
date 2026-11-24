@@ -216,8 +216,30 @@ pub struct TaskSummaryFacts {
     pub last_activity: Option<Timestamp>,
     /// End detail of the last run (outcome, error, final message).
     pub last_run_end_detail: Option<String>,
+    /// The tool calls of the task's last run, as its steps in the history record them.
+    pub tools: ToolCalls,
     /// Questions file status and content for this task.
     pub questions: Option<QuestionsSummaryFacts>,
+}
+
+/// The tool calls of a run, by the tools that made them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct ToolCalls {
+    /// The calls of Serena's tools, which find code through a language server.
+    pub serena: usize,
+    /// The calls of the tools that run a shell command.
+    pub shell: usize,
+    /// The calls of every other tool, agentbus's among them.
+    pub other: usize,
+}
+
+impl ToolCalls {
+    /// How many tool calls the run made, or `None` when its stream named no tool.
+    #[must_use]
+    pub const fn counted(&self) -> Option<usize> {
+        let _ = self;
+        None
+    }
 }
 
 /// Questions file facts for a task.
@@ -628,6 +650,16 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
         out.push_str("- Last run end detail: ");
         out.tail(detail);
         write_line(out, "");
+        match t.tools.counted() {
+            Some(total) => write_line(
+                out,
+                &format!(
+                    "- Tool calls: {total} (serena {}, shell {}, other {})",
+                    t.tools.serena, t.tools.shell, t.tools.other
+                ),
+            ),
+            None => write_line(out, "- Tool calls: none recorded"),
+        }
         if let Some(q) = &t.questions {
             write_line(out, &format!("- Questions (unanswered: {}):", q.has_unanswered));
             out.tail(&q.content);

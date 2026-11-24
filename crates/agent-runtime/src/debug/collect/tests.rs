@@ -353,6 +353,7 @@ fn git_read_failures_are_prose_with_the_first_error_line() {
         last_run_ended: None,
         last_activity: None,
         last_run_end_detail: None,
+        tools: agent_core::debug_summary::ToolCalls::default(),
         questions: None,
     });
     runtime.block_on(collection.git(&home, &team));

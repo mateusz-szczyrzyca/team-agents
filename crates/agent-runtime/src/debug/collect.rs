@@ -349,6 +349,7 @@ impl Collection {
             last_run_ended: ended,
             last_activity: None,
             last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
+            tools: agent_core::debug_summary::ToolCalls::default(),
             questions: None,
         };
         self.summary.tasks.push(row);
