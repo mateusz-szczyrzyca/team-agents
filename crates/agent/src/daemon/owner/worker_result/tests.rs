@@ -327,6 +327,8 @@ async fn pair_daemon() -> (super::super::fixture::Daemon, super::super::Owner) {
 
 #[tokio::test]
 async fn a_completion_whose_record_cannot_be_written_leaves_the_workspace_working_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+
     use crate::fixtures::{task, team_id};
     use agent_runtime::request_workspace::save;
     use agent_runtime::worker_request::write_pending;
