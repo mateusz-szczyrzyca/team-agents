@@ -508,3 +508,38 @@ fn non_ascii_capabilities_are_matched_exactly_and_byte_for_byte() {
         }
     }
 }
+
+// Adjacent workers must give their provider one turn, regardless of how many models it offers.
+#[test]
+fn adjacent_workers_of_one_provider_do_not_repeat_its_turn() {
+    let workers = pool(&[
+        ("w-di-a", "deepinfra", false),
+        ("w-di-b", "deepinfra", false),
+        ("w-or", "openrouter", false),
+    ]);
+    for (last, expected) in [(None, 0), (Some("deepinfra"), 2), (Some("openrouter"), 0)] {
+        assert_eq!(
+            next_pool_worker(&workers, &requires(&[]), LastServed(last)),
+            Some((workers[expected].name, workers[expected].provider)),
+            "last provider: {last:?}"
+        );
+    }
+}
+
+// A partial match must not qualify, even when it includes the first required capability.
+#[test]
+fn a_worker_must_declare_every_required_capability() {
+    for (capabilities, expected) in [
+        (&["table", "images"][..], Some(0)),
+        (&["table"][..], None),
+        (&["images"][..], None),
+        (&[][..], None),
+    ] {
+        let workers = pool_caps(&[("w-di", "deepinfra", false, capabilities)]);
+        assert_eq!(
+            next_pool_worker(&workers, &requires(&["table", "images"]), LastServed(None)),
+            expected.map(|index| (workers[index].name, workers[index].provider)),
+            "declared capabilities: {capabilities:?}"
+        );
+    }
+}
