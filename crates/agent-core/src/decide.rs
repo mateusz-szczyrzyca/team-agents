@@ -43,3 +43,6 @@ pub mod worker_result;
 
 /// Deterministic assignment of investigators to any team activity.
 pub mod investigator;
+
+/// Bounded recovery of requests whose worker supplied no result.
+pub mod worker_recovery;
