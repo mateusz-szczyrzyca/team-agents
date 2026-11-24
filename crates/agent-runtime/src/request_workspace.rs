@@ -312,10 +312,18 @@ pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), Workspa
         request: workspace.record.request,
         source,
     })?;
-    std::fs::rename(&temporary, &path).map_err(|source| WorkspaceError::Write {
-        request: workspace.record.request,
-        source,
-    })
+    if let Err(source) = std::fs::rename(&temporary, &path) {
+        // Cleanup must not replace the original rename failure.
+        if let Err(cleanup) = std::fs::remove_file(&temporary) {
+            tracing::warn!(request = %workspace.record.request, path = ?temporary, error = %cleanup,
+                "cannot remove temporary workspace record after failed rename");
+        }
+        return Err(WorkspaceError::Write {
+            request: workspace.record.request,
+            source,
+        });
+    }
+    Ok(())
 }
 
 /// Completes a request whose worker's run ended in its workspace: the pending of the result is written into the worker's
@@ -503,12 +511,18 @@ async fn write_record(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(
             request: workspace.record.request,
             source,
         })?;
-    tokio::fs::rename(&temporary, &path)
-        .await
-        .map_err(|source| WorkspaceError::Write {
+    if let Err(source) = tokio::fs::rename(&temporary, &path).await {
+        // Cleanup must not replace the original rename failure.
+        if let Err(cleanup) = tokio::fs::remove_file(&temporary).await {
+            tracing::warn!(request = %workspace.record.request, path = ?temporary, error = %cleanup,
+                "cannot remove temporary workspace record after failed rename");
+        }
+        return Err(WorkspaceError::Write {
             request: workspace.record.request,
             source,
-        })
+        });
+    }
+    Ok(())
 }
 
 /// Removes the worktree and the branch of `workspace` from the `home` when they are still there.
