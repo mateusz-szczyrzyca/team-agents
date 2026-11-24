@@ -71,3 +71,37 @@ func TestOwnedReceiptRecoverySkipsThePersistedPrefixAcrossLoads(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnedReceiptRecoveryRejectsOffsetsOutsideTheLog(t *testing.T) {
+	for _, offset := range []int64{-1, 1} {
+		b, cmd := ownedFixture(t)
+		if _, err := b.helperOwned(cmd); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(b.path("messages.jsonl"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(b.path("state.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			t.Fatal(err)
+		}
+		fields["owned_receipt_offset"], err = json.Marshal(offset)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(b.path("state.json"), data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if _, serr := b.load(); serr == nil {
+			t.Fatalf("accepted receipt offset %d outside empty log", offset)
+		}
+	}
+}
