@@ -16,8 +16,6 @@ mod gate;
 mod history;
 mod idle;
 mod last_step;
-#[cfg(test)]
-mod launch_tests;
 mod plan;
 mod removal;
 mod returned;
@@ -28,6 +26,8 @@ mod split;
 mod start;
 mod takeover;
 mod teams;
+#[cfg(test)]
+mod tests;
 mod tier_questions;
 mod wakes;
 mod worker_result;
