@@ -137,7 +137,7 @@ fn a_run_the_history_never_started_is_not_reminded() {
             task(),
             0,
         );
-        history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
+        history.serena_reminded(&run, &task(), CliKind::Claude, 40, 7, &Later(10));
     });
 
     let found = reminder_of(&reader, &run, &team());
