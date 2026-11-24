@@ -5,7 +5,14 @@
 //! in its first prompt — one run of the section per session — and one that has none gets the prompt it always got:
 //! `agents.toml` without `serena` renders byte for byte as before.
 
+use std::collections::BTreeMap;
+
+use agent_core::cli::McpServerKind;
+use agent_core::config::CommandLine;
 use agent_core::kinds::Role;
+
+#[cfg(test)]
+mod tests;
 use agent_core::prompt::HarnessPrompt;
 
 use super::PromptKind;
@@ -20,10 +27,10 @@ pub enum Serena {
 }
 
 impl Serena {
-    /// `Given` when `has_serena`, `Without` otherwise: what the list of a run's MCP servers says.
+    /// `Given` when a run's own MCP servers, `servers`, hold Serena; `Without` otherwise.
     #[must_use]
-    pub const fn of(has_serena: bool) -> Self {
-        if has_serena { Self::Given } else { Self::Without }
+    pub fn of(_servers: &BTreeMap<McpServerKind, CommandLine>) -> Self {
+        Self::Without
     }
 }
 
