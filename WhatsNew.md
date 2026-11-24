@@ -8,10 +8,10 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.84.0 — 24.11.2026 — PR #236
 
 ### New features
-- [agent-core] [agent-runtime] An agent or investigator of `agents.toml` may carry `context`, its model's context window in tokens. For an opencode agent whose model is registered under `deepinfra/` or `openrouter/`, the generated configuration then gives the model `limit.context`, so opencode compacts the session itself before the provider refuses it. Without the key nothing changes; claude, codex and agy take no window and ignore the key.
+- [agent] [agent-core] [agent-runtime] An agent or investigator of `agents.toml` may carry `context`, its model's context window in tokens. For an opencode agent whose model is registered under `deepinfra/` or `openrouter/`, the generated configuration then gives the model a `limit` with that `context` (and `output` 0, which opencode's schema requires), and a codex agent gets `-c model_context_window=N`; the CLI then compacts the session itself before the provider refuses it. Without the key nothing changes; claude and agy are left as they were.
 
 ### Configuration
-- [agent-core] new: `[agents.NAME] context` and `[investigators.NAME] context` (default: none) — the model's context window in tokens, written into the opencode configuration of that agent only. `0` is refused at load; a value below `max_context` is accepted.
+- [agent-core] new: `[agents.NAME] context` and `[investigators.NAME] context` (default: none) — the model's context window in tokens, given to the opencode configuration or the codex command line of that agent only. `0` is refused at load; a value below `max_context` is accepted.
 
 ## 0.83.0 — 24.11.2026 — PR #235
 
