@@ -57,7 +57,7 @@ pub enum RemindAfterError {
 /// What one session of a run did without Serena, as the run engine notes it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionTally {
-    /// The searches of code without Serena so far.
+    /// The searches of code without Serena so far, counted from one.
     searches: u64,
     /// Whether Serena was called at least once.
     used_serena: bool,
@@ -66,11 +66,11 @@ pub struct SessionTally {
 }
 
 impl SessionTally {
-    /// The tally of a session that has done nothing.
+    /// The tally of a session that has done nothing: its count of searches is one, for the search that reaches a bound.
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            searches: 0,
+            searches: 1,
             used_serena: false,
             reminded: false,
         }
@@ -94,11 +94,11 @@ impl SessionTally {
 
     /// Whether the reminder of the session is due, and marks the session as reminded: it is told once.
     fn is_due(&mut self, after: RemindAfter) -> bool {
-        if self.reminded || self.used_serena || self.searches < after.get() {
+        if self.reminded || self.used_serena {
             return false;
         }
-        self.reminded = true;
-        true
+        self.reminded = self.searches >= after.get();
+        self.reminded
     }
 
     /// The searches of code without Serena the session made so far.
