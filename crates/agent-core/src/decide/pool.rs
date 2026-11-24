@@ -17,6 +17,8 @@
 //! the first free worker of the first provider in that rotation that has a free worker meeting the request. A provider
 //! with nothing free is skipped, so a request never waits for one.
 
+use crate::config::ModelName;
+use crate::decide::slot::RunLimit;
 use crate::ids::AgentName;
 use crate::kinds::CliKind;
 
@@ -33,8 +35,6 @@ pub struct PoolWorker<'a> {
     pub busy: bool,
     /// How many runs the worker has going installation-wide, over all teams and solo tasks.
     pub runs: u32,
-    /// The `[limits] runs_per_worker` cap that applies (the same for every worker of the pool); `0` is no limit.
-    pub runs_limit: u32,
     /// Whether the worker has a finished run whose result is not settled yet; such a worker cannot take a request.
     pub unsettled: bool,
 }
@@ -53,12 +53,14 @@ pub struct LastServed<'a>(pub Option<&'a str>);
 
 /// The worker of the pool that serves the next request and its provider: of the first provider after [`LastServed`] in
 /// the pool's provider order that has a free worker meeting `requires`, that worker in `workers` order; `None` when no
-/// free worker of the pool meets the request. The provider served is returned so the caller can keep [`LastServed`] on.
+/// free worker of the pool meets the request. `run_limit` applies installation-wide to every worker.
+/// The provider served is returned so the caller can keep [`LastServed`] on.
 #[must_use]
 pub fn next_pool_worker<'a>(
     workers: &[PoolWorker<'a>],
     requires: &Requires<'_>,
     last_served: LastServed<'_>,
+    run_limit: RunLimit,
 ) -> Option<(&'a AgentName, &'a str)> {
     let providers = provider_order(workers);
     if providers.is_empty() {
@@ -79,7 +81,7 @@ pub fn next_pool_worker<'a>(
     {
         if let Some(worker) = workers
             .iter()
-            .find(|worker| available(worker) && worker.provider == provider && meets(worker, requires))
+            .find(|worker| available(worker, run_limit) && worker.provider == provider && meets(worker, requires))
         {
             return Some((worker.name, worker.provider));
         }
@@ -88,19 +90,23 @@ pub fn next_pool_worker<'a>(
 }
 
 /// Whether a worker can take a request: not at work, no unsettled finished run, and under its `[limits] runs_per_worker`
-/// cap (`runs_limit` 0 is no cap).
+/// cap, shared by all workers of the pool.
 #[must_use]
-fn available(worker: &PoolWorker<'_>) -> bool {
-    !worker.busy && !worker.unsettled && (worker.runs_limit == 0 || worker.runs < worker.runs_limit)
+fn available(worker: &PoolWorker<'_>, run_limit: RunLimit) -> bool {
+    let below_limit = match run_limit {
+        RunLimit::Unlimited => true,
+        RunLimit::AtMost(limit) => worker.runs < limit.get(),
+    };
+    !worker.busy && !worker.unsettled && below_limit
 }
 
 /// The provider of a worker: for `cli = "opencode"` with a model that carries one, the part of the model before the first
 /// `/`; for any other worker or a bare model without a `/`, the `cli` itself.
 #[must_use]
-pub fn provider_of(cli: CliKind, model: Option<&str>) -> &str {
+pub fn provider_of(cli: CliKind, model: Option<&ModelName>) -> &str {
     if cli == CliKind::Opencode
         && let Some(model) = model
-        && let Some((provider, _)) = model.split_once('/')
+        && let Some((provider, _)) = model.as_str().split_once('/')
     {
         return provider;
     }
