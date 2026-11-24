@@ -147,3 +147,23 @@ func TestOwnedOperationLeavesLegacyOpenRequestsUnfenced(t *testing.T) {
 		t.Fatalf("old request = %+v", h)
 	}
 }
+
+func TestOwnedRetryReplayKeepsTheQueueAndDoesNotPost(t *testing.T) {
+	b, cmd := ownedFixture(t)
+	if got, err := b.helperOwned(cmd); err != nil || got != ownedApplied {
+		t.Fatalf("start = %s, %v", got, err)
+	}
+	cmd.Action = ownedRetry
+	for _, want := range []ownedOutcome{ownedApplied, ownedReplay} {
+		if got, err := b.helperOwned(cmd); err != nil || got != want {
+			t.Fatalf("retry = %s, %v; want %s", got, err, want)
+		}
+	}
+	messages, err := b.messages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("retry posted messages: %+v", messages)
+	}
+}
