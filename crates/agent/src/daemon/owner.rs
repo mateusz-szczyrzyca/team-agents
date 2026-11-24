@@ -1739,16 +1739,16 @@ impl Owner {
             Ok(true) => return,
             Ok(false) => {}
             Err(error) => {
-                // A reminder goes out at most once: with the mark in doubt it may have gone out already.
+                // The look only spares a reminder that was told the work of being rendered: the claim made before the
+                // bus is asked is the guard, so a look that fails goes on to it, and a mark in doubt sends nothing there.
                 tracing::warn!(
                     event = LogEvent::DaemonTaskFailed.as_str(),
                     task = %task,
                     run = %run,
                     operation = "serena_reminder",
                     error = %error_chain(&error),
-                    "the mark of the reminder of Serena cannot be looked for: the reminder is not put on the bus"
+                    "the mark of the reminder of Serena cannot be looked for: the claim of the reminder decides"
                 );
-                return;
             }
         }
         let Some((searches, cli)) = self.reminder_of_run(task, team, run).await else {
