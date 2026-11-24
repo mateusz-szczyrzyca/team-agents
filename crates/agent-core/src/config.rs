@@ -13,7 +13,7 @@ mod replacement_tests;
 mod restart;
 mod session;
 pub use restart::{Restart, RestartSession};
-pub use session::{DEFAULT_MAX_CONTEXT, Session, context_bound};
+pub use session::{ContextKey, DEFAULT_MAX_CONTEXT, Session, check_context, context_bound};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -110,6 +110,27 @@ pub enum ConfigError {
         /// Size of the configured investigator roster.
         configured: usize,
     },
+    /// An agent's or an investigator's `context` is `0`, so the CLI would be told that the model reads nothing.
+    #[error("{} of {name}: `context` is 0 tokens: a model's window is above 0", key.section())]
+    AgentContextZero {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the key.
+        name: String,
+    },
+    /// An agent's or an investigator's `context` is below the bound of its session, so a session it lets the CLI
+    /// compact would be replaced by the harness before it ever filled.
+    #[error("{} of {name}: `context` is {context} tokens, below the bound of its session ({bound} tokens): give a window above the bound, or switch the bound off", key.section())]
+    AgentContextBelowBound {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the key.
+        name: String,
+        /// The window it asks for, in tokens.
+        context: u64,
+        /// The bound of its session in tokens.
+        bound: u64,
+    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
@@ -198,6 +219,10 @@ pub struct AgentConfig {
     /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
     #[serde(default)]
     pub max_context: Option<u64>,
+    /// The model's context window in tokens, given to the CLI's configuration where it takes one; without it the CLI
+    /// learns no window.
+    #[serde(default)]
+    pub context: Option<u64>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -215,6 +240,10 @@ pub struct InvestigatorConfig {
     /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
     #[serde(default)]
     pub max_context: Option<u64>,
+    /// The model's context window in tokens, given to the CLI's configuration where it takes one; without it the CLI
+    /// learns no window.
+    #[serde(default)]
+    pub context: Option<u64>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.
@@ -1068,6 +1097,24 @@ impl RawConfig {
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
+        // The bound of a session is checked against the key after the lists: nothing is refused that a file without
+        // the key would have loaded before.
+        for (name, agent) in &agents {
+            check_context(
+                ContextKey::Agent,
+                name.as_str(),
+                agent.context,
+                context_bound(agent.max_context, session.max_context),
+            )?;
+        }
+        for (name, investigator) in &investigators {
+            check_context(
+                ContextKey::Investigator,
+                name.as_str(),
+                investigator.context,
+                context_bound(investigator.max_context, session.max_context),
+            )?;
+        }
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &worker_names, &agents)?;

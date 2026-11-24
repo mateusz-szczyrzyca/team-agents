@@ -3,6 +3,8 @@
 
 use serde::Deserialize;
 
+use super::ConfigError;
+
 /// The bound a session's context has when `[session]` says nothing, in tokens. It is taken from the measurements of
 /// 22.11.2026 (sessions that grew to 438 000 and 580 000 tokens, and runs that ended `STATUS: FAILED` above 360 000
 /// tokens), not from any model's documentation.
@@ -30,6 +32,39 @@ impl Default for Session {
 pub fn context_bound(agent: Option<u64>, section: u64) -> Option<u64> {
     let bound = agent.unwrap_or(section);
     (bound != 0).then_some(bound)
+}
+
+/// The section of `agents.toml` whose `context` an agent sets: `[agents]` or `[investigators]`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextKey {
+    /// The key `[agents.NAME] context`: a normal agent's or a worker's window.
+    Agent,
+    /// The key `[investigators.NAME] context`: an investigator's window.
+    Investigator,
+}
+
+impl ContextKey {
+    /// The name of the section, as the error message names it.
+    #[must_use]
+    pub const fn section(self) -> &'static str {
+        match self {
+            Self::Agent => "agents",
+            Self::Investigator => "investigators",
+        }
+    }
+}
+
+/// Checks the `context` window `context` of the agent named `name` of `key` against the bound `bound` of its session.
+///
+/// # Errors
+/// None yet.
+pub fn check_context(
+    _key: ContextKey,
+    _name: &str,
+    _context: Option<u64>,
+    _bound: Option<u64>,
+) -> Result<(), ConfigError> {
+    Ok(())
 }
 
 #[cfg(test)]
