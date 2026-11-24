@@ -887,6 +887,10 @@ case $action in
     wait_for_peer_review
     result "${action#late:}"'\nSTATUS: DONE'
     ;;
+  script-declared:*)
+    bash "$home/fake-scripts/${action#script-declared:}.sh"
+    result 'Did some work.\nSTATUS: FAILED'
+    ;;
   script:*)
     bash "$home/fake-scripts/${action#script:}.sh"
     record_gate

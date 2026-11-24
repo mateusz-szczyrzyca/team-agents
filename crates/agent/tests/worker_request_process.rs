@@ -3388,4 +3388,21 @@ fi
         assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
         world.told("claude-1", "w-or");
     }
+    #[test]
+    fn legacy_crew_declared_failure_uses_another_provider_and_one_notice() {
+        let (world, tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script-declared:guide"),
+                ("glm-2", "sleep,script:guide"),
+            ],
+            Some(2),
+        );
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
 }
