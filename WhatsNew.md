@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.87.0 — 24.11.2026 — PR #240
+
+### Enhancements
+- [agent-runtime] Prepares a worker's task, branch and worktree at the requester's committed base, keeping the requester's uncommitted files untouched. New dispatch will use this in the next part.
+- [agent] Settles recorded worker requests outside the team crew: checks the result in its own worktree, brings over a valid commit, retries a wrong result, and releases the workspace. Failed cleanup is retried; malformed results are retained for inspection.
+
 ## 0.86.0 — 24.11.2026 — PR #239
 
 ### Bug fixes

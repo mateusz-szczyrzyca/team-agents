@@ -1804,4 +1804,307 @@ Integrate the guide.
 
         eventually("the file of the unknown request to be dropped", || !path.exists());
     }
+
+    /// The workspace of a request of `member` served by a worker task that is not a task of the crew: its worktree on
+    /// the branch `agents/<worker>/<worker_task>` at the requester's committed end, the old-format OPEN record in the
+    /// member's task directory, the pending (without a base) in the worker task's directory, and the request running
+    /// on the bus for that worker task. When `guide` the guide is committed in the workspace, as the worker's run
+    /// would have left it. Returns the branch.
+    fn workspace_of(world: &World, member: &str, worker: &str, worker_task: &str, guide: bool) -> String {
+        let base = world.git_output(member, &["rev-parse", "HEAD"]);
+        let branch = format!("agents/{worker}/{worker_task}");
+        let path = world.worktree(worker_task);
+        world.git_output(
+            member,
+            &["worktree", "add", "-b", &branch, path.to_str().unwrap(), &base],
+        );
+        if guide {
+            let status = Command::new("bash")
+                .arg(world.home.join("fake-scripts/guide.sh"))
+                .current_dir(&path)
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .status()
+                .unwrap();
+            assert!(status.success());
+        }
+        let record = serde_json::json!({
+            "request": 1,
+            "requester": "claude-1",
+            "requester_task": member,
+            "requester_round": "round-20261124-090000-aaaa",
+            "requester_repo": "example",
+            "worker": worker,
+            "worker_task": worker_task,
+            "branch": branch,
+            "base": base,
+            "stage": {"workspace_stage": "working"},
+        });
+        std::fs::write(
+            world.home.join("tasks").join(member).join("request-workspace-1.json"),
+            record.to_string(),
+        )
+        .unwrap();
+        let pending = serde_json::json!({
+            "request": 1,
+            "team": world.team_id(),
+            "requester": "claude-1",
+            "requester_task": member,
+            "worker": worker,
+            "worker_task": worker_task,
+            "summary": "Result: done.",
+            "run_seconds": 1,
+            "stage": {"stage": "ended"},
+        });
+        let task_dir = world.home.join("tasks").join(worker_task);
+        std::fs::create_dir_all(&task_dir).unwrap();
+        std::fs::write(task_dir.join("worker-request-1.json"), pending.to_string()).unwrap();
+        std::fs::write(world.worktree(member).join("scratch.txt"), "my notes\n").unwrap();
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        let number = world.one_more_request(member, worker_task);
+        assert_eq!(number, 1, "the request is the first of the bus");
+        branch
+    }
+
+    #[test]
+    fn a_pending_and_try_of_the_main_era_settle_a_served_request() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        // The worker's run committed the guide in its worktree.
+        let base = world.git_output(&worker, &["rev-parse", "HEAD"]);
+        let status = Command::new("bash")
+            .arg(world.home.join("fake-scripts/guide.sh"))
+            .current_dir(world.worktree(&worker))
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        std::fs::create_dir_all(world.worktree(&member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(&member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        let got = answers(&world.delegate_as(&member, &counting_request()));
+        assert!(!got[0].0, "{got:?}");
+        world.bus_cli(&["helper-set", "--id", "1", "--status", "running", "--task", &worker]);
+        // The files the daemon of the main era would have written: the pending of the ended run and its try, with the
+        // ids of this world patched in.
+        let mut pending: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(script("worker-request-1.json")).unwrap()).unwrap();
+        pending["team"] = serde_json::json!(world.team_id());
+        pending["requester_task"] = serde_json::json!(member);
+        pending["worker_task"] = serde_json::json!(worker);
+        pending["base"] = serde_json::json!(base);
+        std::fs::write(
+            world.home.join("tasks").join(&worker).join("worker-request-1.json"),
+            pending.to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            world.home.join("tasks").join(&worker).join("worker-try-1.json"),
+            std::fs::read_to_string(script("worker-try-1.json")).unwrap(),
+        )
+        .unwrap();
+
+        world.start();
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.file(&worker, ".fake-check-count"), "run\n", "the check ran once");
+        assert_eq!(world.brought_over(&member), 1);
+        world.told("claude-1", "did step 1.1 of your plan");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        eventually("the files of the request to be removed", || {
+            !world
+                .home
+                .join("tasks")
+                .join(&worker)
+                .join("worker-request-1.json")
+                .exists()
+                && !world
+                    .home
+                    .join("tasks")
+                    .join(&worker)
+                    .join("worker-try-1.json")
+                    .exists()
+        });
+    }
+
+    #[test]
+    fn an_old_open_record_with_its_pending_is_settled_in_the_workspace_and_the_workspace_is_released() {
+        let (mut world, member, _worker) = world_with_a_served_request();
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, true);
+        assert!(
+            !world.worktree(&member).join("docs/guide.md").exists(),
+            "the guide is only in the workspace, not yet in the requester's worktree"
+        );
+
+        world.start();
+
+        world.request_is("1", "done");
+        assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.brought_over(&member), 1);
+        assert_eq!(
+            world.file(&member, "scratch.txt"),
+            "my notes\n",
+            "the requester's own file is untouched"
+        );
+        let record = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+        let pending = world.home.join("tasks").join(worker_task).join("worker-request-1.json");
+        eventually("the workspace to be released", || {
+            !record.exists()
+                && !worktree.exists()
+                && !pending.exists()
+                && world.git_output(&member, &["branch", "--list", &branch]).is_empty()
+        });
+    }
+
+    #[test]
+    fn a_workspace_whose_pending_is_malformed_is_quarantined_and_never_released_across_passes_and_reload() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, true);
+        // The record is at Ended and its pending is not JSON: the pending cannot be used, so it is set aside and kept,
+        // and the workspace is never released on its behalf.
+        let task_dir = world.home.join("tasks").join(worker_task);
+        std::fs::write(task_dir.join("worker-request-1.json"), "not json at all").unwrap();
+        let record_path = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let mut record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+        record["stage"] = serde_json::json!({"workspace_stage": "ended"});
+        std::fs::write(&record_path, record.to_string()).unwrap();
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+
+        world.start();
+
+        // The first settlement pass sets the malformed pending aside, keeping it under a `.damaged` name.
+        eventually("the malformed pending to be set aside", || {
+            task_dir.join("worker-request-1.json.damaged").exists()
+        });
+        // A later pass must not release the quarantined workspace: its record, worktree and branch all stay.
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a later pass");
+        assert!(worktree.exists(), "the worktree is kept after a later pass");
+        assert!(
+            world
+                .git_output(&member, &["branch", "--list", &branch])
+                .contains(&branch),
+            "the branch is kept after a later pass"
+        );
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the malformed pending is kept"
+        );
+        // A daemon that restarts still keeps the quarantined workspace and its malformed pending.
+        world.stop();
+        world.start();
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a reload");
+        assert!(worktree.exists(), "the worktree is kept after a reload");
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the malformed pending is kept after a reload"
+        );
+    }
+
+    #[test]
+    fn a_workspace_whose_pending_mismatches_is_quarantined_and_never_released_across_passes_and_reload() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, true);
+        // The pending is a valid request for a different worker task than the record: it mismatches the record, so it
+        // is set aside and kept, and the workspace is never released on its behalf.
+        let mismatching = serde_json::json!({
+            "request": 1,
+            "team": world.team_id(),
+            "requester": "claude-1",
+            "requester_task": member,
+            "worker": "glm-1",
+            "worker_task": "task-20261124-090000-0000",
+            "summary": "Result: done.",
+            "run_seconds": 1,
+            "stage": {"stage": "ended"},
+        });
+        let task_dir = world.home.join("tasks").join(worker_task);
+        std::fs::write(task_dir.join("worker-request-1.json"), mismatching.to_string()).unwrap();
+        let record_path = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let mut record: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&record_path).unwrap()).unwrap();
+        record["stage"] = serde_json::json!({"workspace_stage": "ended"});
+        std::fs::write(&record_path, record.to_string()).unwrap();
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+
+        world.start();
+
+        eventually("the mismatching pending to be set aside", || {
+            task_dir.join("worker-request-1.json.damaged").exists()
+        });
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a later pass");
+        assert!(worktree.exists(), "the worktree is kept after a later pass");
+        assert!(
+            world
+                .git_output(&member, &["branch", "--list", &branch])
+                .contains(&branch),
+            "the branch is kept after a later pass"
+        );
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the mismatching pending is kept"
+        );
+        world.stop();
+        world.start();
+        let number = world.one_more_request(&member, &worker);
+        world.settle_as_a_look(number, &member, &worker);
+        assert!(record_path.exists(), "the record is kept after a reload");
+        assert!(worktree.exists(), "the worktree is kept after a reload");
+        assert!(
+            task_dir.join("worker-request-1.json.damaged").exists(),
+            "the mismatching pending is kept after a reload"
+        );
+    }
+
+    #[test]
+    fn a_wrong_result_of_a_workspace_request_is_given_once_more_and_the_workspace_is_released_after_the_handoff() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "sleep"),
+            ("glm-2", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-2"]);
+        let (member, second) = (task(&tasks, "claude-1").to_owned(), task(&tasks, "glm-2").to_owned());
+        for name in ["claude-1", "inv-opus", "glm-2"] {
+            world.ended(task(&tasks, name), 1);
+        }
+        world.sleeps_on_the_bus("glm-2");
+        world.stop();
+        // The workspace of a worker that left nothing: its worktree stays at the requester's committed end.
+        let worker_task = "task-20261124-090000-cccc";
+        let branch = workspace_of(&world, &member, "glm-1", worker_task, false);
+
+        world.start();
+
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "glm-2");
+        let again = world.told("claude-1", "went once more to the worker glm-2");
+        assert!(again.contains("the check `exists docs/guide.md` failed"), "{again}");
+        assert_eq!(world.runs(&second), 2, "the second worker served it once");
+        assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.brought_over(&member), 1);
+        assert_eq!(world.file(&member, "scratch.txt"), "my notes\n");
+        let record = world.home.join("tasks").join(&member).join("request-workspace-1.json");
+        let worktree = world.home.join("worktrees/example").join(worker_task);
+        let pending = world.home.join("tasks").join(worker_task).join("worker-request-1.json");
+        eventually("the workspace to be released after the handoff", || {
+            !record.exists()
+                && !worktree.exists()
+                && !pending.exists()
+                && world.git_output(&member, &["branch", "--list", &branch]).is_empty()
+        });
+    }
 }

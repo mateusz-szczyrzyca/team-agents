@@ -26,6 +26,7 @@ pub mod plan;
 pub mod process;
 pub mod prompts;
 pub mod questions_prompts;
+pub mod request_workspace;
 pub mod run;
 pub mod settings;
 pub mod snapshot;
