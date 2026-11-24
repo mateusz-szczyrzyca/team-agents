@@ -167,3 +167,30 @@ func TestOwnedRetryReplayKeepsTheQueueAndDoesNotPost(t *testing.T) {
 		t.Fatalf("retry posted messages: %+v", messages)
 	}
 }
+
+func TestOwnedSuppressedResultsLogExecutionIdentity(t *testing.T) {
+	b, cmd := ownedFixture(t)
+	if _, err := b.helperOwned(cmd); err != nil {
+		t.Fatal(err)
+	}
+	logs := captureLogs(t)
+	cmd.Action, cmd.Status, cmd.Notice = ownedSettle, HelperDone, "worker served step"
+	for _, run := range []string{"run-1", "run-1", "late"} {
+		cmd.Run = run
+		if _, err := b.helperOwned(cmd); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var outcomes []string
+	for _, record := range records(t, logs) {
+		if record["event"] == "worker_result_dropped" {
+			if record["worker"] != "worker" || record["task"] != "worker-task" {
+				t.Fatalf("identity: %+v", record)
+			}
+			outcomes = append(outcomes, record["outcome"].(string))
+		}
+	}
+	if len(outcomes) != 2 || outcomes[0] != "replay" || outcomes[1] != "stale" {
+		t.Fatalf("suppression records = %v", outcomes)
+	}
+}
