@@ -1243,13 +1243,37 @@ async fn untracked_observation_preserves_a_task_artifact_with_the_same_name() {
     assert_eq!(paths.len(), collection.artifacts.len());
 }
 
+/// The run start of `run` for `task` in `team`, as the history records it.
+fn run_start(team: &Team, task: &TaskId, run: &agent_core::ids::RunId, at: Timestamp) -> agent_core::history::Record {
+    use agent_core::history::{AgentIdentity, RunStart, RunWhy};
+    use agent_core::kinds::{CliKind, Tier};
+    agent_core::history::Record::Run(Box::new(RunStart {
+        run: run.clone(),
+        team: team.id().clone(),
+        task: task.clone(),
+        at,
+        agent: AgentIdentity {
+            name: "codex-1".to_owned(),
+            tier: Tier::Normal,
+            cli: CliKind::Codex,
+            model: None,
+        },
+        role: Role::Solo,
+        rounds: vec![],
+        why: RunWhy::WakeUp,
+        prompt: "Please continue".to_owned(),
+        worktree: agent_core::config::AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
+        branch: "feature".parse().unwrap(),
+        session: None,
+    }))
+}
+
 #[tokio::test]
 async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() {
     use crate::history::Store as _;
     use agent_core::cli::ActivityEvent;
     use agent_core::config::AbsolutePath;
-    use agent_core::history::{AgentIdentity, Cut, MaxTextBytes, Record, RunStart, RunWhy, SequencedRecord, Step};
-    use agent_core::kinds::{CliKind, Tier};
+    use agent_core::history::{Cut, MaxTextBytes, Record, SequencedRecord, Step};
     let dir = tempfile::tempdir().unwrap();
     let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
     let mut team = team();
@@ -1280,25 +1304,7 @@ async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() 
     };
     database
         .write(&[
-            Record::Run(Box::new(RunStart {
-                run: run.clone(),
-                team: team.id().clone(),
-                task: task.clone(),
-                at,
-                agent: AgentIdentity {
-                    name: "codex-1".to_owned(),
-                    tier: Tier::Normal,
-                    cli: CliKind::Codex,
-                    model: None,
-                },
-                role: Role::Solo,
-                rounds: vec![],
-                why: RunWhy::WakeUp,
-                prompt: "Please continue".to_owned(),
-                worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
-                branch: "feature".parse().unwrap(),
-                session: None,
-            })),
+            run_start(&team, &task, &run, at),
             call(1, "mcp__serena__find_symbol"),
             call(2, "serena.find_referencing_symbols"),
             call(3, "Bash"),
@@ -1311,25 +1317,7 @@ async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() 
         at,
         team: team.id().clone(),
         rounds: vec![],
-        record: Record::Run(Box::new(RunStart {
-            run: run.clone(),
-            team: team.id().clone(),
-            task: task.clone(),
-            at,
-            agent: AgentIdentity {
-                name: "codex-1".to_owned(),
-                tier: Tier::Normal,
-                cli: CliKind::Codex,
-                model: None,
-            },
-            role: Role::Solo,
-            rounds: vec![],
-            why: RunWhy::WakeUp,
-            prompt: "Please continue".to_owned(),
-            worktree: AbsolutePath::try_from("/tmp/example".to_owned()).unwrap(),
-            branch: "feature".parse().unwrap(),
-            session: None,
-        })),
+        record: run_start(&team, &task, &run, at),
         cut: Cut::default(),
     }];
     let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();

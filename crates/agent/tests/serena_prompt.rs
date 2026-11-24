@@ -299,7 +299,7 @@ mod serena_prompt {
         let output = world.agent(&[
             "debug",
             "--task",
-            &task.to_string(),
+            task.as_ref(),
             "--out",
             bundle.path().to_str().unwrap(),
         ]);
