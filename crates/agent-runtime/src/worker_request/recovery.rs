@@ -1,4 +1,4 @@
-//! Opt-in durable attempt journals. No daemon dispatch path uses recovery yet.
+//! Opt-in durable attempt journals for fenced settlement; automatic no-result requeue remains deferred.
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;

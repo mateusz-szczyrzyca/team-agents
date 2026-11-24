@@ -60,7 +60,7 @@ pub enum TeamPrompt {
     /// What a worker is told when it is given a request of a member.
     Delegation,
     /// What a worker is told, after the delegation, when the request was given to another worker before and that result was
-    /// wrong.
+    /// wrong, including a declared FAILED or QUESTIONS ending.
     DelegationAgain,
     /// The message to the coordinator that a member is done with an item.
     MemberFinished,
@@ -115,7 +115,7 @@ pub enum TeamPrompt {
     WorkerResultBrought,
     /// The message to a member that a worker's commit does not apply to its branch, with the files in conflict.
     WorkerResultConflict,
-    /// The message to a member that its request went once more to another worker, with the reason the first failed.
+    /// The message to a member naming the retry worker and why the previous result or declared ending failed.
     WorkerGivenAgain,
     /// The message to a member that no result serves its step, which it does itself.
     WorkerStepReturned,

@@ -518,8 +518,9 @@ Each is derived or lives elsewhere, so that there is one place for it:
   stages; an unknown field is refused, and a file that is refused, cut short or cannot be read is set aside as
   `worker-request-<n>.json.damaged` (kept, never read again), logged (`worker_request_damaged`, with its name) and its request is
   answered as a wrong result, while the other files are read. `base` is the commit the worker's worktree was at when the request was given to it. A task directory without such files reads as before.
-- **An explicitly prepared recovery journal** — optional `tasks/<original worker task>/worker-recovery-<n>.json`.
-  This version provides the format and runtime APIs; the daemon does not prepare or consume these journals yet.
+- **An explicitly prepared recovery journal** — optional `tasks/<requester task>/worker-recovery-<n>.json`.
+  New local requests carry an optional bus `recovery` marker; the daemon prepares their journal before launching.
+  Older requests lack that marker and retain their previous handling. An optional bus `attempt_run` binds the current execution.
   Absence means legacy handling, including for open requests from an older version. Loading never creates a journal.
   Preparation creates a new file exclusively; advancing replaces it atomically after validation, with mode `0600`.
   Reads and updates are bounded to 64 KiB; a rejected update leaves the previous journal unchanged.
@@ -527,11 +528,14 @@ Each is derived or lives elsewhere, so that there is one place for it:
   It never stores independently trusted counters or an independently trusted current owner. Replay derives them:
   `started` records `worker` and a fresh `run`; `interrupted` records that run, a `cause` and `snapshot`;
   `restarted_queued` records a snapshot; `rejected` records the current run, nonempty `wrong` reasons and snapshot;
+  `observed` records the current run and its declared ending; `assigned` binds a fresh run to its validated workspace;
   `settled` records the current run and forbids further transitions. An attempt's generation increases for every start.
   Run identifiers cannot be reused. Interruptions and settlement must name the current run, so a late answer cannot
-  change ownership. Snapshots name the original worker task, round, nonzero reference number, commit and parent head;
+  change ownership. Snapshots name the current attempt's worker task, round, nonzero reference number, commit and parent head;
   they refer to the existing `refs/agents/snapshots` facility rather than copying worktree contents into JSON.
-  The original workspace, task and branch remain unchanged when another worker takes an attempt.
+  The original workspace identity remains immutable; a wrong-result retry can assign a new workspace and worker task.
+  Final settlement uses an ownership-checked bus receipt in the message log. Loading repairs a state save interrupted
+  after the receipt was appended, without publishing another notice. Stale ownership cannot settle the request.
   No-result causes are `died`, `refused`, `quota`, `no_status`, `restart_queued` and `restart_running`.
   There are at most three returns without a result; the fourth interruption is retained and ends the journal as exhausted.
   These returns never increment the wrong-result try, which starts at one and increases only for `rejected` events.

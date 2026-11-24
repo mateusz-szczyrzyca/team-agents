@@ -1108,23 +1108,25 @@ as `worker-request-<n>.json.damaged` (kept, never deleted, never met again — a
 the request as a wrong result — the bus request ends `failed` and the requester is told why and that the worker's work
 cannot be judged — and goes on with the other requests, the other teams and the owner loop. Look at the kept file and the
 log line to learn what happened to the worker's work: nothing was brought over.
-**A wrong result is tried once elsewhere.** When the result of a run that ended `STATUS: DONE` is wrong (the check failed or
+**A wrong result is tried once elsewhere.** When a new local request ends `STATUS: FAILED` or `STATUS: QUESTIONS`, or its `STATUS: DONE` result is wrong (the check failed or
 ran past its limit, a file outside `files` was changed, nothing was committed, the run lasted past `[workers] seconds`) and
-`[workers] tries` is above 1, the request goes once more to a free worker of another CLI (of the same CLI when no other is
+`[workers] tries` is above 1, the request goes once more to a free worker of another provider (of the same provider when no other is
 free): its prompt says who served the request before and why that result did not serve, and the requester is told that the
 request went again. A second wrong result returns the step to the requester with the reasons of both results, and no third
 worker starts; `tries = 1` never gives a request to a second worker. What the first worker committed is not brought over. The
 try is kept in `tasks/<worker task>/worker-try-<n>.json`, and a daemon that stops while the request waits for the second
 worker goes on from the file of the first result. A worker whose result is not settled is busy; a request the daemon has
-answered does not keep it busy, even when its file cannot be removed. A run that ends otherwise than `STATUS: DONE`, the
-lines of `agent status` for the tries and the pull request's description of the returned steps come with the next version.
+answered keeps it busy until its workspace is released. The lines of `agent status` for the tries and the pull request's description of the returned steps come with a later version.
 
-**Recovery protocol preparation.** The runtime now provides an explicitly prepared request-attempt journal,
-with separate counters for wrong results and up to three returns without a result. It preserves the original
-worker workspace and snapshot identities and validates run ownership when reloaded. This version does not enable
-automatic recovery dispatch: existing open requests keep their previous handling, and no journal is created for
-them implicitly. There is no new configuration key. The [durable format](docs/state.md) and
-[policy](docs/architecture.md#prepared-request-recovery-protocol) describe the APIs for the next recovery parts.
+**Owned settlement.** New local requests bind each execution to its worker, task and run. The final requester
+notice names the serving worker and is published once, even when settlement is replayed after a daemon restart.
+Late results are dropped and logged. Before a wrong-result retry, the daemon retains a snapshot of the failed
+worker's work; a pool retry starts in a fresh workspace from the original requester's commit. The journal lives
+in the requester's task directory and preserves both workspace identities and the observed ending.
+Existing open requests without the opt-in marker keep their previous handling; loading never opts them in.
+Automatic recovery for a dead CLI, missing status or interrupted running request is not enabled yet.
+The three-return no-result bound is prepared independently of wrong-result tries, with no new configuration key.
+See the [durable format](docs/state.md) and [protocol](docs/architecture.md#prepared-request-recovery-protocol).
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
