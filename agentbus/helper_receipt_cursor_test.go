@@ -29,7 +29,7 @@ func TestOwnedReceiptRecoverySkipsThePersistedPrefixAcrossLoads(t *testing.T) {
 	if len(poisoned) != len(data) || bytes.Equal(poisoned, data) {
 		t.Fatal("receipt prefix not poisoned")
 	}
-	if err := os.WriteFile(b.path("messages.jsonl"), poisoned, 0o600); err != nil {
+	if err := os.WriteFile(b.path("messages.jsonl"), poisoned, 0o600); err != nil { // #nosec G703 -- the path is fixed in t.TempDir; only the intentional corrupt receipt is tainted.
 		t.Fatal(err)
 	}
 	for i := 0; i < 4; i++ {
@@ -132,7 +132,7 @@ func TestOwnedRequestBeforeTheReceiptCursorStillSettlesOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(b.path("state.json"), data, 0o600); err != nil {
+	if err := os.WriteFile(b.path("state.json"), data, 0o600); err != nil { // #nosec G703 -- the path is fixed in t.TempDir; data is the legacy JSON fixture, not a path.
 		t.Fatal(err)
 	}
 	cmd := ownedCommand{ID: 1, Action: "settle", Worker: "worker", Task: "worker-task", Run: "run-1", Status: HelperDone, Notice: "served"}
