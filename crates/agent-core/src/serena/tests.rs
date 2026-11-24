@@ -83,6 +83,48 @@ fn a_cli_tool_that_reads_a_file_of_code_is_a_search_of_code() {
 }
 
 #[test]
+fn a_cli_tool_that_finds_files_of_code_by_a_pattern_is_a_search_of_code() {
+    table(vec![
+        (call("Glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
+        (call("glob", "**/*.tsx"), Some(vec!["**/*.tsx"])),
+        (
+            call("Glob", "/work/tree/crates/**/lib.go"),
+            Some(vec!["/work/tree/crates/**/lib.go"]),
+        ),
+    ]);
+}
+
+#[test]
+fn a_search_over_a_directory_of_code_is_a_search_of_code() {
+    table(vec![
+        (command("grep -rn serena crates/"), Some(vec!["crates/"])),
+        (command("rg find_symbol src"), Some(vec!["src"])),
+        (command("grep -n foo ."), Some(vec!["."])),
+        (command("cat ."), Some(vec!["."])),
+        (command("grep -rn foo ."), Some(vec!["."])),
+    ]);
+}
+
+#[test]
+fn a_search_over_a_directory_of_text_is_no_search_of_code() {
+    table(vec![
+        (command("grep -rn serena docs/"), None),
+        (command("rg remind_after config"), None),
+        (command("grep -r TODO build/"), None),
+        (command("grep -rn serena .."), None),
+    ]);
+}
+
+#[test]
+fn a_search_of_another_program_than_the_shells_own_is_no_search_of_code() {
+    table(vec![
+        (command("python3 x.py"), None),
+        (command("python3 src/main.rs"), None),
+        (command("awk '{print $1}' crates/agent-core/src/lib.rs"), None),
+    ]);
+}
+
+#[test]
 fn a_cli_tool_that_reads_text_is_no_search_of_code() {
     table(vec![
         (call("Read", "/work/tree/docs/configuration.md"), None),

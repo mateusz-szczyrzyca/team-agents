@@ -21,6 +21,14 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] Pool runs share worker limits, the global run ceiling and disk checks with ordinary runs, including after their requester is removed. Failed preparation leaves the provider's turn available.
 - [agent] `agent status --running` keeps workers assigned to active legacy crews even when those crews have no open rounds.
 
+### New features
+- [agent-core] [agent-runtime] A run that has Serena and searches code without it past a bound is told once in its session to find code with Serena. Counted are the shell's `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` and `find` over a file of code, and the CLI's own `Grep`, `Glob` and `Read` over one; Markdown, TOML, a log or a diff never counts, and neither does a run that called Serena at least once. The reminder names the count and asks in the imperative for `find_symbol`, `find_referencing_symbols` and `get_symbols_overview`, while `grep` stays for text. A new session counts anew, a resumed one keeps its count.
+- [agent] [agent-core] [agent-runtime] Each reminder is the log event `serena_reminded` and a record of the history with the task, the run, the count and the CLI, and `agent debug` tells next to a run's tool count whether it was reminded and how many calls of Serena it made after.
+
+### Configuration
+- [agent-core] new: `[serena] remind_after` (default `40`; `0` turns the reminder off) — the count of searches of code without Serena at which a run with Serena is reminded once in its session; a file without `[serena]` keeps the default.
+- [agent-runtime] A history of version 22 is read and upgraded to version 23, which admits the record and the log event of a reminder.
+
 ### Configuration
 - [agent-core] new: `[agents.NAME] capabilities` and `[investigators.NAME] capabilities` (default `[]`) — capabilities matched against worker request `requires`, written as `<namespace>:<value>` with namespaces `os`, `arch`, `build`, `test`, `hw`, `net`.
 
