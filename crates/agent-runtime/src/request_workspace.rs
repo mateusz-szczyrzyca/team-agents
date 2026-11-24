@@ -333,13 +333,58 @@ pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Re
         source,
     })?;
     let task_dir = home.task_dir(&workspace.requester_task);
-    tokio::fs::create_dir_all(&task_dir)
+    let record = write_record(&task_dir, workspace).await;
+    if let Err(write_error) = record {
+        // A failed record write rolls the new worktree and its branch back, so a failed prepare leaves nothing
+        // behind; a rollback that fails too is told as a warning, and the leftover worktree stays discoverable by
+        // the workspace's branch name.
+        if let Err(rollback_error) = remove_worktree_and_branch(home, git, workspace).await {
+            tracing::warn!(
+                event = agent_core::log::LogEvent::GitCallFailed.as_str(),
+                request = %workspace.request,
+                error = %rollback_error,
+                "the worktree of a failed prepare could not be rolled back"
+            );
+        }
+        return Err(write_error);
+    }
+    Ok(())
+}
+
+/// Releases the workspace of `request` in the `home`: removes its worktree and its branch, and the record of it kept in
+/// the requester's task directory.
+///
+/// A release is retriable: a worktree, branch or record that a previous partial release already removed is not a
+/// failure again.
+///
+/// # Errors
+/// [`WorkspaceError`] when a worktree or branch cannot be removed, or the record cannot be removed.
+pub async fn release(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
+    remove_worktree_and_branch(home, git, workspace).await?;
+    let path = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
+    match tokio::fs::remove_file(&path).await {
+        Ok(()) => Ok(()),
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(source) => Err(WorkspaceError::Write {
+            request: workspace.request,
+            source,
+        }),
+    }
+}
+
+/// Writes the record of `workspace` into the requester's task directory `task_dir`, through a temporary file.
+///
+/// # Errors
+/// [`WorkspaceError::Write`] when the directory or the file cannot be written; [`WorkspaceError::Encode`] when the
+/// workspace cannot be made JSON.
+async fn write_record(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
+    tokio::fs::create_dir_all(task_dir)
         .await
         .map_err(|source| WorkspaceError::Write {
             request: workspace.request,
             source,
         })?;
-    let (path, text) = file_and_text(&task_dir, workspace)?;
+    let (path, text) = file_and_text(task_dir, workspace)?;
     let temporary = path.with_extension("json.tmp");
     tokio::fs::write(&temporary, text)
         .await
@@ -355,32 +400,47 @@ pub async fn prepare(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Re
         })
 }
 
-/// Releases the workspace of `request` in the `home`: removes its worktree and its branch, and the record of it kept in
-/// the requester's task directory.
+/// Removes the worktree and the branch of `workspace` from the `home` when they are still there.
+///
+/// The retriable removal of [`release`] and the rollback of a failed [`prepare`] share it: a worktree is only removed
+/// when its branch is still checked out somewhere, and the branch only when it still exists.
 ///
 /// # Errors
-/// [`WorkspaceError`] when a worktree or branch cannot be removed, or the record cannot be removed.
-pub async fn release(home: &Home, git: &Git, workspace: &RequestWorkspace) -> Result<(), WorkspaceError> {
+/// [`WorkspaceError::Git`] when a worktree or branch that is still there cannot be removed.
+async fn remove_worktree_and_branch(
+    home: &Home,
+    git: &Git,
+    workspace: &RequestWorkspace,
+) -> Result<(), WorkspaceError> {
     let worktree = worktree_of(home, &workspace.requester_repo, &workspace.worker_task)?;
-    git.worktree_remove(&worktree, RemoveMode::Force)
+    let held = git.held_branches().await.map_err(|source| WorkspaceError::Git {
+        request: workspace.request,
+        source,
+    })?;
+    if held.contains(&workspace.branch) {
+        git.worktree_remove(&worktree, RemoveMode::Force)
+            .await
+            .map_err(|source| WorkspaceError::Git {
+                request: workspace.request,
+                source,
+            })?;
+    }
+    if git
+        .branch_tip(&workspace.branch)
         .await
         .map_err(|source| WorkspaceError::Git {
             request: workspace.request,
             source,
-        })?;
-    git.branch_delete(&workspace.branch, DeleteMode::Force)
-        .await
-        .map_err(|source| WorkspaceError::Git {
-            request: workspace.request,
-            source,
-        })?;
-    let path = path_of(&home.task_dir(&workspace.requester_task), workspace.request);
-    tokio::fs::remove_file(path)
-        .await
-        .map_err(|source| WorkspaceError::Write {
-            request: workspace.request,
-            source,
-        })?;
+        })?
+        .is_some()
+    {
+        git.branch_delete(&workspace.branch, DeleteMode::Force)
+            .await
+            .map_err(|source| WorkspaceError::Git {
+                request: workspace.request,
+                source,
+            })?;
+    }
     Ok(())
 }
 
