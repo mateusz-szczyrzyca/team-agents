@@ -58,10 +58,8 @@ pub enum RemindAfterError {
 /// What one session of a run did without Serena, as the run engine notes it.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct SessionTally {
-    /// The searches of code without Serena so far, counted from one.
-    searches: u64,
-    /// Whether Serena was called at least once.
-    used_serena: bool,
+    /// What its steps counted so far.
+    counted: Counted,
     /// Whether this session was reminded already.
     reminded: bool,
 }
@@ -71,8 +69,10 @@ impl SessionTally {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            searches: 1,
-            used_serena: false,
+            counted: Counted {
+                searches: 0,
+                used_serena: false,
+            },
             reminded: false,
         }
     }
@@ -80,41 +80,25 @@ impl SessionTally {
     /// Notes the step `event` of the session and returns the reminder it makes due now, if any.
     #[must_use]
     pub fn note(&mut self, event: &ActivityEvent, after: RemindAfter) -> Option<Reminder> {
-        match event {
-            ActivityEvent::ToolCall { name, .. } if is_serena(name) => self.used_serena = true,
-            _ => {
-                if code_search(event).is_some() {
-                    self.searches = self.searches.saturating_add(1);
-                }
-            }
-        }
+        self.counted.count(event);
         (self.is_due(after)).then_some(Reminder {
-            searches: self.searches,
+            searches: self.counted.searches,
         })
-    }
-
-    /// Counts `event`, as a session counts it.
-    #[must_use]
-    pub fn counted(self) -> Counted {
-        Counted {
-            searches: self.searches,
-            used_serena: self.used_serena,
-        }
     }
 
     /// Whether the reminder of the session is due, and marks the session as reminded: it is told once.
     fn is_due(&mut self, after: RemindAfter) -> bool {
-        if self.reminded || self.used_serena {
+        if self.reminded || self.counted.used_serena {
             return false;
         }
-        self.reminded = self.searches >= after.get();
+        self.reminded = self.counted.searches >= after.get();
         self.reminded
     }
 
     /// The searches of code without Serena the session made so far.
     #[must_use]
     pub const fn searches(&self) -> u64 {
-        self.searches
+        self.counted.searches
     }
 }
 
@@ -128,8 +112,17 @@ pub struct Counted {
 }
 
 impl Counted {
-    /// Counts the step `event`.
-    pub fn count(&mut self, _event: &ActivityEvent) {}
+    /// Counts the step `event`: one more search of code for a search of code, and Serena once it is called.
+    pub fn count(&mut self, event: &ActivityEvent) {
+        match event {
+            ActivityEvent::ToolCall { name, .. } if is_serena(name) => self.used_serena = true,
+            _ => {
+                if code_search(event).is_some() {
+                    self.searches = self.searches.saturating_add(1);
+                }
+            }
+        }
+    }
 }
 
 /// Whether the tool `name` is one of Serena's.
