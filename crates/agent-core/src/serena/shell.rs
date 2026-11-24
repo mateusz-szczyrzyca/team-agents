@@ -129,10 +129,11 @@ impl Meaning {
     /// The meaning of the long option `--key` of `reader`.
     fn of_long(reader: Reader, key: &str) -> Self {
         match (reader, key) {
-            (Reader::Grep | Reader::Rg | Reader::Sed, "regexp" | "expression" | "file") => Self::Pattern,
+            (Reader::Grep | Reader::Rg | Reader::Sed, "regexp" | "expression" | "file") | (Reader::Rg, "files") => {
+                Self::Pattern
+            }
             (Reader::Grep | Reader::Rg, "include") | (Reader::Rg, "glob" | "iglob") => Self::Glob,
             (Reader::Rg, "type") => Self::Type,
-            (Reader::Rg, "files") => Self::Pattern,
             (Reader::Sed, "quiet" | "silent") => Self::Quiet,
             (Reader::Sed, key) if key.starts_with("in-place") => Self::InPlace,
             _ => Self::Other,
