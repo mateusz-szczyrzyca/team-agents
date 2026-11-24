@@ -709,6 +709,37 @@ mod tests {
     }
 
     #[test]
+    fn a_search_tool_with_a_path_marks_its_summary_as_a_path() {
+        let call = |name: &str, summary: &str| ActivityEvent::ToolCall {
+            name: name.to_owned(),
+            summary: summary.to_owned(),
+        };
+        let table = [
+            (
+                "Grep",
+                json!({"pattern": "foo", "path": "src"}),
+                call("Grep", "src (path)"),
+            ),
+            (
+                "grep",
+                json!({"pattern": "foo", "path": "docs"}),
+                call("grep", "docs (path)"),
+            ),
+            ("Grep", json!({"pattern": "foo"}), call("Grep", "foo")),
+            ("Read", json!({"file_path": "/f"}), call("Read", "/f")),
+            (
+                "Glob",
+                json!({"pattern": "src/**/*.rs", "path": "/w"}),
+                call("Glob", "/w"),
+            ),
+        ];
+
+        for (name, input, expected) in table {
+            assert_eq!(tool_activity(name, &input), expected, "{name} {input}");
+        }
+    }
+
+    #[test]
     fn a_long_argument_summary_is_cut_for_a_bus_call_at_200_and_for_another_tool_at_160() {
         let long = json!({ "title": "x".repeat(300) });
 

@@ -39,6 +39,10 @@ const CODE_DIRECTORIES: [&str; 12] = [
     "src", "crates", "lib", "cmd", "pkg", "internal", "app", "tests", "test", "tools", "bin", "agentbus",
 ];
 
+/// The mark that ends the summary of a CLI's search (`Grep`, `grep`) that was given a path: `src (path)`. The summary of a
+/// search with no path is its pattern, with no mark, and it searches the whole repository.
+pub const SEARCH_PATH_MARK: &str = " (path)";
+
 /// What a CLI's own tool does to the files it is given, by the name Claude Code and opencode give it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CliTool {

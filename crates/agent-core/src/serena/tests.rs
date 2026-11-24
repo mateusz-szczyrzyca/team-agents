@@ -317,3 +317,24 @@ fn a_listing_of_files_by_rg_names_its_directory_and_no_pattern() {
         (command("rg --files -g '*.md' src"), None),
     ]);
 }
+
+#[test]
+fn a_cli_search_with_no_mark_is_a_pattern_over_the_whole_repository() {
+    table(vec![
+        (call("Grep", "docs"), Some(vec!["."])),
+        (call("grep", "config"), Some(vec!["."])),
+        (call("Grep", "foo/bar"), Some(vec!["."])),
+        (call("Grep", "TODO README.md"), Some(vec!["."])),
+        (call("grep", "fn main src/lib.rs"), Some(vec!["."])),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_a_path_of_text_is_no_search_of_code_whatever_the_name() {
+    table(vec![
+        (call("Grep", "docs (path)"), None),
+        (call("grep", "config (path)"), None),
+        (call("Grep", "/work/tree/docs (path)"), None),
+        (call("Grep", "src (path)"), Some(vec!["src"])),
+    ]);
+}
