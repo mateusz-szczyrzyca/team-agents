@@ -1,0 +1,14 @@
+{
+  "request": 7,
+  "requester": "claude-1",
+  "requester_task": "task-20261124-090000-bbbb",
+  "requester_round": "round-20261124-090000-aaaa",
+  "requester_repo": "example-repo",
+  "worker": "glm-1",
+  "worker_task": "task-20261124-090000-cccc",
+  "branch": "agents/glm-1/task-20261124-090000-cccc",
+  "base": "0123456789abcdef0123456789abcdef01234567",
+  "stage": {
+    "workspace_stage": "working"
+  }
+}

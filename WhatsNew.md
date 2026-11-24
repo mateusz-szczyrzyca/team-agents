@@ -5,6 +5,19 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.87.0 — 24.11.2026 — PR #240
+
+### Enhancements
+- [agent-runtime] Prepares a worker's task, branch and worktree at the requester's committed base, keeping the requester's uncommitted files untouched. New dispatch will use this in the next part.
+- [agent] Settles recorded worker requests outside the team crew: checks the result in its own worktree, brings over a valid commit, retries a wrong result, and releases the workspace. Failed cleanup is retried; malformed results are retained for inspection.
+
+## 0.86.0 — 24.11.2026 — PR #239
+
+### Bug fixes
+- [agent] [agent-core] A team no longer waits behind a member that failed after it called a bus tool when its lead already holds the member's work: once the lead ends `STATUS: DONE` with a passed gate and the member's branch is in the lead's branch (and no uncommitted file of the member's worktree is new to the lead), the member is closed as taken over and the pull request is opened, with no `agent stop` by hand. A member that failed without a single tool call still holds the round and the human is still told.
+- [agent] [agent-core] [agent-runtime] Work of a failed or stopped member that the lead's branch lacks is never dropped: the lead is told once, in one message for all members, which commits and files; a file whose contents changed after the lead was told of it is told again; if the lead ends `STATUS: DONE` again without the commits, the human is asked once, with the list, also after a restart of the daemon.
+- [agent] [agent-core] A member the human stops after it was once started in a new session is looked at like any other stopped member: its uncommitted files are told to the lead before the round is published. Only a member the ladder gave to its lead is skipped, and only until it runs again: a hand-over member that is resumed and stopped again is looked at; the state records that as `renewals.given_to_lead` (optional, absent in older states).
+
 ## 0.85.0 — 24.11.2026 — PR #238
 
 ### New features

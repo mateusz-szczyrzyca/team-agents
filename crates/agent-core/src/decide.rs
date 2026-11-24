@@ -13,6 +13,7 @@ pub mod busy;
 pub mod checks;
 pub mod commit_guard;
 pub mod context;
+pub mod delivered;
 pub mod delivery;
 pub mod disclosure;
 pub mod fix;

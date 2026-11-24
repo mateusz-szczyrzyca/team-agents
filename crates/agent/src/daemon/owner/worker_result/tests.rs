@@ -5,10 +5,29 @@
 use agent_core::decide::worker_result::{CheckOutcome, Elsewhere, Scope, WorkerEnding, Wrong};
 use agent_runtime::worker_request::{Checked, Found};
 
+use std::path::Path;
+
 use agent_core::ids::{AgentName, TaskId};
 use agent_runtime::agentbus::{DelegationRequest, DelegationStatus};
 
-use super::{facts_of, is_running_for, reasons_of, scope_of};
+use super::{RequestCheck, facts_of, is_running_for, reasons_of, run_request_check, scope_of};
+
+/// Runs git in `dir` with a fixed identity and returns its standard output, so a test can build the worktree a release
+/// of a workspace needs.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
 
 fn found(outcome: CheckOutcome) -> Found {
     Found {
@@ -207,6 +226,267 @@ fn a_request_is_the_workers_while_the_bus_has_it_running_for_its_task_or_for_its
 }
 
 #[tokio::test]
+async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_recorded_reason() {
+    use agent_runtime::process::error_chain;
+    use agent_runtime::request_workspace::WorkspaceError;
+
+    use crate::fixtures::{repo, task};
+
+    // `start_request_check` builds the fault of a request served in a workspace from `request_workspace::worktree_of`;
+    // that cause is what the recorded failed check keeps, not a generic "no worktree" text. Drive the free
+    // `run_request_check` with the exact cause `worktree_of` yields for a non-text path, and prove it surfaces.
+    let cause = error_chain(&WorkspaceError::NotText {
+        repo: repo(),
+        task: task(2),
+        path: "/tmp/example".into(),
+    });
+    let found = run_request_check(RequestCheck::new(
+        Err(cause.clone()),
+        "/tmp/example".into(),
+        "1.1".parse().unwrap(),
+        "test -s docs/count.txt".to_owned(),
+        60,
+        vec![],
+    ))
+    .await;
+
+    assert_eq!(found.outcome, CheckOutcome::Failed);
+    assert_eq!(found.line, "test -s docs/count.txt");
+    assert_eq!(
+        found.reason.as_deref(),
+        Some(cause.as_str()),
+        "the recorded failed check keeps the worktree_of cause, not a generic message"
+    );
+    assert_ne!(
+        found.reason.as_deref(),
+        Some("the worker's worktree cannot be reached"),
+        "the reason is the specific not-UTF-8 worktree cause, not the generic fallback"
+    );
+}
+
+/// The workspace record of request 1, requester `claude-1` of task 1, working in the workspace of `claude-2`'s task 2.
+fn a_workspace_record(
+    stage: agent_runtime::request_workspace::Stage,
+) -> agent_runtime::request_workspace::RequestWorkspace {
+    use std::num::NonZeroU64;
+    use std::str::FromStr;
+
+    use crate::fixtures::{repo, task};
+    use agent_core::ids::RoundId;
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::request_workspace::branch;
+
+    let worker: agent_core::ids::AgentName = "claude-2".parse().unwrap();
+    let worker_task = task(2);
+    agent_runtime::request_workspace::WorkspaceRecord {
+        request: RequestId::new(NonZeroU64::new(1).unwrap()),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        requester_round: RoundId::from_str("round-20261124-090000-aaaa").unwrap(),
+        requester_repo: repo(),
+        worker: worker.clone(),
+        worker_task: worker_task.clone(),
+        branch: branch(&worker, &worker_task).unwrap(),
+        base: "0000000000000000000000000000000000000000".parse().unwrap(),
+        stage,
+    }
+    .try_into()
+    .unwrap()
+}
+
+/// The pending of request 1 in the worker `claude-2`'s task 2, matching [`a_workspace_record`].
+fn a_matching_pending() -> agent_runtime::worker_request::Pending {
+    use std::num::NonZeroU64;
+
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::worker_request::{Pending, Stage};
+
+    Pending {
+        request: RequestId::new(NonZeroU64::new(1).unwrap()),
+        team: team_id(0),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        worker: "claude-2".parse().unwrap(),
+        worker_task: task(2),
+        summary: "finished".to_owned(),
+        run_seconds: 0,
+        base: None,
+        stage: Stage::Ended,
+    }
+}
+
+/// A daemon in a temporary home with one pair team, whose owner is not running.
+async fn pair_daemon() -> (super::super::fixture::Daemon, super::super::Owner) {
+    use super::super::fixture::{Daemon, pair_state};
+
+    let daemon = Daemon::new(&pair_state(), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    (daemon, owner)
+}
+
+#[tokio::test]
+async fn a_completion_whose_record_cannot_be_written_leaves_the_workspace_working_and_is_tried_again() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::request_workspace::save;
+    use agent_runtime::worker_request::write_pending;
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Working);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    let worker_dir = daemon.home.task_dir(&task(2));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    std::fs::create_dir_all(&worker_dir).unwrap();
+    save(&requester_dir, &record).unwrap();
+    write_pending(&worker_dir, &a_matching_pending()).unwrap();
+    // The requester's task directory is read-only, so the completion's write of the Ended record fails and the record
+    // stays Working to be completed again at the next look.
+    std::fs::set_permissions(&requester_dir, std::fs::Permissions::from_mode(0o555)).unwrap();
+    std::fs::set_permissions(&worker_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(requester_dir.join("request-workspace-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        on_disk["stage"]["workspace_stage"], "working",
+        "the record stays Working"
+    );
+    assert_eq!(owner.unreadable_requests.len(), 1, "the failed completion is told once");
+    assert!(
+        owner
+            .unreadable_requests
+            .iter()
+            .any(|reason| reason.contains("cannot be saved as ended")),
+        "the told reason names the failed completion, got {:?}",
+        owner.unreadable_requests
+    );
+
+    // A second look tries the completion again: the fault is still told once.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(owner.unreadable_requests.len(), 1);
+    std::fs::set_permissions(&requester_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A third look, once the directory is writable again, completes the record: the stage on disk moves from working
+    // to ended, so the completion/settlement actually progresses once the fault is repaired, instead of only retrying
+    // it. (Any release the settlement then attempts has no git here, so it may add a `release 1`; what is asserted is
+    // the progress of the record, not the count of told faults.)
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(requester_dir.join("request-workspace-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        on_disk["stage"]["workspace_stage"], "ended",
+        "the record progresses to ended once the directory is writable again"
+    );
+}
+
+#[tokio::test]
+async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_another_try() {
+    use crate::fixtures::{repo, task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    agent_runtime::request_workspace::save(&requester_dir, &record).unwrap();
+    // No pending and no `*.damaged` marker: a leftover of a settled request whose workspace is to be released. The
+    // requester's worktree cannot be released (there is no such git worktree), so the release fails and is tried again.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(
+        owner.unreadable_requests.iter().any(|reason| reason == "release 1"),
+        "the failed release is told once, got {:?}",
+        owner.unreadable_requests
+    );
+    assert!(
+        requester_dir.join("request-workspace-1.json").exists(),
+        "the record is kept for the next look to release it"
+    );
+
+    // A second look with the fault still there is told once again, not twice: the same release is not re-told.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(
+        owner
+            .unreadable_requests
+            .iter()
+            .filter(|reason| reason == &"release 1")
+            .count(),
+        1
+    );
+    assert!(
+        requester_dir.join("request-workspace-1.json").exists(),
+        "the record is still kept"
+    );
+
+    // Repair the git the release needs: a checkout whose worktree for task 1 is the requester's worktree (where the
+    // release runs) and whose worktree for task 2 is the workspace on its branch. A third look then removes the
+    // worktree, deletes the branch and drops the record.
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(checkout.path().join("README.md"), "read me\n").unwrap();
+    git(checkout.path(), &["add", "README.md"]);
+    git(checkout.path(), &["commit", "-q", "-m", "first"]);
+    let requester_worktree = daemon.home.worktree_dir(&repo(), &task(1));
+    let worker_worktree = daemon.home.worktree_dir(&repo(), &task(2));
+    let requester_branch =
+        agent_runtime::request_workspace::branch(&record.record().requester, &record.record().requester_task).unwrap();
+    for (path, branch) in [
+        (requester_worktree, requester_branch),
+        (worker_worktree.clone(), record.record().branch.clone()),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(
+            checkout.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch.as_str(),
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+    }
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(
+        !requester_dir.join("request-workspace-1.json").exists(),
+        "the record is dropped once the release succeeds"
+    );
+    assert!(!worker_worktree.exists(), "the worker's worktree is removed");
+    assert_eq!(
+        git(checkout.path(), &["branch", "--list", record.record().branch.as_str()]).trim(),
+        "",
+        "the workspace branch is deleted"
+    );
+}
+
+#[tokio::test]
+async fn a_workspace_record_that_cannot_be_read_is_told_once_and_left_alone() {
+    use crate::fixtures::{task, team_id};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let requester_dir = daemon.home.task_dir(&task(1));
+    std::fs::create_dir_all(&requester_dir).unwrap();
+    let record_path = requester_dir.join("request-workspace-1.json");
+    std::fs::write(&record_path, "not json at all").unwrap();
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(owner.unreadable_requests.len(), 1, "the unreadable record is told once");
+    assert_eq!(
+        std::fs::read_to_string(&record_path).unwrap(),
+        "not json at all",
+        "the file is left alone"
+    );
+}
+
+#[tokio::test]
 async fn removal_refuses_or_joins_a_workers_pending_check() {
     use std::num::NonZeroU64;
 
@@ -243,6 +523,7 @@ async fn removal_refuses_or_joins_a_workers_pending_check() {
             checked(&[], &[], None),
             "1.1".parse().unwrap(),
             "/bin/true".to_owned(),
+            None,
         );
 
         let result = owner
@@ -269,4 +550,102 @@ async fn removal_refuses_or_joins_a_workers_pending_check() {
             owner.request_check_done(joined).await.unwrap();
         }
     }
+}
+
+#[tokio::test]
+async fn starting_a_workspace_check_preserves_the_joined_path_length_error() {
+    use std::sync::Arc;
+
+    use agent_core::config::{AbsolutePath, ValueRule};
+    use agent_runtime::process::error_chain;
+    use agent_runtime::request_workspace::{Stage, WorkspaceError, worktree_of};
+    use agent_runtime::store::{Home, StateStore};
+    use agent_runtime::worker_request::{Stage as PendingStage, read_pending_each};
+
+    let (daemon, mut owner) = pair_daemon().await;
+    let root = tempfile::tempdir().unwrap();
+    let mut text = root.path().to_str().unwrap().to_owned();
+    // Keep the home and its lock below the path bound, while the joined worker path exceeds it.
+    while text.len() < 4070 {
+        text.push('/');
+        let component = (4070 - text.len()).min(200);
+        text.push_str(&"h".repeat(component));
+    }
+    let home = Home::new(&text.parse::<AbsolutePath>().unwrap());
+    owner.parts.store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+    let record = a_workspace_record(Stage::Ended);
+    let error = worktree_of(&home, &record.record().requester_repo, &record.record().worker_task).unwrap_err();
+    assert!(matches!(
+        &error,
+        WorkspaceError::NotAbsolute { source, .. } if source.rule == ValueRule::TooLong { max: 4096 }
+    ));
+    let reason = error_chain(&error);
+    let task_dir = daemon.home.task_dir(&record.record().worker_task);
+    std::fs::create_dir_all(&task_dir).unwrap();
+
+    owner.start_request_check(
+        &task_dir,
+        a_matching_pending(),
+        checked(&[], &[], None),
+        "1.1".parse().unwrap(),
+        "/bin/true".to_owned(),
+        Some(&record),
+    );
+    let joined = owner.request_checks.join_next_with_id().await.unwrap();
+    owner.request_check_done(joined).await.unwrap();
+
+    let mut pending = read_pending_each(&task_dir).await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let pending = pending.pop().unwrap().unwrap();
+    let PendingStage::Checked(checked) = pending.stage else {
+        panic!("the starter's check must be recorded");
+    };
+    let found = checked.found.unwrap();
+    assert_eq!(found.outcome, CheckOutcome::Failed);
+    assert_eq!(found.reason.as_deref(), Some(reason.as_str()));
+}
+
+#[tokio::test]
+async fn mismatched_pending_worker_or_team_quarantines_the_workspace() {
+    use crate::fixtures::{task, team_id};
+    use agent_runtime::worker_request::{is_set_aside, write_pending};
+
+    for wrong_worker in [true, false] {
+        let (daemon, mut owner) = pair_daemon().await;
+        let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+        let mut pending = a_matching_pending();
+        if wrong_worker {
+            pending.worker = "claude-3".parse().unwrap();
+        } else {
+            pending.team = team_id(1);
+        }
+        let worker_dir = daemon.home.task_dir(&task(2));
+        std::fs::create_dir_all(&worker_dir).unwrap();
+        write_pending(&worker_dir, &pending).unwrap();
+
+        owner.settle_workspace_one(&team_id(0), &record).await.unwrap();
+
+        assert!(
+            is_set_aside(&worker_dir, pending.request).await.unwrap(),
+            "a mismatched worker ({wrong_worker}) or team must be quarantined"
+        );
+        assert_eq!(owner.answered_requests.len(), 0);
+    }
+}
+
+#[tokio::test]
+async fn releasing_without_requester_git_records_one_warning_per_request() {
+    use crate::fixtures::team_id;
+
+    let (_daemon, mut owner) = pair_daemon().await;
+    let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
+
+    for _ in 0..2 {
+        owner.release_workspace(&team_id(9), &record).await.unwrap();
+    }
+
+    assert_eq!(
+        owner.unreadable_requests,
+        ["release 1".to_owned()].into_iter().collect()
+    );
 }

@@ -500,6 +500,45 @@ long.
 Not done here, by item: the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
 resumed session whose result it did not print is not done.
 
+### Request workspaces (`agent-runtime`)
+
+Part 1.1b of the worker harness adds the record of a request served to a worker of the pool, prepared so that from part c
+a request of the pool can be served in a workspace of its own: a task and a git worktree of that task, in the
+requester's repository, at the requester's committed end, kept with no place in the requester's crew. The worktree is at
+`worktrees/<requester repo>/<worker task>` on the branch `agents/<worker>/<worker task>`, made from the commit the
+requester's worktree was at when it was committed (`request_workspace::prepare`, over `Git::worktree_add`); the
+requester's uncommitted files stay in the requester's own worktree untouched. The record — `RequestWorkspace` — is
+written through a temporary file to `tasks/<requester task>/request-workspace-<n>.json`, the directory the request
+names, so completion, pending-settlement and second-try lookups of a request's worker task and worktree
+(`RequestWorkspace::read_each`) find it without going through the requester's crew; its form is told in
+`docs/state.md`. The stage (`working` while the worker works, `ended` once its run ended and the request waits to be
+settled) is written before each next stage. The runtime validates both new and loaded metadata: the worker task must
+differ from the requester task, and its branch must equal the branch derived from the worker and worker task.
+`RequestWorkspace` seals that identity behind immutable metadata; invalid records are left alone and never released.
+
+**The settlement of the owner.** At every look at a team, after the crew's own pending files, the owner reads the
+workspace records from the task directories of the team's members — the requester of such a request is a member — and
+settles each record with its pending (`settle_workspace_results`, `settle_workspace_one`). The stages are the crew's
+own: a `working` record without a pending is a worker still working; a `working` record whose pending is already
+present is completed first (`request_workspace::complete`: the pending is written into the worker's task directory and
+the record saved `ended`, so a daemon that stopped between the two writes never loses the result or forgets the
+workspace), then settled. The check runs in the workspace's worktree, the commit the worker started from falls back to
+the record's base when the pending carries none, and a good commit is brought over to the requester's committed end
+once, leaving the requester's uncommitted files untouched.
+
+**Retention and release.** A workspace lives from the moment its request is given to the worker until the request's
+result is settled, and is then released (`request_workspace::release`): `git worktree remove --force`, the branch
+deleted, and the record removed. A released request has no task, worktree or record of its own left behind; an
+abandoned request keeps its workspace so that a restart of the daemon finds where the worker served it. The workspace
+is released on the durable handoff — the answer taken, or the request given again and no longer this worker's — and a
+request that was answered, or an `ended` record whose pending is gone (a leftover of a settled request), leaves only
+its record, which is released. A release that cannot finish is told once and tried again at the next look, from the
+record that stays. A pending from another team or one that does not match its record on request, worker, worker task, requester and requester task is a
+damaged file: it is set aside and told once, and its workspace is never released on its behalf; a record file that
+cannot be read is told once and left alone, and one damaged file does not hide the others. The serving path that makes
+these workspaces is wired in part c; this version prepares the settlement path, `serve_requests` still serves
+team-member workers exactly as before, and an older daemon that finds a record leaves it alone.
+
 ### Pull requests, reviews and the merge (the autopilot)
 
 The default `--autopilot` loop, in the owner (`owner/rounds.rs`), is: the lead's branch is pushed and opened as a pull
@@ -573,6 +612,8 @@ prompt (`harness/pr/team-asleep.md`) says that nobody works and how every task e
 (`ASLEEP_WAKES`) the human is told instead (`harness/pr/notice-team-asleep.md`), once for every time the team falls asleep again.
 The count starts over when the lead ends with `STATUS: DONE`, and with the daemon.
 When the lead has reported `STATUS: DONE` and waits, but an item in progress or being fixed stands behind a failed member, the lead cannot fix it and waking the lead would do nothing. The harness tells the human immediately, once per item (`harness/pr/notice-standing-item.md`), with the member's last-run detail line, showing how to speak to the member and resume it (`agent say <task>`, `agent resume <task>`) or stop the team (`agent stop <team>`). Resuming the failed task clears the deduplication for items assigned to that task.
+
+**A team is not held behind work its lead already holds** (`owner/rounds/delivered.rs`, the decision `agent_core::decide::delivered::delivered_step`). Before a round's branch is published, once the lead ended `STATUS: DONE` with a passed gate at the tip of its branch, every member whose item is in progress and whose task failed after a run that called a bus tool, or was stopped by the human, is compared with the lead's branch. A failed member whose branch has no commit the lead's branch lacks, and whose worktree holds no uncommitted file the lead was not told of, is closed as taken over (`stopped`; the `takeover` decision is logged) and the round is published at once. A member that failed without a single tool call is not looked at (its failure is a setup defect and the human is told, as above), nor is one that still runs, waits, asks or is paused, nor a stopped member the ladder gave to the lead and that has begun no run since (its briefing listed the files; a member resumed and stopped again is looked at; the state keeps `renewals.given_to_lead` for it, so that a member the human stopped after a new session of its own is still looked at). When members have commits the lead lacks, or files it was not told of, the lead is woken once with one briefing for all of them (`harness/pr/member-work-lacks.md`, one section per member, with a snapshot of each worktree that holds files); a file whose bytes changed since the lead was told of it counts as untold (the daemon compares the tree of the member's worktree, `Git::worktree_tree`). If the lead ends `STATUS: DONE` again and commits are still lacking, the human is asked once with the same list (`harness/pr/notice-member-work-left.md`); a failed member's item stays unpublished, a stopped member's item is published with the lead's branch and the notice says so. What the lead was told is kept in the daemon's memory only: after a restart a lead may be told once more, never silently dropped. What the human was told is found among the saved notices (and suppresses the standing-item notice of the same member), so the human is asked once also across restarts. The release itself is a change of the state, so it survives a restart.
 
 The first pass of a newly opened PR is independent: reviewer runs have no Agentbus MCP server, including replacement
 and report-correction runs. The harness keeps reports locally until all verdicts arrive, then posts them in request

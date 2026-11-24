@@ -292,7 +292,11 @@ when that run ends. `0` restores the old behaviour, where an agent may run as ma
 
 > **Preparing (not active yet):** the decision that shares the agents of `[tiers] workers` as one installation-wide pool —
 > any team or delegating solo task served by the free worker that meets its capabilities, with the providers taking turns —
-> is being built up as a pure `agent-core` decision. Nothing on a serving path uses it yet; it lands in a later part.
+> is being built up as a pure `agent-core` decision, with the runtime record of a request served in a workspace of its
+> own (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`). The daemon's owner already reads and
+> settles such a record, and releases its workspace, when it finds one; the serving path that writes them lands in a
+> later part, so none is written yet. Loaded records must name a distinct worker task and its derived branch; invalid
+> records are retained without releasing their worktrees.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
@@ -398,6 +402,15 @@ for items assigned to that task. Existing notification files identify the item a
 across daemon restarts; a later failed run can notify again. An item does not stand behind a member that the human stopped,
 or that is no longer in the team: when the lead ends `STATUS: DONE` with a passed gate, the item is published with the
 lead's branch.
+A member that failed after it called a bus tool does not hold the round either when its lead's branch already holds its
+work: when the lead ends `STATUS: DONE` with a passed gate at the tip of its branch, the member's branch has no commit the
+lead's branch lacks and its worktree holds no uncommitted file the lead was not told of, the member's task is closed as
+taken over and the item is published, with no hand. A member that never called a tool did no work: it keeps holding the
+round and the human is told, as before. Work the lead's branch lacks is never dropped, also that of a member the human
+stopped: the lead is told once, in one message for all members, which commits and files
+(`prompts/harness/pr/member-work-lacks.md`; the files are kept in a snapshot, and a file that changed afterwards is told
+again), and when it ends `STATUS: DONE` again without the commits, the human is asked once with the list, also after a
+restart of the daemon (`prompts/harness/pr/notice-member-work-left.md`).
 
 Snapshots keep a worktree's work when its run was cut. When the daemon starts, it takes a snapshot of every task whose run did not end, if the round that run worked for is still open: everything in the worktree (uncommitted, staged, deleted, untracked and binary files; ignored files are left out) becomes a commit under `refs/agents/snapshots/<round>/<task>/<n>` in the repository, and the worktree, its index and its files do not change. `agent status <round>` shows the last snapshot of each task with its number, time and size. A snapshot above `[snapshot] warn_mb` (default `200`) is still taken and logged as `snapshot_large`; a snapshot that fails is logged as `snapshot_failed` and the daemon goes on. Snapshots are never pushed and never pruned yet: remove the references with `git update-ref -d` when you no longer need them. Two events and one history table (`snapshots`, migration `12`) describe them, see [`docs/history.md`](docs/history.md).
 
