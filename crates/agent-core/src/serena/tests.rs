@@ -287,3 +287,30 @@ fn a_cli_search_over_text_is_no_search_of_code() {
         (call("Glob", "docs/**/*.md"), None),
     ]);
 }
+
+#[test]
+fn a_search_filtered_to_text_and_code_together_is_a_search_of_code() {
+    table(vec![
+        (command("rg -g '*.md' -g '*.rs' fn src"), Some(vec!["*.rs", "src"])),
+        (
+            command("grep -rn --include=*.md --include=*.rs fn src"),
+            Some(vec!["*.rs", "src"]),
+        ),
+        (command("rg -t md -t rust fn src"), Some(vec!["src"])),
+        (command("rg -g '*.rs' -g '*.md' fn docs"), Some(vec!["*.rs"])),
+        (command("rg -g '*.md' -g '*.toml' fn src"), None),
+    ]);
+}
+
+#[test]
+fn a_listing_of_files_by_rg_names_its_directory_and_no_pattern() {
+    table(vec![
+        (command("rg --files src"), Some(vec!["src"])),
+        (
+            command("rg --files crates/agent-core/src/lib.rs"),
+            Some(vec!["crates/agent-core/src/lib.rs"]),
+        ),
+        (command("rg --files docs"), None),
+        (command("rg --files -g '*.md' src"), None),
+    ]);
+}
