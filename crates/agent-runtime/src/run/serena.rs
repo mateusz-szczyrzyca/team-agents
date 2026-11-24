@@ -28,6 +28,8 @@ pub enum Watched {
 pub struct SessionWatch {
     /// The session's tally, when the run has Serena and the reminder is not off.
     tally: Option<SessionTally>,
+    /// Whether the session was reminded already: a session is told once.
+    reminded: bool,
 }
 
 impl SessionWatch {
@@ -35,21 +37,35 @@ impl SessionWatch {
     /// step is counted then.
     #[must_use]
     pub fn new(after: Option<RemindAfter>) -> Option<Self> {
-        let _ = after;
-        None
+        after.map(|_| Self {
+            tally: Some(SessionTally::new()),
+            reminded: false,
+        })
     }
 
     /// The watch of a session that goes on after the reminder its `searches` searches brought: it counts on from
-    /// there and is not reminded again.
+    /// there and is not reminded again. A session that goes on is a resumed one; a new session begins with
+    /// [`SessionWatch::new`].
     #[must_use]
     pub fn after_reminder(searches: u64) -> Self {
-        let _ = searches;
-        Self { tally: None }
+        Self {
+            tally: Some(SessionTally::counted_from(searches)),
+            reminded: true,
+        }
     }
 
     /// Gives the step `event` to the count.
     pub fn note(&mut self, event: &ActivityEvent, after: RemindAfter) -> Watched {
-        let _ = (event, after);
-        Watched::Quiet
+        let Some(tally) = self.tally.as_mut() else {
+            return Watched::Quiet;
+        };
+        let searches = match tally.note(event, after) {
+            Some(reminder) if !self.reminded => {
+                self.reminded = true;
+                reminder.searches
+            }
+            Some(_) | None => return Watched::Quiet,
+        };
+        Watched::Due { searches }
     }
 }
