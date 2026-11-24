@@ -432,3 +432,54 @@ async fn observed_ending_is_owned_durable_and_independent_of_wrong_tries() {
         assert_eq!(load(dir.path(), request).await.unwrap().unwrap().ending(), None);
     }
 }
+
+#[tokio::test]
+async fn assigned_retry_retains_original_workspace_and_updates_snapshot_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = workspace();
+    let request = original.record().request;
+    prepare(dir.path(), &original).await.unwrap();
+    advance(dir.path(), request, start(1)).await.unwrap();
+    advance(
+        dir.path(),
+        request,
+        Transition::Rejected {
+            run: run(1),
+            wrong: vec![Wrong::NoCheck],
+            snapshot: snapshot(),
+        },
+    )
+    .await
+    .unwrap();
+    let mut record = original.record().clone();
+    record.worker = "worker-3".parse().unwrap();
+    record.worker_task = "task-20261124-120001-eeee".parse().unwrap();
+    record.branch = branch(&record.worker, &record.worker_task).unwrap();
+    let next = RequestWorkspace::try_from(record).unwrap();
+    let journal = advance(
+        dir.path(),
+        request,
+        Transition::Assigned {
+            workspace: next.clone(),
+            run: run(2),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(journal.workspace(), &original);
+    assert_eq!(journal.current_workspace(), &next);
+    assert_eq!(journal.wrong_try().get(), 2);
+    let mut kept = snapshot();
+    kept.task = next.record().worker_task.clone();
+    advance(
+        dir.path(),
+        request,
+        Transition::Rejected {
+            run: run(2),
+            wrong: vec![Wrong::NoCheck],
+            snapshot: kept,
+        },
+    )
+    .await
+    .unwrap();
+}

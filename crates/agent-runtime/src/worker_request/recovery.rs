@@ -71,6 +71,13 @@ pub enum Transition {
         /// Fresh run identifier.
         run: RunId,
     },
+    /// A retry starts in a dedicated workspace while preserving the original identity.
+    Assigned {
+        /// Workspace prepared for this execution.
+        workspace: RequestWorkspace,
+        /// Fresh execution identifier.
+        run: RunId,
+    },
     /// A current execution supplied no result.
     Interrupted {
         /// Run whose ownership must still be current.
@@ -180,6 +187,7 @@ impl TryFrom<Record> for Journal {
         let mut generation = 0_u32;
         for event in record.events {
             match &event {
+                Transition::Assigned { .. } => return Err(Invalid::Transition),
                 Transition::Started { worker, run } => {
                     if journal.phase != Phase::Queued || !runs.insert(run.clone()) {
                         return Err(Invalid::Transition);
@@ -282,6 +290,12 @@ impl Journal {
             Transition::Observed { run, ending } if run == &attempt.run => Some(*ending),
             _ => None,
         })
+    }
+
+    /// Workspace used by the latest execution.
+    #[must_use]
+    pub fn current_workspace(&self) -> &RequestWorkspace {
+        &self.record.workspace
     }
 
     /// Original workspace identity, unaffected by later worker assignments.
