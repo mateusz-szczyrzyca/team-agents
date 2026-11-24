@@ -119,7 +119,7 @@ fn a_session_run_under_a_higher_bound_is_reminded_when_it_reaches_a_lower_one() 
     drop(database);
     let lower = RemindAfter::new(40).expect("40");
 
-    let mut watch = SessionWatch::from_history(&path, &task(), "session-1", lower).expect("the history of the session");
+    let mut watch = SessionWatch::from_history(&path, &task(), "session-1").expect("the history of the session");
 
     assert_eq!(
         watch.note(&ActivityEvent::Command("cat src/one_more.rs".to_owned()), lower),
