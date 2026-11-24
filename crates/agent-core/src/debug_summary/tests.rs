@@ -1150,14 +1150,16 @@ fn a_run_tells_its_tool_calls_by_kind_or_that_it_recorded_none() {
 
     let counted = render_summary(&input, zone).expect("mandatory summary facts fit");
     assert!(
-        counted.contains("- Tool calls: 214 (serena 12, shell 160, other 42)\n- Questions (unanswered: false):"),
+        counted.contains(
+            "- Tool calls: 214 (serena 12, shell 160, other 42)\n- Serena reminder: none\n- Questions (unanswered: false):"
+        ),
         "{counted}"
     );
 
     input.tasks[0].tools = ToolCalls::default();
     let none = render_summary(&input, zone).expect("mandatory summary facts fit");
     assert!(
-        none.contains("- Tool calls: none recorded\n- Questions (unanswered: false):"),
+        none.contains("- Tool calls: none recorded\n- Serena reminder: none\n- Questions (unanswered: false):"),
         "{none}"
     );
 

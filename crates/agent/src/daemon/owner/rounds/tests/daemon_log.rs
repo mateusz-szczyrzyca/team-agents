@@ -872,6 +872,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::RunStarted,
             LogEvent::RunEnded,
             LogEvent::TaskWaitsForAgent,
+            LogEvent::SerenaReminded,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1443,6 +1444,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
     super::removal_tests::record_team_removed(&mut observed).await;
+    super::serena_reminder_tests::record_serena_reminded(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
