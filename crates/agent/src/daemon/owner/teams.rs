@@ -1224,7 +1224,13 @@ impl Owner {
 
         // Recover stranded Starting helpers that have no active serving task
         for req in &open_requests {
-            if req.status == DelegationStatus::Starting && !self.serving.values().any(|s| s.request == req.id) {
+            if req.status == DelegationStatus::Starting
+                && req
+                    .worker
+                    .as_ref()
+                    .is_some_and(|worker| pool.contains(worker) && !self.is_in_active_crew(worker))
+                && !self.serving.values().any(|s| s.request == req.id)
+            {
                 let update = DelegationUpdate {
                     status: Some(DelegationStatus::Queued),
                     task: None,
