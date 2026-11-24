@@ -1384,7 +1384,7 @@ impl Owner {
                 event = LogEvent::WorkerRequestDamaged.as_str(),
                 request = %request.id,
                 worker = %worker_name,
-                error = %error,
+                error = %error_chain(&error),
                 "failed to dispatch pool worker request; returning request to queue"
             );
             let update = DelegationUpdate {

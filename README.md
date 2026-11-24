@@ -1074,10 +1074,9 @@ check_refuse`); and `do`, what to do in the requester's words. The bus asks the 
 the moment of the request, which reads `.agent/plan.md` of the requester's worktree: a request that lacks one of the
 four, names a step the plan does not have or that is done or given up, a path outside the repository, or a refused
 check is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
-`MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. In a
-team, such a request is also refused at once (`NoFreeWorker`) when no worker of the team is free to take it — none in
-the team waits for work (a worker in a run of its own is busy), or every waiting one is promised to an earlier request
-of the team — and the requester does the step itself; it is never served by a higher tier. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
+`MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. Such a request is also refused at once (`NoFreeWorker`) when every worker
+of the installation pool is running, reserved, awaiting settlement or promised to an earlier request. Legacy teams
+with worker members retain their own admission path. The requester does a refused step itself; a higher tier never serves it. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
 and `Do:`, and the bus records the step's ID with the request (`step` in the bus state; a request recorded before has
 none and is served as before). An agent without a plan — a worker, a reviewer, an investigator answering an
 investigation request, a run of a home that keeps no plan, or a run whose worktree has no `.agent/plan.md` yet — sends
