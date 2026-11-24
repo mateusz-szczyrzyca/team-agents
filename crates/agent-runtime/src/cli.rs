@@ -744,7 +744,7 @@ mod tests {
             (
                 "Glob",
                 json!({"pattern": "src/**/*.rs", "path": "/w"}),
-                call("Glob", "/w"),
+                call("Glob", "/w/src/**/*.rs"),
             ),
         ];
 
