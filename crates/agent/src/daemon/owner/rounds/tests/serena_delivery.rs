@@ -34,7 +34,12 @@ async fn reminder_text(searches: u64) -> String {
     .await
     .unwrap();
     let values = Variables::new().with("count", searches.to_string()).unwrap();
-    texts.render(HarnessPrompt::SerenaRemind, &values).unwrap()
+    // The bus keeps the text of a message without its trailing line break.
+    texts
+        .render(HarnessPrompt::SerenaRemind, &values)
+        .unwrap()
+        .trim_end()
+        .to_owned()
 }
 
 /// The texts of the chats the harness sent on the bus of `rig`, as its message log keeps them; none before the log is
