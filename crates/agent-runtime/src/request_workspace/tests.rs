@@ -544,3 +544,36 @@ async fn completing_keeps_the_typed_cause_when_the_record_cannot_be_saved() {
         "the record is ended in memory, ready to be saved again"
     );
 }
+
+#[tokio::test]
+async fn workspace_loading_refuses_a_branch_not_owned_by_the_worker_task() {
+    let tmp = tempfile::tempdir().unwrap();
+    let record = workspace(21);
+    let mut value = serde_json::to_value(&record).unwrap();
+    value["branch"] = serde_json::json!("main");
+    let path = path_of(tmp.path(), request(21));
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let found = read_each(tmp.path()).await.unwrap().pop().unwrap();
+    assert!(matches!(found, Err(WorkspaceError::Parse { .. })), "{found:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap(),
+        value
+    );
+}
+
+#[tokio::test]
+async fn workspace_loading_refuses_the_requesters_task_even_with_its_matching_branch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let record = workspace(22);
+    let mut value = serde_json::to_value(&record).unwrap();
+    value["worker_task"] = serde_json::to_value(&record.requester_task).unwrap();
+    value["branch"] = serde_json::to_value(branch(&record.worker, &record.requester_task).unwrap()).unwrap();
+    let path = path_of(tmp.path(), request(22));
+    std::fs::write(&path, serde_json::to_vec(&value).unwrap()).unwrap();
+    let found = read_each(tmp.path()).await.unwrap().pop().unwrap();
+    assert!(matches!(found, Err(WorkspaceError::Parse { .. })), "{found:?}");
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&std::fs::read(path).unwrap()).unwrap(),
+        value
+    );
+}

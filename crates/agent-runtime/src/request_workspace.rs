@@ -200,6 +200,17 @@ pub struct RequestWorkspace {
     pub stage: Stage,
 }
 
+/// Unvalidated workspace metadata, checked when converted to a request workspace.
+pub type WorkspaceRecord = RequestWorkspace;
+
+impl RequestWorkspace {
+    /// Borrows the workspace metadata without permitting changes to its identity.
+    #[must_use]
+    pub fn record(&self) -> &WorkspaceRecord {
+        self
+    }
+}
+
 /// How far the settlement of a request's result has got; written before each next stage.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "workspace_stage", rename_all = "snake_case")]
