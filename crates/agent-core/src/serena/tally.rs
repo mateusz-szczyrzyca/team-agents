@@ -66,8 +66,8 @@ pub struct SessionTally {
 }
 
 impl SessionTally {
-    /// The tally of a session that has made `searches` searches of code without Serena and was not reminded yet: what a
-    /// session that goes on after its reminder has counted when the watch that tells the reminder is gone.
+    /// The tally of a session that has made `searches` searches of code without Serena and was reminded: what a session
+    /// that goes on after its reminder has counted when the watch that told the reminder is gone.
     #[must_use]
     pub const fn counted_from(searches: u64) -> Self {
         Self {
@@ -75,7 +75,7 @@ impl SessionTally {
                 searches,
                 used_serena: false,
             },
-            reminded: false,
+            reminded: true,
         }
     }
 

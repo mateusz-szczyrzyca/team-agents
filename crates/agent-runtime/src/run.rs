@@ -428,17 +428,49 @@ impl RunEngine {
         self
     }
 
-    /// The watch of the session `job` is of: fresh for a new session, and the tally its earlier runs kept for a resumed
-    /// one. `None` when the run has no Serena or the reminder is off.
-    fn serena_watch(&self, job: &RunJob) -> Option<SessionWatch> {
+    /// The watch of the session `job` is of: fresh for a new session, and for a resumed one the tally its earlier runs
+    /// kept in this engine, or, after a restart of the daemon, the count the history holds for the session. `None` when
+    /// the run has no Serena or the reminder is off.
+    async fn serena_watch(&self, job: &RunJob) -> Option<SessionWatch> {
         let after = remind_after(job, &self.parts.config)?;
-        if matches!(job.mode, RunMode::Resume { .. }) {
-            let key = session_key(&job.mode);
-            if let Some(tally) = self.serena_tally(&key) {
-                return Some(SessionWatch::resumed(tally));
+        if !matches!(job.mode, RunMode::Resume { .. }) {
+            return SessionWatch::new(Some(after));
+        }
+        let key = session_key(&job.mode);
+        if let Some(tally) = self.serena_tally(&key) {
+            return Some(SessionWatch::resumed(tally));
+        }
+        if self.history.is_disabled() {
+            return SessionWatch::new(Some(after));
+        }
+        let path = self.parts.store.home().history_file();
+        let task = job.task.clone();
+        let session = key.clone();
+        let read = tokio::task::spawn_blocking(move || SessionWatch::from_history(&path, &task, &session, after)).await;
+        match read {
+            Ok(Ok(watch)) => Some(watch),
+            // A session whose count cannot be read counts anew: it may be reminded once more, which is told.
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %job.task,
+                    run = %job.run,
+                    error = %error_chain(&error),
+                    "the count of the resumed session cannot be read from the history: it counts anew"
+                );
+                SessionWatch::new(Some(after))
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %job.task,
+                    run = %job.run,
+                    error = %error_chain(&error),
+                    "the read of the count of the resumed session failed: it counts anew"
+                );
+                SessionWatch::new(Some(after))
             }
         }
-        SessionWatch::new(Some(after))
     }
 
     /// The tally of the session `key` the engine has kept so far, if any.
@@ -538,7 +570,7 @@ impl RunEngine {
                 RunMode::New { session_id } if job.cli == CliKind::Claude => Some(session_id.clone()),
                 RunMode::New { .. } => None,
             },
-            watch: self.serena_watch(&job),
+            watch: self.serena_watch(&job).await,
             session_key: session_key(&job.mode),
             after: remind_after(&job, &self.parts.config),
             cli: job.cli,

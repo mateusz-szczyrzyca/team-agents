@@ -4,10 +4,15 @@
 //! [`agent_core::serena`]) and says `Due` once, at the step that brings the reminder. A watch of a session that goes on
 //! after its reminder counts from there and says nothing more.
 
+use std::path::Path;
+
 use agent_core::cli::ActivityEvent;
+use agent_core::history::{HistoryEvent, Record};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::serena::{RemindAfter, SessionTally};
+
+use crate::history::{ReadError, Reader};
 
 #[cfg(test)]
 #[path = "serena_tests.rs"]
@@ -52,10 +57,74 @@ impl SessionWatch {
     /// step is counted then.
     #[must_use]
     pub fn new(after: Option<RemindAfter>) -> Option<Self> {
-        after.map(|_| Self {
+        after.map(|_| Self::counting())
+    }
+
+    /// A watch of a session that has done nothing.
+    const fn counting() -> Self {
+        Self {
             tally: Some(SessionTally::new()),
             reminded: false,
-        })
+        }
+    }
+
+    /// The watch of the session `session` of `task`, as the history at `path` holds it: the steps of every run of the
+    /// session counted again in order, and the session taken as reminded when the history holds a reminder of one of its
+    /// runs, whatever `after` was then. A resumed session of a new engine, after a restart of the daemon, goes on from
+    /// it.
+    ///
+    /// # Errors
+    /// [`ReadError`] when the history cannot be read: the caller decides what a session without its count does.
+    pub fn from_history(path: &Path, task: &TaskId, session: &str, after: RemindAfter) -> Result<Self, ReadError> {
+        let reader = Reader::open(path)?;
+        let mut watch = Self::counting();
+        let mut teams = Vec::new();
+        let mut runs = Vec::new();
+        for row in reader.runs_of_task(task)? {
+            let start = &row.start.value;
+            let of_session = start.session.as_ref().is_some_and(|known| known.as_str() == session)
+                || reader
+                    .sessions(&start.run)?
+                    .iter()
+                    .any(|seen| seen.session.as_str() == session);
+            if !of_session {
+                continue;
+            }
+            for step in reader.steps(&start.run)? {
+                watch.replay(&step.value.event, after);
+            }
+            if !teams.contains(&start.team) {
+                teams.push(start.team.clone());
+            }
+            runs.push(start.run.clone());
+        }
+        for team in &teams {
+            for stored in reader.team_records(team)? {
+                if let Record::Event(event) = &stored.record
+                    && let HistoryEvent::SerenaReminded { run, .. } = &event.event
+                    && runs.contains(run)
+                {
+                    watch.told_before();
+                }
+            }
+        }
+        Ok(watch)
+    }
+
+    /// Counts the step `event` of a run that was carried out before: the reminder it brought is not due again, the
+    /// session is only taken as reminded.
+    fn replay(&mut self, event: &ActivityEvent, after: RemindAfter) {
+        if let Some(tally) = self.tally.as_mut()
+            && tally.note(event, after).is_some()
+        {
+            self.reminded = true;
+        }
+    }
+
+    /// Takes the session as reminded: it counts on and is told no more.
+    fn told_before(&mut self) {
+        let searches = self.tally.map_or(0, |tally| tally.searches());
+        *self = Self::after_reminder(searches);
     }
 
     /// The watch of a session that goes on after the reminder its `searches` searches brought: it counts on from
