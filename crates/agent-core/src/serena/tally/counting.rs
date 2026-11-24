@@ -99,16 +99,32 @@ fn every_tool_of_serena_counts_whichever_way_the_cli_names_it() {
 
     // Each step is counted alone: a counter that has read Serena once in an earlier step is no evidence of what a
     // later step was.
-    let told: Vec<bool> = steps
+    let told: Vec<Counted> = steps
         .iter()
         .map(|name| {
             let mut step = Counted::default();
             step.count(&call(name, "{}"));
-            step.used_serena
+            step
         })
         .collect();
 
-    assert_eq!(told, [true, true, false, false, false, false]);
+    assert_eq!(
+        told,
+        [
+            Counted {
+                searches: 0,
+                used_serena: true
+            },
+            Counted {
+                searches: 0,
+                used_serena: true
+            },
+            Counted::default(),
+            Counted::default(),
+            Counted::default(),
+            Counted::default(),
+        ]
+    );
 }
 
 #[test]
