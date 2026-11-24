@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use agent_core::cli::{ActivityEvent, CliAdapter, OutputCause, RunSpec, StreamOutcome};
 use agent_core::kinds::CliKind;
+use agent_runtime::cli::adapter_for;
 use agent_runtime::cli::opencode::OpencodeAdapter;
 use serde_json::{Value, json};
 
@@ -20,6 +21,14 @@ fn environment(spec: &RunSpec) -> BTreeMap<&str, &str> {
         .iter()
         .map(|(name, value)| (name.as_str(), value.as_str()))
         .collect()
+}
+
+/// The configuration `spec` hands over in `OPENCODE_CONFIG_CONTENT`, as it is written, without a trailing newline.
+fn configuration_text(spec: &RunSpec) -> TestResult<&str> {
+    environment(spec)
+        .get("OPENCODE_CONFIG_CONTENT")
+        .copied()
+        .ok_or_else(|| "no OPENCODE_CONFIG_CONTENT".into())
 }
 
 /// The configuration `spec` hands over in `OPENCODE_CONFIG_CONTENT`.
@@ -168,6 +177,161 @@ fn the_same_configuration_is_kept_in_a_file_of_the_run() -> TestResult {
         Some("/work/run/opencode-config.json")
     );
     assert_eq!(json_of(&spec.files[0])?, configuration(&spec)?);
+    Ok(())
+}
+
+#[test]
+fn a_request_without_a_window_writes_the_configuration_it_wrote_before_the_key() -> TestResult {
+    for model in [
+        None,
+        Some("deepinfra/Qwen/Qwen3-Coder"),
+        Some("openrouter/anthropic/claude-4"),
+    ] {
+        let mut request = request(new_run()?, Servers::BusAndSerena)?;
+        request.model = model.map(str::parse).transpose()?;
+
+        let spec = OpencodeAdapter.build_run(&request)?;
+
+        let provider = model.unwrap_or("no model");
+        let written = serde_json::to_string(&configuration(&spec)?)?;
+        let expected = json!({
+            "$schema": "https://opencode.ai/config.json",
+            "autoupdate": false,
+            "mcp": {
+                "agentbus": {
+                    "type": "local",
+                    "command": ["/opt/bin/agentbus", "serve", "--agent", "claude-1", "--team", "team-7"],
+                    "enabled": true
+                },
+                "serena": {
+                    "type": "local",
+                    "command": [
+                        "/opt/bin/serena", "start-mcp-server", "--project", "/work/tree",
+                        "--open-web-dashboard", "false", "--context", "ide"
+                    ],
+                    "enabled": true
+                }
+            },
+            "provider": match model {
+                Some(model) if model.starts_with("deepinfra/") => json!({
+                    "openrouter": { "options": { "apiKey": "{env:OPENROUTER_API_KEY}" } },
+                    "deepinfra": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "DeepInfra",
+                        "options": {
+                            "baseURL": "https://api.deepinfra.com/v1/openai",
+                            "apiKey": "{env:DEEPINFRA_API_KEY}"
+                        },
+                        "models": { "Qwen/Qwen3-Coder": { "name": "Qwen/Qwen3-Coder" } }
+                    }
+                }),
+                Some(_) => json!({
+                    "openrouter": {
+                        "options": { "apiKey": "{env:OPENROUTER_API_KEY}" },
+                        "models": { "anthropic/claude-4": { "name": "anthropic/claude-4" } }
+                    },
+                    "deepinfra": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "DeepInfra",
+                        "options": {
+                            "baseURL": "https://api.deepinfra.com/v1/openai",
+                            "apiKey": "{env:DEEPINFRA_API_KEY}"
+                        }
+                    }
+                }),
+                None => json!({
+                    "openrouter": { "options": { "apiKey": "{env:OPENROUTER_API_KEY}" } },
+                    "deepinfra": {
+                        "npm": "@ai-sdk/openai-compatible",
+                        "name": "DeepInfra",
+                        "options": {
+                            "baseURL": "https://api.deepinfra.com/v1/openai",
+                            "apiKey": "{env:DEEPINFRA_API_KEY}"
+                        }
+                    }
+                }),
+            },
+        });
+        assert_eq!(written, serde_json::to_string(&expected)?, "{provider}");
+        assert!(!written.contains("limit"), "{provider}: {written}");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_window_is_the_context_of_the_registered_model_and_of_the_registered_model_only() -> TestResult {
+    let cases = [
+        ("deepinfra/Qwen/Qwen3-Coder", "deepinfra", "Qwen/Qwen3-Coder"),
+        ("openrouter/anthropic/claude-4", "openrouter", "anthropic/claude-4"),
+    ];
+    for (model, provider, name) in cases {
+        let mut request = request(new_run()?, Servers::Bus)?;
+        request.model = Some(model.parse()?);
+        request.context = Some(200_000);
+
+        let spec = OpencodeAdapter.build_run(&request)?;
+
+        assert_eq!(
+            configuration(&spec)?["provider"][provider]["models"][name],
+            json!({ "name": name, "limit": { "context": 200_000, "output": 0 } }),
+            "{model}"
+        );
+    }
+
+    let mut other = request(new_run()?, Servers::Bus)?;
+    other.model = Some("anthropic/claude-4".parse()?);
+    other.context = Some(200_000);
+    let mut no_model = request(new_run()?, Servers::Bus)?;
+    no_model.model = None;
+    no_model.context = Some(200_000);
+    for request in [other, no_model] {
+        let spec = OpencodeAdapter.build_run(&request)?;
+        assert!(!configuration_text(&spec)?.contains("limit"), "{:?}", request.model);
+    }
+    Ok(())
+}
+
+#[test]
+fn two_agents_with_different_windows_each_get_their_own() -> TestResult {
+    let mut narrow = request(new_run()?, Servers::Bus)?;
+    narrow.model = Some("deepinfra/Qwen/Qwen3-Coder".parse()?);
+    narrow.context = Some(131_072);
+    let mut wide = request(new_run()?, Servers::Bus)?;
+    wide.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse()?);
+    wide.context = Some(1_048_576);
+
+    let narrow = configuration(&OpencodeAdapter.build_run(&narrow)?)?;
+    let wide = configuration(&OpencodeAdapter.build_run(&wide)?)?;
+
+    assert_eq!(
+        narrow["provider"]["deepinfra"]["models"],
+        json!({ "Qwen/Qwen3-Coder": { "name": "Qwen/Qwen3-Coder", "limit": { "context": 131_072, "output": 0 } } })
+    );
+    assert_eq!(
+        wide["provider"]["deepinfra"]["models"],
+        json!({ "zai-org/GLM-5.3-Flash": { "name": "zai-org/GLM-5.3-Flash", "limit": { "context": 1_048_576, "output": 0 } } })
+    );
+    Ok(())
+}
+
+#[test]
+fn a_window_leaves_the_run_of_claude_and_antigravity_as_it_was() -> TestResult {
+    let windowed = |adapter: &dyn CliAdapter| -> TestResult<RunSpec> {
+        let mut request = request(new_run()?, Servers::Bus)?;
+        request.context = Some(200_000);
+        Ok(adapter.build_run(&request)?.clone())
+    };
+    for kind in [CliKind::Claude, CliKind::Gemini] {
+        let mut plain = request(new_run()?, Servers::Bus)?;
+        plain.context = None;
+        let adapter = adapter_for(kind);
+        let without = adapter.build_run(&plain)?;
+        let with = windowed(adapter.as_ref())?;
+
+        assert_eq!(with.args, without.args, "{kind:?}");
+        assert_eq!(with.env, without.env, "{kind:?}");
+        assert_eq!(with.files, without.files, "{kind:?}");
+    }
     Ok(())
 }
 
@@ -523,5 +687,116 @@ fn an_error_event_with_an_empty_session_id_is_still_the_error_of_the_run() -> Te
     assert_eq!(output.stream, StreamOutcome::Failed);
     assert_eq!(output.session_id, None);
     assert_eq!(output.error_tail.lines(), [line]);
+    Ok(())
+}
+
+#[test]
+fn a_request_without_a_window_writes_the_very_bytes_it_wrote_before_the_key() -> TestResult {
+    // The goldens were written by the code of `main` before the `context` key existed (version 0.83.0), for the same
+    // request: byte for byte, with its key order, indentation and line end.
+    for (model, golden) in [
+        (None, "config-no-model.json"),
+        (Some("deepinfra/Qwen/Qwen3-Coder"), "config-deepinfra-model.json"),
+        (Some("openrouter/anthropic/claude-4"), "config-openrouter-model.json"),
+    ] {
+        let mut request = request(new_run()?, Servers::BusAndSerena)?;
+        request.model = model.map(str::parse).transpose()?;
+
+        let spec = OpencodeAdapter.build_run(&request)?;
+
+        let expected = fixture("opencode", golden)?;
+        assert_eq!(spec.files[0].content, expected, "{golden}: the kept file");
+        assert_eq!(
+            configuration_text(&spec)?,
+            expected.trim_end(),
+            "{golden}: the environment"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn a_window_with_an_output_gives_the_registered_model_both_as_they_are() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.model = Some("deepinfra/meta-llama/Llama-3.3-70B-Instruct-Turbo".parse()?);
+    request.context = Some(131_072);
+    request.output = Some(16_384);
+
+    let spec = OpencodeAdapter.build_run(&request)?;
+
+    assert_eq!(
+        configuration(&spec)?["provider"]["deepinfra"]["models"],
+        json!({
+            "meta-llama/Llama-3.3-70B-Instruct-Turbo": {
+                "name": "meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                "limit": { "context": 131_072, "output": 16_384 }
+            }
+        })
+    );
+    Ok(())
+}
+
+#[test]
+fn two_agents_with_different_outputs_each_get_their_own() -> TestResult {
+    let mut narrow = request(new_run()?, Servers::Bus)?;
+    narrow.model = Some("deepinfra/Qwen/Qwen3-Coder".parse()?);
+    narrow.context = Some(131_072);
+    narrow.output = Some(8_192);
+    let mut wide = request(new_run()?, Servers::Bus)?;
+    wide.model = Some("openrouter/anthropic/claude-4".parse()?);
+    wide.context = Some(1_048_576);
+    wide.output = Some(65_536);
+    let mut unsaid = request(new_run()?, Servers::Bus)?;
+    unsaid.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse()?);
+    unsaid.context = Some(202_752);
+
+    let narrow = configuration(&OpencodeAdapter.build_run(&narrow)?)?;
+    let wide = configuration(&OpencodeAdapter.build_run(&wide)?)?;
+    let unsaid = configuration(&OpencodeAdapter.build_run(&unsaid)?)?;
+
+    assert_eq!(
+        narrow["provider"]["deepinfra"]["models"]["Qwen/Qwen3-Coder"]["limit"],
+        json!({ "context": 131_072, "output": 8_192 })
+    );
+    assert_eq!(
+        wide["provider"]["openrouter"]["models"]["anthropic/claude-4"]["limit"],
+        json!({ "context": 1_048_576, "output": 65_536 })
+    );
+    assert_eq!(
+        unsaid["provider"]["deepinfra"]["models"]["zai-org/GLM-5.3-Flash"]["limit"],
+        json!({ "context": 202_752, "output": 0 })
+    );
+    Ok(())
+}
+
+#[test]
+fn an_output_without_a_window_writes_no_limit() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.model = Some("deepinfra/Qwen/Qwen3-Coder".parse()?);
+    request.context = None;
+    request.output = Some(8_192);
+
+    let spec = OpencodeAdapter.build_run(&request)?;
+
+    assert!(!configuration_text(&spec)?.contains("limit"));
+    Ok(())
+}
+
+#[test]
+fn an_output_leaves_the_run_of_every_cli_but_opencode_as_it_was_with_the_window_alone() -> TestResult {
+    for kind in [CliKind::Claude, CliKind::Codex, CliKind::Gemini] {
+        let mut window = request(new_run()?, Servers::Bus)?;
+        window.context = Some(200_000);
+        let mut both = request(new_run()?, Servers::Bus)?;
+        both.context = Some(200_000);
+        both.output = Some(16_384);
+        let adapter = adapter_for(kind);
+        let alone = adapter.build_run(&window)?;
+        let with_output = adapter.build_run(&both)?;
+
+        assert_eq!(with_output.args, alone.args, "{kind:?}");
+        assert_eq!(with_output.env, alone.env, "{kind:?}");
+        assert_eq!(with_output.files, alone.files, "{kind:?}");
+    }
     Ok(())
 }

@@ -3249,3 +3249,228 @@ async fn no_tool_retry_and_final_failure_have_named_logs_with_the_agent_configur
         }
     }
 }
+
+/// The configuration as written, with a `context` key at the end of every named table.
+fn with_context(text: &str, keys: &[(&str, &str, u64)]) -> String {
+    keys.iter().fold(text.to_owned(), |text, (table, name, tokens)| {
+        text.replacen(
+            &format!("[{table}.{name}]\n"),
+            &format!("[{table}.{name}]\ncontext = {tokens}\n"),
+            1,
+        )
+    })
+}
+
+/// The directory of the first run of `task`, waited for: the team starts the run of a member at once.
+async fn first_run(f: &Fixture, task: &TaskId) -> PathBuf {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        // Yielding, never blocking: the daemon of the test runs on this thread too.
+        tokio::task::yield_now().await;
+        let runs = f.home.runs_dir(task);
+        let mut dirs: Vec<PathBuf> = std::fs::read_dir(&runs)
+            .map(|runs| runs.map(|run| run.unwrap().path()).collect())
+            .unwrap_or_default();
+        dirs.sort();
+        if let Some(first) = dirs.first() {
+            return first.clone();
+        }
+        assert!(Instant::now() < deadline, "no run of {task} started");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// The text of `path`, waited for: a run writes its files once it has started.
+async fn wait_for_file(path: PathBuf) -> String {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        match std::fs::read_to_string(&path) {
+            Ok(text) => return text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && Instant::now() < deadline => {
+                // Yielding, never blocking: the daemon of the test runs on this thread too.
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot read {path:?}: {error}"),
+        }
+    }
+}
+
+/// The window the opencode configuration file `written` gives the model `provider/name`, if it gives one.
+async fn window_at(written: PathBuf, provider: &str, name: &str) -> Option<serde_json::Value> {
+    let config: serde_json::Value = serde_json::from_str(&wait_for_file(written).await).unwrap();
+    config["provider"][provider]["models"].get(name)?.get("limit").cloned()
+}
+
+#[tokio::test]
+async fn each_opencode_agent_is_told_its_own_window_and_a_claude_agent_is_told_none() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("glm-1", "sleep"),
+        normal("glm-2", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    // The two agents run the stand-in CLI as opencode; the other agents of the fixture are Claude Code.
+    let config = config
+        .replace(
+            "[agents.glm-1]\ncli = \"claude\"\n",
+            "[agents.glm-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[agents.glm-2]\ncli = \"claude\"\n",
+            "[agents.glm-2]\ncli = \"opencode\"\nmodel = \"openrouter/anthropic/claude-4\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_context(&config, &[("agents", "glm-1", 202_752), ("agents", "glm-2", 1_000_000)]);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f
+        .start_team(&["inv-opus", "glm-1", "glm-2", "claude-1"], PARALLEL)
+        .await;
+    let mut runs: Vec<PathBuf> = Vec::new();
+    for task in &tasks[1..] {
+        runs.push(first_run(&f, task).await);
+    }
+    let windows = (
+        window_at(
+            runs[0].join("opencode-config.json"),
+            "deepinfra",
+            "zai-org/GLM-5.3-Flash",
+        )
+        .await,
+        window_at(runs[1].join("opencode-config.json"), "openrouter", "anthropic/claude-4").await,
+    );
+    let claude = f.worktree(&tasks[3]);
+    assert!(!claude.join("opencode-config.json").exists());
+    let claude_args = wait_for_file(claude.join(".fake-args-1")).await;
+    f.stop().await.unwrap();
+
+    assert_eq!(windows.0, Some(serde_json::json!({ "context": 202_752, "output": 0 })));
+    assert_eq!(
+        windows.1,
+        Some(serde_json::json!({ "context": 1_000_000, "output": 0 }))
+    );
+    assert!(!claude_args.contains("202752"), "{claude_args}");
+}
+
+#[tokio::test]
+async fn an_opencode_investigator_is_told_its_own_window() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    // The first investigator of a team is its coordinator: it runs the stand-in CLI as opencode.
+    let config = config
+        .replace(
+            "[investigators.inv-opus]\ncli = \"claude\"\n",
+            "[investigators.inv-opus]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_context(&config, &[("investigators", "inv-opus", 131_072)]);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    let run = first_run(&f, &tasks[0]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(window, Some(serde_json::json!({ "context": 131_072, "output": 0 })));
+}
+
+/// The configuration as written, with `context` and `output` keys at the end of the named table `[table.name]`.
+fn with_window(text: &str, table: &str, name: &str, context: u64, output: u64) -> String {
+    text.replacen(
+        &format!("[{table}.{name}]\n"),
+        &format!("[{table}.{name}]\ncontext = {context}\noutput = {output}\n"),
+        1,
+    )
+}
+
+#[tokio::test]
+async fn an_opencode_agent_is_told_its_own_output_with_its_window() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("glm-1", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config
+        .replace(
+            "[agents.glm-1]\ncli = \"claude\"\n",
+            "[agents.glm-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_window(&config, "agents", "glm-1", 202_752, 16_384);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "glm-1", "claude-1"], PARALLEL).await;
+    let run = first_run(&f, &tasks[1]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(
+        window,
+        Some(serde_json::json!({ "context": 202_752, "output": 16_384 }))
+    );
+}
+
+#[tokio::test]
+async fn an_opencode_investigator_is_told_its_own_output_with_its_window() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+    ]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    let config = config
+        .replace(
+            "[investigators.inv-opus]\ncli = \"claude\"\n",
+            "[investigators.inv-opus]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_window(&config, "investigators", "inv-opus", 131_072, 8_192);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "claude-1"], PARALLEL).await;
+    let run = first_run(&f, &tasks[0]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(window, Some(serde_json::json!({ "context": 131_072, "output": 8_192 })));
+}

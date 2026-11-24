@@ -137,10 +137,37 @@ struct ProviderOptions {
 struct ModelEntry {
     /// The model's display name.
     name: String,
+    /// The window opencode compacts a session by; absent leaves it what its catalogue knows of the model.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    limit: Option<ModelLimit>,
+}
+
+/// The output limit written when the agent sets a `context` but no `output`: the published schema requires `output` next
+/// to `context`, and the harness knows no output limit of a model. `0` is no limit of the model's: opencode replaces
+/// what its catalogue knows of the model's output with it and requests its own 32000 tokens, so an agent whose
+/// catalogue output matters sets `output`.
+const UNKNOWN_OUTPUT_LIMIT: u64 = 0;
+
+/// The limit of a model in opencode's configuration: its context window in tokens.
+#[derive(Debug, Serialize)]
+struct ModelLimit {
+    /// The context window in tokens.
+    context: u64,
+    /// The most tokens the model writes: the agent's `output`, else [`UNKNOWN_OUTPUT_LIMIT`].
+    output: u64,
+}
+
+/// The window the agent configured for its model: its context, and the output limit when it set one.
+#[derive(Debug, Clone, Copy)]
+struct Window {
+    /// The context window in tokens, the agent's `context`.
+    context: u64,
+    /// The most tokens the model writes, the agent's `output`; `None` where it set none.
+    output: Option<u64>,
 }
 
 /// The provider `known` for a run of `model`: the model is registered under it when it is one of its own.
-fn provider(known: &KnownProvider, model: Option<&str>) -> Provider {
+fn provider(known: &KnownProvider, model: Option<&str>, window: Option<Window>) -> Provider {
     let registered = model
         .and_then(|model| model.strip_prefix(known.key))
         .and_then(|rest| rest.strip_prefix('/'))
@@ -153,14 +180,25 @@ fn provider(known: &KnownProvider, model: Option<&str>) -> Provider {
             api_key: format!("{{env:{}}}", known.api_key_env),
         },
         models: registered
-            .map(|name| (name.to_owned(), ModelEntry { name: name.to_owned() }))
+            .map(|name| {
+                (
+                    name.to_owned(),
+                    ModelEntry {
+                        name: name.to_owned(),
+                        limit: window.map(|window| ModelLimit {
+                            context: window.context,
+                            output: window.output.unwrap_or(UNKNOWN_OUTPUT_LIMIT),
+                        }),
+                    },
+                )
+            })
             .into_iter()
             .collect(),
     }
 }
 
-/// The configuration of a run of `model` that gets `servers`.
-fn config(servers: &[Server], model: Option<&str>) -> Config {
+/// The configuration of a run of `model` that gets `servers`; a model registered under a provider gets `window`.
+fn config(servers: &[Server], model: Option<&str>, window: Option<Window>) -> Config {
     Config {
         schema: "https://opencode.ai/config.json",
         autoupdate: false,
@@ -179,7 +217,7 @@ fn config(servers: &[Server], model: Option<&str>) -> Config {
             .collect(),
         provider: PROVIDERS
             .iter()
-            .map(|known| (known.key, provider(known, model)))
+            .map(|known| (known.key, provider(known, model, window)))
             .collect(),
     }
 }
@@ -202,7 +240,12 @@ impl CliAdapter for OpencodeAdapter {
 
     fn build_run(&self, request: &RunRequest) -> Result<RunSpec, BuildRunError> {
         let servers = servers(CliKind::Opencode, request, SERENA_CONTEXT)?;
-        let config = config(&servers, request.model.as_ref().map(ModelName::as_str));
+        // An `output` without a `context` is no window: there is nothing to put it next to.
+        let window = request.context.map(|context| Window {
+            context,
+            output: request.output,
+        });
+        let config = config(&servers, request.model.as_ref().map(ModelName::as_str), window);
         let file = json_file(
             CliKind::Opencode,
             path_under(CliKind::Opencode, &request.run_dir, CONFIG_FILE)?,

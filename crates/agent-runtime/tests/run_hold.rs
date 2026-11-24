@@ -113,6 +113,8 @@ mod run_hold {
                 working_dir: abs(self.worktree.path()),
                 identity: CommitIdentity::new("claude-1 (agent)".to_owned(), "agents@example.com".to_owned(), None),
                 mcp_servers: BTreeMap::new(),
+                context: None,
+                output: None,
             }
         }
     }
