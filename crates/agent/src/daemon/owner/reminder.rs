@@ -7,11 +7,13 @@
 use agent_core::serena::{ReminderText, ReminderTextError, SessionTally};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 
+mod backlog;
 mod held;
 #[cfg(test)]
 mod tests;
 
 pub(crate) use agent_runtime::history::ReadError;
+pub(crate) use backlog::{Backlog, Failed};
 pub(crate) use held::reminder_of;
 
 /// Why the text of the reminder of Serena cannot be made.
