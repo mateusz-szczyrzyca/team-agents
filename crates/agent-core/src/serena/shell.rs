@@ -99,7 +99,7 @@ impl Reader {
 /// What an option of a reader means for the files it reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Meaning {
-    /// It gives the pattern or the script, so that no operand is one.
+    /// It gives the pattern or the script, or makes the command need none (`rg --files`), so that no operand is one.
     Pattern,
     /// It filters the files by a glob (`--glob`, `--include`).
     Glob,
@@ -132,6 +132,7 @@ impl Meaning {
             (Reader::Grep | Reader::Rg | Reader::Sed, "regexp" | "expression" | "file") => Self::Pattern,
             (Reader::Grep | Reader::Rg, "include") | (Reader::Rg, "glob" | "iglob") => Self::Glob,
             (Reader::Rg, "type") => Self::Type,
+            (Reader::Rg, "files") => Self::Pattern,
             (Reader::Sed, "quiet" | "silent") => Self::Quiet,
             (Reader::Sed, key) if key.starts_with("in-place") => Self::InPlace,
             _ => Self::Other,
@@ -147,7 +148,10 @@ struct Arguments {
     /// The globs of code that filter the files (`-g '*.rs'`): files of code the search names.
     code_globs: Vec<String>,
     /// Whether a filter limits the search to text (`--glob '*.md'`, `--type md`).
-    text_only: bool,
+    text_filter: bool,
+    /// Whether a filter lets files of code through (`--glob '*.rs'`, `--type rust`): with one, a filter of text next to it
+    /// does not make the search a search of text only.
+    code_filter: bool,
     /// Whether `-e` or `-f` gave the pattern, so that the first operand is a file.
     pattern_given: bool,
     /// What `sed`'s options say it does with the file; `Printing::Everything` for any other command.
@@ -172,7 +176,13 @@ impl Arguments {
         match (meaning, value) {
             (Meaning::Pattern, _) => self.pattern_given = true,
             (Meaning::Glob, Some(glob)) => self.filter_by_glob(glob),
-            (Meaning::Type, Some(kind)) => self.text_only |= is_text_extension(kind),
+            (Meaning::Type, Some(kind)) => {
+                if is_text_extension(kind) {
+                    self.text_filter = true;
+                } else {
+                    self.code_filter = true;
+                }
+            }
             (Meaning::Quiet, _) if self.printing == Printing::Everything => self.printing = Printing::Quiet,
             (Meaning::InPlace, _) => self.printing = Printing::InPlace,
             (Meaning::Quiet | Meaning::Glob | Meaning::Type | Meaning::Other, _) => {}
@@ -186,10 +196,16 @@ impl Arguments {
             return;
         }
         if has_text_extension(glob) {
-            self.text_only = true;
+            self.text_filter = true;
         } else if is_code_file(glob) {
+            self.code_filter = true;
             self.code_globs.push(glob.to_owned());
         }
+    }
+
+    /// Whether the filters limit the search to text: some filter lets text through and none lets code through.
+    const fn text_only(&self) -> bool {
+        self.text_filter && !self.code_filter
     }
 
     /// Reads `args`, the words after the command's name, for `reader`.
@@ -256,7 +272,7 @@ fn segment_names(words: &[String]) -> Vec<String> {
     }
     let parsed = Arguments::read(reader, args);
     let reads = reader != Reader::Sed || parsed.printing == Printing::Quiet;
-    if parsed.text_only || !reads {
+    if parsed.text_only() || !reads {
         return Vec::new();
     }
     let pattern = usize::from(reader.has_pattern() && !parsed.pattern_given);
