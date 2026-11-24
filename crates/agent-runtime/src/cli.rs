@@ -581,10 +581,7 @@ mod tests {
         let serena = || Some(ToolCall::Serena);
         let cases = [
             ("mcp__serena__find_symbol", serena()),
-            (
-                "mcp__serena__find_referencing_symbols",
-                serena(),
-            ),
+            ("mcp__serena__find_referencing_symbols", serena()),
             ("mcp__serena__get_symbols_overview", serena()),
             ("serena.find_symbol", serena()),
             ("serena_get_symbols_overview", serena()),

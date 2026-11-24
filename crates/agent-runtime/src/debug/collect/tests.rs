@@ -1432,7 +1432,9 @@ async fn every_run_of_a_task_is_told_with_its_own_tool_calls() {
         member
             .end_run("2026-11-17T12:30:00Z".parse().unwrap(), RunEnd::Stopped)
             .unwrap();
-        member.begin_run(second.clone(), "2026-11-17T13:00:00Z".parse().unwrap(), None).unwrap();
+        member
+            .begin_run(second.clone(), "2026-11-17T13:00:00Z".parse().unwrap(), None)
+            .unwrap();
     }
     let call = |run: &agent_core::ids::RunId, number: u32, name: &str| {
         Record::Step(Box::new(Step {
