@@ -13,8 +13,8 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent-runtime] A session that goes on after a restart of the daemon keeps its count and its reminder, and is never told twice, also when the bound was lowered since its earlier runs. A history of version 22 is read and upgraded to version 23, which admits the new record and log event.
-- [agent-core] [agent-runtime] A CLI's `Grep` is told by what it was given: with no path it searches the whole repository, with `docs` or `config` it searches text, and the history keeps its path as `src (path)`. A search filtered to Markdown and Rust together counts, and so does `rg --files src`.
-- [agent] A reminder of Serena that the engine recorded just before the daemon went down is put on the bus once when the daemon starts; the file `serena-reminder-told` in the run's directory keeps one the bus took from going out again.
+- [agent-core] [agent-runtime] A CLI's `Grep` and `Glob` are told by what they were given: with no path a `Grep` searches the whole repository (also for a pattern such as `docs (path)`), with `docs` or `config` it searches text, and with a glob, `include` or `type` filter it searches the files the filter names — `Grep` of `src` limited to `*.md` is no search of code, a `Glob` of `*.rs` under `src` is. The history keeps the files as `src/*.rs (path)`. A search filtered to Markdown and Rust together counts, and so does `rg --files src`.
+- [agent] A reminder of Serena that the engine recorded just before the daemon went down is put on the bus once when the daemon starts; the file `serena-reminder-told` in the run's directory, made before the bus is asked, keeps a reminder from going out twice: it goes out at most once per session, and one whose mark cannot be made or looked for is not sent.
 - [agent] A reminder of Serena that the bus refuses, or that cannot be rendered or addressed, is tried again at the next turns of the daemon and at the end of its run, not lost.
 
 ### Configuration
