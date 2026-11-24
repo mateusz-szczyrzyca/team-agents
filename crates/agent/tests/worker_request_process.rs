@@ -3666,4 +3666,26 @@ fi
             1
         );
     }
+    #[test]
+    fn owned_declared_failure_without_file_work_uses_a_wrong_result_try() {
+        let (world, tasks) = second_try_world(&[("glm-1", "sleep,fail"), ("glm-2", "sleep,script:guide")], Some(2));
+        world.request_is("1", "done");
+        let request = &world.requests()["1"];
+        assert_eq!(request["recovery"], true);
+        assert_eq!(request["worker"], "glm-2");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/guide.md"),
+            "the walkthrough\n"
+        );
+        let retry_prompt = world.file(task(&tasks, "glm-2"), ".fake-prompt-2");
+        assert!(
+            retry_prompt.contains("the worker did not end its run with STATUS: DONE"),
+            "{retry_prompt}"
+        );
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+        assert_eq!(
+            world.count_told("claude-1", "Your request H1 to the workers is back with you"),
+            0
+        );
+    }
 }
