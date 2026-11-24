@@ -22,6 +22,8 @@
 #                   in the worktree first, so a test can stop the daemon while that run goes on
 #   fail-tool-committed-dirty  like fail-tool, after it committed a file (`work-N.txt`) and left draft.txt uncommitted: a
 #                   member that fails with real work done, part of it on its branch and part of it not
+#   fail-tool-committed  like fail-tool, after it committed a file (`work-N.txt`) and left nothing uncommitted: a member that
+#                   fails with real work done, all of it on its branch
 #   take-gone-members-work  as the lead of a member that is gone: reads the text the harness gave it on the bus, takes the
 #                   worktree it names, commits the files left uncommitted there as they are (no question to the human),
 #                   merges the member's branch into its own, records the gate and ends with STATUS: DONE; it fails when the
@@ -651,6 +653,12 @@ case $action in
     hide_own_files
     commit_work
     echo "draft of run $n" > draft.txt
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result 'I could not do it.\nSTATUS: FAILED'
+    ;;
+  fail-tool-committed)
+    hide_own_files
+    commit_work
     printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
     result 'I could not do it.\nSTATUS: FAILED'
     ;;

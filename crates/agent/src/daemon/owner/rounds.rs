@@ -831,6 +831,10 @@ mod worker_steps_tests;
 mod handover_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/delivered_work.rs"]
+mod delivered_work_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/member_gone.rs"]
 mod member_gone_tests;
 
