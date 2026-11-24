@@ -83,9 +83,14 @@ fn record_reminder(rig: &Rig, team: &TeamId, task: &TaskId, run: &RunId, searche
         branch: BranchName::from_str("main").unwrap(),
         session: None,
     })));
-    started
-        .history
-                                    .serena_reminded(run, task, CliKind::Claude, searches, 3, &SharedClock::new(rig.clock_of().clone()));
+    started.history.serena_reminded(
+        run,
+        task,
+        CliKind::Claude,
+        searches,
+        3,
+        &SharedClock::new(rig.clock_of().clone()),
+    );
     started.history.flush();
     started.writer.close().unwrap();
 }
@@ -107,10 +112,7 @@ async fn beyond_this_run(rig: &Rig) {
         let reply = crate::client::Connection::connect(&rig.home.socket_file())
             .await
             .unwrap()
-            .request(
-                Client::Cli,
-                Command::Status(StatusRequest { target: None }),
-            )
+            .request(Client::Cli, Command::Status(StatusRequest { target: None }))
             .await
             .unwrap();
         assert!(matches!(reply, Reply::Teams { .. }), "{reply:?}");
@@ -122,7 +124,13 @@ async fn run_ended(rig: &Rig, task: &TaskId) {
     rig.state_where("the end of the last run", |state| {
         state
             .find_task(task)
-            .and_then(|found| found.member.runs().last().map(|last| matches!(last.state(), agent_core::state::RunState::Ended { .. })))
+            .and_then(|found| {
+                found
+                    .member
+                    .runs()
+                    .last()
+                    .map(|last| matches!(last.state(), agent_core::state::RunState::Ended { .. }))
+            })
             .unwrap_or(false)
     })
     .await;
@@ -160,7 +168,10 @@ async fn a_look_after(rig: &Rig, before: std::time::SystemTime) {
         if changed {
             return;
         }
-        assert!(std::time::Instant::now() < deadline, "the daemon did not look at its teams");
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the daemon did not look at its teams"
+        );
         tokio::time::sleep(std::time::Duration::from_millis(10)).await;
     }
 }

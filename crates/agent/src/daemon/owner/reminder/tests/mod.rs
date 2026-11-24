@@ -194,14 +194,7 @@ fn the_next_run_of_the_task_ends_the_reminder_of_this_one() {
             task(),
             20,
         );
-        history.serena_reminded(
-            &run,
-            &task(),
-            CliKind::Claude,
-            41,
-            7,
-            &Later(30),
-        );
+        history.serena_reminded(&run, &task(), CliKind::Claude, 41, 7, &Later(30));
     });
 
     let found = reminder_of(&reader, &run, &team());

@@ -5,9 +5,6 @@
 use std::str::FromStr;
 use std::sync::Arc;
 
-
-
-
 use agent_core::config::AbsolutePath;
 use agent_core::history::{AgentIdentity, HistoryEvent, MaxTextBytes, Record, RunStart, RunWhy};
 use agent_core::ids::{BranchName, Clock, RunId, TaskId, TeamId};

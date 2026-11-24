@@ -10,11 +10,7 @@ use agent_runtime::history::{ReadError, Reader};
 ///
 /// # Errors
 /// [`ReadError`] when the history of the team cannot be read: no reminder is delivered then, and the caller says why.
-pub(crate) fn reminder_of(
-    history: &Reader,
-    run: &RunId,
-    team: &TeamId,
-) -> Result<Option<(u64, CliKind)>, ReadError> {
+pub(crate) fn reminder_of(history: &Reader, run: &RunId, team: &TeamId) -> Result<Option<(u64, CliKind)>, ReadError> {
     let records = history.team_records(team)?;
     Ok(within(&records, run))
 }
