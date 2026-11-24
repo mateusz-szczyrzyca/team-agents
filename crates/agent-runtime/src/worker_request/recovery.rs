@@ -114,7 +114,7 @@ pub enum Phase {
     Settled,
 }
 
-/// Untrusted on-disk form. Workspace validation is reused from request_workspace.
+/// Untrusted on-disk form. Workspace validation is reused from `request_workspace`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Record {

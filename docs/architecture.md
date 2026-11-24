@@ -870,6 +870,26 @@ and its parent is the head; the history records it ([`history.md`](history.md), 
 `[snapshot] warn_mb` is still taken and logged as `snapshot_large`; a failure is logged as `snapshot_failed` and the daemon
 goes on. Nothing prunes the snapshots yet, and nothing pushes them. `agent status <round>` shows the last snapshot of each task.
 
+### Prepared request recovery protocol
+
+`agent_core::decide::worker_recovery` separates an absent result from a result that needs checking.
+The pure policy allows three no-result returns, independently of `[workers] tries`: provider refusals and quota
+failures prefer another provider, with same-provider fallback; process death, missing status and queued or running
+restart take the first compatible free worker. With none free the request stays queued. A fourth missing result
+returns the retained causes. A result, including a declared failure after work, goes to the existing wrong-result
+policy; a stale answer is dropped. These decisions have no process or filesystem effects.
+
+`agent_runtime::worker_request::recovery` provides an opt-in journal beside existing request records.
+Its transitions retain the original workspace and existing snapshot identities while assigning each execution a
+fresh run and generation. Loading replays all transitions to reconstruct ownership and independent counters;
+callers cannot deserialize an arbitrary owner or counter. The daemon owner must serialize updates for a request.
+The APIs use the existing bounded UTF-8 reader and atomic file writer, and never write requester worktree files.
+See [the durable format](state.md) for events, limits and compatibility.
+
+This is preparation for recovery dispatch and fenced settlement. No daemon path calls these APIs in this version;
+existing open requests continue using their previous settlement rules. Automatic restart recovery and suppression
+of late answers in the live dispatcher are delivered by later parts of the worker recovery work.
+
 ### The history
 
 The state file says what is; the history says what happened. It is one SQLite database, `history.db` in the home, written
