@@ -1325,7 +1325,8 @@ async fn the_summary_counts_the_tool_calls_of_a_tasks_last_run_from_its_steps() 
         .task(&home, team.crew().roster()[0].1, Role::Solo)
         .await
         .unwrap();
-    collection.enrich_last_run_details_with_tools(Some(&home), &records, &team);
+    collection.enrich_last_run_details(&records, &team);
+    collection.enrich_last_run_tools(&home, &team);
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
@@ -1362,7 +1363,8 @@ async fn the_summary_says_no_tool_when_the_steps_of_a_tasks_last_run_name_none()
         .task(&home, team.crew().roster()[0].1, Role::Solo)
         .await
         .unwrap();
-    collection.enrich_last_run_details_with_tools(Some(&home), &[], &team);
+    collection.enrich_last_run_details(&[], &team);
+    collection.enrich_last_run_tools(&home, &team);
     let summary = agent_core::debug_summary::render_command_summary(
         &collection.summary,
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),

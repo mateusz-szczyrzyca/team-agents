@@ -737,7 +737,8 @@ impl Collection {
                     },
                 );
                 self.summary.history_tail = Some(text.clone());
-                self.enrich_last_run_details_with_tools(Some(home), &records, team);
+                self.enrich_last_run_details(&records, team);
+                self.enrich_last_run_tools(home, team);
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -756,29 +757,13 @@ impl Collection {
         Ok(())
     }
 
-    /// Adds the last run of each member of `team` to the summary, without counting its tool calls: the history the
-    /// steps of a run are read from is not given here.
-    #[cfg(test)]
     fn enrich_last_run_details(&mut self, records: &[agent_core::history::SequencedRecord], team: &Team) {
-        self.enrich_last_run_details_with_tools(None, records, team);
-    }
-
-    fn enrich_last_run_details_with_tools(
-        &mut self,
-        home: Option<&Home>,
-        records: &[agent_core::history::SequencedRecord],
-        team: &Team,
-    ) {
         let selection = agent_core::story::Selection::Team(team.id().clone());
-        let roster: Vec<_> = team
+        let roster = team
             .crew()
             .roster()
             .into_iter()
-            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
-            .collect();
-        if let Some(home) = home {
-            self.count_tools(home, &roster);
-        }
+            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
         for (_role, member) in roster {
             let Some(last_run) = member.runs().last() else {
                 continue;
@@ -831,6 +816,17 @@ impl Collection {
                 }
             }
         }
+    }
+
+    /// Counts the tool calls of each member's last run from the steps the history records for it.
+    fn enrich_last_run_tools(&mut self, home: &Home, team: &Team) {
+        let roster: Vec<_> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
+            .collect();
+        self.count_tools(home, &roster);
     }
 
     /// Counts the tool calls of each task's last run, from the steps the history records for it. A run without a
