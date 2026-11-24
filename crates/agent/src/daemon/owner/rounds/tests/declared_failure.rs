@@ -1,7 +1,8 @@
 //! A run that reports `STATUS: FAILED` after it used a tool is not the end of its task: the ladder starts the task in a
 //! new session before anything fails it.
 
-use agent_core::state::{ItemPhase, MergeMode};
+use agent_core::ids::TaskId;
+use agent_core::state::{ItemPhase, MergeMode, State};
 use agent_core::status::TaskStatus;
 
 use super::rig::{ONE, Rig, investigator, normal};
@@ -14,22 +15,25 @@ const APPROVE: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 async fn a_declared_failure_after_a_tool_call_goes_on_in_a_new_session() {
     let mut rig = Rig::new(
         &[
+            investigator("inv-lead", "sleep"),
             normal("claude-1", "fail-first-tool:the second session says done"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
         5,
-        false,
+        true,
     )
     .await;
     rig.start().await;
-    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    rig.wait_for("the second run to start", || rig.runs(&tasks[0]) >= 2)
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.wait_for("the second run to start", || rig.runs(&tasks[1]) >= 2)
         .await;
     let state = rig.state();
     rig.stop().await.unwrap();
 
-    let member = state.find_task(&tasks[0]).unwrap().member;
+    let member = state.find_task(&tasks[1]).unwrap().member;
     assert_ne!(
         member.status(),
         TaskStatus::Failed,
@@ -48,6 +52,19 @@ fn configure(rig: &Rig, table: &str) {
     let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
     config.push_str(table);
     std::fs::write(rig.home.config_file(), config).unwrap();
+}
+
+/// Waits until `claude-2`, the replacement, has taken `task` over and ended its run: the third of the task, after the
+/// two of `claude-1`.
+async fn replacement_ended_a_run(rig: &Rig, task: &TaskId) -> State {
+    rig.state_where("the replacement ended a run of the task", |state| {
+        state.find_task(task).is_some_and(|found| {
+            found.member.agent().name() == "claude-2"
+                && found.member.runs().len() == 3
+                && found.member.current_run().is_none()
+        })
+    })
+    .await
 }
 
 /// The texts the bus of `rig` keeps, every file of its directory read as text.
@@ -77,30 +94,29 @@ fn bus_texts(rig: &Rig) -> String {
 async fn a_declared_failure_that_fails_again_is_taken_over_by_a_fitting_agent_in_the_same_worktree() {
     let mut rig = Rig::new(
         &[
+            investigator("inv-lead", "sleep"),
             normal("claude-1", "fail-tool"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
         5,
-        false,
+        true,
     )
     .await;
     configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
     rig.start().await;
-    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-
-    let state = rig
-        .item_where("1.1", "merged after the takeover", |phase| {
-            matches!(phase, ItemPhase::Done { .. })
-        })
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
-    let takeover = rig.prompt(&tasks[0], 3).await;
-    let log = std::fs::read_to_string(rig.worktree(&tasks[0]).join(".fake-log")).unwrap();
+
+    let state = replacement_ended_a_run(&rig, &tasks[1]).await;
+    let takeover = rig.prompt(&tasks[1], 3).await;
+    let log = std::fs::read_to_string(rig.worktree(&tasks[1]).join(".fake-log")).unwrap();
     let told = rig.notifications();
     rig.stop().await.unwrap();
 
-    let member = state.find_task(&tasks[0]).unwrap().member;
+    let member = state.find_task(&tasks[1]).unwrap().member;
     assert_eq!(
         member.agent().name(),
         "claude-2",
@@ -195,29 +211,32 @@ async fn a_declared_failure_that_fails_again_gives_the_lead_the_members_work() {
 async fn mode_off_keeps_a_declared_failure_final() {
     let mut rig = Rig::new(
         &[
+            investigator("inv-lead", "sleep"),
             normal("claude-1", "fail-tool"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
         5,
-        false,
+        true,
     )
     .await;
     configure(&rig, "[replacement]\nmode = \"off\"\nagents = [\"claude-2\"]\n");
     rig.start().await;
-    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
 
     let state = rig
         .state_where("the task failed", |state| {
             state
-                .find_task(&tasks[0])
+                .find_task(&tasks[1])
                 .is_some_and(|found| found.member.status() == TaskStatus::Failed)
         })
         .await;
     rig.stop().await.unwrap();
 
-    let member = state.find_task(&tasks[0]).unwrap().member;
+    let member = state.find_task(&tasks[1]).unwrap().member;
     assert_eq!(member.runs().len(), 1, "mode off: the failed run is not started again");
     assert_eq!(member.past_holders().len(), 0, "mode off: nothing is handed over");
     assert_eq!(member.agent().name(), "claude-1");
@@ -237,29 +256,29 @@ async fn mode_off_keeps_a_declared_failure_final() {
 async fn every_holder_after_a_declared_failure_is_told_of_the_uncommitted_file() {
     let mut rig = Rig::new(
         &[
+            investigator("inv-lead", "sleep"),
             normal("claude-1", "fail-tool-dirty"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
         5,
-        false,
+        true,
     )
     .await;
     configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
     rig.start().await;
-    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let worktree = rig.worktree(&tasks[0]);
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let worktree = rig.worktree(&tasks[1]);
     rig.wait_for("the first run to start", || worktree.join(".fake-args-1").exists())
         .await;
     std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
 
-    rig.item_where("1.1", "merged after the takeover", |phase| {
-        matches!(phase, ItemPhase::Done { .. })
-    })
-    .await;
-    let new_session = rig.prompt(&tasks[0], 2).await;
-    let takeover = rig.prompt(&tasks[0], 3).await;
+    replacement_ended_a_run(&rig, &tasks[1]).await;
+    let new_session = rig.prompt(&tasks[1], 2).await;
+    let takeover = rig.prompt(&tasks[1], 3).await;
     let kept = worktree.join("draft.txt").exists();
     rig.stop().await.unwrap();
 
@@ -284,19 +303,22 @@ async fn every_holder_after_a_declared_failure_is_told_of_the_uncommitted_file()
 async fn a_restart_in_the_new_session_of_a_declared_failure_keeps_the_ladder() {
     let mut rig = Rig::new(
         &[
+            investigator("inv-lead", "sleep"),
             normal("claude-1", "fail-tool-dirty"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
         5,
-        false,
+        true,
     )
     .await;
     configure(&rig, "[replacement]\nagents = [\"claude-2\"]\n");
     rig.start().await;
-    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let worktree = rig.worktree(&tasks[0]);
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    let worktree = rig.worktree(&tasks[1]);
     rig.wait_for("the new session to start", || worktree.join(".fake-args-2").exists())
         .await;
     let before = rig.state();
@@ -304,17 +326,13 @@ async fn a_restart_in_the_new_session_of_a_declared_failure_keeps_the_ladder() {
     std::fs::write(worktree.join(".fake-continue"), b"").unwrap();
     rig.start().await;
 
-    let state = rig
-        .item_where("1.1", "merged after the takeover", |phase| {
-            matches!(phase, ItemPhase::Done { .. })
-        })
-        .await;
+    let state = replacement_ended_a_run(&rig, &tasks[1]).await;
     let told = rig.notifications();
     rig.stop().await.unwrap();
 
     assert_eq!(
         before
-            .find_task(&tasks[0])
+            .find_task(&tasks[1])
             .unwrap()
             .member
             .renewals()
@@ -322,7 +340,7 @@ async fn a_restart_in_the_new_session_of_a_declared_failure_keeps_the_ladder() {
         Some(1),
         "the new session was recorded before the restart"
     );
-    let member = state.find_task(&tasks[0]).unwrap().member;
+    let member = state.find_task(&tasks[1]).unwrap().member;
     assert_eq!(member.agent().name(), "claude-2");
     assert_eq!(member.past_holders().len(), 1);
     assert!(
