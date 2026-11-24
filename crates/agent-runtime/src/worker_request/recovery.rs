@@ -215,7 +215,12 @@ impl TryFrom<Record> for Journal {
                     journal.wrong_try = journal.wrong_try.checked_add(1).ok_or(Invalid::Transition)?;
                     journal.phase = Phase::Queued;
                 }
-                Transition::Observed { .. } => {}
+                Transition::Observed { run, .. } => {
+                    journal.require_run(run)?;
+                    if journal.ending().is_some() {
+                        return Err(Invalid::Transition);
+                    }
+                }
                 Transition::Settled { run } => {
                     journal.require_run(run)?;
                     journal.phase = Phase::Settled;
@@ -270,7 +275,13 @@ impl Journal {
     /// Ending observed for the current execution, if one was durably recorded.
     #[must_use]
     pub fn ending(&self) -> Option<WorkerEnding> {
-        None
+        let Phase::Running(attempt) = &self.phase else {
+            return None;
+        };
+        self.record.events.iter().rev().find_map(|event| match event {
+            Transition::Observed { run, ending } if run == &attempt.run => Some(*ending),
+            _ => None,
+        })
     }
 
     /// Original workspace identity, unaffected by later worker assignments.
