@@ -3243,7 +3243,7 @@ Integrate the guide.
     }
 
     #[test]
-    fn review_single_worker_retries_in_the_handed_off_workspace() {
+    fn review_single_worker_receives_its_second_try() {
         let mut world = World::new_custom(
             &[
                 AgentDef {
@@ -3266,8 +3266,8 @@ Integrate the guide.
             None,
         );
         world.allow_tries(2);
-        // The first run commits an incomplete guide; the retry must receive that same workspace.
-        world.script("retry", &format!("if test -f docs/guide.md; then\n{}\nelse\nmkdir -p docs\necho first > docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Record first try'\nfi\n", commit_script("the walkthrough", &[])));
+        // Retry selection is independent of the discarded worktree of the wrong first result.
+        world.script("retry", &format!("if test -f \"$AGENTS_HOME/first-worker-try\"; then\n{}\nelse\ntouch \"$AGENTS_HOME/first-worker-try\"\nmkdir -p docs\necho first > docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Record first try'\nfi\n", commit_script("the walkthrough", &[])));
         let plan = MEMBER_PLAN.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
         let request = MEMBER_REQUEST.replace("exists docs/guide.md", "grep -q walkthrough docs/guide.md");
         world.asks("member", Some(&plan), &[&request]);
