@@ -17,6 +17,7 @@ pub struct ToolCall {
 
 impl ToolCall {
     /// Construct a tool call.
+    #[must_use]
     pub const fn new(cli: &'static str, tool: &'static str) -> Self {
         Self { cli, tool }
     }
@@ -42,12 +43,49 @@ impl CodeExtensions {
         // Notably excluded: toml, yaml, yml, xml, json, md, txt, log
         matches!(
             ext.to_lowercase().as_str(),
-            "rs" | "go" | "py" | "js" | "ts" | "jsx" | "tsx" | "java" | "c" | "cpp" | "h"
-                | "hpp" | "cc" | "cxx" | "cs" | "kt" | "scala" | "rb" | "php" | "swift"
-                | "m" | "mm" | "lua" | "pl" | "sh" | "bash" | "zsh" | "fish" | "ps1"
-                | "gradle" | "maven" | "cmake" | "makefile" | "make"
-                | "html" | "css" | "scss" | "less"
-                | "sql" | "vb" | "f90" | "f95" | "f03" | "f08"
+            "rs" | "go"
+                | "py"
+                | "js"
+                | "ts"
+                | "jsx"
+                | "tsx"
+                | "java"
+                | "c"
+                | "cpp"
+                | "h"
+                | "hpp"
+                | "cc"
+                | "cxx"
+                | "cs"
+                | "kt"
+                | "scala"
+                | "rb"
+                | "php"
+                | "swift"
+                | "m"
+                | "mm"
+                | "lua"
+                | "pl"
+                | "sh"
+                | "bash"
+                | "zsh"
+                | "fish"
+                | "ps1"
+                | "gradle"
+                | "maven"
+                | "cmake"
+                | "makefile"
+                | "make"
+                | "html"
+                | "css"
+                | "scss"
+                | "less"
+                | "sql"
+                | "vb"
+                | "f90"
+                | "f95"
+                | "f03"
+                | "f08"
         )
     }
 }
@@ -69,7 +107,7 @@ pub fn is_code_search_shell_command(command: &str, file_path: Option<&str>) -> b
 
     // If we know the file path, check if it's a code file.
     if let Some(path) = file_path {
-        let ext = path.split('.').last().unwrap_or("");
+        let ext = path.split('.').next_back().unwrap_or("");
         return CodeExtensions::is_code_file(ext);
     }
 
@@ -110,6 +148,7 @@ pub struct ReminderState {
 
 impl ReminderState {
     /// Create a new reminder state at the start of a session.
+    #[must_use]
     pub const fn new() -> Self {
         Self {
             code_searches_without_serena: 0,
@@ -148,10 +187,7 @@ impl ReminderState {
     /// - No reminder has been sent yet in this session.
     #[must_use]
     pub fn should_remind(&self, threshold: usize) -> bool {
-        !self.serena_called
-            && !self.reminder_sent
-            && threshold > 0
-            && self.code_searches_without_serena >= threshold
+        !self.serena_called && !self.reminder_sent && threshold > 0 && self.code_searches_without_serena >= threshold
     }
 
     /// Whether a reminder has been sent in this session.
