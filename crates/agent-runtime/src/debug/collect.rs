@@ -937,11 +937,11 @@ impl Collection {
                 .map(|run| RunToolCalls {
                     run: run.id().clone(),
                     tools: counted.get(run.id()).copied().unwrap_or_default(),
-                    reminder: reminder_of(&run.id(), &by_run, &reminders),
+                    reminder: reminder_of(run.id(), &by_run, &reminders),
                 })
                 .collect();
             task_summary.tools = counted.get(last_run.id()).copied().unwrap_or_default();
-            task_summary.reminder = reminder_of(&last_run.id(), &by_run, &reminders);
+            task_summary.reminder = reminder_of(last_run.id(), &by_run, &reminders);
         }
         Ok(())
     }

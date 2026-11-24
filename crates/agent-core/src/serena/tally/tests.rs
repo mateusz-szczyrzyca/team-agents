@@ -87,8 +87,11 @@ fn a_session_without_serena_is_never_reminded() {
 fn a_new_session_counts_its_searches_anew() {
     let after = RemindAfter::new(2).unwrap();
     let mut first = SessionTally::new();
-    let _ = first.note(&command("cat src/main.rs"), after);
-    let _ = first.note(&command("cat src/main.rs"), after);
+    assert_eq!(first.note(&command("cat src/main.rs"), after), None);
+    assert_eq!(
+        first.note(&command("cat src/main.rs"), after),
+        Some(Reminder { searches: 2 })
+    );
 
     let mut second = SessionTally::new();
 

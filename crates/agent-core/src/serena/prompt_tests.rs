@@ -27,9 +27,12 @@ fn the_text_of_the_catalog_names_the_count_and_asks_for_serenas_tools() {
         .join(path);
     let text = std::fs::read_to_string(&file).expect("the text is in prompts/harness/run");
     let mut tally = SessionTally::new();
-    let _ = tally.note(
-        &command("cat src/main.rs"),
-        crate::serena::RemindAfter::new(1).expect("1"),
+    assert_eq!(
+        tally.note(
+            &command("cat src/main.rs"),
+            crate::serena::RemindAfter::new(1).expect("1"),
+        ),
+        Some(crate::serena::Reminder { searches: 1 })
     );
     let reminder = ReminderText::of(&tally).expect("the count renders");
 
@@ -38,7 +41,7 @@ fn the_text_of_the_catalog_names_the_count_and_asks_for_serenas_tools() {
         .render(&text, reminder.values())
         .expect("the text renders with the count");
 
-    assert!(rendered.contains("1"), "the count of searches is named: {rendered}");
+    assert!(rendered.contains('1'), "the count of searches is named: {rendered}");
     for tool in ["find_symbol", "find_referencing_symbols", "get_symbols_overview"] {
         assert!(rendered.contains(tool), "{tool} is asked for: {rendered}");
     }
