@@ -140,10 +140,13 @@ Serena's language servers read — `rs`, `go`, `py`, `pyi`, `ts`, `tsx`, `js`, `
 `erl`, `lua`, `pl` — and the shell, SQL, Elixir, Erlang and Lua that a repository of these agents holds too. A search
 over a directory of code counts as well: `.`, or a path with one of `src`, `crates`, `lib`, `cmd`, `pkg`, `internal`,
 `app`, `tests`, `test`, `tools`, `bin`, `agentbus` among its parts (`grep -rn x crates/`, `rg x src`), and so does the
-CLI's `Grep`, by what it was given: a search with no path, only its pattern, searches the whole repository and counts,
-whatever the pattern says; a search given a path counts when the path is a directory or a file of code (`src`,
-`src/lib.rs`) and not when it is `docs` or `config`. The history keeps the path of such a `Grep` with the mark ` (path)`
-after it, which is how a path is told from a pattern. The line of the
+CLI's `Grep` and `Glob`, by what they were given: a `Grep` with no path and no filter, only its pattern, searches the whole
+repository and counts, whatever the pattern says (also `docs (path)`); one given a path counts when the path is a directory
+or a file of code (`src`, `src/lib.rs`) and not when it is `docs` or `config`; one given a filter (`glob`, `include`,
+`type`) is read as a search of the files the filter names, under its path: `src` with `*.md` or type `md` searches text and
+does not count, `src` with `*.rs` or type `rust` counts, and `*.{rs,md}` or a text filter next to a code one counts too. A
+`Glob` counts by its pattern under its path (`*.rs` under `src` is `src/*.rs`). The history keeps the files of such a
+search as its summary with the mark ` (path)` after them, which is how they are told from a pattern. The line of the
 shell is read command by command, split at `|`, `||`, `&&`, `;` and `&`, with quotes, options and redirections taken off:
 only a command's path operands count, never its pattern (`grep -rn test docs/` searches text), a search that writes into a
 pipe counts what it searched (`rg x src | sort`) and one that reads a pipe names nothing (`git log | grep x`). `find` counts
@@ -159,7 +162,7 @@ the daemon puts the text of the reminder on the bus for the run's agent in the s
 does: the agent reads it at its next call of the bus while the run goes on, with no stop and no restart, and the run is
 not given a second one. The text is the catalog's, names the count, asks in the imperative to find a symbol with
 `find_symbol`, its callers with `find_referencing_symbols` and a file's declarations with `get_symbols_overview`, and to
-keep `grep` for text. A reminder the bus refuses, or one that cannot be rendered or addressed, is tried again at the next turn of the daemon, five times at most, and then at the end of the run from the history; only a reminder the bus took marks its run as told, in memory and by the file `serena-reminder-told` in the run's directory.
+keep `grep` for text. A reminder the bus refuses, or one that cannot be rendered or addressed, is tried again at the next turn of the daemon, five times at most, and then at the end of the run from the history; a reminder is claimed before the bus is asked, by the file `serena-reminder-told` in the run's directory, made atomically and taken away again when the bus refuses the reminder, so that it goes out at most once per session. A claim that cannot be made or looked for puts nothing on the bus, and a crash between the claim and the bus loses the reminder, never sends it twice.
 A reminder the history holds for the last run of a task that is not done when the daemon starts, and that has no such
 file, was recorded by a daemon that went down before it reached the bus: the new daemon puts it there once. A run that called Serena at least once is never reminded, and neither is a session that was
 reminded once, also after a restart of the daemon: a resumed session reads its count and its reminder from the history. A
