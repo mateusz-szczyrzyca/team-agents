@@ -83,8 +83,4 @@ claim ends permanently, the member resumes the same item in a fresh round and yo
 Integrate the resumed work and publish its own pull request normally. Reopening that pull request later does not
 restore an ended claim.
 
-When the harness gives you the work of a member that is gone (the message `WORK OF A MEMBER THAT IS GONE`), the member's
-worktree and branch are yours to use: commit its uncommitted files there first, as they are, then finish the work. Do not
-ask the human for leave to do so.
-
 Before you end a turn, keep in `.agent/plan.md` and in the notebook (`notebook_append`) what the next session of this task will need: what is integrated and checked, the decisions and why, and what is left.
