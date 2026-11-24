@@ -659,14 +659,16 @@ impl History {
             || (None, Vec::new()),
             |(team, _, rounds, _)| (Some(team.clone()), rounds.clone()),
         );
-        let team = if let Some(override_team) = override_team {
-            override_team.clone()
-        } else if let Some(team) = team {
-            team
-        } else {
-            // The run hasn't been started yet: no team to record the reminder in.
+        // The run hasn't been started yet: no rounds to record the reminder with.
+        // Even if an override_team is provided for testing, we cannot record a reminder without rounds.
+        let Some(team_to_use) = team else {
             self.shared.lose(1);
             return;
+        };
+        let team = if let Some(override_team) = override_team {
+            override_team.clone()
+        } else {
+            team_to_use
         };
         let at = match Timestamp::now(clock) {
             Ok(at) => at,

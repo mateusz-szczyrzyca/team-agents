@@ -171,15 +171,16 @@ fn the_reminder_of_another_run_of_the_task_is_not_this_runs() {
 fn the_run_of_the_reminder_may_be_written_after_the_reminder() {
     let run = RunId::from_str("run-20261124-100001-r1r1").expect("a run");
     let (_dir, reader) = history(|history| {
-        // The daemon cut the run, wrote its end and its reminder, and only then looked at the team that briefs the run it
-        // starts again, the same run in the state.
+        // A reminder called before the run starts is not recorded because it has no rounds.
+        // Even with override_team, the reminder cannot be recorded without rounds.
         history.serena_reminded_with_team(&run, &task(), CliKind::Claude, 40, 7, Some(&team()), &Later(10));
         run_start(history, run.clone(), team(), task(), 20);
     });
 
     let found = reminder_of(&reader, &run, &team());
 
-    assert_eq!(found.expect("the history reads"), Some((40, CliKind::Claude)));
+    // The reminder is not recorded because it was called before the run started
+    assert_eq!(found.expect("the history reads"), None);
 }
 
 #[test]
