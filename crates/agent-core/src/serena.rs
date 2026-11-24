@@ -10,6 +10,8 @@ use std::path::Path;
 
 use crate::cli::ActivityEvent;
 
+mod prompt;
+pub use prompt::{ReminderText, ReminderTextError};
 mod tally;
 #[cfg(test)]
 mod tests;
