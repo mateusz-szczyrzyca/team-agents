@@ -12,7 +12,7 @@ mod tests;
 /// An unsettled workspace observation for a pool worker.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct UnsettledWorker {
-    pub(crate) worker: AgentName,
+    pub(crate) worker: Option<AgentName>,
     pub(crate) from_task: String,
     pub(crate) step: Option<String>,
     pub(crate) damaged: bool,
@@ -21,6 +21,7 @@ pub(crate) struct UnsettledWorker {
 /// The lines describing the pool workers of `configured`: each worker, whom it serves (team or task, step) or that it is free.
 ///
 /// Returns `None` if `configured` is empty.
+#[cfg(test)]
 pub(crate) fn render_pool(
     configured: &[AgentName],
     teams: &[TeamSummary],
@@ -55,7 +56,7 @@ fn find_serving(
     worker: &AgentName,
     teams: &[TeamSummary],
     helpers: Option<&[HelperEntry]>,
-    _unsettled: Option<&[UnsettledWorker]>,
+    unsettled: Option<&[UnsettledWorker]>,
 ) -> Option<String> {
     if let Some(helpers) = helpers {
         for helper in helpers {
@@ -80,13 +81,52 @@ fn find_serving(
             }
         }
     }
+    if let Some(unsettled) = unsettled {
+        for entry in unsettled {
+            if entry.worker.as_ref() != Some(worker) {
+                continue;
+            }
+            if entry.damaged {
+                return Some("unsettled".to_owned());
+            }
+            let from_task = entry.from_task.as_str();
+            let team_id = teams
+                .iter()
+                .find(|t| t.members.iter().any(|m| m.task.as_str() == from_task))
+                .map_or(from_task, |t| t.id.as_str());
+            if let Some(ref step) = entry.step
+                && !step.is_empty()
+            {
+                return Some(format!("{team_id} (step {step})"));
+            }
+            if !team_id.is_empty() {
+                return Some(team_id.to_owned());
+            }
+        }
+        if unsettled.iter().any(|u| u.damaged && u.worker.is_none()) {
+            return Some("unsettled".to_owned());
+        }
+    }
     for team in teams {
+        if team_is_stopped(team) {
+            continue;
+        }
         if let Some(m) = team.members.iter().find(|m| m.agent.name() == worker.as_str())
             && (m.status == TaskStatus::Running
-                || (m.role == Role::Worker && !matches!(m.status, TaskStatus::Done | TaskStatus::Failed)))
+                || (m.role == Role::Worker && !matches!(m.status, TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped)))
         {
             return Some(team.id.to_string());
         }
     }
     None
+}
+
+fn team_is_stopped(team: &TeamSummary) -> bool {
+    !team.members.is_empty()
+        && team.members.iter().all(|m| {
+            matches!(
+                m.status,
+                TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
+            )
+        })
 }
