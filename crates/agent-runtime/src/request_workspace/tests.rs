@@ -106,7 +106,7 @@ fn workspace(number: u64) -> RequestWorkspace {
         worker: worker.clone(),
         worker_task: worker_task.clone(),
         branch: branch(&worker, &worker_task).unwrap(),
-        base: "0000000000000000000000000000000000000000".to_owned(),
+        base: "0000000000000000000000000000000000000000".parse().unwrap(),
         stage: Stage::Working,
     }
 }
@@ -118,7 +118,7 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
     let base = fixture.head();
     let workspace = workspace(1);
     let workspace = RequestWorkspace {
-        base: base.to_string(),
+        base: base.to_string().parse().unwrap(),
         ..workspace
     };
 
@@ -151,7 +151,7 @@ async fn a_workspace_is_made_at_the_requesters_committed_end_in_their_repository
     let read = files.into_iter().next().unwrap().unwrap();
     assert_eq!(read.worker_task, workspace.worker_task);
     assert_eq!(read.requester_task, workspace.requester_task);
-    assert_eq!(read.base, base.to_string());
+    assert_eq!(read.base.to_string(), base.to_string());
 }
 
 #[tokio::test]
@@ -160,7 +160,7 @@ async fn releasing_removes_the_worktree_branch_and_record() {
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
     let workspace = RequestWorkspace {
-        base: base.to_string(),
+        base: base.to_string().parse().unwrap(),
         ..workspace(2)
     };
     let requester_git = handle(&fixture.repo);
@@ -206,7 +206,7 @@ async fn a_workspace_record_of_the_kept_format_loads() {
 
     let read = read_each(&task_dir).await.unwrap().into_iter().next().unwrap().unwrap();
     let expected = RequestWorkspace {
-        base: "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5".to_owned(),
+        base: "a1b2c3d4e5f60718293a4b5c6d7e8f901a2b3c4d5".parse().unwrap(),
         ..workspace(7)
     };
     assert_eq!(read, expected);
@@ -218,7 +218,7 @@ async fn a_committed_step_of_the_workspace_is_brought_over_to_the_requesters_end
     let home = Home::new(&abs(fixture.tmp.path()));
     let base = fixture.head();
     let workspace = RequestWorkspace {
-        base: base.to_string(),
+        base: base.to_string().parse().unwrap(),
         ..workspace(6)
     };
     let requester_git = handle(&fixture.repo);
