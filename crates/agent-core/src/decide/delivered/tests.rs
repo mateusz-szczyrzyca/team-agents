@@ -178,3 +178,74 @@ fn nothing_is_decided_before_the_lead_is_done_with_a_passed_gate() {
         assert_eq!(step, Delivered::Nothing, "done {lead_done}, gate {gate_passed}");
     }
 }
+
+// Rule: a member the human stopped is looked at for work the lead lacks as a failed one is: a commit the lead lacks is told.
+#[test]
+fn a_stopped_member_with_a_commit_the_lead_lacks_has_it_told_to_the_lead() {
+    let commits = [commit('a')];
+
+    let step = delivered_step(&Delivery {
+        member: TaskStatus::Stopped,
+        commits: &commits,
+        ..delivered()
+    });
+
+    assert_eq!(step, Delivered::TellLead);
+}
+
+// Rule: an uncommitted file of a stopped member that the lead was not told of is told to it.
+#[test]
+fn a_stopped_member_with_an_uncommitted_file_the_lead_was_not_told_of_has_it_told_to_the_lead() {
+    let files = [file("src/lib.rs")];
+
+    let step = delivered_step(&Delivery {
+        member: TaskStatus::Stopped,
+        files: &files,
+        ..delivered()
+    });
+
+    assert_eq!(step, Delivered::TellLead);
+}
+
+// Rule: a stopped member whose work the lead holds is closed already: nothing is done, and its file the lead was told of
+// does not hold the round.
+#[test]
+fn a_stopped_member_whose_work_the_lead_holds_needs_nothing() {
+    let files = [file("src/lib.rs")];
+
+    let clean = delivered_step(&Delivery {
+        member: TaskStatus::Stopped,
+        ..delivered()
+    });
+    let told = delivered_step(&Delivery {
+        member: TaskStatus::Stopped,
+        files: &files,
+        told: Some(Told {
+            commits: &[],
+            files: &files,
+            answered: true,
+        }),
+        ..delivered()
+    });
+
+    assert_eq!((clean, told), (Delivered::Nothing, Delivered::Nothing));
+}
+
+// Rule: the lead ended again without the commits of a stopped member it was told of: the human is asked.
+#[test]
+fn a_lead_that_ended_again_without_the_commits_of_a_stopped_member_has_the_human_asked() {
+    let commits = [commit('a')];
+
+    let step = delivered_step(&Delivery {
+        member: TaskStatus::Stopped,
+        commits: &commits,
+        told: Some(Told {
+            commits: &commits,
+            files: &[],
+            answered: true,
+        }),
+        ..delivered()
+    });
+
+    assert_eq!(step, Delivered::AskHuman);
+}
