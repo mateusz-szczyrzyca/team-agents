@@ -5,10 +5,29 @@
 use agent_core::decide::worker_result::{CheckOutcome, Elsewhere, Scope, WorkerEnding, Wrong};
 use agent_runtime::worker_request::{Checked, Found};
 
+use std::path::Path;
+
 use agent_core::ids::{AgentName, TaskId};
 use agent_runtime::agentbus::{DelegationRequest, DelegationStatus};
 
 use super::{RequestCheck, facts_of, is_running_for, reasons_of, run_request_check, scope_of};
+
+/// Runs git in `dir` with a fixed identity and returns its standard output, so a test can build the worktree a release
+/// of a workspace needs.
+fn git(dir: &Path, args: &[&str]) -> String {
+    let output = std::process::Command::new("git")
+        .current_dir(dir)
+        .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).unwrap()
+}
 
 fn found(outcome: CheckOutcome) -> Found {
     Found {
@@ -208,9 +227,22 @@ fn a_request_is_the_workers_while_the_bus_has_it_running_for_its_task_or_for_its
 
 #[tokio::test]
 async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_recorded_reason() {
+    use agent_runtime::process::error_chain;
+    use agent_runtime::request_workspace::WorkspaceError;
+
+    use crate::fixtures::{repo, task};
+
+    // `start_request_check` builds the fault of a request served in a workspace from `request_workspace::worktree_of`;
+    // that cause is what the recorded failed check keeps, not a generic "no worktree" text. Drive the free
+    // `run_request_check` with the exact cause `worktree_of` yields for a non-text path, and prove it surfaces.
+    let cause = error_chain(&WorkspaceError::NotText {
+        repo: repo(),
+        task: task(2),
+        path: "/tmp/example".into(),
+    });
     let found = run_request_check(RequestCheck {
         worktree: None,
-        worktree_fault: Some("the worktree path is not UTF-8 text".to_owned()),
+        worktree_fault: Some(cause.clone()),
         task_dir: "/tmp/example".into(),
         step: "1.1".parse().unwrap(),
         text: "test -s docs/count.txt".to_owned(),
@@ -223,8 +255,13 @@ async fn a_check_whose_workspace_worktree_cannot_be_reached_tells_why_in_the_rec
     assert_eq!(found.line, "test -s docs/count.txt");
     assert_eq!(
         found.reason.as_deref(),
-        Some("the worktree path is not UTF-8 text"),
+        Some(cause.as_str()),
         "the recorded failed check keeps the worktree_of cause, not a generic message"
+    );
+    assert_ne!(
+        found.reason.as_deref(),
+        Some("the worker's worktree cannot be reached"),
+        "the reason is the specific not-UTF-8 worktree cause, not the generic fallback"
     );
 }
 
@@ -331,11 +368,24 @@ async fn a_completion_whose_record_cannot_be_written_leaves_the_workspace_workin
     owner.settle_workspace_results(&team_id(0)).await.unwrap();
     assert_eq!(owner.unreadable_requests.len(), 1);
     std::fs::set_permissions(&requester_dir, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    // A third look, once the directory is writable again, completes the record: the stage on disk moves from working
+    // to ended, so the completion/settlement actually progresses once the fault is repaired, instead of only retrying
+    // it. (Any release the settlement then attempts has no git here, so it may add a `release 1`; what is asserted is
+    // the progress of the record, not the count of told faults.)
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    let on_disk: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(requester_dir.join("request-workspace-1.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        on_disk["stage"]["workspace_stage"], "ended",
+        "the record progresses to ended once the directory is writable again"
+    );
 }
 
 #[tokio::test]
 async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_another_try() {
-    use crate::fixtures::{task, team_id};
+    use crate::fixtures::{repo, task, team_id};
 
     let (daemon, mut owner) = pair_daemon().await;
     let record = a_workspace_record(agent_runtime::request_workspace::Stage::Ended);
@@ -354,6 +404,64 @@ async fn a_leftover_workspace_that_cannot_be_released_is_told_once_and_kept_for_
     assert!(
         requester_dir.join("request-workspace-1.json").exists(),
         "the record is kept for the next look to release it"
+    );
+
+    // A second look with the fault still there is told once again, not twice: the same release is not re-told.
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+    assert_eq!(
+        owner
+            .unreadable_requests
+            .iter()
+            .filter(|reason| reason == &"release 1")
+            .count(),
+        1
+    );
+    assert!(
+        requester_dir.join("request-workspace-1.json").exists(),
+        "the record is still kept"
+    );
+
+    // Repair the git the release needs: a checkout whose worktree for task 1 is the requester's worktree (where the
+    // release runs) and whose worktree for task 2 is the workspace on its branch. A third look then removes the
+    // worktree, deletes the branch and drops the record.
+    let checkout = tempfile::tempdir().unwrap();
+    git(checkout.path(), &["init", "-q", "-b", "main"]);
+    std::fs::write(checkout.path().join("README.md"), "read me\n").unwrap();
+    git(checkout.path(), &["add", "README.md"]);
+    git(checkout.path(), &["commit", "-q", "-m", "first"]);
+    let requester_worktree = daemon.home.worktree_dir(&repo(), &task(1));
+    let worker_worktree = daemon.home.worktree_dir(&repo(), &task(2));
+    let requester_branch = agent_runtime::request_workspace::branch(&record.requester, &record.requester_task).unwrap();
+    for (path, branch) in [
+        (requester_worktree, requester_branch),
+        (worker_worktree.clone(), record.branch.clone()),
+    ] {
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(
+            checkout.path(),
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                branch.as_str(),
+                path.to_str().unwrap(),
+                "main",
+            ],
+        );
+    }
+
+    owner.settle_workspace_results(&team_id(0)).await.unwrap();
+
+    assert!(
+        !requester_dir.join("request-workspace-1.json").exists(),
+        "the record is dropped once the release succeeds"
+    );
+    assert!(!worker_worktree.exists(), "the worker's worktree is removed");
+    assert_eq!(
+        git(checkout.path(), &["branch", "--list", record.branch.as_str()]).trim(),
+        "",
+        "the workspace branch is deleted"
     );
 }
 
