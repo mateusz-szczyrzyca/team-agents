@@ -2,7 +2,7 @@ use super::*;
 use crate::ids::AgentName;
 
 /// A pool of workers built from `(name, provider, busy)` rows, the capabilities all empty and every other busy fact at
-/// its free default (`runs` 0, `runs_limit` 0 = no cap, `unsettled` false).
+/// its free default (`runs` 0, `unsettled` false).
 fn pool(rows: &[(&str, &str, bool)]) -> Vec<PoolWorker<'static>> {
     rows.iter()
         .map(|(name, provider, busy)| PoolWorker {
@@ -11,7 +11,7 @@ fn pool(rows: &[(&str, &str, bool)]) -> Vec<PoolWorker<'static>> {
             capabilities: &[],
             busy: *busy,
             runs: 0,
-            runs_limit: 0,
+
             unsettled: false,
         })
         .collect()
@@ -32,22 +32,22 @@ fn pool_caps(rows: &[(&str, &str, bool, &[&str])]) -> Vec<PoolWorker<'static>> {
             ),
             busy: *busy,
             runs: 0,
-            runs_limit: 0,
+
             unsettled: false,
         })
         .collect()
 }
 
-/// A pool of workers built from `(name, provider, busy, runs, runs_limit, unsettled)` rows, the capabilities all empty.
-fn pool_full(rows: &[(&str, &str, bool, u32, u32, bool)]) -> Vec<PoolWorker<'static>> {
+/// A pool of workers built from `(name, provider, busy, runs, unsettled)` rows, the capabilities all empty.
+fn pool_full(rows: &[(&str, &str, bool, u32, bool)]) -> Vec<PoolWorker<'static>> {
     rows.iter()
-        .map(|(name, provider, busy, runs, runs_limit, unsettled)| PoolWorker {
+        .map(|(name, provider, busy, runs, unsettled)| PoolWorker {
             name: Box::leak(name.to_string().parse::<AgentName>().unwrap().into()),
             provider: Box::leak(provider.to_string().into_boxed_str()),
             capabilities: &[],
             busy: *busy,
             runs: *runs,
-            runs_limit: *runs_limit,
+
             unsettled: *unsettled,
         })
         .collect()
@@ -79,15 +79,27 @@ fn a_request_is_served_by_a_worker_of_the_provider_whose_turn_it_is_next() {
         ("w-di-b", "deepinfra", false),
     ]);
     // No provider served yet: deepinfra (the first in the order) with its first free worker.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited).unwrap();
     assert_eq!(worker, name_of(&workers, 0));
     assert_eq!(provider, "deepinfra");
     // After a deepinfra request: openrouter next.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("deepinfra"))).unwrap();
+    let (worker, provider) = next_pool_worker(
+        &workers,
+        &requires(&[]),
+        LastServed(Some("deepinfra")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "openrouter");
     // After an openrouter request: deepinfra again — its first free worker in the pool order serves.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("openrouter"))).unwrap();
+    let (worker, provider) = next_pool_worker(
+        &workers,
+        &requires(&[]),
+        LastServed(Some("openrouter")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(worker, name_of(&workers, 0));
     assert_eq!(provider, "deepinfra");
 }
@@ -96,7 +108,13 @@ fn a_request_is_served_by_a_worker_of_the_provider_whose_turn_it_is_next() {
 #[test]
 fn the_rotation_wraps_around_the_providers() {
     let workers = pool(&[("w-a", "deepinfra", false), ("w-b", "openrouter", false)]);
-    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("openrouter"))).unwrap();
+    let (worker, _) = next_pool_worker(
+        &workers,
+        &requires(&[]),
+        LastServed(Some("openrouter")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(worker, name_of(&workers, 0));
 }
 
@@ -105,11 +123,17 @@ fn the_rotation_wraps_around_the_providers() {
 fn a_busy_provider_is_skipped_for_the_next() {
     let workers = pool(&[("w-di", "deepinfra", true), ("w-or", "openrouter", false)]);
     // Deepinfra is next but busy: openrouter serves.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited).unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "openrouter");
     // A later turn that starts at a busy provider wraps to the free one.
-    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("deepinfra"))).unwrap();
+    let (worker, _) = next_pool_worker(
+        &workers,
+        &requires(&[]),
+        LastServed(Some("deepinfra")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(worker, name_of(&workers, 1));
 }
 
@@ -122,7 +146,13 @@ fn a_request_that_requires_a_capability_is_served_by_a_worker_that_declares_it()
         ("w-node-2", "openrouter", false, &["node"]),
     ]);
     // Turn is deepinfra (openrouter served last): the only free worker that declares `node` and is of that turn serves.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&["node"]), LastServed(Some("openrouter"))).unwrap();
+    let (worker, provider) = next_pool_worker(
+        &workers,
+        &requires(&["node"]),
+        LastServed(Some("openrouter")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "deepinfra");
 }
@@ -131,7 +161,10 @@ fn a_request_that_requires_a_capability_is_served_by_a_worker_that_declares_it()
 #[test]
 fn a_request_that_requires_a_capability_is_not_served_by_a_worker_without_it() {
     let workers = pool_caps(&[("w-plain", "openrouter", false, &[])]);
-    assert_eq!(next_pool_worker(&workers, &requires(&["node"]), LastServed(None)), None);
+    assert_eq!(
+        next_pool_worker(&workers, &requires(&["node"]), LastServed(None), RunLimit::Unlimited),
+        None
+    );
 }
 
 // Rule: a request that requires nothing is met by any free worker.
@@ -142,7 +175,7 @@ fn a_request_that_requires_nothing_is_met_by_any_free_worker() {
         ("w-node", "deepinfra", false, &["node"]),
     ]);
     // Turn is openrouter (first in order): its plain worker serves.
-    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited).unwrap();
     assert_eq!(worker, name_of(&workers, 0));
 }
 
@@ -151,7 +184,7 @@ fn a_request_that_requires_nothing_is_met_by_any_free_worker() {
 fn a_worker_that_declares_no_capability_meets_only_a_request_that_requires_none() {
     let workers = pool_caps(&[("w-plain", "openrouter", false, &[])]);
     assert_eq!(
-        next_pool_worker(&workers, &requires(&["node"]), LastServed(None)),
+        next_pool_worker(&workers, &requires(&["node"]), LastServed(None), RunLimit::Unlimited),
         None,
         "a request requiring `node` is unmet by a worker that declares none"
     );
@@ -161,30 +194,48 @@ fn a_worker_that_declares_no_capability_meets_only_a_request_that_requires_none(
 #[test]
 fn when_no_free_worker_meets_the_request_none_serves() {
     let workers = pool(&[("w-di", "deepinfra", true), ("w-or", "openrouter", true)]);
-    assert_eq!(next_pool_worker(&workers, &requires(&[]), LastServed(None)), None);
+    assert_eq!(
+        next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited),
+        None
+    );
 }
 
 // Rule: an empty pool serves nothing.
 #[test]
 fn an_empty_pool_serves_nothing() {
     let workers: [PoolWorker<'_>; 0] = [];
-    assert_eq!(next_pool_worker(&workers, &requires(&[]), LastServed(None)), None);
+    assert_eq!(
+        next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited),
+        None
+    );
 }
 
 // Rule: `opencode` with a model that carries a provider takes the part before the first `/`.
 #[test]
 fn opencode_with_a_model_carries_the_provider_before_the_slash() {
     assert_eq!(
-        provider_of(CliKind::Opencode, Some("openrouter/@preset/qwen")),
+        provider_of(
+            CliKind::Opencode,
+            Some(&"openrouter/@preset/qwen".parse::<ModelName>().unwrap())
+        ),
         "openrouter"
     );
-    assert_eq!(provider_of(CliKind::Opencode, Some("deepinfra/model-x")), "deepinfra");
+    assert_eq!(
+        provider_of(
+            CliKind::Opencode,
+            Some(&"deepinfra/model-x".parse::<ModelName>().unwrap())
+        ),
+        "deepinfra"
+    );
 }
 
 // Rule: a bare model — no `/` — keeps the `cli` as the provider.
 #[test]
 fn a_bare_model_keeps_the_cli_as_the_provider() {
-    assert_eq!(provider_of(CliKind::Opencode, Some("qwen-worker")), "opencode");
+    assert_eq!(
+        provider_of(CliKind::Opencode, Some(&"qwen-worker".parse::<ModelName>().unwrap())),
+        "opencode"
+    );
 }
 
 // Rule: a missing model keeps the `cli` as the provider.
@@ -197,7 +248,10 @@ fn a_missing_model_keeps_the_cli_as_the_provider() {
 #[test]
 fn a_cli_other_than_opencode_is_the_provider() {
     for cli in [CliKind::Claude, CliKind::Codex, CliKind::Gemini] {
-        assert_eq!(provider_of(cli, Some("openrouter/@preset/qwen")), cli.as_str());
+        assert_eq!(
+            provider_of(cli, Some(&"openrouter/@preset/qwen".parse::<ModelName>().unwrap())),
+            cli.as_str()
+        );
     }
     assert_eq!(provider_of(CliKind::Claude, None), "claude");
 }
@@ -206,11 +260,17 @@ fn a_cli_other_than_opencode_is_the_provider() {
 #[test]
 fn a_single_provider_serves_every_turn() {
     let workers = pool(&[("w-a", "deepinfra", false), ("w-b", "deepinfra", false)]);
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited).unwrap();
     assert_eq!(provider, "deepinfra");
     assert_eq!(worker, name_of(&workers, 0));
     // After a deepinfra serve, the only provider is still deepinfra.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(Some("deepinfra"))).unwrap();
+    let (worker, provider) = next_pool_worker(
+        &workers,
+        &requires(&[]),
+        LastServed(Some("deepinfra")),
+        RunLimit::Unlimited,
+    )
+    .unwrap();
     assert_eq!(provider, "deepinfra");
     assert_eq!(worker, name_of(&workers, 0));
 }
@@ -219,11 +279,11 @@ fn a_single_provider_serves_every_turn() {
 #[test]
 fn a_worker_at_its_runs_limit_is_skipped() {
     let workers = pool_full(&[
-        ("w-di", "deepinfra", false, 1, 1, false),
-        ("w-or", "openrouter", false, 0, 1, false),
+        ("w-di", "deepinfra", false, 1, false),
+        ("w-or", "openrouter", false, 0, false),
     ]);
     // Deepinfra is first but at its limit of 1 run: openrouter serves.
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::of(1)).unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "openrouter");
 }
@@ -233,10 +293,10 @@ fn a_worker_at_its_runs_limit_is_skipped() {
 fn a_global_runs_per_worker_counts_across_teams() {
     // The worker's runs are counted installation-wide: one run already going, cap of 1, so it cannot take a second.
     let workers = pool_full(&[
-        ("w-di", "deepinfra", false, 1, 1, false),
-        ("w-or", "openrouter", false, 0, 2, false),
+        ("w-di", "deepinfra", false, 1, false),
+        ("w-or", "openrouter", false, 0, false),
     ]);
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::of(1)).unwrap();
     assert_eq!(provider, "openrouter");
     assert_eq!(worker, name_of(&workers, 1));
 }
@@ -244,16 +304,16 @@ fn a_global_runs_per_worker_counts_across_teams() {
 // Rule: a worker below its `runs_limit` is eligible.
 #[test]
 fn a_worker_below_its_runs_limit_is_eligible() {
-    let workers = pool_full(&[("w-di", "deepinfra", false, 0, 2, false)]);
-    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let workers = pool_full(&[("w-di", "deepinfra", false, 0, false)]);
+    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::of(2)).unwrap();
     assert_eq!(worker, name_of(&workers, 0));
 }
 
 // Rule: `runs_limit` 0 is no limit, so runs never make the worker ineligible.
 #[test]
 fn a_zero_runs_limit_never_makes_a_worker_ineligible() {
-    let workers = pool_full(&[("w-di", "deepinfra", false, 100, 0, false)]);
-    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let workers = pool_full(&[("w-di", "deepinfra", false, 100, false)]);
+    let (worker, _) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::of(0)).unwrap();
     assert_eq!(worker, name_of(&workers, 0));
 }
 
@@ -261,10 +321,10 @@ fn a_zero_runs_limit_never_makes_a_worker_ineligible() {
 #[test]
 fn a_worker_with_an_unsettled_result_is_skipped() {
     let workers = pool_full(&[
-        ("w-di", "deepinfra", false, 0, 0, true),
-        ("w-or", "openrouter", false, 0, 0, false),
+        ("w-di", "deepinfra", false, 0, true),
+        ("w-or", "openrouter", false, 0, false),
     ]);
-    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None)).unwrap();
+    let (worker, provider) = next_pool_worker(&workers, &requires(&[]), LastServed(None), RunLimit::Unlimited).unwrap();
     assert_eq!(worker, name_of(&workers, 1));
     assert_eq!(provider, "openrouter");
 }
@@ -277,16 +337,16 @@ fn two_teams_share_one_global_turn() {
     let mut last_served = LastServed(None);
     // Both teams start the turn at the first provider, deepinfra.
     for team in ["team-one", "team-two"] {
-        let (worker, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+        let (worker, provider) = next_pool_worker(&workers, &requires(&[]), last_served, RunLimit::Unlimited).unwrap();
         assert_eq!(provider, "deepinfra", "team {team} starts at the first provider");
         assert_eq!(worker, name_of(&workers, 0));
     }
     // The two teams share the turn: the pair of requests alternates providers globally through one rotation.
     last_served = LastServed(Some("deepinfra"));
-    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served, RunLimit::Unlimited).unwrap();
     assert_eq!(provider, "openrouter");
     last_served = LastServed(Some("openrouter"));
-    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served).unwrap();
+    let (_, provider) = next_pool_worker(&workers, &requires(&[]), last_served, RunLimit::Unlimited).unwrap();
     assert_eq!(provider, "deepinfra");
 }
 
@@ -337,7 +397,7 @@ fn a_busy_first_worker_does_not_skip_its_provider_and_a_free_sibling_serves() {
     ];
     for (case, &(rows, last, index, provider)) in cases.iter().enumerate() {
         let workers = pool(rows);
-        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last))
+        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last), RunLimit::Unlimited)
             .unwrap_or_else(|| panic!("case {case}: expected a pick"));
         assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
         assert_eq!(got, provider, "case {case}: provider");
@@ -394,12 +454,13 @@ fn a_free_provider_that_cannot_meet_the_requires_is_skipped_for_one_that_can() {
         let requires = requires(needed);
         match expected {
             Some((index, provider)) => {
-                let (worker, got) = next_pool_worker(&workers, &requires, LastServed(last)).unwrap();
+                let (worker, got) =
+                    next_pool_worker(&workers, &requires, LastServed(last), RunLimit::Unlimited).unwrap();
                 assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
                 assert_eq!(got, provider, "case {case}: provider");
             }
             None => assert_eq!(
-                next_pool_worker(&workers, &requires, LastServed(last)),
+                next_pool_worker(&workers, &requires, LastServed(last), RunLimit::Unlimited),
                 None,
                 "case {case}: no provider can meet"
             ),
@@ -456,7 +517,7 @@ fn an_unknown_last_provider_starts_the_rotation_at_the_first_provider() {
     ];
     for (case, &(rows, last, index, provider)) in cases.iter().enumerate() {
         let workers = pool(rows);
-        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last))
+        let (worker, got) = next_pool_worker(&workers, &requires(&[]), LastServed(last), RunLimit::Unlimited)
             .unwrap_or_else(|| panic!("case {case}: expected a pick"));
         assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
         assert_eq!(got, provider, "case {case}: provider");
@@ -497,11 +558,11 @@ fn non_ascii_capabilities_are_matched_exactly_and_byte_for_byte() {
         let requires = requires(needed);
         match expected {
             Some(index) => {
-                let (worker, _) = next_pool_worker(&workers, &requires, LastServed(None)).unwrap();
+                let (worker, _) = next_pool_worker(&workers, &requires, LastServed(None), RunLimit::Unlimited).unwrap();
                 assert_eq!(worker, name_of(&workers, index), "case {case}: worker");
             }
             None => assert_eq!(
-                next_pool_worker(&workers, &requires, LastServed(None)),
+                next_pool_worker(&workers, &requires, LastServed(None), RunLimit::Unlimited),
                 None,
                 "case {case}: no exact byte match"
             ),
@@ -519,7 +580,7 @@ fn adjacent_workers_of_one_provider_do_not_repeat_its_turn() {
     ]);
     for (last, expected) in [(None, 0), (Some("deepinfra"), 2), (Some("openrouter"), 0)] {
         assert_eq!(
-            next_pool_worker(&workers, &requires(&[]), LastServed(last)),
+            next_pool_worker(&workers, &requires(&[]), LastServed(last), RunLimit::Unlimited),
             Some((workers[expected].name, workers[expected].provider)),
             "last provider: {last:?}"
         );
@@ -537,7 +598,12 @@ fn a_worker_must_declare_every_required_capability() {
     ] {
         let workers = pool_caps(&[("w-di", "deepinfra", false, capabilities)]);
         assert_eq!(
-            next_pool_worker(&workers, &requires(&["table", "images"]), LastServed(None)),
+            next_pool_worker(
+                &workers,
+                &requires(&["table", "images"]),
+                LastServed(None),
+                RunLimit::Unlimited
+            ),
             expected.map(|index| (workers[index].name, workers[index].provider)),
             "declared capabilities: {capabilities:?}"
         );
