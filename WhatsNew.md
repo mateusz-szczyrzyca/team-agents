@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.84.0 — 24.11.2026 — PR #
+
+### Enhancements
+- [agent-runtime] Prepares the record of a request served to a worker of the pool in a workspace of its own — a task and a worktree of the requester's repository at the requester's committed end, on its own branch, kept out of the requester's crew so that its uncommitted files are not touched; the record (`tasks/<requester task>/request-workspace-<n>.json`) finds the request's worker task and worktree without the crew. Nothing on a serving path writes it yet; a later part wires it in.
+
 ## 0.83.0 — 24.11.2026 — PR #235
 
 ### Enhancements
