@@ -20,6 +20,79 @@ pub(super) enum WorkspaceUse {
 }
 
 impl Owner {
+    /// Reconciles durable owned attempts before the queue may dispatch a replacement.
+    pub(super) async fn recover_owned_requests(&mut self) -> Result<(), OwnerError> {
+        for entry in self.parts.bus.helper_list(false).await? {
+            let Some(journal) = self.owned_journal(&entry.from_task, entry.id).await? else {
+                // Requests created before recovery was enabled retain their original lifecycle.
+                continue;
+            };
+            let workspace = journal.current_workspace().record();
+            let task = workspace.worker_task.clone();
+            match journal.phase() {
+                Phase::Running(attempt) if journal.ending().is_none() => {
+                    let run = attempt.run.clone();
+                    self.serving.insert(
+                        task.clone(),
+                        super::teams::Served {
+                            request: entry.id,
+                            requester: entry.from,
+                            requester_task: entry.from_task,
+                            worker: attempt.worker.clone(),
+                            started: agent_core::state::Timestamp::now(&self.parts.clock)?,
+                            base: Some(workspace.base.to_string()),
+                        },
+                    );
+                    self.interrupt_owned_request(
+                        &task,
+                        &run,
+                        agent_core::decide::worker_recovery::Cause::RestartRunning,
+                    )
+                    .await?;
+                }
+                Phase::Queued
+                    if matches!(
+                        journal.events().last(),
+                        Some(Transition::Interrupted { .. } | Transition::RestartedQueued { .. })
+                    ) =>
+                {
+                    let worker = entry.worker.as_ref().ok_or(OwnerError::RequestOwnership)?;
+                    let team = self
+                        .parts
+                        .state
+                        .find_task(&entry.from_task)
+                        .ok_or(OwnerError::RequestOwnership)?
+                        .team
+                        .id()
+                        .clone();
+                    let git = self.git_of(&team, &task, worker).ok_or(OwnerError::RequestOwnership)?;
+                    let snapshot = git
+                        .snapshot(&workspace.requester_round, &task)
+                        .await
+                        .map_err(OwnerError::RequestSnapshot)?;
+                    recovery::advance(
+                        &self.parts.store.home().task_dir(&entry.from_task),
+                        entry.id,
+                        Transition::RestartedQueued {
+                            snapshot: recovery::SnapshotIdentity {
+                                round: workspace.requester_round.clone(),
+                                task,
+                                number: std::num::NonZeroU32::new(snapshot.number)
+                                    .ok_or(OwnerError::RequestOwnership)?,
+                                commit: snapshot.commit,
+                                head: snapshot.head,
+                            },
+                        },
+                    )
+                    .await?;
+                    self.look_at(&team);
+                }
+                Phase::Running(_) | Phase::Queued | Phase::Exhausted | Phase::Settled { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
     /// Checks the durable observation before checking or bringing over an owned result.
     pub(super) async fn owns_observed_result(&self, pending: &Pending) -> Result<bool, OwnerError> {
         let Some(journal) = self.owned_journal(&pending.requester_task, pending.request).await? else {

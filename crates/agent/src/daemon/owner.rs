@@ -886,6 +886,7 @@ impl Owner {
             self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
+        self.recover_owned_requests().await?;
         self.recover_plan_checks().await?;
         Ok(())
     }
