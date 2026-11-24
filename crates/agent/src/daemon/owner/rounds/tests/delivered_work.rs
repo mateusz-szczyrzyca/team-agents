@@ -166,3 +166,51 @@ async fn an_uncommitted_file_of_a_failed_member_is_told_to_the_lead_and_never_dr
     let member = state.find_task(&tasks[1]).unwrap().member;
     assert_eq!(member.status(), TaskStatus::Stopped);
 }
+
+// Rule: a member that failed without a single tool call did no work the lead could have taken: it is not released
+// although the lead delivered, and the human is told, as before.
+#[tokio::test]
+async fn a_failed_member_that_called_no_tool_keeps_holding_the_round_when_the_lead_delivered() {
+    let (mut rig, tasks) = team("sleep,work", "fail").await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+
+    let notice = rig.notification_with("behind failed member").await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+
+    assert!(notice.contains("claude-1"), "the notice names the member: {notice}");
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Failed, "the member is not closed");
+    assert!(
+        !matches!(
+            state.find_task(&tasks[1]).unwrap().team.items()[0].phase(),
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+        ),
+        "the round is not published behind a member that did nothing"
+    );
+}
+
+// Rule: the release is a change of the state, not of the daemon's memory: a daemon restarted while the lead sleeps behind
+// the failed member still publishes the round when the lead delivers, and the member stays closed as taken over.
+#[tokio::test]
+async fn a_release_of_a_failed_member_survives_a_restart_of_the_daemon() {
+    let (mut rig, tasks) = team("sleep,integrate", "fail-tool-committed").await;
+    rig.status_is(&tasks[1], TaskStatus::Failed).await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+
+    let state = published(&rig).await;
+    let after_restart = rig.state();
+    rig.stop().await.unwrap();
+
+    let member = state.find_task(&tasks[1]).unwrap().member;
+    assert_eq!(member.status(), TaskStatus::Stopped);
+    assert_eq!(
+        after_restart.find_task(&tasks[1]).unwrap().member.status(),
+        TaskStatus::Stopped
+    );
+    assert!(
+        rig.notifications().iter().all(|text| !text.contains(BEHIND)),
+        "the human is not told of a round that is published"
+    );
+}
