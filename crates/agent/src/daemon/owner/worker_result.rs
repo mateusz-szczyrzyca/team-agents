@@ -116,6 +116,7 @@ fn reasons_of(checked: &Checked, wrong: &[Wrong], limit_seconds: u64) -> Vec<Str
                 "the worker changed files the request did not name: {}",
                 checked.outside.join(", ")
             ),
+            Wrong::NoCommit => "the worker committed nothing, so there is nothing to bring over".to_owned(),
             Wrong::NoCheck => "the request names files but no check, so nothing shows the commit right".to_owned(),
             Wrong::PastSeconds => format!("the worker's run lasted past {limit_seconds} seconds"),
         })
@@ -1482,3 +1483,12 @@ async fn run_request_check(job: RequestCheck) -> Found {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "wired into owned retry in the following GREEN commit")
+)]
+/// Retains the actual rejection causes alongside a retry snapshot.
+pub(super) fn rejection_causes(_checked: &Checked, _ending: WorkerEnding, _seconds: u64, _limit: u64) -> Vec<Wrong> {
+    vec![]
+}
