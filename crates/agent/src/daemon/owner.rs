@@ -1687,7 +1687,7 @@ impl Owner {
         at: Timestamp,
         notice: Notice,
     ) -> Result<(TaskStatus, Option<Notice>), OwnerError> {
-        // A FAILED the agent reports after it used a tool is its own verdict on the work: the ladder carries the task on.
+        // A FAILED a member reports after it used a tool is its own verdict on the work: the ladder carries the task on.
         if matches!(
             end,
             RunEnd::Reported {
@@ -1696,7 +1696,11 @@ impl Owner {
         ) && used_tool
         {
             let role = self.locate(task)?.role;
-            return self.after_declared_failure(task, role, notice);
+            // Only a member's work has a lead to take it over and a worktree the lead may use; a task of any other role
+            // that declares itself failed ends failed, as it did before.
+            if role == Role::Member {
+                return self.after_declared_failure(task, role, notice);
+            }
         }
         let (first_of_session, already_retried) = match self.parts.state.find_task(task) {
             Some(found) => {
