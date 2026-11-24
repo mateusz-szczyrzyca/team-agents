@@ -1784,7 +1784,8 @@ impl Owner {
             .bad_runs_since_renewal();
         Ok(match self.climb(task, role, Trouble::Failed, count)? {
             // A declared failure is never resumed in its session, so SameSession does not come from the ladder for it.
-            Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
+            Step::SameSession | Step::HandedOver => (TaskStatus::Queued, None),
+            Step::NewSession => (TaskStatus::Queued, Some(notice)),
             Step::ToLead => (TaskStatus::Stopped, None),
             Step::Failed => (TaskStatus::Failed, Some(notice)),
         })
