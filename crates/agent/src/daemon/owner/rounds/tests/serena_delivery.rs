@@ -88,13 +88,12 @@ fn record_reminder(rig: &Rig, team: &TeamId, task: &TaskId, run: &RunId, searche
         branch: BranchName::from_str("main").unwrap(),
         session: None,
     })));
-    started.history.serena_reminded_with_team(
+    started.history.serena_reminded(
         run,
         task,
         CliKind::Claude,
         searches,
         3,
-        Some(team),
         &SharedClock::new(rig.clock_of().clone()),
     );
     started.history.flush();
