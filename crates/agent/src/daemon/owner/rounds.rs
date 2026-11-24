@@ -874,6 +874,10 @@ mod last_step_tests;
 mod agent_slots_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/serena_reminder.rs"]
+mod serena_reminder_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/worker_request_damaged.rs"]
 mod worker_request_damaged_tests;
 
@@ -1015,3 +1019,7 @@ mod removal_tests;
 #[cfg(test)]
 #[path = "rounds/tests/whole_records.rs"]
 mod whole_records_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/serena_delivery.rs"]
+mod serena_delivery_tests;

@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use agent_core::cli::ActivityEvent;
 use agent_core::debug_summary::{
-    GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
+    GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts, ReminderFacts,
     RoundSummaryFacts, RunToolCalls, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
     ToolCalls,
 };
@@ -106,6 +106,40 @@ fn context_series(
         }
     }
     text
+}
+
+/// The Serena reminder of `run` among `steps`, when the history recorded one for it and its task: the count it came at,
+/// and the calls of Serena the run made after the step at which it was logged.
+fn reminder_of(
+    run: &agent_core::ids::RunId,
+    steps: &std::collections::BTreeMap<agent_core::ids::RunId, Vec<Step>>,
+    reminders: &[(agent_core::ids::RunId, agent_core::ids::TaskId, u64, u32)],
+) -> Option<ReminderFacts> {
+    let (_, _, searches, at) = reminders.iter().find(|(reminded, _, _, _)| reminded == run)?;
+    let after = steps.get(run).cloned().unwrap_or_default();
+    let serena_after = after
+        .iter()
+        .filter(|step| step.number.get() > *at && is_serena_call(step))
+        .count();
+    Some(ReminderFacts {
+        searches: *searches,
+        serena_after,
+    })
+}
+
+/// Whether `step` is a call of a tool of Serena.
+fn is_serena_call(step: &Step) -> bool {
+    match &step.event {
+        ActivityEvent::ToolCall { name, .. } | ActivityEvent::BusCall { tool: name, .. } => {
+            matches!(crate::cli::tool_call(name), Some(crate::cli::ToolCall::Serena))
+        }
+        ActivityEvent::Command(_)
+        | ActivityEvent::FileEdit { .. }
+        | ActivityEvent::Text(_)
+        | ActivityEvent::Error(_)
+        | ActivityEvent::Info(_)
+        | ActivityEvent::Control { .. } => false,
+    }
 }
 
 /// The tool calls `steps` hold, counted by the tool each calls: Serena's, the shell's and another's. A streamed shell
@@ -378,6 +412,7 @@ impl Collection {
             last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
             tools: agent_core::debug_summary::ToolCalls::default(),
             earlier_tools: Vec::new(),
+            reminder: None,
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -637,9 +672,11 @@ impl Collection {
         let bounds = self.context_bounds(home).await;
         let runs: Vec<agent_core::ids::RunId> = records
             .iter()
-            .filter_map(|stored| match &stored.record {
-                agent_core::history::Record::Run(start) => Some(start.run.clone()),
-                _ => None,
+            .filter_map(|stored| {
+                let agent_core::history::Record::Run(start) = &stored.record else {
+                    return None;
+                };
+                Some(start.run.clone())
             })
             .collect();
         let path = home.history_file();
@@ -853,9 +890,45 @@ impl Collection {
                 return Ok(());
             }
         };
-        let counted: std::collections::BTreeMap<agent_core::ids::RunId, ToolCalls> = steps
-            .into_iter()
-            .map(|(run, steps)| (run, tool_calls_of(&steps)))
+        let path = home.history_file();
+        let team_id = team.id().clone();
+        let read_reminders =
+            tokio::task::spawn_blocking(move || crate::history::Reader::open(&path)?.team_records(&team_id))
+                .await
+                .map_err(DebugRuntimeError::Worker)?;
+        let reminders: Vec<(agent_core::ids::RunId, agent_core::ids::TaskId, u64, u32)> = match read_reminders {
+            Ok(records) => records
+                .into_iter()
+                .filter_map(|stored| {
+                    let agent_core::history::Record::Event(event) = stored.record else {
+                        return None;
+                    };
+                    let agent_core::history::HistoryEvent::SerenaReminded {
+                        run,
+                        searches,
+                        step,
+                        task,
+                        ..
+                    } = event.event
+                    else {
+                        return None;
+                    };
+                    Some((run, task, searches, step))
+                })
+                .collect(),
+            Err(error) => {
+                self.assessment.unreadable.push(ReadFailure {
+                    section: agent_core::debug_summary::SummarySection::TaskDetails,
+                    part: "Serena reminders".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return Ok(());
+            }
+        };
+        let by_run: std::collections::BTreeMap<agent_core::ids::RunId, Vec<Step>> = steps.into_iter().collect();
+        let counted: std::collections::BTreeMap<agent_core::ids::RunId, ToolCalls> = by_run
+            .iter()
+            .map(|(run, steps)| (run.clone(), tool_calls_of(steps)))
             .collect();
         for member in members {
             let Some((last_run, earlier_runs)) = member.runs().split_last() else {
@@ -869,9 +942,11 @@ impl Collection {
                 .map(|run| RunToolCalls {
                     run: run.id().clone(),
                     tools: counted.get(run.id()).copied().unwrap_or_default(),
+                    reminder: reminder_of(run.id(), &by_run, &reminders),
                 })
                 .collect();
             task_summary.tools = counted.get(last_run.id()).copied().unwrap_or_default();
+            task_summary.reminder = reminder_of(last_run.id(), &by_run, &reminders);
         }
         Ok(())
     }

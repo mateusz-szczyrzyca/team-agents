@@ -51,6 +51,7 @@ fn sample_task() -> TaskSummaryFacts {
             other: 42,
         },
         earlier_tools: Vec::new(),
+        reminder: None,
         questions: Some(QuestionsSummaryFacts {
             has_unanswered: false,
             content: "All answered".to_owned(),
@@ -1149,14 +1150,16 @@ fn a_run_tells_its_tool_calls_by_kind_or_that_it_recorded_none() {
 
     let counted = render_summary(&input, zone).expect("mandatory summary facts fit");
     assert!(
-        counted.contains("- Tool calls: 214 (serena 12, shell 160, other 42)\n- Questions (unanswered: false):"),
+        counted.contains(
+            "- Tool calls: 214 (serena 12, shell 160, other 42)\n- Serena reminder: none\n- Questions (unanswered: false):"
+        ),
         "{counted}"
     );
 
     input.tasks[0].tools = ToolCalls::default();
     let none = render_summary(&input, zone).expect("mandatory summary facts fit");
     assert!(
-        none.contains("- Tool calls: none recorded\n- Questions (unanswered: false):"),
+        none.contains("- Tool calls: none recorded\n- Serena reminder: none\n- Questions (unanswered: false):"),
         "{none}"
     );
 
@@ -1224,10 +1227,12 @@ fn each_earlier_run_of_a_task_is_told_with_its_own_tool_calls_before_the_last_ru
                 shell: 2,
                 other: 3,
             },
+            reminder: None,
         },
         RunToolCalls {
             run: "run-20261117-130001-c3d4".parse().expect("valid run id"),
             tools: ToolCalls::default(),
+            reminder: None,
         },
     ];
 

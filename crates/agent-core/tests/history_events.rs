@@ -11,6 +11,7 @@ mod history_events {
     use agent_core::decide::round::AskReason;
     use agent_core::history::{CheckOutcome, EventKind, HistoryEvent, LostCause, LostKind, RecordKind};
     use agent_core::ids::{BranchName, InvestigatorName};
+    use agent_core::kinds::CliKind;
     use agent_core::protocol::{Client, ControlAction, Target};
     use agent_core::state::{AnsweredVia, CommitId, GateOutcome, GateRecord, GateResult, GateTree, PrNumber, RoundEnd};
     use agent_core::status::ReviewVerdict;
@@ -29,6 +30,10 @@ mod history_events {
 
         pub(super) fn team_id(n: u32) -> TeamId {
             format!("team-20261111-1930{n:02}-t5m8").parse().unwrap()
+        }
+
+        pub(super) fn run(n: u32) -> String {
+            format!("run-20261111-1930{n:02}-r4b7")
         }
 
         pub(super) fn round(n: u32) -> RoundId {
@@ -222,6 +227,13 @@ mod history_events {
                 },
                 tasks: vec![world::task(1), world::task(2)],
             },
+            HistoryEvent::SerenaReminded {
+                task: world::task(1),
+                run: world::run(1).parse().unwrap(),
+                searches: 40,
+                step: 40,
+                cli: CliKind::Claude,
+            },
             HistoryEvent::Notified {
                 task: Some(world::task(1)),
                 title: "Questions".to_owned(),
@@ -271,6 +283,7 @@ mod history_events {
             "question_asked",
             "question_answered",
             "controlled",
+            "serena_reminded",
             "notified",
             "round_closed",
             "team_ended",
@@ -313,7 +326,7 @@ mod history_events {
             .map(|event| (event.kind().to_string(), event.key()))
             .collect();
         let none = |kind: &str| keys.iter().find(|(name, _)| name == kind).unwrap().1.is_none();
-        for kind in ["gate", "checked", "controlled", "notified", "lost"] {
+        for kind in ["gate", "checked", "controlled", "serena_reminded", "notified", "lost"] {
             assert!(none(kind), "{kind} can happen again");
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -322,7 +335,7 @@ mod history_events {
                 assert!(seen.insert((kind.clone(), key.clone())), "{kind} {key} is not unique");
             }
         }
-        assert_eq!(seen.len(), keys.len() - 5);
+        assert_eq!(seen.len(), keys.len() - 6);
     }
 
     #[test]
@@ -390,6 +403,7 @@ mod history_events {
             ("question_asked", vec!["text"]),
             ("question_answered", vec!["text"]),
             ("controlled", vec![]),
+            ("serena_reminded", vec![]),
             ("notified", vec!["title", "body"]),
             ("round_closed", vec![]),
             ("team_ended", vec![]),

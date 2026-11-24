@@ -40,6 +40,7 @@ use agent_core::cli::{
 };
 use agent_core::config::{AbsolutePath, InvalidValue, ValueRule};
 use agent_core::kinds::CliKind;
+use agent_core::serena::{SearchInput, search_summary};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -69,10 +70,6 @@ const SERENA_FOLDER: &str = ".serena/";
 /// the others'.
 const BUS_TOOL_PREFIXES: [&str; 4] = ["mcp__agentbus__", "mcp_agentbus_", "agentbus_", "agentbus."];
 
-/// The prefixes of an MCP tool's name in the CLIs' tool calls, the way [`BUS_TOOL_PREFIXES`] names agentbus's: Claude
-/// Code's `mcp__<server>__<tool>` and `<server>.<tool>` or `<server>_<tool>`, which Codex and Antigravity report.
-const SERENA_TOOL_PREFIXES: [&str; 3] = ["mcp__serena__", "serena.", "serena_"];
-
 /// The names, in lower case, of the tools that run a shell command.
 const COMMAND_TOOLS: [&str; 4] = ["bash", "execute", "run_command", "shell"];
 
@@ -94,6 +91,18 @@ const SUMMARY_KEYS: [&str; 9] = [
     "AbsolutePath",
     "Query",
 ];
+
+/// The inputs a search tool (`Grep`, `Glob`) can be given its path in, first one present wins.
+const SEARCH_PATH_KEYS: [&str; 3] = ["file_path", "filePath", "path"];
+
+/// The inputs a search tool is given what it looks for in.
+const SEARCH_PATTERN_KEYS: [&str; 1] = ["pattern"];
+
+/// The inputs a search tool (`Grep`) is given a glob of the files it searches in: Claude Code's `glob`, opencode's `include`.
+const SEARCH_GLOB_KEYS: [&str; 2] = ["glob", "include"];
+
+/// The inputs a search tool (`Grep`) is given the type of the files it searches in.
+const SEARCH_TYPE_KEYS: [&str; 1] = ["type"];
 
 /// The adapter for `kind`.
 #[must_use]
@@ -279,11 +288,7 @@ pub fn tool_call(name: &str) -> Option<ToolCall> {
     if bus_tool(name).is_some() {
         return Some(ToolCall::Other(name.to_owned()));
     }
-    if SERENA_TOOL_PREFIXES
-        .iter()
-        .filter_map(|prefix| lower.strip_prefix(prefix))
-        .any(|tool| !tool.is_empty())
-    {
+    if agent_core::serena::is_serena_tool(name) {
         return Some(ToolCall::Serena);
     }
     if COMMAND_TOOLS.contains(&lower.as_str()) || lower.contains("command") {
@@ -320,6 +325,18 @@ pub(crate) fn tool_activity(name: &str, input: &Value) -> ActivityEvent {
     let changes_files = ["edit", "write", "replace"].iter().any(|word| lower.contains(word));
     if changes_files && let Some(path) = first_text(input, &EDIT_PATH_KEYS) {
         return ActivityEvent::FileEdit { path: path.to_owned() };
+    }
+    let search = SearchInput {
+        pattern: first_text(input, &SEARCH_PATTERN_KEYS),
+        path: first_text(input, &SEARCH_PATH_KEYS),
+        globs: first_text(input, &SEARCH_GLOB_KEYS).into_iter().collect(),
+        types: first_text(input, &SEARCH_TYPE_KEYS).into_iter().collect(),
+    };
+    if let Some(summary) = search_summary(name, &search, clip, MAX_TOOL_SUMMARY_CHARS) {
+        return ActivityEvent::ToolCall {
+            name: name.to_owned(),
+            summary,
+        };
     }
     let summary = first_text(input, &SUMMARY_KEYS).map_or_else(|| input.to_string(), str::to_owned);
     ActivityEvent::ToolCall {
@@ -714,6 +731,98 @@ mod tests {
         for (name, input, expected) in table {
             assert_eq!(tool_activity(name, &input), expected, "{name} {input}");
         }
+    }
+
+    #[test]
+    fn a_search_tool_with_a_path_marks_its_summary_as_a_path() {
+        let call = |name: &str, summary: &str| ActivityEvent::ToolCall {
+            name: name.to_owned(),
+            summary: summary.to_owned(),
+        };
+        let table = [
+            (
+                "Grep",
+                json!({"pattern": "foo", "path": "src"}),
+                call("Grep", "src (path)"),
+            ),
+            (
+                "grep",
+                json!({"pattern": "foo", "path": "docs"}),
+                call("grep", "docs (path)"),
+            ),
+            ("Grep", json!({"pattern": "foo"}), call("Grep", "foo")),
+            ("Read", json!({"file_path": "/f"}), call("Read", "/f")),
+            (
+                "Glob",
+                json!({"pattern": "src/**/*.rs", "path": "/w"}),
+                call("Glob", "/w/src/**/*.rs"),
+            ),
+        ];
+
+        for (name, input, expected) in table {
+            assert_eq!(tool_activity(name, &input), expected, "{name} {input}");
+        }
+    }
+
+    #[test]
+    fn a_search_tool_keeps_what_the_rule_needs_of_its_filters_and_its_path() {
+        let found = |name: &str, input: Value| {
+            let event = tool_activity(name, &input);
+            agent_core::serena::code_search(&event).map(|found| found.paths)
+        };
+        let paths = |of: &[&str]| Some(of.iter().map(|path| (*path).to_owned()).collect::<Vec<_>>());
+        let table = [
+            ("grep", json!({"pattern": "fn", "include": "*.md"}), None),
+            ("grep", json!({"pattern": "fn", "path": "src", "include": "*.md"}), None),
+            ("Grep", json!({"pattern": "fn", "path": "src", "glob": "*.md"}), None),
+            ("Grep", json!({"pattern": "fn", "type": "md"}), None),
+            (
+                "Grep",
+                json!({"pattern": "fn", "glob": "*.md", "type": "rust"}),
+                paths(&["*.rs"]),
+            ),
+            (
+                "grep",
+                json!({"pattern": "fn", "path": "src", "include": "*.rs"}),
+                paths(&["src/*.rs"]),
+            ),
+            (
+                "Grep",
+                json!({"pattern": "fn", "path": "src", "glob": "*.{rs,md}"}),
+                paths(&["src/*.rs"]),
+            ),
+            ("Grep", json!({"pattern": "fn", "path": "src"}), paths(&["src"])),
+            ("Grep", json!({"pattern": "docs (path)"}), paths(&["."])),
+            ("grep", json!({"pattern": "foo (path)"}), paths(&["."])),
+            ("Glob", json!({"pattern": "*.rs", "path": "src"}), paths(&["src/*.rs"])),
+            (
+                "glob",
+                json!({"pattern": "**/*.go", "path": "crates"}),
+                paths(&["crates/**/*.go"]),
+            ),
+            ("Glob", json!({"pattern": "*.md", "path": "docs"}), None),
+            ("Glob", json!({"pattern": "src/**/*.rs"}), paths(&["src/**/*.rs"])),
+        ];
+
+        for (name, input, expected) in table {
+            assert_eq!(found(name, input.clone()), expected, "{name} {input}");
+        }
+    }
+
+    #[test]
+    fn a_glob_tool_expands_the_brace_groups_of_its_pattern() {
+        let found = |input: Value| {
+            let event = tool_activity("Glob", &input);
+            agent_core::serena::code_search(&event).map(|found| found.paths)
+        };
+        let paths = |of: &[&str]| Some(of.iter().map(|path| (*path).to_owned()).collect::<Vec<_>>());
+
+        assert_eq!(
+            found(json!({"pattern": "*.{ts,tsx}", "path": "src"})),
+            paths(&["src/*.ts", "src/*.tsx"])
+        );
+        assert_eq!(found(json!({"pattern": "**/*.{rs,toml}"})), paths(&["**/*.rs"]));
+        assert_eq!(found(json!({"pattern": "*.{md,toml}", "path": "docs"})), None);
     }
 
     #[test]

@@ -5,6 +5,21 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.93.0 — 25.11.2026 — PR #246
+
+### New features
+- [agent] [agent-core] [agent-runtime] A run that has Serena and searches code without it past a bound is told once to find code with Serena, while it goes on: the reminder reaches the agent on the bus and the run is not stopped. The shell's `grep`, `rg`, `sed -n`, `cat`, `head`, `tail` and `find` over a file or a directory of code count, and so do `Grep`, `Glob` and `Read` of the CLI; The line of the shell is read command by command, so a search's pattern is never taken for a directory, `rg x src | sort` counts and `git log | grep x` does not; a search filtered to Markdown or another text (`rg --glob '*.md'`) and `sed -i` never count. Markdown, TOML, logs and diffs never count, and neither does a run that called Serena.
+- [agent] [agent-core] [agent-runtime] Each reminder is the log event `serena_reminded` and a record of the history with the task, the run, the count and the CLI. `agent debug` tells next to a run's tool count whether it was reminded and how many calls of Serena it made after.
+
+### Enhancements
+- [agent-runtime] A session that goes on after a restart of the daemon keeps its count and its reminder, and is never told twice, also when the bound was lowered since its earlier runs. A history of version 22 is read and upgraded to version 23, which admits the new record and log event.
+- [agent-core] [agent-runtime] A CLI's `Grep` and `Glob` are told by what they were given: with no path a `Grep` searches the whole repository (also for a pattern such as `docs (path)`), with `docs` or `config` it searches text, and with a glob, `include` or `type` filter it searches the files the filter names — `Grep` of `src` limited to `*.md` is no search of code, a `Glob` of `*.rs` under `src` is. The history keeps the files as `src/*.rs (path)`. A search filtered to Markdown and Rust together counts, and so does `rg --files src`. A `Glob` with a brace group (`*.{ts,tsx}`) counts by each alternative; a search over the absolute path of the repository root is not counted — search `.` or give no path.
+- [agent] A reminder of Serena that the engine recorded just before the daemon went down is put on the bus once when the daemon starts; the file `serena-reminder-told` in the run's directory, made before the bus is asked, keeps a reminder from going out twice: it goes out at most once per session, and one whose mark cannot be made is not sent, and a mark that cannot be looked for is logged and left to that claim.
+- [agent] A reminder of Serena that the bus refuses, or that cannot be rendered or addressed, is tried again at the next turns of the daemon and at the end of its run, not lost.
+
+### Configuration
+- [agent-core] new: `[serena] remind_after` (default `40`; `0` turns the reminder off) — the count of searches of code without Serena at which a run with Serena is reminded once; a file without `[serena]` keeps the default.
+
 ## 0.92.0 — 24.11.2026 — PR #247
 
 ### Bug fixes

@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `10` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `23` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -853,3 +853,23 @@ migration (`021-no-tool-events.sql`) preserves existing daemon logs, round links
 The populated version-20 fixture `crates/agent-runtime/tests/fixtures/history-before-no-tool-events.sql` and its
 upgrade regression verify that old events remain readable alongside the new ones. Back up the history before
 upgrading if you need to return to an older daemon: older versions refuse a history newer than their supported schema.
+
+History version 23 admits the `serena_reminded` record and the `serena_reminded` event of the daemon's log
+([`log.md`](log.md)). The record is the event of a run with Serena that was told, once in its session, to find code
+with Serena: it keeps the `task`, the `run` it was told in, the count of `searches` of code without Serena the session
+had made, the number of the run's `step` at which it was told (the calls of Serena after it are the ones from that step
+on) and the model `cli`. It has no key: a session is reminded once, and the engine writes one record per reminder. A
+resumed session reads that record back to learn that it was reminded and how many searches it had counted, so that a
+restart of the daemon does not remind it again. `agent debug` reads the same record next to a run's tool counts. The
+migration (`023-serena-reminded.sql`) preserves the existing daemon logs, records, round links, search entries and
+cursors. The version-22 dump `crates/agent-runtime/tests/fixtures/history-before-serena-reminded.sql` is loaded and
+upgraded by a test. Back up the history before upgrading if you need to return to an older daemon: older versions
+refuse a history newer than their supported schema.
+
+The summary of a tool step of a CLI's own search (`Grep`, `grep`) that was given a path or a filter is the files it
+searches, followed by ` (path)`: the path under each filter of a known kind (`src/*.rs (path)` for `src` with the glob
+`*.rs`), or the path alone (`src (path)`). A `Grep` with only a pattern keeps the pattern as its summary, and a pattern that
+itself ends in ` (path)` gets ` (pattern)` after it. The summary of a `Glob` is its pattern under its path
+(`src/**/*.rs`). The harness reads the mark to tell a path from a pattern when it counts searches of code, and a history
+written before it has none: such a summary is read as a pattern, which searches the whole repository. The format of the
+table is unchanged.
