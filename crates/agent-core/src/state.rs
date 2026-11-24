@@ -526,6 +526,42 @@ impl State {
         })
     }
 
+    /// Starts `task` anew because its session outgrew its agent's bound at `tokens`, at `at`, and keeps that size with the
+    /// renewal, so that a restart before the new session's first run still knows it.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
+    pub fn begin_context_session_with_size(
+        &mut self,
+        task: &TaskId,
+        at: Timestamp,
+        tokens: u64,
+    ) -> Result<bool, RenewTaskError> {
+        let begun = self.begin_context_session(task, at)?;
+        if let Some((_, mut member)) = self.find_task_mut(task).filter(|_| begun) {
+            member.keep_context_tokens(tokens);
+        }
+        Ok(begun)
+    }
+
+    /// Starts `task` anew in a new session because its session outgrew its agent's bound, at `at`: the runs after now
+    /// are the new session's, and no session before it is resumed. Every role is started anew for it, and no renewal is
+    /// counted. Returns whether the task was started anew: `false` for a task with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
+    pub fn begin_context_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        member
+            .begin_holder_session(crate::decide::ladder::Trouble::ContextBound, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })
+    }
+
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
     /// session of the agent before it is resumed, its bad runs are not counted against the new one, and the next run is
     /// briefed. Unlike [`State::renew_task`] it counts no new session of the task's agent. Returns whether a session was

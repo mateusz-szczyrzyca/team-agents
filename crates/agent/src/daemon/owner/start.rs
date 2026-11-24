@@ -37,7 +37,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::briefing::BriefingDraft;
+use super::briefing::{BriefingDraft, LastMessage, MessageSource};
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -216,6 +216,59 @@ async fn compose_run_prompt(
     }
 }
 
+/// Whether the session of `member` was replaced because it outgrew its agent's bound, and its new session has not begun.
+fn replaced_by_bound(member: &Member) -> bool {
+    member
+        .renewals()
+        .is_some_and(|renewals| renewals.reason() == agent_core::decide::ladder::Trouble::ContextBound)
+        && member.awaits_new_session()
+}
+
+/// The prompt with the size that ended the session before at its start, while a renewal for the bound is pending: the size
+/// is the one the state keeps, so that a restart before the new session's first run still names it.
+fn with_size_paragraph(ctx: &Context<'_>, member: &Member, prompt: String) -> Result<String, StartProblem> {
+    let pending = member
+        .renewals()
+        .filter(|_| replaced_by_bound(member))
+        .and_then(agent_core::state::Renewals::context_tokens);
+    // The replacement is pending only for its first run: a resumed run after it has no paragraph of it.
+    let unknown = replaced_by_bound(member);
+    let paragraph = match pending {
+        Some(tokens) => Some(super::briefing::context_paragraph(ctx.texts, tokens)?),
+        // A renewal that keeps no size was made on a size nobody could read.
+        None if unknown => Some(super::briefing::unknown_size_paragraph(ctx.texts)?),
+        None => None,
+    };
+    Ok(match paragraph {
+        Some(paragraph) => format!("{paragraph}\n\n{prompt}"),
+        None => prompt,
+    })
+}
+
+/// The prompt with the last message of the session before at its end, when the session is briefed with one.
+fn with_last_message(
+    ctx: &Context<'_>,
+    prompt: String,
+    last_message: Option<&LastMessage>,
+) -> Result<String, StartProblem> {
+    let Some(message) = last_message else {
+        return Ok(prompt);
+    };
+    let (heading, cut_at) = match message.source {
+        MessageSource::Outcome => (HarnessPrompt::BriefingLastMessage, None),
+        MessageSource::History { cut_at } => (HarnessPrompt::BriefingLastMessageHistory, cut_at),
+    };
+    let mut text = format!(
+        "{prompt}\n\n{}",
+        super::briefing::last_message_paragraph(ctx.texts, heading, &message.text)?
+    );
+    if let Some(limit) = cut_at {
+        text.push_str("\n\n");
+        text.push_str(&super::briefing::message_cut_paragraph(ctx.texts, limit)?);
+    }
+    Ok(text)
+}
+
 /// The note that tells a run retried after its session reported FAILED without a tool call why it starts again,
 /// appended before its briefing; `None` for every other run.
 fn no_tool_call_note(
@@ -250,6 +303,7 @@ pub(super) async fn plan(
     rng: &mut impl Rng,
     task: &TaskId,
     briefing: Option<&BriefingDraft>,
+    last_message: Option<&LastMessage>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx
         .state
@@ -270,7 +324,10 @@ pub(super) async fn plan(
         .last_session()
         .map(|session| SessionId::from_str(session.as_str()))
         .transpose()?;
-    let kind = if ctx.why == Some(&Why::NoStatus) {
+    // A session above its agent's bound is replaced: its next run is a whole new session, whatever the run before ended as.
+    let kind = if replaced_by_bound(member) {
+        PromptKind::First
+    } else if ctx.why == Some(&Why::NoStatus) {
         PromptKind::Resume(ResumeReason::NoStatus)
     } else {
         prompt_kind_for_role(role, member, session.as_ref(), config)
@@ -314,6 +371,9 @@ pub(super) async fn plan(
         Some(draft) => draft.render(ctx.texts, task, &prompt)?,
         None => prompt,
     };
+    // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
+    let prompt = with_size_paragraph(ctx, member, prompt)?;
+    let prompt = with_last_message(ctx, prompt, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())

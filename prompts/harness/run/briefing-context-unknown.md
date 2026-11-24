@@ -1,0 +1,1 @@
+Your earlier session may have grown above its bound, but its size could not be read, so the harness replaces it as a precaution. This session starts from what is recorded below, not from the memory of the session before.

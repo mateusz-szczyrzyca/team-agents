@@ -761,4 +761,35 @@ mod run_history {
         assert!(text.contains("history_record_incomplete"), "{text}");
         assert!(text.contains("history writer is unavailable"), "{text}");
     }
+
+    // Rule: a run leaves its outcome in its own directory, whole and independent of the history: the context of its last model
+    // call, and its final message whole. The owner decides on a session's bound from this file first.
+    #[tokio::test]
+    async fn a_run_leaves_its_last_context_and_its_final_message_in_its_own_outcome_file() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        std::fs::write(rig.worktree.path().join(".fake-context"), "200000").unwrap();
+        let run = RunId::from_str("run-20261112-100005-o0o0").unwrap();
+        let end = run_of_session(
+            &rig,
+            &run,
+            RunMode::New {
+                session_id: SessionId::from_str(SESSION).unwrap(),
+            },
+            RunWhy::FirstRun,
+            "context-from-file",
+        )
+        .await;
+        assert_eq!(end, done());
+
+        let path = rig.home.run_dir(&rig.task, &run).join("outcome.json");
+        let text = std::fs::read_to_string(&path).expect("the outcome file of the run");
+        let outcome: serde_json::Value = serde_json::from_str(&text).expect("an outcome in JSON");
+        assert_eq!(outcome["last_context"], 200_000, "{text}");
+        assert!(
+            outcome["final_message"]
+                .as_str()
+                .is_some_and(|message| message.contains("STATUS: DONE")),
+            "{text}"
+        );
+    }
 }

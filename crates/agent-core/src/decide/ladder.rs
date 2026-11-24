@@ -36,6 +36,8 @@ pub enum Trouble {
     Busy,
     /// The daemon went down while the run was going: the run was cut from outside, and no run went bad.
     DaemonDown,
+    /// The session outgrew its agent's bound: no run went bad, the session is started anew for its size.
+    ContextBound,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -80,7 +82,7 @@ pub fn next_step(
         Trouble::Hang => session.is_some() && count < watchdog.hang_strikes.get(),
         Trouble::TurnLimit => session.is_some() && u64::from(count) <= u64::from(limits.turn_limit_resumes),
         // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
-        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown => false,
+        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound => false,
     };
     if retried {
         return LadderStep::SameSession;
