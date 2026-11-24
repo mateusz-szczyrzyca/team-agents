@@ -1814,7 +1814,10 @@ Integrate the guide.
         let base = world.git_output(member, &["rev-parse", "HEAD"]);
         let branch = format!("agents/{worker}/{worker_task}");
         let path = world.worktree(worker_task);
-        world.git_output(member, &["worktree", "add", "-b", &branch, path.to_str().unwrap(), &base]);
+        world.git_output(
+            member,
+            &["worktree", "add", "-b", &branch, path.to_str().unwrap(), &base],
+        );
         if guide {
             let status = Command::new("bash")
                 .arg(world.home.join("fake-scripts/guide.sh"))
@@ -1910,8 +1913,18 @@ Integrate the guide.
         world.told("claude-1", "did step 1.1 of your plan");
         assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
         eventually("the files of the request to be removed", || {
-            !world.home.join("tasks").join(&worker).join("worker-request-1.json").exists()
-                && !world.home.join("tasks").join(&worker).join("worker-try-1.json").exists()
+            !world
+                .home
+                .join("tasks")
+                .join(&worker)
+                .join("worker-request-1.json")
+                .exists()
+                && !world
+                    .home
+                    .join("tasks")
+                    .join(&worker)
+                    .join("worker-try-1.json")
+                    .exists()
         });
     }
 
@@ -1930,7 +1943,11 @@ Integrate the guide.
         world.request_is("1", "done");
         assert_eq!(world.file(&member, "docs/guide.md"), "the walkthrough\n");
         assert_eq!(world.brought_over(&member), 1);
-        assert_eq!(world.file(&member, "scratch.txt"), "my notes\n", "the requester's own file is untouched");
+        assert_eq!(
+            world.file(&member, "scratch.txt"),
+            "my notes\n",
+            "the requester's own file is untouched"
+        );
         let record = world.home.join("tasks").join(&member).join("request-workspace-1.json");
         let worktree = world.home.join("worktrees/example").join(worker_task);
         let pending = world.home.join("tasks").join(worker_task).join("worker-request-1.json");

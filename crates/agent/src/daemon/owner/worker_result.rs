@@ -25,6 +25,7 @@ use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpd
 use agent_runtime::git::{BringOver, CommitIdentity, Git, Revision};
 use agent_runtime::plan::check::{CheckContext, execute_request_check, read_check_tail, request_check_outcome};
 use agent_runtime::process::error_chain;
+use agent_runtime::request_workspace::{self, CompleteError, RequestWorkspace, WorkspaceError};
 use agent_runtime::team_prompts::TeamPrompts;
 use agent_runtime::worker_request::{
     Checked, Found, Pending, PendingError, Settlement, Stage, pending_path, read_pending_each, request_of_file,
@@ -217,11 +218,221 @@ impl Owner {
                         {
                             continue;
                         }
-                        self.settle_one(&task_dir, pending).await?;
+                        self.settle_one(&task_dir, pending, None).await?;
                     }
                     Err(error) => self.settle_damaged(team, &task, &worker, error).await?,
                 }
             }
+        }
+        // The requests of the non-crew workers, whose workspaces are recorded in the members' task directories, are
+        // settled from their records: the same stages, with the workspace as context, and the workspace released when
+        // the request is settled.
+        self.settle_workspace_results(team).await
+    }
+
+    /// Settles the requests of the workers of the pool, whose workspaces are recorded in the task directories of the
+    /// members of `team`: each record is settled with its pending, and a record that cannot be read is told once and
+    /// left alone, so that one damaged file does not hide the others.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the clock or the state fails.
+    async fn settle_workspace_results(&mut self, team: &TeamId) -> Result<(), OwnerError> {
+        let Some(found) = self.parts.state.team(team) else {
+            return Ok(());
+        };
+        let member_tasks: Vec<TaskId> = found
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task().clone())
+            .collect();
+        for requester_task in member_tasks {
+            let task_dir = self.parts.store.home().task_dir(&requester_task);
+            let read = match request_workspace::read_each(&task_dir).await {
+                Ok(read) => read,
+                Err(error) => {
+                    self.tell_workspace_unreadable_once(&error);
+                    continue;
+                }
+            };
+            for item in read {
+                match item {
+                    Ok(record) => self.settle_workspace_one(team, &record).await?,
+                    Err(error) => self.tell_workspace_unreadable_once(&error),
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Settles the request whose workspace `record` keeps: a request that was answered leaves only a record, which is
+    /// released; a `Working` record whose pending is already present is completed and settled; a record at `Ended`
+    /// without a pending is a leftover of a settled request, released. The pending and the record must name the same
+    /// request, worker task, requester and requester task before any record path is used or the workspace is released; a
+    /// mismatch is a damaged file, set aside and told once, and the workspace is never released on its behalf.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the clock or the state fails.
+    async fn settle_workspace_one(&mut self, team: &TeamId, record: &RequestWorkspace) -> Result<(), OwnerError> {
+        // A request that was answered is answered once: what is left of it is only its record, which is released.
+        if self.answered_requests.contains(&record.request) {
+            return self.release_workspace(team, record).await;
+        }
+        let worker_dir = self.parts.store.home().task_dir(&record.worker_task);
+        let read = match read_pending_each(&worker_dir).await {
+            Ok(read) => read,
+            Err(error) => {
+                self.tell_unreadable_once(&error);
+                return Ok(());
+            }
+        };
+        // The pending of the record's request, and a damaged file of it, if one is there.
+        let mut pending = None;
+        let mut damaged = None;
+        for item in read {
+            match item {
+                Ok(found) if found.request == record.request => pending = Some(found),
+                Err(error) if error.path().and_then(request_of_file) == Some(record.request) => damaged = Some(error),
+                _ => {}
+            }
+        }
+        // A `Working` record without a pending is the worker still working: nothing to settle. A record at `Ended`
+        // without a pending is a leftover of a settled request, and its workspace is released. A damaged pending is set
+        // aside and told once, and the workspace is never released on its behalf.
+        let Some(pending) = pending else {
+            if let Some(error) = damaged {
+                return self.settle_workspace_damaged(record, &error).await;
+            }
+            if record.stage == request_workspace::Stage::Ended {
+                return self.release_workspace(team, record).await;
+            }
+            return Ok(());
+        };
+        // The pending and the record must name the same request, worker task, requester and requester task before any
+        // record path is used or the workspace is released; a mismatch is a damaged file.
+        if pending.worker_task != record.worker_task
+            || pending.requester != record.requester
+            || pending.requester_task != record.requester_task
+        {
+            let error = PendingError::Mismatch {
+                path: pending_path(&worker_dir, pending.request),
+                found: pending.request.number(),
+            };
+            return self.settle_workspace_damaged(record, &error).await;
+        }
+        // A `Working` record whose pending is already present is completed before it is settled: a daemon stopped
+        // between the completion's two writes, or the record of the old open form.
+        let workspace = if record.stage == request_workspace::Stage::Working {
+            let mut completed = record.clone();
+            if let Err(error) = request_workspace::complete(self.parts.store.home(), &mut completed, &pending) {
+                self.tell_complete_once(record.request, &error);
+                return Ok(());
+            }
+            completed
+        } else {
+            record.clone()
+        };
+        if self
+            .request_checking
+            .values()
+            .any(|checking| checking.pending.request == pending.request)
+        {
+            return Ok(());
+        }
+        self.settle_one(&worker_dir, pending, Some(&workspace)).await
+    }
+
+    /// The pending of a request's workspace cannot be used with its record: its file is set aside and kept, and the
+    /// fault is told once, with the file's name. The workspace of the request is never released on its behalf.
+    ///
+    /// # Errors
+    /// [`OwnerError`] never today; the stage's loop takes this error type.
+    async fn settle_workspace_damaged(
+        &mut self,
+        record: &RequestWorkspace,
+        error: &PendingError,
+    ) -> Result<(), OwnerError> {
+        let Some(path) = error.path().map(Path::to_owned) else {
+            self.tell_unreadable_once(error);
+            return Ok(());
+        };
+        let aside = match set_aside(&path).await {
+            Ok(aside) => aside,
+            Err(failure) => {
+                self.tell_unreadable_once(error);
+                tracing::warn!(
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
+                    request = %record.request,
+                    error = %error_chain(&failure),
+                    "the damaged pending of a request's workspace cannot be set aside: it is left as it is"
+                );
+                return Ok(());
+            }
+        };
+        if self.unreadable_requests.insert(error.to_string()) {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %record.request,
+                file = ?path,
+                kept_as = ?aside,
+                error = %error_chain(error),
+                "the pending of a request's workspace cannot be used: it is set aside, and the workspace is never released on its behalf"
+            );
+        }
+        Ok(())
+    }
+
+    /// Says once, in the log, that a record of a request's workspace cannot be read: the daemon goes on without it, and
+    /// the file is left alone.
+    fn tell_workspace_unreadable_once(&mut self, error: &WorkspaceError) {
+        if self.unreadable_requests.insert(error.to_string()) {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                error = %error_chain(error),
+                "the record of a request's workspace cannot be read: it is left as it is and the daemon goes on without it"
+            );
+        }
+    }
+
+    /// Says once, in the log, that a request's workspace cannot be completed: the record stays `Working` and the next
+    /// look completes it again.
+    fn tell_complete_once(&mut self, request: RequestId, error: &CompleteError) {
+        if self.unreadable_requests.insert(error.to_string()) {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %request,
+                error = %error_chain(error),
+                "a request's workspace cannot be completed: it is tried again at the next look"
+            );
+        }
+    }
+
+    /// Releases the workspace `record` of a settled request of `team`: its worktree and its branch are removed and the
+    /// record dropped, in the requester's repository, through the requester's git. A release that cannot finish is told
+    /// once and tried again at the next look, from the record that stays.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the clock or the state fails.
+    async fn release_workspace(&mut self, team: &TeamId, record: &RequestWorkspace) -> Result<(), OwnerError> {
+        let Some(git) = self.git_of(team, &record.requester_task, &record.requester) else {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %record.request,
+                "the requester's worktree of a settled request cannot be reached: the workspace is left to be released again"
+            );
+            return Ok(());
+        };
+        if let Err(error) = request_workspace::release(self.parts.store.home(), &git, record).await
+            && self
+                .unreadable_requests
+                .insert(format!("release {}", record.request.number()))
+        {
+            tracing::warn!(
+                event = LogEvent::WorkerRequestDamaged.as_str(),
+                request = %record.request,
+                error = %error_chain(&error),
+                "the workspace of a settled request cannot be released: it is tried again at the next look"
+            );
         }
         Ok(())
     }
@@ -330,7 +541,7 @@ impl Owner {
         let task_dir = self.parts.store.home().task_dir(worker_task);
         // Kept first, so that an answer the bus cannot take now is tried again at the next look.
         match write_pending(&task_dir, &pending) {
-            Ok(()) => self.settle_one(&task_dir, pending).await,
+            Ok(()) => self.settle_one(&task_dir, pending, None).await,
             Err(failure) => self.settle_unkept(&task_dir, pending, &failure).await,
         }
     }
@@ -346,20 +557,25 @@ impl Owner {
         }
     }
 
-    /// Takes `pending` through the stages that remain.
-    async fn settle_one(&mut self, task_dir: &Path, mut pending: Pending) -> Result<(), OwnerError> {
+    /// Takes `pending` through the stages that remain. When the request was served in `workspace`, the stages use the
+    /// workspace's worktree for the check and its base for the commit the worker started from, and the workspace is
+    /// released when the request is settled.
+    async fn settle_one(
+        &mut self,
+        task_dir: &Path,
+        mut pending: Pending,
+        workspace: Option<&RequestWorkspace>,
+    ) -> Result<(), OwnerError> {
         // A request that was answered is answered once: what is left of it is only a file that could not be removed.
         if self.answered_requests.contains(&pending.request) {
-            self.drop_pending_once(task_dir, pending.request);
-            return Ok(());
+            return self.drop_settled(task_dir, &pending, workspace).await;
         }
         loop {
             let next = match &pending.stage {
                 Stage::Ended | Stage::Checked(_) if !self.still_the_workers(&pending).await => {
-                    self.drop_pending_once(task_dir, pending.request);
-                    return Ok(());
+                    return self.drop_settled(task_dir, &pending, workspace).await;
                 }
-                Stage::Ended => match self.gather_request(&pending).await {
+                Stage::Ended => match self.gather_request(&pending, workspace).await {
                     Gathered::Later => return Ok(()),
                     Gathered::Gone => {
                         tracing::warn!(
@@ -368,6 +584,9 @@ impl Owner {
                             "the bus has no such request any more: the result of the worker is dropped"
                         );
                         Self::drop_pending(task_dir, pending.request);
+                        if let Some(record) = workspace {
+                            self.release_workspace(&pending.team, record).await?;
+                        }
                         return Ok(());
                     }
                     Gathered::Wrong(checked, reasons) => Stage::Settled {
@@ -376,12 +595,12 @@ impl Owner {
                     },
                     Gathered::Checked(checked) => Stage::Checked(Box::new(checked)),
                     Gathered::Check(checked, step, text) => {
-                        self.start_request_check(task_dir, pending, checked, step, text);
+                        self.start_request_check(task_dir, pending, checked, step, text, workspace);
                         return Ok(());
                     }
                 },
                 Stage::Checked(checked) => {
-                    let settlement = self.settle_result(&pending, checked).await;
+                    let settlement = self.settle_result(&pending, checked, workspace).await;
                     Stage::Settled {
                         checked: checked.clone(),
                         settlement,
@@ -392,14 +611,14 @@ impl Owner {
                     ..
                 } => {
                     if self.give_again(&pending, reasons).await? {
-                        self.drop_pending_once(task_dir, pending.request);
+                        return self.drop_settled(task_dir, &pending, workspace).await;
                     }
                     return Ok(());
                 }
                 Stage::Settled { checked, settlement } => {
                     if self.answer_requester(&pending, checked, settlement).await? {
                         self.answered_requests.insert(pending.request);
-                        self.drop_pending_once(task_dir, pending.request);
+                        return self.drop_settled(task_dir, &pending, workspace).await;
                     }
                     return Ok(());
                 }
@@ -409,6 +628,24 @@ impl Owner {
                 return self.settle_unkept(task_dir, pending, &error).await;
             }
         }
+    }
+
+    /// Removes the file of `pending` from `task_dir` and, when the request was served in a workspace, releases the
+    /// workspace: a settled request leaves nothing behind but the record, which is released.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the clock or the state fails.
+    async fn drop_settled(
+        &mut self,
+        task_dir: &Path,
+        pending: &Pending,
+        workspace: Option<&RequestWorkspace>,
+    ) -> Result<(), OwnerError> {
+        self.drop_pending_once(task_dir, pending.request);
+        if let Some(record) = workspace {
+            self.release_workspace(&pending.team, record).await?;
+        }
+        Ok(())
     }
 
     /// A stage of `pending` cannot be written: that is the fault of this request only. Its file, if there is one, is set aside
@@ -540,7 +777,7 @@ impl Owner {
     }
 
     /// Reads what the request asks and what the worker left, before the check: a result that is wrong already is told so.
-    async fn gather_request(&self, pending: &Pending) -> Gathered {
+    async fn gather_request(&self, pending: &Pending, workspace: Option<&RequestWorkspace>) -> Gathered {
         let work = match self.parts.bus.helper_work(pending.request).await {
             Ok(work) => work,
             Err(error) if error.class() == Some(FailureClass::NotFound) => return Gathered::Gone,
@@ -566,7 +803,7 @@ impl Owner {
         // A request that writes files is judged by what the worker committed: whatever cannot be established is a reason to
         // return the step, never a reason to bring something over.
         if scope_of(&checked.files) == Scope::Files && checked.step.is_some() {
-            match self.what_the_worker_left(pending, &work.files).await {
+            match self.what_the_worker_left(pending, &work.files, workspace).await {
                 Ok((head, committed, outside)) => {
                     checked.head = Some(head);
                     checked.committed = committed;
@@ -582,24 +819,50 @@ impl Owner {
     }
 
     /// What the worker's worktree holds: its commit, whether it committed since the request was given to it, the files its
-    /// commits changed outside `allowed`; or why that cannot be established, or the worker left changes uncommitted.
+    /// commits changed outside `allowed`; or why that cannot be established, or the worker left changes uncommitted. The
+    /// worktree and the commit the worker started from are the workspace's when the request was served in one.
     async fn what_the_worker_left(
         &self,
         pending: &Pending,
         allowed: &[agent_core::repo_path::RepoPath],
+        workspace: Option<&RequestWorkspace>,
     ) -> Result<(String, bool, Vec<String>), Vec<String>> {
         let fail = |reason: String| vec![reason];
-        let Some(git) = self.git_of(&pending.team, &pending.worker_task, &pending.worker) else {
-            return Err(fail("the worker's worktree cannot be reached".to_owned()));
+        let git = match workspace {
+            Some(record) => {
+                let worktree = request_workspace::worktree_of(
+                    self.parts.store.home(),
+                    &record.requester_repo,
+                    &record.worker_task,
+                )
+                .map_err(|error| {
+                    fail(format!(
+                        "the worker's worktree cannot be reached: {}",
+                        error_chain(&error)
+                    ))
+                })?;
+                Git::new(
+                    worktree,
+                    CommitIdentity::for_agent(self.parts.settings.config.git(), &pending.worker),
+                )
+            }
+            None => {
+                let Some(git) = self.git_of(&pending.team, &pending.worker_task, &pending.worker) else {
+                    return Err(fail("the worker's worktree cannot be reached".to_owned()));
+                };
+                git
+            }
         };
         let head = git
             .rev_parse(&Revision::Head)
             .await
             .map_err(|error| fail(format!("the worker's commit cannot be read: {}", error_chain(&error))))?;
+        // The commit the worker started from: the pending's base, or the workspace's base when the pending carries none.
         let base = pending
             .base
             .as_deref()
             .and_then(|base| CommitId::from_str(base).ok())
+            .or_else(|| workspace.map(|record| record.base.clone()))
             .ok_or_else(|| {
                 fail("the commit the worker started from is not known, so what it changed cannot be told".to_owned())
             })?;
@@ -648,11 +911,28 @@ impl Owner {
         Ok((head.to_string(), committed, outside))
     }
 
-    /// Starts the check `text` of the request in the background, so that the owner goes on while it runs.
-    fn start_request_check(&mut self, task_dir: &Path, pending: Pending, checked: Checked, step: ItemId, text: String) {
+    /// Starts the check `text` of the request in the background, so that the owner goes on while it runs. The check runs
+    /// in the workspace's worktree when the request was served in one, and in the worker's own worktree otherwise.
+    fn start_request_check(
+        &mut self,
+        task_dir: &Path,
+        pending: Pending,
+        checked: Checked,
+        step: ItemId,
+        text: String,
+        workspace: Option<&RequestWorkspace>,
+    ) {
         let config = &self.parts.settings.config;
+        let worktree = match workspace {
+            Some(record) => {
+                request_workspace::worktree_of(self.parts.store.home(), &record.requester_repo, &record.worker_task)
+                    .ok()
+                    .map(|worktree| worktree.as_path().to_path_buf())
+            }
+            None => self.worker_worktree(&pending.team, &pending.worker_task),
+        };
         let job = RequestCheck {
-            worktree: self.worker_worktree(&pending.team, &pending.worker_task),
+            worktree,
             task_dir: task_dir.to_owned(),
             step,
             text,
@@ -712,7 +992,12 @@ impl Owner {
 
     /// Decides what the checked result is worth and, when it is good, brings the worker's commit over; a wrong one goes once
     /// more to another worker, or, the second time, back to the requester.
-    async fn settle_result(&self, pending: &Pending, checked: &Checked) -> Settlement {
+    async fn settle_result(
+        &self,
+        pending: &Pending,
+        checked: &Checked,
+        workspace: Option<&RequestWorkspace>,
+    ) -> Settlement {
         if checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()) {
             return Settlement::Report;
         }
@@ -731,7 +1016,7 @@ impl Owner {
                     && matches!(facts.elsewhere, Elsewhere::Free | Elsewhere::SameProvider);
                 self.wrong_settlement(pending, nothing, again)
             }
-            Verdict::Accept => self.bring_over(pending, checked).await,
+            Verdict::Accept => self.bring_over(pending, checked, workspace).await,
             Verdict::GiveToAnother { wrong } => {
                 self.wrong_settlement(pending, reasons_of(checked, &wrong, limit), true)
             }
@@ -740,13 +1025,24 @@ impl Owner {
     }
 
     /// Brings what the worker committed since the request was given to it to the requester's branch, once: a commit that is
-    /// there already is not brought again.
-    async fn bring_over(&self, pending: &Pending, checked: &Checked) -> Settlement {
+    /// there already is not brought again. The commit the worker started from is the workspace's base when the pending
+    /// carries none.
+    async fn bring_over(
+        &self,
+        pending: &Pending,
+        checked: &Checked,
+        workspace: Option<&RequestWorkspace>,
+    ) -> Settlement {
         let returned = |reason: String| Settlement::Returned { reasons: vec![reason] };
         let Some(head) = checked.head.as_deref().and_then(|head| CommitId::from_str(head).ok()) else {
             return returned("the worker's commit cannot be read".to_owned());
         };
-        let Some(base) = pending.base.as_deref().and_then(|base| CommitId::from_str(base).ok()) else {
+        let Some(base) = pending
+            .base
+            .as_deref()
+            .and_then(|base| CommitId::from_str(base).ok())
+            .or_else(|| workspace.map(|record| record.base.clone()))
+        else {
             return returned("the commit the worker started from is not known".to_owned());
         };
         let Some(git) = self.git_of(&pending.team, &pending.requester_task, &pending.requester) else {

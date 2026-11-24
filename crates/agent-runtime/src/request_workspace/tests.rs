@@ -8,16 +8,17 @@ use std::process::Command;
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, RepoName};
-use agent_core::ids::TaskId;
+use agent_core::ids::{TaskId, TeamId};
 use agent_core::state::CommitId;
 
 use crate::agentbus::RequestId;
 use crate::git::{BringOver, CommitIdentity, Git};
 use crate::request_workspace::{
-    RequestWorkspace, Stage, WorkspaceError, branch, path_of, prepare as prepare_workspace, read_each,
-    release as release_workspace, save,
+    CompleteError, RequestWorkspace, Stage, WorkspaceError, branch, complete, path_of, prepare as prepare_workspace,
+    read_each, release as release_workspace, save,
 };
 use crate::store::Home;
+use crate::worker_request::{Pending, PendingError, Stage as PendingStage, read_pending_each};
 
 const ROUND: &str = "round-20261124-090000-aaaa";
 const REQUESTER: &str = "task-20261124-090000-bbbb";
@@ -443,4 +444,103 @@ async fn the_requesters_dirty_worktree_stays_byte_identical_after_the_workspace_
     let worktree = home.worktree_dir(&workspace.requester_repo, &workspace.worker_task);
     assert_eq!(std::fs::read_to_string(worktree.join("a.txt")).unwrap(), "one\n");
     assert!(!worktree.join("untracked.txt").exists());
+}
+
+// ---- completion ------------------------------------------------------------------------------------------------------
+
+/// The pending of a request whose worker's run ended in its workspace: the same request, requester, worker and tasks as
+/// `workspace`, with no base of its own and at the `Ended` stage, like the pending the harness keeps of an ended run.
+fn pending_for(workspace: &RequestWorkspace) -> Pending {
+    Pending {
+        request: workspace.request,
+        team: TeamId::from_str("team-20261124-090000-aaaa").unwrap(),
+        requester: workspace.requester.clone(),
+        requester_task: workspace.requester_task.clone(),
+        worker: workspace.worker.clone(),
+        worker_task: workspace.worker_task.clone(),
+        summary: "Result: done.".to_owned(),
+        run_seconds: 1,
+        base: None,
+        stage: PendingStage::Ended,
+    }
+}
+
+#[tokio::test]
+async fn completing_writes_the_pending_into_the_worker_task_and_saves_the_record_ended() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let base = fixture.head();
+    let mut workspace = RequestWorkspace {
+        base: base.to_string().parse().unwrap(),
+        ..workspace(11)
+    };
+    let requester_git = handle(&fixture.repo);
+    prepare_workspace(&home, &requester_git, &workspace).await.unwrap();
+    let pending = pending_for(&workspace);
+
+    complete(&home, &mut workspace, &pending).unwrap();
+
+    assert_eq!(workspace.stage, Stage::Ended, "the record is ended");
+    let read = read_each(&home.task_dir(&workspace.requester_task))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(read.stage, Stage::Ended, "the record on disk is ended");
+    let kept = read_pending_each(&home.task_dir(&workspace.worker_task))
+        .await
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(kept, pending, "the pending is in the worker's task directory");
+}
+
+#[tokio::test]
+async fn completing_keeps_the_typed_cause_when_the_pending_cannot_be_written() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let mut workspace = workspace(12);
+    let pending = pending_for(&workspace);
+
+    // A file blocks the tasks directory, so the pending cannot be written into the worker's task directory.
+    std::fs::create_dir_all(home.root()).unwrap();
+    std::fs::write(home.tasks_dir(), "not a directory\n").unwrap();
+
+    let refused = complete(&home, &mut workspace, &pending);
+
+    assert!(
+        matches!(&refused, Err(CompleteError::Pending { request, source: PendingError::Write { .. } }) if *request == workspace.request),
+        "{refused:?}"
+    );
+}
+
+#[tokio::test]
+async fn completing_keeps_the_typed_cause_when_the_record_cannot_be_saved() {
+    let fixture = Fixture::new();
+    let home = Home::new(&abs(fixture.tmp.path()));
+    let mut workspace = workspace(13);
+    let pending = pending_for(&workspace);
+
+    // The pending can be written into the worker's task directory; a file blocks the requester's task directory, so the
+    // record cannot be saved after it.
+    std::fs::create_dir_all(home.root()).unwrap();
+    std::fs::create_dir_all(home.tasks_dir()).unwrap();
+    std::fs::create_dir_all(home.task_dir(&workspace.worker_task)).unwrap();
+    std::fs::write(home.task_dir(&workspace.requester_task), "not a directory\n").unwrap();
+
+    let refused = complete(&home, &mut workspace, &pending);
+
+    assert!(
+        matches!(&refused, Err(CompleteError::Workspace { request, source: WorkspaceError::Write { .. } }) if *request == workspace.request),
+        "{refused:?}"
+    );
+    assert_eq!(
+        workspace.stage,
+        Stage::Ended,
+        "the record is ended in memory, ready to be saved again"
+    );
 }

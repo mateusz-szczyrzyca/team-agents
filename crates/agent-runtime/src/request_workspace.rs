@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 use crate::agentbus::RequestId;
 use crate::git::{DeleteMode, Git, GitError, RemoveMode, Revision, WorktreeBranch};
 use crate::store::Home;
+use crate::worker_request::{Pending, PendingError, write_pending};
 
 /// The start of the name of the file that keeps a request's workspace: `request-workspace-<number>.json` in the
 /// requester's task directory.
@@ -111,6 +112,28 @@ pub enum WorkspaceError {
         request: RequestId,
         /// The failure.
         source: GitError,
+    },
+}
+
+/// Why a request's workspace cannot be completed: the worker's run ended and the result is to be settled in the
+/// workspace.
+#[derive(Debug, thiserror::Error)]
+pub enum CompleteError {
+    /// The pending of the result cannot be written into the worker's task directory.
+    #[error("the pending of the result of {request} cannot be written into the worker's task directory")]
+    Pending {
+        /// The request.
+        request: RequestId,
+        /// The failure.
+        source: PendingError,
+    },
+    /// The record cannot be saved at [`Stage::Ended`].
+    #[error("the record of the workspace of {request} cannot be saved as ended")]
+    Workspace {
+        /// The request.
+        request: RequestId,
+        /// The failure.
+        source: WorkspaceError,
     },
 }
 
@@ -233,6 +256,34 @@ pub fn save(task_dir: &Path, workspace: &RequestWorkspace) -> Result<(), Workspa
         source,
     })?;
     std::fs::rename(&temporary, &path).map_err(|source| WorkspaceError::Write {
+        request: workspace.request,
+        source,
+    })
+}
+
+/// Completes a request whose worker's run ended in its workspace: the pending of the result is written into the worker's
+/// task directory first, then the record is saved at [`Stage::Ended`] in the requester's task directory. A daemon that
+/// stops between the two writes leaves a `Working` record whose pending is already present; the settlement pass of the
+/// owner completes it and settles it, so a stop never loses the result or forgets the workspace.
+///
+/// # Errors
+/// [`CompleteError::Pending`] when the pending cannot be written; [`CompleteError::Workspace`] when the record cannot be
+/// saved at `Ended`.
+pub fn complete(home: &Home, workspace: &mut RequestWorkspace, pending: &Pending) -> Result<(), CompleteError> {
+    let worker_dir = home.task_dir(&workspace.worker_task);
+    std::fs::create_dir_all(&worker_dir).map_err(|source| CompleteError::Pending {
+        request: workspace.request,
+        source: PendingError::Write {
+            path: worker_dir.clone(),
+            source,
+        },
+    })?;
+    write_pending(&worker_dir, pending).map_err(|source| CompleteError::Pending {
+        request: workspace.request,
+        source,
+    })?;
+    workspace.stage = Stage::Ended;
+    save(&home.task_dir(&workspace.requester_task), workspace).map_err(|source| CompleteError::Workspace {
         request: workspace.request,
         source,
     })

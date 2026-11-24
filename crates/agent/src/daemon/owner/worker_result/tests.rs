@@ -243,6 +243,7 @@ async fn removal_refuses_or_joins_a_workers_pending_check() {
             checked(&[], &[], None),
             "1.1".parse().unwrap(),
             "/bin/true".to_owned(),
+            None,
         );
 
         let result = owner
