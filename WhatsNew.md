@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.86.0 — 24.11.2026 — PR #239
+
+### Bug fixes
+- [agent] [agent-core] A team no longer waits behind a member that failed after it called a bus tool when its lead already holds the member's work: once the lead ends `STATUS: DONE` with a passed gate and the member's branch is in the lead's branch (and no uncommitted file of the member's worktree is new to the lead), the member is closed as taken over and the pull request is opened, with no `agent stop` by hand. A member that failed without a single tool call still holds the round and the human is still told.
+- [agent] Work of a failed member that the lead's branch lacks is never dropped: the lead is told once which commits and files, and if it ends `STATUS: DONE` again without them the human is asked once, with the list.
+
 ## 0.85.0 — 24.11.2026 — PR #238
 
 ### New features
