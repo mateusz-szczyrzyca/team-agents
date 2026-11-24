@@ -348,6 +348,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `request_delegated` | `info` | A request for a worker is given to a worker, with `request` and `worker`; also the result of a worker is settled (`request`, `worker`, `requester`, `step`, `outcome`, `run_seconds`). |
 | `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
 | `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
+| `serena_reminded` | `info` | A run with Serena made `serena.remind_after` searches of code without calling Serena, and was told once in its session to find code with Serena; logged once per session with the task, the run, the step, the count of searches and the CLI. |
 | `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`; `asked_human` also says in `commits` how many findings about commits the question names. Publication uses `publish_failed_lead` when the configured retry limit releases the lead once, and `publish_failed_human` when further failures ask the human in a questions file. |
 | `reviews_requested` | `info` | The reviews of a pull request are asked for, with `pr` and the number of `reviewers`. |
 | `review_report_late` | `info` | A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing. |

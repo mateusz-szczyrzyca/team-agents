@@ -17,6 +17,7 @@ mod history;
 mod idle;
 mod last_step;
 mod plan;
+mod reminder;
 mod removal;
 mod returned;
 mod round_state;
@@ -45,10 +46,11 @@ use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, TaskId, TeamId};
+use agent_core::kinds::{CliKind, Role};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
+
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
     TeamSummary, mark_runs_elsewhere,
@@ -58,11 +60,11 @@ use agent_core::state::{
     SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
-use agent_runtime::agentbus::AgentBus;
+use agent_runtime::agentbus::{AgentBus, AgentBusError, Outgoing, Recipient};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{History, Scoped, log_decision};
+use agent_runtime::history::{History, Reader, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
@@ -79,7 +81,7 @@ use tracing::Instrument;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
 use self::start::{Context, Plan, StartProblem, next_number, plan, run_why};
-use self::teams::{Outbound, Served};
+use self::teams::{BUS_SENDER, Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
@@ -379,6 +381,12 @@ pub(crate) enum OwnerError {
     /// Existing step judgements in `history.db` could not be read.
     #[error(transparent)]
     PlanJudgementsRead(#[from] plan::PlanJudgementsError),
+    /// The bus refused a message of the harness.
+    #[error("the bus refused a message of the harness")]
+    Bus {
+        /// What the bus said.
+        source: AgentBusError,
+    },
 }
 
 /// What the owner is made of.
@@ -528,6 +536,9 @@ pub(super) struct Owner {
     serving: HashMap<TaskId, Served>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
+    /// The reminders of Serena that the looks at the teams put on the bus, by the task and the run that was reminded, so
+    /// that each reminder goes out once.
+    reminded: HashSet<String>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
     /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
@@ -648,6 +659,7 @@ impl Owner {
             outbox: VecDeque::new(),
             serving: HashMap::new(),
             closed: HashSet::new(),
+            reminded: HashSet::new(),
             looks: BTreeSet::new(),
             watcher,
             saved,
@@ -1506,8 +1518,131 @@ impl Owner {
             self.read_returns(task, &located, *outcome, message).await?;
         }
         self.commit(task, &located, now, events, notice).await?;
+        self.report_reminder(task, &located).await?;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
+    }
+
+    /// Puts `message` on the bus for `recipient` under the harness's own name.
+    ///
+    /// # Errors
+    /// [`OwnerError::Name`] when the name of the harness is not an agent name, and the bus's own error when the bus
+    /// refuses the message.
+    async fn send_from_harness(&self, recipient: &Recipient, message: &Outgoing) -> Result<(), OwnerError> {
+        let from = AgentName::from_str(BUS_SENDER)?;
+        match self.parts.bus.send(&from, recipient, message).await {
+            Ok(_sent) => Ok(()),
+            Err(source) => Err(OwnerError::Bus { source }),
+        }
+    }
+
+    /// Puts the reminder of Serena of the run of `task` that ended on the bus, when the engine recorded one for the run:
+    /// the agent reads it at its next call of the bus, in the run's session, and is not woken for it. A session is
+    /// reminded once, so each reminder goes out once.
+    ///
+    /// The reminder goes out after the records of the run are saved: a crash before it loses the reminder of that
+    /// session, whose count the engine then keeps counting. A history that cannot be read or a bus that refuses the
+    /// message leaves the reminder out and changes nothing else about the end of the run.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the recipient of the task cannot be named.
+    async fn report_reminder(&mut self, task: &TaskId, located: &Located) -> Result<(), OwnerError> {
+        let Some(run) = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.runs().last().map(|last| last.id().clone()))
+        else {
+            return Ok(());
+        };
+        let Some((searches, cli)) = self.reminder_of_run(task, &located.team).await else {
+            return Ok(());
+        };
+        // A session is reminded once: the reminder of the run that ended goes out once, however often the task's end is
+        // looked at.
+        if !self.reminded.insert(format!("{task}:{run}")) {
+            return Ok(());
+        }
+        let text = match reminder::text(searches, &self.parts.texts) {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::SerenaReminded.as_str(),
+                    task = %task,
+                    run = %run,
+                    cli = cli.as_str(),
+                    searches,
+                    outcome = "undelivered",
+                    error = %error_chain(&error),
+                    "the reminder of Serena cannot be rendered"
+                );
+                return Ok(());
+            }
+        };
+        let recipient = self.recipient_of(task)?;
+        if let Err(error) = self.send_from_harness(&recipient, &Outgoing::Chat { text }).await {
+            tracing::warn!(
+                event = LogEvent::SerenaReminded.as_str(),
+                task = %task,
+                run = %run,
+                cli = cli.as_str(),
+                searches,
+                outcome = "undelivered",
+                error = %error_chain(&error),
+                "the reminder of Serena cannot be put on the bus: the run reads it not"
+            );
+            return Ok(());
+        }
+        tracing::info!(
+            event = LogEvent::SerenaReminded.as_str(),
+            task = %task,
+            run = %run,
+            cli = cli.as_str(),
+            searches,
+            outcome = "delivered",
+            "the reminder of Serena is on the bus for the run that ended"
+        );
+        Ok(())
+    }
+
+    /// The count of searches and the model CLI of the reminder the history holds for the run of `task` that ended; `None`
+    /// when the run was not reminded, and when the history cannot be read then, which is logged.
+    async fn reminder_of_run(&self, task: &TaskId, team: &TeamId) -> Option<(u64, CliKind)> {
+        let run = self
+            .parts
+            .state
+            .find_task(task)?
+            .member
+            .runs()
+            .last()
+            .map(|last| last.id().clone())?;
+        let path = self.parts.store.home().history_file();
+        let team = team.clone();
+        // The reminder of a session goes out after its run ended: the reminder of the run is the one recorded by then.
+        let asked = move || -> Result<Option<(u64, CliKind)>, reminder::ReadError> {
+            reminder::reminder_of(&Reader::open(&path)?, &run, &team)
+        };
+        match tokio::task::spawn_blocking(asked).await {
+            Ok(Ok(found)) => found,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the history of the team cannot be read: the reminder of Serena of its run is not delivered"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the read of the history of the team failed: the reminder of Serena of its run is not delivered"
+                );
+                None
+            }
+        }
     }
 
     /// What the end `end` of a run of `task`, whose agent said `message` last, means beyond its task's status: a

@@ -118,7 +118,14 @@ async fn turn_limit_continuation_survives_an_unwritable_or_newer_history_and_rep
         let path = rig.home.history_file();
         let before = if newer {
             let raw = rusqlite::Connection::open(&path).unwrap();
-            raw.pragma_update(None, "user_version", 23).unwrap();
+            let newest = agent_runtime::history::schema::MIGRATIONS
+                .iter()
+                .map(|migration| migration.version)
+                .max()
+                .unwrap_or(0)
+                .checked_add(1)
+                .unwrap();
+            raw.pragma_update(None, "user_version", newest).unwrap();
             drop(raw);
             Some(std::fs::read(&path).unwrap())
         } else {

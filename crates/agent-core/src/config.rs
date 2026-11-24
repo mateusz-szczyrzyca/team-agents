@@ -19,6 +19,8 @@ mod split;
 pub use split::Split;
 mod review_count;
 mod secrets;
+#[cfg(test)]
+mod serena;
 mod values;
 
 pub use replacement::Replacement;
@@ -36,6 +38,7 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::log::LogLevel;
 use crate::repo_path::PathPatterns;
 use crate::review_response::opinion::Permission;
+use crate::serena::RemindAfter;
 
 pub use secrets::{InvalidSecret, MAX_SECRETS_BYTES, Position, Secret, Secrets, SecretsError};
 pub use values::{
@@ -995,6 +998,47 @@ pub struct Config {
     web: Web,
     /// The repositories, by name.
     repos: BTreeMap<RepoName, RepoConfig>,
+    /// The reminder for a run with Serena.
+    serena: SerenaSettings,
+}
+
+/// The fewest searches of code without Serena that bring a reminder, by default.
+const DEFAULT_REMIND_AFTER: u64 = crate::serena::DEFAULT_REMIND_AFTER;
+
+/// `[serena]`: the reminder for a run with Serena that searches code without it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct SerenaSettings {
+    /// The count of searches at which a run is reminded; zero turns the reminder off.
+    remind_after: u64,
+}
+
+impl Default for SerenaSettings {
+    fn default() -> Self {
+        Self {
+            remind_after: DEFAULT_REMIND_AFTER,
+        }
+    }
+}
+
+impl SerenaSettings {
+    /// The count at which a run is reminded; zero turns the reminder off.
+    #[must_use]
+    pub const fn remind_after(&self) -> u64 {
+        self.remind_after
+    }
+
+    /// The reminder it sets, or `None` when it turns the reminder off.
+    #[must_use]
+    pub fn reminder(&self) -> Option<RemindAfter> {
+        RemindAfter::new(self.remind_after).ok()
+    }
+}
+
+/// The reminder of `config`: the count at which a run with Serena is reminded, or `None` when the reminder is off.
+#[must_use]
+pub fn remind_after(config: &Config) -> Option<crate::serena::RemindAfter> {
+    config.serena().reminder()
 }
 
 /// The contents of `[tiers]`: which agents are normal and which are workers.
@@ -1096,6 +1140,9 @@ struct RawConfig {
     /// The `[repos.NAME]` tables.
     #[serde(default)]
     repos: BTreeMap<RepoName, RepoConfig>,
+    /// See [`Config::serena`].
+    #[serde(default)]
+    serena: SerenaSettings,
 }
 
 impl RawConfig {
@@ -1135,6 +1182,7 @@ impl RawConfig {
             serena,
             web,
             repos,
+            serena,
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
@@ -1196,6 +1244,7 @@ impl RawConfig {
             serena,
             web,
             repos,
+            serena,
         })
     }
 }
@@ -1490,6 +1539,12 @@ impl Config {
     #[must_use]
     pub fn web(&self) -> &Web {
         &self.web
+    }
+
+    /// The reminder for a run with Serena.
+    #[must_use]
+    pub const fn serena(&self) -> &SerenaSettings {
+        &self.serena
     }
 
     /// The repository named `name`, if the configuration has it.

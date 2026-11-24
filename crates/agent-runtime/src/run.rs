@@ -11,12 +11,13 @@ pub mod compose;
 mod hold;
 mod launch;
 pub mod outcome;
+pub mod serena;
 pub use launch::check_environment;
 mod output;
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
 use agent_core::cli::{
@@ -30,6 +31,7 @@ use agent_core::history::{Launch, Record, RunChanges, StepKind};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
+use agent_core::serena::{RemindAfter, SessionTally};
 use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
 use serde_json::json;
 use time::UtcOffset;
@@ -42,6 +44,7 @@ use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, RunUsageRecord, log_decision};
 use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
+use crate::run::serena::{SessionWatch, Watched as WatchStep};
 
 use crate::store::StateStore;
 pub use hold::{HoldGuard, WatchdogHold};
@@ -383,6 +386,9 @@ pub struct RunEngine {
     parts: EngineParts,
     /// Where the launch, the steps and the changes of every run are recorded; off unless [`RunEngine::with_history`].
     history: History,
+    /// The count of the sessions its runs made of code without Serena, by session: a session that goes on in a resumed
+    /// run keeps its count, and is reminded no more than once.
+    serena_sessions: Arc<Mutex<BTreeMap<String, SessionTally>>>,
 }
 
 impl RunEngine {
@@ -392,6 +398,7 @@ impl RunEngine {
         Self {
             parts,
             history: History::disabled(),
+            serena_sessions: Arc::new(Mutex::new(BTreeMap::new())),
         }
     }
 
@@ -401,6 +408,38 @@ impl RunEngine {
     pub fn with_history(mut self, history: History) -> Self {
         self.history = history;
         self
+    }
+
+    /// The watch of the session `job` is of: fresh for a new session, and the tally its earlier runs kept for a resumed
+    /// one. `None` when the run has no Serena or the reminder is off.
+    fn serena_watch(&self, job: &RunJob) -> Option<SessionWatch> {
+        let after = remind_after(job, &self.parts.config)?;
+        if matches!(job.mode, RunMode::Resume { .. }) {
+            let key = session_key(&job.mode);
+            if let Some(tally) = self.serena_tally(&key) {
+                return Some(SessionWatch::resumed(tally));
+            }
+        }
+        SessionWatch::new(Some(after))
+    }
+
+    /// The tally of the session `key` the engine has kept so far, if any.
+    fn serena_tally(&self, key: &str) -> Option<SessionTally> {
+        // A poisoned lock still holds consistent data: the map is only ever replaced whole.
+        self.serena_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(key)
+            .copied()
+    }
+
+    /// Keeps `tally` as the count of the session `key`.
+    fn keep_tally(&self, key: &str, tally: SessionTally) {
+        // A poisoned lock still holds consistent data: the map is only ever replaced whole.
+        self.serena_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(key.to_owned(), tally);
     }
 
     /// Carries out `job` and returns how it ended.
@@ -481,6 +520,11 @@ impl RunEngine {
                 RunMode::New { session_id } if job.cli == CliKind::Claude => Some(session_id.clone()),
                 RunMode::New { .. } => None,
             },
+            watch: self.serena_watch(&job),
+            session_key: session_key(&job.mode),
+            after: remind_after(&job, &self.parts.config),
+            cli: job.cli,
+            steps: 0,
             progress: Progress::Nothing,
             used_tool: false,
             unreadable: Unreadable::default(),
@@ -764,6 +808,25 @@ impl Unreadable {
     }
 }
 
+/// The count at which the session of `job` is reminded, when the run has Serena and the reminder is not off.
+fn remind_after(job: &RunJob, config: &Config) -> Option<RemindAfter> {
+    given_serena(job)
+        .then(|| agent_core::config::remind_after(config))
+        .flatten()
+}
+
+/// Whether the run `job` is given Serena, the MCP server that finds code through language servers.
+fn given_serena(job: &RunJob) -> bool {
+    job.mcp_servers.contains_key(&McpServerKind::Serena)
+}
+
+/// The key of the session a run is of, for the counts the engine keeps across a session's runs.
+fn session_key(mode: &RunMode) -> String {
+    match mode {
+        RunMode::New { session_id } | RunMode::Resume { session_id } => session_id.as_str().to_owned(),
+    }
+}
+
 /// What the engine does with the output of one run as it grows.
 struct Follow<'a> {
     /// The engine, for the store and the clock.
@@ -778,6 +841,17 @@ struct Follow<'a> {
     parser: Box<dyn OutputParser>,
     /// The session supplied at launch or most recently observed; echoes are not new observations.
     known_session: Option<SessionId>,
+    /// The count of the session's searches of code without Serena; `None` for a run without Serena and for a run whose
+    /// session was reminded before, which counts no step again.
+    watch: Option<SessionWatch>,
+    /// The key of the session, under which the engine keeps the count that a resumed run goes on from.
+    session_key: String,
+    /// The count at which the session is reminded, when the run has Serena and the reminder is not off.
+    after: Option<RemindAfter>,
+    /// The model CLI, which the log of a reminder names.
+    cli: CliKind,
+    /// The number of the step being fed: the steps of the run before it, then this one.
+    steps: u64,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
     /// Whether a step that calls a tool was recorded in this run.
@@ -787,6 +861,44 @@ struct Follow<'a> {
 }
 
 impl Follow<'_> {
+    /// Gives the step `event` to the count of the session, if the run counts one: the searches of the session when the
+    /// reminder came due, or `None`.
+    fn note_reminder(&mut self, event: &ActivityEvent) -> Option<u64> {
+        let (Some(watch), Some(after)) = (self.watch.as_mut(), self.after) else {
+            return None;
+        };
+        let watched = watch.note(event, after);
+        if let Some(tally) = watch.tally() {
+            self.engine.keep_tally(&self.session_key, tally);
+        }
+        let WatchStep::Due { searches } = watched else {
+            return None;
+        };
+        Some(searches)
+    }
+
+    /// Logs the reminder of the session at the step `number`, after `searches` searches of code without Serena, and
+    /// records it in the history of the run's task.
+    fn log_reminder(&self, number: u64, searches: u64) {
+        tracing::info!(
+            event = agent_core::log::LogEvent::SerenaReminded.as_str(),
+            task = %self.task,
+            run = %self.run,
+            step = number,
+            searches,
+            cli = self.cli.as_str(),
+            "the run was told once to find code with Serena"
+        );
+        self.engine.history.serena_reminded(
+            self.run,
+            self.task,
+            self.cli,
+            searches,
+            u32::try_from(number).unwrap_or(u32::MAX),
+            &self.engine.parts.clock,
+        );
+    }
+
     /// Feeds the lines written since the last call to the parser and its events to the history.
     async fn read_new(&mut self) -> Result<(), RunError> {
         let lines = self.tail.read_new().await?;
@@ -848,7 +960,13 @@ impl Follow<'_> {
                     self.used_tool = true;
                 }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
+                self.steps = self.steps.saturating_add(1);
+                let due = self.note_reminder(&event);
+                let step_number = self.steps;
                 self.engine.history.step(self.run, at, event);
+                if let Some(searches) = due {
+                    self.log_reminder(step_number, searches);
+                }
             }
         }
         Ok(())

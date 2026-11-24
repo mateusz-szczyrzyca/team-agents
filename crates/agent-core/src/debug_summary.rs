@@ -221,6 +221,8 @@ pub struct TaskSummaryFacts {
     /// The tool calls of each earlier run of the task, oldest first, so that every run the summary tells has its own
     /// count; a run whose steps the history lacks has none recorded.
     pub earlier_tools: Vec<RunToolCalls>,
+    /// The Serena reminder of the task's last run, when it was reminded.
+    pub reminder: Option<ReminderFacts>,
     /// Questions file status and content for this task.
     pub questions: Option<QuestionsSummaryFacts>,
 }
@@ -232,6 +234,18 @@ pub struct RunToolCalls {
     pub run: RunId,
     /// The count of the run's steps by the tools that made them.
     pub tools: ToolCalls,
+    /// The Serena reminder of the run, when it was reminded.
+    pub reminder: Option<ReminderFacts>,
+}
+
+/// The Serena reminder of one run: at which count of searches of code without Serena it was told, and how many calls of
+/// Serena the run made after it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReminderFacts {
+    /// The searches of code without Serena the session had made when it was told.
+    pub searches: u64,
+    /// The calls of Serena the run made after the reminder.
+    pub serena_after: usize,
 }
 
 /// The tool calls of a run, by the tools that made them.
@@ -669,6 +683,16 @@ fn tool_calls_text(tools: &ToolCalls) -> String {
     }
 }
 
+/// The Serena reminder as a summary tells it: the count it came at and the calls of Serena after it, or "none".
+fn reminder_text(reminder: Option<ReminderFacts>) -> String {
+    match reminder {
+        Some(ReminderFacts { searches, serena_after }) => {
+            format!("at {searches} searches of code, {serena_after} calls of Serena after")
+        }
+        None => "none".to_owned(),
+    }
+}
+
 fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     for t in tasks {
         write_line(out, &format!("### Task `{}` (`{}`)", t.id, t.agent));
@@ -686,8 +710,17 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
                     tool_calls_text(&earlier.tools)
                 ),
             );
+            write_line(
+                out,
+                &format!(
+                    "- Serena reminder of run `{}`: {}",
+                    earlier.run,
+                    reminder_text(earlier.reminder)
+                ),
+            );
         }
         write_line(out, &format!("- Tool calls: {}", tool_calls_text(&t.tools)));
+        write_line(out, &format!("- Serena reminder: {}", reminder_text(t.reminder)));
         if let Some(q) = &t.questions {
             write_line(out, &format!("- Questions (unanswered: {}):", q.has_unanswered));
             out.tail(&q.content);

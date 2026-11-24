@@ -355,6 +355,7 @@ fn git_read_failures_are_prose_with_the_first_error_line() {
         last_run_end_detail: None,
         tools: agent_core::debug_summary::ToolCalls::default(),
         earlier_tools: Vec::new(),
+        reminder: None,
         questions: None,
     });
     runtime.block_on(collection.git(&home, &team));
@@ -1478,4 +1479,132 @@ async fn every_run_of_a_task_is_told_with_its_own_tool_calls() {
         summary.contains("- Tool calls: 1 (serena 0, shell 0, other 1)\n"),
         "{summary}"
     );
+}
+
+#[tokio::test]
+async fn a_run_that_was_reminded_is_told_where_and_with_only_the_serena_calls_after_it() {
+    use crate::history::Store as _;
+    use agent_core::cli::ActivityEvent;
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{EventRecord, HistoryEvent, MaxTextBytes, Record, Step};
+    use agent_core::kinds::CliKind;
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    {
+        let (_, mut member) = team.crew_mut().find_mut(&task).unwrap();
+        member.begin_run(run.clone(), at, None).unwrap();
+    }
+    let step = |number: u32, event: ActivityEvent| {
+        Record::Step(Box::new(Step {
+            run: run.clone(),
+            number: std::num::NonZeroU32::new(number).unwrap(),
+            at,
+            event,
+        }))
+    };
+    let call = |number: u32, name: &str| {
+        step(
+            number,
+            ActivityEvent::ToolCall {
+                name: name.to_owned(),
+                summary: "doing it".to_owned(),
+            },
+        )
+    };
+    let reminder = Record::Event(Box::new(EventRecord {
+        at,
+        team: team.id().clone(),
+        rounds: Vec::new(),
+        event: HistoryEvent::SerenaReminded {
+            task: task.clone(),
+            run: run.clone(),
+            searches: 40,
+            step: 2,
+            cli: CliKind::Claude,
+        },
+    }));
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[
+            run_start(&team, &task, &run, at),
+            call(1, "Bash"),
+            call(2, "mcp__serena__list_dir"),
+            reminder,
+            call(3, "mcp__serena__find_symbol"),
+            call(4, "Read"),
+            call(5, "mcp__serena__get_symbols_overview"),
+        ])
+        .unwrap();
+    drop(database);
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.enrich_run_tools(&home, &team).await.unwrap();
+
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
+
+    assert!(
+        summary.contains("- Serena reminder: at 40 searches of code, 2 calls of Serena after\n"),
+        "{summary}"
+    );
+}
+
+#[tokio::test]
+async fn a_run_without_a_reminder_tells_none() {
+    use crate::history::Store as _;
+    use agent_core::cli::ActivityEvent;
+    use agent_core::config::AbsolutePath;
+    use agent_core::history::{MaxTextBytes, Record, Step};
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+    let mut team = team();
+    let task = team.crew().roster()[0].1.task().clone();
+    let run: agent_core::ids::RunId = "run-20261117-120001-a1b2".parse().unwrap();
+    let at: Timestamp = "2026-11-17T12:00:00Z".parse().unwrap();
+    {
+        let (_, mut member) = team.crew_mut().find_mut(&task).unwrap();
+        member.begin_run(run.clone(), at, None).unwrap();
+    }
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[
+            run_start(&team, &task, &run, at),
+            Record::Step(Box::new(Step {
+                run: run.clone(),
+                number: std::num::NonZeroU32::new(1).unwrap(),
+                at,
+                event: ActivityEvent::ToolCall {
+                    name: "Bash".to_owned(),
+                    summary: "doing it".to_owned(),
+                },
+            })),
+        ])
+        .unwrap();
+    drop(database);
+    let mut collection = Collection::new(&team, at, Duration::from_secs(120)).unwrap();
+    collection
+        .task(&home, team.crew().roster()[0].1, Role::Solo)
+        .await
+        .unwrap();
+    collection.enrich_run_tools(&home, &team).await.unwrap();
+
+    let summary = agent_core::debug_summary::render_command_summary(
+        &collection.summary,
+        agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
+        str::to_owned,
+    )
+    .unwrap();
+
+    assert!(summary.contains("- Serena reminder: none\n"), "{summary}");
 }
