@@ -162,6 +162,8 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
         working_dir: job.working_dir.clone(),
         run_dir: absolute(&run_dir)?,
         mcp_servers: job.mcp_servers.clone(),
+        context: job.context,
+        output: job.output,
     };
     let adapter = adapter_for(job.cli);
     let spec = adapter

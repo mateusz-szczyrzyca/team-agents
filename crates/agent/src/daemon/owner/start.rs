@@ -167,20 +167,28 @@ struct AgentSetup {
     model: Option<ModelName>,
     /// The extra arguments.
     args: CliArgs,
+    /// The model's context window in tokens, from the agent's `context`.
+    context: Option<u64>,
+    /// The most tokens the model writes in one answer, from the agent's `output`.
+    output: Option<u64>,
 }
 
-/// The CLI, model and arguments the configuration gives `participant`.
+/// The CLI, model, arguments and window the configuration gives `participant`.
 fn agent_setup(config: &Config, participant: &Participant) -> Option<AgentSetup> {
     match participant {
         Participant::Normal(name) | Participant::Worker(name) => config.agent(name).map(|agent| AgentSetup {
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
+            context: agent.context,
+            output: agent.output,
         }),
         Participant::Investigator(name) => config.investigator(name).map(|agent| AgentSetup {
             cli: agent.cli,
             model: agent.model.clone(),
             args: agent.args.clone(),
+            context: agent.context,
+            output: agent.output,
         }),
     }
 }
@@ -404,6 +412,8 @@ pub(super) async fn plan(
             working_dir,
             identity,
             mcp_servers,
+            context: setup.context,
+            output: setup.output,
         },
     })
 }

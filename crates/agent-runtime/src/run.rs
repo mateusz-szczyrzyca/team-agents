@@ -132,6 +132,10 @@ pub struct RunJob {
     pub identity: CommitIdentity,
     /// The MCP servers the run gets, each with its whole command line.
     pub mcp_servers: BTreeMap<McpServerKind, CommandLine>,
+    /// The model's context window in tokens, the agent's `context`; `None` leaves the CLI what it knows.
+    pub context: Option<u64>,
+    /// The most tokens the model writes in one answer, the agent's `output`; `None` leaves the CLI its own fallback.
+    pub output: Option<u64>,
 }
 
 /// A run that went to its end.

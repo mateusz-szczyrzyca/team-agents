@@ -94,6 +94,9 @@ impl CliAdapter for CodexAdapter {
         for setting in servers.iter().flat_map(server_settings) {
             args.extend(["-c".to_owned(), setting]);
         }
+        if let Some(context) = request.context {
+            args.extend(["-c".to_owned(), format!("model_context_window={context}")]);
+        }
         if let Some(model) = &request.model {
             args.extend(["-m".to_owned(), model.as_str().to_owned()]);
         }

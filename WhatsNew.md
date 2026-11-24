@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.84.0 — 24.11.2026 — PR #236
+
+### New features
+- [agent] [agent-core] [agent-runtime] An agent or investigator of `agents.toml` may carry `context`, its model's context window in tokens. For an opencode agent whose model is registered under `deepinfra/` or `openrouter/`, the generated configuration then gives the model a `limit` with that `context` and the agent's `output` (opencode's schema requires both; without `output` it is `0`, which makes opencode use its fallback of 32000 output tokens instead of the model catalogue's), and a codex agent gets `-c model_context_window=N`; the CLI then compacts the session itself before the provider refuses it. Without the key nothing changes; claude and agy are left as they were.
+
+### Configuration
+- [agent-core] new: `[agents.NAME] context` and `[investigators.NAME] context` (default: none) — the model's context window in tokens, given to the opencode configuration or the codex command line of that agent only. `0` is refused at load; a value below `max_context` is accepted.
+- [agent-core] new: `[agents.NAME] output` and `[investigators.NAME] output` (default: none) — the most tokens the model writes in one answer, written next to `context` in the opencode configuration (without it opencode is told `0`, its fallback). `0` and a value above `context` are refused at load; other CLIs ignore it.
+
 ## 0.83.0 — 24.11.2026 — PR #235
 
 ### Enhancements

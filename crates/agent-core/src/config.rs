@@ -13,7 +13,8 @@ mod replacement_tests;
 mod restart;
 mod session;
 pub use restart::{Restart, RestartSession};
-pub use session::{DEFAULT_MAX_CONTEXT, Session, context_bound};
+pub use session::{ContextKey, DEFAULT_MAX_CONTEXT, Session, context_bound};
+use session::{check_context, check_output};
 mod split;
 pub use split::Split;
 mod review_count;
@@ -110,6 +111,34 @@ pub enum ConfigError {
         /// Size of the configured investigator roster.
         configured: usize,
     },
+    /// An agent's or an investigator's `context` is `0`, so the CLI would be told that the model reads nothing.
+    #[error("{} of {name}: `context` is 0 tokens: a model's window is above 0", key.section())]
+    AgentContextZero {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the key.
+        name: String,
+    },
+    /// An agent's or an investigator's `output` is `0`, so the CLI would be told that the model writes nothing.
+    #[error("{} of {name}: `output` is 0 tokens: what a model writes is above 0", key.section())]
+    AgentOutputZero {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the key.
+        name: String,
+    },
+    /// An agent's or an investigator's `output` is above its `context`: a model writes inside its window.
+    #[error("{} of {name}: `output` ({output}) is above `context` ({context})", key.section())]
+    AgentOutputAboveContext {
+        /// The section the agent is in: `agents` or `investigators`.
+        key: ContextKey,
+        /// The agent or investigator that sets the keys.
+        name: String,
+        /// The configured output limit in tokens.
+        output: u64,
+        /// The configured window in tokens.
+        context: u64,
+    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
@@ -198,6 +227,14 @@ pub struct AgentConfig {
     /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
     #[serde(default)]
     pub max_context: Option<u64>,
+    /// The model's context window in tokens, given to the CLI's configuration where it takes one; without it the CLI
+    /// learns no window.
+    #[serde(default)]
+    pub context: Option<u64>,
+    /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
+    /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
+    #[serde(default)]
+    pub output: Option<u64>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -215,6 +252,14 @@ pub struct InvestigatorConfig {
     /// The bound in tokens of this agent's session; without it the `[session]` bound applies, `0` switches it off.
     #[serde(default)]
     pub max_context: Option<u64>,
+    /// The model's context window in tokens, given to the CLI's configuration where it takes one; without it the CLI
+    /// learns no window.
+    #[serde(default)]
+    pub context: Option<u64>,
+    /// The most tokens the model writes in one answer, given next to `context` to a CLI whose configuration requires
+    /// it there (opencode); without it that CLI is told the fallback of its own. It takes effect only with `context`.
+    #[serde(default)]
+    pub output: Option<u64>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.
@@ -1072,6 +1117,21 @@ impl RawConfig {
         check_list(Tier::Normal, &normal, &agents)?;
         check_list(Tier::Worker, &worker_names, &agents)?;
         check_tiers(&normal, &worker_names, &agents, &investigators)?;
+        // The key is checked after the lists, so that the first thing a file is refused for is a list that does not
+        // fit its agents; no file written before these keys had them, so no existing configuration is refused.
+        for (name, agent) in &agents {
+            check_context(ContextKey::Agent, name.as_str(), agent.context)?;
+            check_output(ContextKey::Agent, name.as_str(), agent.context, agent.output)?;
+        }
+        for (name, investigator) in &investigators {
+            check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
+            check_output(
+                ContextKey::Investigator,
+                name.as_str(),
+                investigator.context,
+                investigator.output,
+            )?;
+        }
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews
             && required.get() > investigators.len()
