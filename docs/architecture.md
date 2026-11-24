@@ -499,6 +499,27 @@ long.
 Not done here, by item: the dashboard (9.1). A resumed agent's checkpoint is not read from the agentbus yet. opencode's `session export` for a
 resumed session whose result it did not print is not done.
 
+### Request workspaces (`agent-runtime`)
+
+Part 1.1b of the worker harness adds the record of a request served to a worker of the pool, prepared so that from part c
+a request of the pool can be served in a workspace of its own: a task and a git worktree of that task, in the
+requester's repository, at the requester's committed end, kept with no place in the requester's crew. The worktree is at
+`worktrees/<requester repo>/<worker task>` on the branch `agents/<worker>/<worker task>`, made from the commit the
+requester's worktree was at when it was committed (`request_workspace::prepare`, over `Git::worktree_add`); the
+requester's uncommitted files stay in the requester's own worktree untouched. The record — `RequestWorkspace` — is
+written through a temporary file to `tasks/<requester task>/request-workspace-<n>.json`, the directory the request
+names, so completion, pending-settlement and second-try lookups of a request's worker task and worktree
+(`RequestWorkspace::read_each`) find it without going through the requester's crew; its form is told in
+`docs/state.md`. The stage (`working` while the worker works, `ended` once its run ended and the request waits to be
+settled) is written before each next stage.
+
+**Retention and release.** A workspace lives from the moment its request is given to the worker until the request's
+result is settled, and is then released (`request_workspace::release`): `git worktree remove --force`, the branch
+deleted, and the record removed. A released request has no task, worktree or record of its own left behind; an
+abandoned request keeps its workspace so that a restart of the daemon finds where the worker served it. The new
+serving path that makes and settles these workspaces is wired in part c; this version only prepares it, and
+`serve_requests` still serves team-member workers exactly as before.
+
 ### Pull requests, reviews and the merge (the autopilot)
 
 The default `--autopilot` loop, in the owner (`owner/rounds.rs`), is: the lead's branch is pushed and opened as a pull

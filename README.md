@@ -284,7 +284,9 @@ when that run ends. `0` restores the old behaviour, where an agent may run as ma
 
 > **Preparing (not active yet):** the decision that shares the agents of `[tiers] workers` as one installation-wide pool —
 > any team or delegating solo task served by the free worker that meets its capabilities, with the providers taking turns —
-> is being built up as a pure `agent-core` decision. Nothing on a serving path uses it yet; it lands in a later part.
+> is being built up as a pure `agent-core` decision, with the runtime record of a request served in a workspace of its
+> own (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`). Nothing on a serving path uses either yet;
+> the serving path itself lands in a later part.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
