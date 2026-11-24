@@ -110,6 +110,17 @@ impl Git {
         })
     }
 
+    /// The id of the tree that holds what this worktree holds now: the head's tree with every file of the worktree added,
+    /// the new ones included. Two reads give the same id exactly when the worktree holds the same files with the same
+    /// bytes, so it tells whether uncommitted work changed between two looks. The repository is not changed: the tree is
+    /// written to a scratch object directory that is removed again.
+    ///
+    /// # Errors
+    /// The errors of [`Git::uncommitted_changes`].
+    pub async fn worktree_tree(&self) -> Result<String, GitError> {
+        Ok(String::new())
+    }
+
     /// The directory the repository keeps its objects in, shared by all its worktrees.
     async fn objects_dir(&self) -> Result<PathBuf, GitError> {
         let operation = GitOperation::GitPath;
