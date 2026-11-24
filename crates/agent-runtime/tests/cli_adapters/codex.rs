@@ -403,3 +403,65 @@ fn other_tools_become_tool_calls_and_searches() -> TestResult {
     );
     Ok(())
 }
+
+#[test]
+fn a_window_is_the_model_context_window_setting_before_the_model() -> TestResult {
+    let mut request = request(new_run()?, Servers::Bus)?;
+    request.context = Some(200_000);
+
+    let spec = CodexAdapter.build_run(&request)?;
+
+    let mut expected = strings(&[
+        "exec",
+        "--json",
+        "--dangerously-bypass-approvals-and-sandbox",
+        "-C",
+        "/work/tree",
+    ]);
+    expected.extend(strings(&BUS_SETTINGS));
+    expected.extend(strings(&[
+        "-c",
+        "model_context_window=200000",
+        "-m",
+        "model-1",
+        "--add-dir",
+        "/extra",
+        "Do the item.\nQuote: \"it's\"",
+    ]));
+    assert_eq!(spec.args, expected);
+    assert!(spec.env.is_empty());
+    assert_eq!(spec.files, []);
+    Ok(())
+}
+
+#[test]
+fn a_window_is_given_to_a_resumed_run_too() -> TestResult {
+    let mut request = request(resumed_run()?, Servers::None)?;
+    request.context = Some(1_048_576);
+
+    let spec = CodexAdapter.build_run(&request)?;
+
+    let window = spec
+        .args
+        .windows(2)
+        .position(|pair| pair == ["-c", "model_context_window=1048576"]);
+    let resume = spec.args.iter().position(|word| word == "resume");
+    assert!(
+        window.is_some_and(|window| resume.is_some_and(|resume| window < resume)),
+        "{:?}",
+        spec.args
+    );
+    Ok(())
+}
+
+#[test]
+fn a_request_without_a_window_gets_no_context_window_setting() -> TestResult {
+    let spec = CodexAdapter.build_run(&request(new_run()?, Servers::BusAndSerena)?)?;
+
+    assert!(
+        spec.args.iter().all(|word| !word.contains("model_context_window")),
+        "{:?}",
+        spec.args
+    );
+    Ok(())
+}

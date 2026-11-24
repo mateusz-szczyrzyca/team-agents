@@ -689,3 +689,28 @@ fn an_error_event_with_an_empty_session_id_is_still_the_error_of_the_run() -> Te
     assert_eq!(output.error_tail.lines(), [line]);
     Ok(())
 }
+
+#[test]
+fn a_request_without_a_window_writes_the_very_bytes_it_wrote_before_the_key() -> TestResult {
+    // The goldens were written by the code of `main` before the `context` key existed (version 0.83.0), for the same
+    // request: byte for byte, with its key order, indentation and line end.
+    for (model, golden) in [
+        (None, "config-no-model.json"),
+        (Some("deepinfra/Qwen/Qwen3-Coder"), "config-deepinfra-model.json"),
+        (Some("openrouter/anthropic/claude-4"), "config-openrouter-model.json"),
+    ] {
+        let mut request = request(new_run()?, Servers::BusAndSerena)?;
+        request.model = model.map(str::parse).transpose()?;
+
+        let spec = OpencodeAdapter.build_run(&request)?;
+
+        let expected = fixture("opencode", golden)?;
+        assert_eq!(spec.files[0].content, expected, "{golden}: the kept file");
+        assert_eq!(
+            configuration_text(&spec)?,
+            expected.trim_end(),
+            "{golden}: the environment"
+        );
+    }
+    Ok(())
+}

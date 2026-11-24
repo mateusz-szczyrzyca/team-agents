@@ -3361,3 +3361,32 @@ async fn each_opencode_agent_is_told_its_own_window_and_a_claude_agent_is_told_n
     );
     assert!(!claude_args.contains("202752"), "{claude_args}");
 }
+
+#[tokio::test]
+async fn an_opencode_investigator_is_told_its_own_window() {
+    let mut f = Fixture::new(&[investigator("inv-opus", "sleep"), investigator("inv-codex", "sleep")]);
+    let config = std::fs::read_to_string(f.home.config_file()).unwrap();
+    // The investigator runs the stand-in CLI as opencode; the coordinator of the fixture is Claude Code.
+    let config = config
+        .replace(
+            "[investigators.inv-codex]\ncli = \"claude\"\n",
+            "[investigators.inv-codex]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n",
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                fixture_script("team-cli.sh").display()
+            ),
+        );
+    let config = with_context(&config, &[("investigators", "inv-codex", 131_072)]);
+    std::fs::write(f.home.config_file(), config).unwrap();
+    f.start().await;
+
+    let (_, tasks) = f.start_team(&["inv-opus", "inv-codex"], PARALLEL).await;
+    let run = first_run(&f, &tasks[1]).await;
+    let window = window_at(run.join("opencode-config.json"), "deepinfra", "zai-org/GLM-5.3-Flash").await;
+    f.stop().await.unwrap();
+
+    assert_eq!(window, Some(serde_json::json!({ "context": 131_072, "output": 0 })));
+}
