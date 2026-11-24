@@ -905,19 +905,6 @@ pub struct Web {
 /// once per session if Serena is available (configured and connected).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields, default)]
-pub struct Serena {
-    /// The number of code searches without Serena that trigger a reminder. Zero disables reminders.
-    /// Default is 40: a typical exploration uses 5-10 searches, so 40 suggests the agent is unaware
-    /// of Serena.
-    pub remind_after: usize,
-}
-
-impl Default for Serena {
-    fn default() -> Self {
-        Self { remind_after: 40 }
-    }
-}
-
 /// The validated contents of `agents.toml`.
 ///
 /// Made only by [`Config::from_toml_str`], so every value is valid and the lists are consistent: each name in
@@ -992,14 +979,12 @@ pub struct Config {
     history: History,
     /// The daemon's own log.
     log: Log,
-    /// Serena soft enforcement settings.
-    serena: Serena,
+    /// The reminder for a run with Serena.
+    serena: SerenaSettings,
     /// The dashboard.
     web: Web,
     /// The repositories, by name.
     repos: BTreeMap<RepoName, RepoConfig>,
-    /// The reminder for a run with Serena.
-    serena: SerenaSettings,
 }
 
 /// The fewest searches of code without Serena that bring a reminder, by default.
@@ -1133,16 +1118,13 @@ struct RawConfig {
     log: Log,
     /// See [`Config::serena`].
     #[serde(default)]
-    serena: Serena,
+    serena: SerenaSettings,
     /// See [`Config::web`].
     #[serde(default)]
     web: Web,
     /// The `[repos.NAME]` tables.
     #[serde(default)]
     repos: BTreeMap<RepoName, RepoConfig>,
-    /// See [`Config::serena`].
-    #[serde(default)]
-    serena: SerenaSettings,
 }
 
 impl RawConfig {
@@ -1244,7 +1226,6 @@ impl RawConfig {
             serena,
             web,
             repos,
-            serena,
         })
     }
 }
@@ -1501,7 +1482,7 @@ impl Config {
 
     /// Serena soft enforcement settings.
     #[must_use]
-    pub const fn serena(&self) -> &Serena {
+    pub const fn serena(&self) -> &SerenaSettings {
         &self.serena
     }
 
