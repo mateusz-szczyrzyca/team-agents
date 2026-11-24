@@ -158,7 +158,7 @@ impl Owner {
 
     /// The git handle of the worktree of `task`, a task of `team`, for `agent`; `None` when the team or the path is not
     /// there.
-    fn git_of(&self, team: &TeamId, task: &TaskId, agent: &AgentName) -> Option<Git> {
+    pub(super) fn git_of(&self, team: &TeamId, task: &TaskId, agent: &AgentName) -> Option<Git> {
         let path = self.worker_worktree(team, task)?;
         let worktree = AbsolutePath::from_str(path.to_str()?).ok()?;
         Some(Git::new(
@@ -658,7 +658,12 @@ impl Owner {
                     ..
                 } => {
                     if self.give_again(&pending, reasons).await?
-                        || (workspace.is_some() && self.again.contains_key(&pending.request))
+                        || (workspace.is_some()
+                            && self.again.contains_key(&pending.request)
+                            && self
+                                .owned_journal(&pending.requester_task, pending.request)
+                                .await?
+                                .is_none())
                     {
                         return self.drop_settled(task_dir, &pending, workspace).await;
                     }
@@ -1048,15 +1053,34 @@ impl Owner {
         checked: &Checked,
         workspace: Option<&RequestWorkspace>,
     ) -> Settlement {
-        if checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()) {
+        let journal = match self.owned_journal(&pending.requester_task, pending.request).await {
+            Ok(journal) => journal,
+            Err(error) => {
+                return Settlement::Returned {
+                    reasons: vec![format!("cannot read execution ownership: {}", error_chain(&error))],
+                };
+            }
+        };
+        let ending = journal
+            .as_ref()
+            .and_then(agent_runtime::worker_request::recovery::Journal::ending)
+            .unwrap_or(WorkerEnding::Done);
+        if ending == WorkerEnding::Done
+            && (checked.step.is_none() || (checked.files.is_empty() && checked.found.is_none()))
+        {
             return Settlement::Report;
         }
         let limit = self.parts.settings.config.workers().seconds();
         let mut facts = facts_of(checked, pending.run_seconds, limit);
         let tried = self.try_of(pending);
+        facts.ending = ending;
         facts.try_number = tried.number;
         facts.tries = self.parts.settings.config.workers().tries();
-        facts.elsewhere = self.elsewhere_of(pending).await;
+        facts.elsewhere = if ending == WorkerEnding::NoStatus || (ending != WorkerEnding::Done && !checked.committed) {
+            Elsewhere::None
+        } else {
+            self.elsewhere_of(pending).await
+        };
         match decide(&facts) {
             Verdict::Accept if facts.scope == Scope::Facts => Settlement::Report,
             Verdict::Accept if !checked.committed => {
@@ -1162,6 +1186,9 @@ impl Owner {
                 )
             }
         };
+        if self.settle_owned_request(pending, status, &summary, &notice).await? {
+            return Ok(true);
+        }
         tracing::info!(
             event = LogEvent::RequestDelegated.as_str(),
             request = %pending.request,

@@ -66,6 +66,7 @@ type BoardItem struct {
 // free worker; the `agent` script starts the worker as a helper task on a copy of the
 // requester's branch and sends the result back as a message.
 type Helper struct {
+	Recovery bool `json:"recovery,omitempty"` // new local requests use durable execution ownership
 	AttemptRun string `json:"attempt_run,omitempty"` // optional execution fence; absent keeps legacy settlement
 
 	Requires  []string    `json:"requires,omitempty"`   // required declared capabilities; absent means ordinary local delegation
@@ -1063,7 +1064,7 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 			}
 			first.AnsweredBy = st.NextHelperID
 		}
-		h := &Helper{ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
+		h := &Helper{Recovery: len(caps) == 0, ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
 			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha,
 			FollowsUp: follows, Step: named.Step, Files: requestFiles(named.Files), Check: strings.TrimSpace(named.Check),
 			Doing: strings.TrimSpace(named.Doing)}

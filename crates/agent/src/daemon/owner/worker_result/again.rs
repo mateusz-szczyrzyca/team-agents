@@ -228,31 +228,38 @@ impl Owner {
                 return Ok(false);
             }
         };
-        match known.status {
-            DelegationStatus::Queued => {}
-            DelegationStatus::Running | DelegationStatus::Starting
-                if super::is_running_for(&known, &pending.worker_task, &pending.worker) =>
-            {
-                let update = DelegationUpdate {
-                    status: Some(DelegationStatus::Queued),
-                    task: None,
-                    summary: None,
-                };
-                if let Err(error) = self.parts.bus.helper_set(pending.request, &update).await {
-                    tracing::warn!(
-                        event = LogEvent::BusDown.as_str(),
-                        request = %pending.request,
-                        error = %error_chain(&error),
-                        "a request cannot be queued for its second try now: it is tried again at the next look"
-                    );
-                    return Ok(false);
+        let owned = self.retry_owned_request(pending).await?;
+        if owned == Some(true) {
+            self.again.remove(&pending.request);
+            return Ok(true);
+        }
+        if owned.is_none() {
+            match known.status {
+                DelegationStatus::Queued => {}
+                DelegationStatus::Running | DelegationStatus::Starting
+                    if super::is_running_for(&known, &pending.worker_task, &pending.worker) =>
+                {
+                    let update = DelegationUpdate {
+                        status: Some(DelegationStatus::Queued),
+                        task: None,
+                        summary: None,
+                    };
+                    if let Err(error) = self.parts.bus.helper_set(pending.request, &update).await {
+                        tracing::warn!(
+                            event = LogEvent::BusDown.as_str(),
+                            request = %pending.request,
+                            error = %error_chain(&error),
+                            "a request cannot be queued for its second try now: it is tried again at the next look"
+                        );
+                        return Ok(false);
+                    }
                 }
-            }
-            // Another worker has it, or it was answered: the second try is given, or there is nothing to give, and what was
-            // remembered for it is not wanted.
-            _ => {
-                self.again.remove(&pending.request);
-                return Ok(true);
+                // Another worker has it, or it was answered: the second try is given, or there is nothing to give, and what was
+                // remembered for it is not wanted.
+                _ => {
+                    self.again.remove(&pending.request);
+                    return Ok(true);
+                }
             }
         }
         let tried = self.try_of(pending);

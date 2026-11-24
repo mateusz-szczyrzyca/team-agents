@@ -1367,33 +1367,60 @@ impl AgentBus {
         owner: RequestOwner<'_>,
         change: OwnedChange<'_>,
     ) -> Result<OwnedOutcome, AgentBusError> {
-        let mut input = json!({
-            "id": request.number(), "worker": owner.worker.as_str(),
-            "task": owner.task.as_str(), "run": owner.run.as_str(),
-        });
-        match change {
-            OwnedChange::Start => input["action"] = json!("start"),
-            OwnedChange::Retry => input["action"] = json!("retry"),
+        let (action, status, summary, notice) = match change {
+            OwnedChange::Start => ("start", None, None, None),
+            OwnedChange::Retry => ("retry", None, None, None),
             OwnedChange::Settle {
                 result,
                 summary,
                 notice,
-            } => {
-                input["action"] = json!("settle");
-                input["status"] = json!(match result {
+            } => (
+                "settle",
+                Some(match result {
                     RequestResult::Done => "done",
                     RequestResult::Failed => "failed",
                     RequestResult::Unclear => "unclear",
-                });
-                input["summary"] = json!(summary);
-                input["notice"] = json!(notice);
+                }),
+                Some(summary),
+                Some(notice),
+            ),
+        };
+        let mut input = serde_json::Map::from_iter([
+            ("id".to_owned(), json!(request.number())),
+            ("worker".to_owned(), json!(owner.worker.as_str())),
+            ("task".to_owned(), json!(owner.task.as_str())),
+            ("run".to_owned(), json!(owner.run.as_str())),
+            ("action".to_owned(), json!(action)),
+        ]);
+        for (key, value) in [("status", status), ("summary", summary), ("notice", notice)] {
+            if let Some(value) = value {
+                input.insert(key.to_owned(), json!(value));
             }
         }
+        let input = serde_json::Value::Object(input);
         let command = BusCommand::HelperOwned;
         let output = self
             .run(command, Args::new().flag("--input", input.to_string()), None)
             .await?;
         decode_json(command, &output)
+    }
+
+    /// Whether a request was created with durable execution ownership enabled.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] when the request cannot be read or decoded.
+    pub async fn helper_recovery(&self, request: RequestId) -> Result<bool, AgentBusError> {
+        #[derive(Deserialize)]
+        struct Metadata {
+            #[serde(default)]
+            recovery: bool,
+        }
+        let command = BusCommand::HelperGet;
+        let output = self
+            .run(command, Args::new().flag("--id", request.number().to_string()), None)
+            .await?;
+        let metadata: Metadata = decode_json(command, &output)?;
+        Ok(metadata.recovery)
     }
 
     /// Reads a request for a worker.

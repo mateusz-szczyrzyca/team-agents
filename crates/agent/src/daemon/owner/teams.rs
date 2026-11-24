@@ -137,6 +137,9 @@ pub(super) struct Look {
 /// Why a pool worker request cannot be dispatched.
 #[derive(Debug, thiserror::Error)]
 pub(super) enum PoolDispatchError {
+    /// Durable execution ownership could not be established.
+    #[error("cannot claim owned worker request")]
+    Ownership(#[from] Box<super::OwnerError>),
     /// The requester task was not found in daemon state.
     #[error("requester task {0} not found in state")]
     RequesterNotFound(TaskId),
@@ -1579,6 +1582,7 @@ impl Owner {
             let cmd = CommandLine::try_from(words)?;
             mcp_servers.insert(McpServerKind::Agentbus, cmd);
 
+            self.start_owned_request(&workspace, &run).await.map_err(Box::new)?;
             let identity = CommitIdentity::for_agent(self.parts.settings.config.git(), worker_name);
             let job = RunJob {
                 task: worker_task.clone(),
@@ -1613,10 +1617,18 @@ impl Owner {
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
             self.spawn_job(worker_task.clone(), job, run_span);
 
-            self.tell_bus(
-                team.id(),
-                request_update(request.id, DelegationStatus::Running, Some(worker_task.clone())),
-            );
+            if !self
+                .parts
+                .bus
+                .helper_recovery(request.id)
+                .await
+                .map_err(|error| Box::new(super::OwnerError::from(error)))?
+            {
+                self.tell_bus(
+                    team.id(),
+                    request_update(request.id, DelegationStatus::Running, Some(worker_task.clone())),
+                );
+            }
             tracing::info!(
                 event = LogEvent::RequestDelegated.as_str(),
                 team = %team.id(),
