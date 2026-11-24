@@ -1163,6 +1163,10 @@ impl Owner {
             }
         }
 
+        if self.cleanup_obligations.iter().any(|o| o.workspace.record().worker == *name) {
+            unsettled = true;
+        }
+
         WorkerAvailability {
             busy,
             runs: total_runs,
@@ -1176,6 +1180,7 @@ impl Owner {
         reason = "loop checks busy state across teams, selects provider turn, dispatches, and handles held requests"
     )]
     pub(super) async fn serve_pool_requests(&mut self) -> Result<(), OwnerError> {
+        self.retry_cleanup_obligations().await;
         let pool = self.parts.settings.config.worker_agents().to_vec();
         if pool.is_empty() {
             return Ok(());
@@ -1606,6 +1611,10 @@ impl Owner {
                     error = %error_chain(&cleanup_err),
                     "cannot release workspace after failed dispatch"
                 );
+                self.cleanup_obligations.push(CleanupObligation {
+                    requester_git,
+                    workspace,
+                });
             }
             return Err(err);
         }
@@ -1614,7 +1623,34 @@ impl Owner {
     }
 
     /// Retries outstanding cleanup obligations, freeing workers whose workspace release failed earlier.
-    pub(in crate::daemon::owner) async fn retry_cleanup_obligations(&mut self) {}
+    pub(in crate::daemon::owner) async fn retry_cleanup_obligations(&mut self) {
+        if self.cleanup_obligations.is_empty() {
+            return;
+        }
+        let mut remaining = Vec::new();
+        for obligation in std::mem::take(&mut self.cleanup_obligations) {
+            match request_workspace::release(self.parts.store.home(), &obligation.requester_git, &obligation.workspace).await {
+                Ok(()) => {
+                    tracing::info!(
+                        event = LogEvent::RequestDelegated.as_str(),
+                        request = %obligation.workspace.record().request,
+                        worker = %obligation.workspace.record().worker,
+                        "cleaned up pending workspace obligation after earlier release failure"
+                    );
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        event = LogEvent::WorkerRequestDamaged.as_str(),
+                        request = %obligation.workspace.record().request,
+                        error = %error_chain(&err),
+                        "retrying workspace release failed; retaining cleanup obligation"
+                    );
+                    remaining.push(obligation);
+                }
+            }
+        }
+        self.cleanup_obligations = remaining;
+    }
 
     /// A run of a pool worker that ended.
     pub(super) fn settle_pool_worker_run(
