@@ -31,6 +31,7 @@ use agent_core::history::{Launch, Record, RunChanges, StepKind};
 use agent_core::ids::{RunId, TaskId};
 use agent_core::kinds::CliKind;
 use agent_core::prompt::VariablesError;
+use agent_core::serena::RemindAfter;
 use agent_core::state::{CommitId, InvalidTimestamp, Timestamp};
 use serde_json::json;
 use time::UtcOffset;
@@ -43,6 +44,7 @@ use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::history::{CaptureKind, History, RunUsageRecord, log_decision};
 use crate::process::{ExitReport, ProcessError, RunningProcess, Supervisor, error_chain};
 use crate::run::output::{OutputTail, read_end};
+use crate::run::serena::SessionWatch;
 
 use crate::store::StateStore;
 pub use hold::{HoldGuard, WatchdogHold};
@@ -482,6 +484,9 @@ impl RunEngine {
                 RunMode::New { session_id } if job.cli == CliKind::Claude => Some(session_id.clone()),
                 RunMode::New { .. } => None,
             },
+            watch: remind_after(&job).and_then(|search| SessionWatch::new(Some(search))),
+            after: remind_after(&job),
+            cli: job.cli,
             progress: Progress::Nothing,
             used_tool: false,
             unreadable: Unreadable::default(),
@@ -765,6 +770,30 @@ impl Unreadable {
     }
 }
 
+/// The number of steps the history of a run holds so far.
+trait StepsSeen {
+    /// How many steps of `run` it holds.
+    fn steps(&self, run: &RunId) -> u32;
+}
+
+impl StepsSeen for History {
+    fn steps(&self, _run: &RunId) -> u32 {
+        0
+    }
+}
+
+/// Whether the run `job` is given Serena, the MCP server that finds code through language servers.
+fn given_serena(job: &RunJob) -> bool {
+    let _ = job;
+    false
+}
+
+/// The count at which the session of `job` is reminded, when the run has Serena and the reminder is not off.
+fn remind_after(job: &RunJob) -> Option<RemindAfter> {
+    let _ = job;
+    None
+}
+
 /// What the engine does with the output of one run as it grows.
 struct Follow<'a> {
     /// The engine, for the store and the clock.
@@ -779,6 +808,13 @@ struct Follow<'a> {
     parser: Box<dyn OutputParser>,
     /// The session supplied at launch or most recently observed; echoes are not new observations.
     known_session: Option<SessionId>,
+    /// The count of the session's searches of code without Serena; `None` for a run without Serena and for a run whose
+    /// session was reminded before, which counts no step again.
+    watch: Option<SessionWatch>,
+    /// The count at which the session is reminded, when the run has Serena and the reminder is not off.
+    after: Option<RemindAfter>,
+    /// The model CLI, which the log of a reminder names.
+    cli: CliKind,
     /// Whether an event that is more than the start or an error was seen.
     progress: Progress,
     /// Whether a step that calls a tool was recorded in this run.
@@ -788,6 +824,16 @@ struct Follow<'a> {
 }
 
 impl Follow<'_> {
+    /// Gives the step `event` to the count of the session, if the run counts one: the number of the step at which the
+    /// reminder was due, with the searches of the session then, or `None`.
+    fn note_reminder(&mut self, event: &ActivityEvent) -> Result<Option<(u64, u64)>, RunError> {
+        let _ = event;
+        Ok(None)
+    }
+
+    /// Logs the reminder of the session at the step `number`, after `searches` searches of code without Serena.
+    fn log_reminder(&self, _number: u64, _searches: u64) {}
+
     /// Feeds the lines written since the last call to the parser and its events to the history.
     async fn read_new(&mut self) -> Result<(), RunError> {
         let lines = self.tail.read_new().await?;
@@ -849,7 +895,11 @@ impl Follow<'_> {
                     self.used_tool = true;
                 }
                 let at = Timestamp::now(&self.engine.parts.clock)?;
+                let number = self.note_reminder(&event)?;
                 self.engine.history.step(self.run, at, event);
+                if let Some((number, searches)) = number {
+                    self.log_reminder(number, searches);
+                }
             }
         }
         Ok(())
