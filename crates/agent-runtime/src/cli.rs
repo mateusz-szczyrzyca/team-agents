@@ -754,6 +754,51 @@ mod tests {
     }
 
     #[test]
+    fn a_search_tool_keeps_what_the_rule_needs_of_its_filters_and_its_path() {
+        let found = |name: &str, input: Value| {
+            let event = tool_activity(name, &input);
+            agent_core::serena::code_search(&event).map(|found| found.paths)
+        };
+        let paths = |of: &[&str]| Some(of.iter().map(|path| (*path).to_owned()).collect::<Vec<_>>());
+        let table = [
+            ("grep", json!({"pattern": "fn", "include": "*.md"}), None),
+            ("grep", json!({"pattern": "fn", "path": "src", "include": "*.md"}), None),
+            ("Grep", json!({"pattern": "fn", "path": "src", "glob": "*.md"}), None),
+            ("Grep", json!({"pattern": "fn", "type": "md"}), None),
+            (
+                "Grep",
+                json!({"pattern": "fn", "glob": "*.md", "type": "rust"}),
+                paths(&["*.rs"]),
+            ),
+            (
+                "grep",
+                json!({"pattern": "fn", "path": "src", "include": "*.rs"}),
+                paths(&["src/*.rs"]),
+            ),
+            (
+                "Grep",
+                json!({"pattern": "fn", "path": "src", "glob": "*.{rs,md}"}),
+                paths(&["src/*.rs"]),
+            ),
+            ("Grep", json!({"pattern": "fn", "path": "src"}), paths(&["src"])),
+            ("Grep", json!({"pattern": "docs (path)"}), paths(&["."])),
+            ("grep", json!({"pattern": "foo (path)"}), paths(&["."])),
+            ("Glob", json!({"pattern": "*.rs", "path": "src"}), paths(&["src/*.rs"])),
+            (
+                "glob",
+                json!({"pattern": "**/*.go", "path": "crates"}),
+                paths(&["crates/**/*.go"]),
+            ),
+            ("Glob", json!({"pattern": "*.md", "path": "docs"}), None),
+            ("Glob", json!({"pattern": "src/**/*.rs"}), paths(&["src/**/*.rs"])),
+        ];
+
+        for (name, input, expected) in table {
+            assert_eq!(found(name, input.clone()), expected, "{name} {input}");
+        }
+    }
+
+    #[test]
     fn a_long_argument_summary_is_cut_for_a_bus_call_at_200_and_for_another_tool_at_160() {
         let long = json!({ "title": "x".repeat(300) });
 

@@ -11,6 +11,8 @@ use std::path::Path;
 use crate::cli::ActivityEvent;
 
 mod prompt;
+mod search;
+pub use search::{SearchInput, search_summary};
 mod shell;
 pub use prompt::{ReminderText, ReminderTextError};
 mod tally;
