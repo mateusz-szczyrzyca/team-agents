@@ -40,7 +40,7 @@ use agent_core::cli::{
 };
 use agent_core::config::{AbsolutePath, InvalidValue, ValueRule};
 use agent_core::kinds::CliKind;
-use agent_core::serena::SEARCH_PATH_MARK;
+use agent_core::serena::{SearchInput, search_summary};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -92,9 +92,17 @@ const SUMMARY_KEYS: [&str; 9] = [
     "Query",
 ];
 
-/// The inputs a search tool (`Grep`) can be given its path in, first one present wins: with one, the summary of the call
-/// is the path with [`SEARCH_PATH_MARK`]; without, it is the pattern.
+/// The inputs a search tool (`Grep`, `Glob`) can be given its path in, first one present wins.
 const SEARCH_PATH_KEYS: [&str; 3] = ["file_path", "filePath", "path"];
+
+/// The inputs a search tool is given what it looks for in.
+const SEARCH_PATTERN_KEYS: [&str; 1] = ["pattern"];
+
+/// The inputs a search tool (`Grep`) is given a glob of the files it searches in: Claude Code's `glob`, opencode's `include`.
+const SEARCH_GLOB_KEYS: [&str; 2] = ["glob", "include"];
+
+/// The inputs a search tool (`Grep`) is given the type of the files it searches in.
+const SEARCH_TYPE_KEYS: [&str; 1] = ["type"];
 
 /// The adapter for `kind`.
 #[must_use]
@@ -318,13 +326,16 @@ pub(crate) fn tool_activity(name: &str, input: &Value) -> ActivityEvent {
     if changes_files && let Some(path) = first_text(input, &EDIT_PATH_KEYS) {
         return ActivityEvent::FileEdit { path: path.to_owned() };
     }
-    if agent_core::serena::is_search_tool(name)
-        && let Some(path) = first_text(input, &SEARCH_PATH_KEYS)
-    {
-        let room = MAX_TOOL_SUMMARY_CHARS.saturating_sub(SEARCH_PATH_MARK.chars().count());
+    let search = SearchInput {
+        pattern: first_text(input, &SEARCH_PATTERN_KEYS),
+        path: first_text(input, &SEARCH_PATH_KEYS),
+        globs: first_text(input, &SEARCH_GLOB_KEYS).into_iter().collect(),
+        types: first_text(input, &SEARCH_TYPE_KEYS).into_iter().collect(),
+    };
+    if let Some(summary) = search_summary(name, &search, clip, MAX_TOOL_SUMMARY_CHARS) {
         return ActivityEvent::ToolCall {
             name: name.to_owned(),
-            summary: format!("{}{SEARCH_PATH_MARK}", clip(path, room)),
+            summary,
         };
     }
     let summary = first_text(input, &SUMMARY_KEYS).map_or_else(|| input.to_string(), str::to_owned);
