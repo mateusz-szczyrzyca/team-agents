@@ -128,7 +128,7 @@ fn a_search_of_another_program_than_the_shells_own_is_no_search_of_code() {
 fn a_cli_tool_that_reads_text_is_no_search_of_code() {
     table(vec![
         (call("Read", "/work/tree/docs/configuration.md"), None),
-        (call("Grep", "serena config/agents.toml"), None),
+        (call("Grep", "config/agents.toml (path)"), None),
         (call("read", "daemon.log"), None),
         (call("Read", "/work/tree/README.md"), None),
     ]);
