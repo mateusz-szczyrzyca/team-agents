@@ -282,6 +282,10 @@ of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is que
 queued task waits — it is not failed — and `agent status` says `queued, waits for claude-1, running in team-…`. It starts
 when that run ends. `0` restores the old behaviour, where an agent may run as many tasks at once as are queued.
 
+> **Preparing (not active yet):** the decision that shares the agents of `[tiers] workers` as one installation-wide pool —
+> any team or delegating solo task served by the free worker that meets its capabilities, with the providers taking turns —
+> is being built up as a pure `agent-core` decision. Nothing on a serving path uses it yet; it lands in a later part.
+
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
 a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
 at that moment: the same worktree and branch, briefed with the reason `busy`, the bus tells the whole team who holds each item now,
