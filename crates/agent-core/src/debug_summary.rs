@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use crate::config::RepoName;
-use crate::ids::{AgentName, BranchName, ItemId, RoundId, TaskId, TeamId};
+use crate::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use crate::kinds::Role;
 use crate::state::{CommitId, GateOutcome, GateRecord, GateTree, RoundLife, Timestamp};
 use crate::status::{ItemStatus, TaskStatus};
@@ -218,8 +218,20 @@ pub struct TaskSummaryFacts {
     pub last_run_end_detail: Option<String>,
     /// The tool calls of the task's last run, as its steps in the history record them.
     pub tools: ToolCalls,
+    /// The tool calls of each earlier run of the task, oldest first, so that every run the summary tells has its own
+    /// count; a run whose steps the history lacks has none recorded.
+    pub earlier_tools: Vec<RunToolCalls>,
     /// Questions file status and content for this task.
     pub questions: Option<QuestionsSummaryFacts>,
+}
+
+/// The tool calls of one run of a task, told with the run's own identifier.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunToolCalls {
+    /// The run whose steps were counted.
+    pub run: RunId,
+    /// The count of the run's steps by the tools that made them.
+    pub tools: ToolCalls,
 }
 
 /// The tool calls of a run, by the tools that made them.
@@ -645,6 +657,15 @@ fn render_task_table(tasks: &[TaskSummaryFacts], now: Timestamp, zone: Zone, out
     write_line(out, "");
 }
 
+/// The tool calls as a summary tells them: the total with its three classes, or "none recorded" for a run whose steps
+/// name no tool.
+fn tool_calls_text(tools: &ToolCalls) -> String {
+    match tools.counted() {
+        Some(total) => format!("{total} (serena {}, shell {}, other {})", tools.serena, tools.shell, tools.other),
+        None => "none recorded".to_owned(),
+    }
+}
+
 fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     for t in tasks {
         write_line(out, &format!("### Task `{}` (`{}`)", t.id, t.agent));
@@ -653,16 +674,13 @@ fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
         out.push_str("- Last run end detail: ");
         out.tail(detail);
         write_line(out, "");
-        match t.tools.counted() {
-            Some(total) => write_line(
+        for earlier in &t.earlier_tools {
+            write_line(
                 out,
-                &format!(
-                    "- Tool calls: {total} (serena {}, shell {}, other {})",
-                    t.tools.serena, t.tools.shell, t.tools.other
-                ),
-            ),
-            None => write_line(out, "- Tool calls: none recorded"),
+                &format!("- Tool calls of run `{}`: {}", earlier.run, tool_calls_text(&earlier.tools)),
+            );
         }
+        write_line(out, &format!("- Tool calls: {}", tool_calls_text(&t.tools)));
         if let Some(q) = &t.questions {
             write_line(out, &format!("- Questions (unanswered: {}):", q.has_unanswered));
             out.tail(&q.content);

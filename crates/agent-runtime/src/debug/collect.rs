@@ -10,7 +10,8 @@ use std::time::Duration;
 use agent_core::cli::ActivityEvent;
 use agent_core::debug_summary::{
     GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts,
-    RoundSummaryFacts, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts, ToolCalls,
+    RoundSummaryFacts, RunToolCalls, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
+    ToolCalls,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
 use agent_core::history::Step;
@@ -376,6 +377,7 @@ impl Collection {
             last_activity: None,
             last_run_end_detail: last.map(|run| run_detail_at(run.state(), self.zone)),
             tools: agent_core::debug_summary::ToolCalls::default(),
+            earlier_tools: Vec::new(),
             questions: None,
         };
         self.summary.tasks.push(row);
@@ -738,7 +740,7 @@ impl Collection {
                 );
                 self.summary.history_tail = Some(text.clone());
                 self.enrich_last_run_details(&records, team);
-                self.enrich_last_run_tools(home, team);
+                self.enrich_run_tools(home, team).await?;
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
@@ -818,29 +820,29 @@ impl Collection {
         }
     }
 
-    /// Counts the tool calls of each member's last run from the steps the history records for it.
-    fn enrich_last_run_tools(&mut self, home: &Home, team: &Team) {
-        let roster: Vec<_> = team
+    /// Counts the tool calls of every run of every member, from the steps the history records for them. Reading the
+    /// history copies its database, so the read runs on a blocking task that is awaited. A run without a recorded
+    /// step names no tool, which the summary says.
+    async fn enrich_run_tools(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
+        let members: Vec<&Member> = team
             .crew()
             .roster()
             .into_iter()
-            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
+            .map(|(_, member)| member)
+            .chain(team.reviewers().iter())
             .collect();
-        self.count_tools(home, &roster);
-    }
-
-    /// Counts the tool calls of each task's last run, from the steps the history records for it. A run without a
-    /// recorded step names no tool, which the summary says.
-    fn count_tools(&mut self, home: &Home, roster: &[(Role, &Member)]) {
-        let path = home.history_file();
-        let runs: Vec<agent_core::ids::RunId> = roster
+        let runs: Vec<agent_core::ids::RunId> = members
             .iter()
-            .filter_map(|(_, member)| member.runs().last().map(|run| run.id().clone()))
+            .flat_map(|member| member.runs().iter().map(|run| run.id().clone()))
             .collect();
         if runs.is_empty() {
-            return;
+            return Ok(());
         }
-        let steps = match super::history::read_live_run_steps(&path, &runs) {
+        let path = home.history_file();
+        let read = tokio::task::spawn_blocking(move || super::history::read_live_run_steps(&path, &runs))
+            .await
+            .map_err(DebugRuntimeError::Worker)?;
+        let steps = match read {
             Ok(steps) => steps,
             Err(error) => {
                 self.assessment.unreadable.push(ReadFailure {
@@ -848,22 +850,30 @@ impl Collection {
                     part: "run steps".to_owned(),
                     reason: error_chain(&error),
                 });
-                return;
+                return Ok(());
             }
         };
         let counted: std::collections::BTreeMap<agent_core::ids::RunId, ToolCalls> = steps
             .into_iter()
             .map(|(run, steps)| (run, tool_calls_of(&steps)))
             .collect();
-        for (_, member) in roster {
-            let Some(last_run) = member.runs().last() else {
+        for member in members {
+            let Some((last_run, earlier_runs)) = member.runs().split_last() else {
                 continue;
             };
-            let tools = counted.get(last_run.id()).copied().unwrap_or_default();
-            if let Some(task_summary) = self.summary.tasks.iter_mut().find(|t| t.id == *member.task()) {
-                task_summary.tools = tools;
-            }
+            let Some(task_summary) = self.summary.tasks.iter_mut().find(|t| t.id == *member.task()) else {
+                continue;
+            };
+            task_summary.earlier_tools = earlier_runs
+                .iter()
+                .map(|run| RunToolCalls {
+                    run: run.id().clone(),
+                    tools: counted.get(run.id()).copied().unwrap_or_default(),
+                })
+                .collect();
+            task_summary.tools = counted.get(last_run.id()).copied().unwrap_or_default();
         }
+        Ok(())
     }
 
     async fn git(&mut self, home: &Home, team: &Team) {

@@ -9,7 +9,6 @@ use std::collections::BTreeMap;
 
 use agent_core::cli::McpServerKind;
 use agent_core::config::CommandLine;
-use agent_core::kinds::Role;
 
 #[cfg(test)]
 mod tests;
@@ -38,15 +37,12 @@ impl Serena {
     }
 }
 
-/// The section on finding code with Serena for a first prompt of `role`, when the run has Serena: `None` for a run
-/// that resumes its session (the section is in the prompt of its first run) and a run without Serena.
+/// The section on finding code with Serena for a first prompt of the given `kind`, when the run has Serena: `None` for a
+/// run that resumes its session (the section is in the prompt of its first run) and a run without Serena.
 ///
-/// `role` decides nothing: every role that reads code gets the section, the worker with the others — a delegated job is
-/// about code as often as not, and the text does not know the request it serves. It says itself that a task without
-/// code needs none of it, and `harness/team/delegation.md` tells a worker to reach Serena for a symbol and to keep the
-/// shell for text.
+/// Every role gets the section: the role does not change what the run may do with Serena, and a worker's delegated job
+/// is about code as often as not. The text says itself that a task without code needs none of it.
 #[must_use]
-pub fn serena_section(role: Role, kind: PromptKind, serena: Serena) -> Option<HarnessPrompt> {
-    let _ = role;
+pub fn serena_section(kind: PromptKind, serena: Serena) -> Option<HarnessPrompt> {
     matches!((kind, serena), (PromptKind::First, Serena::Given)).then_some(HarnessPrompt::Serena)
 }

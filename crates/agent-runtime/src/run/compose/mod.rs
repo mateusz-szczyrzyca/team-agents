@@ -154,7 +154,7 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
         .with("questions_file", input.questions_file.display().to_string())?
         .with("number", input.number.to_string())?;
     let mut sections = vec![texts.harness.render(HarnessPrompt::Context, &context)?];
-    if let Some(section) = serena_section(input.role, input.kind, input.serena) {
+    if let Some(section) = serena_section(input.kind, input.serena) {
         sections.push(texts.harness.render(section, &Variables::new())?);
     }
     sections.extend([
