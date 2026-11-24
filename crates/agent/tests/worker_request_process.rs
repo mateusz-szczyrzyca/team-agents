@@ -2718,7 +2718,16 @@ Integrate the guide.
         let req_gpu = r#"{"goal":"train","workdir":"/tmp","steps":"train.py","returns":"model","for":"1.1","files":"docs/guide.md","check":"exists docs/guide.md","do":"Train model","requires":["hw:gpu"]}"#;
         let reply3 = world.delegate_as(member, req_gpu);
         assert!(!answers(&reply3)[0].0, "{reply3}");
-        std::thread::sleep(Duration::from_millis(200));
+
+        // 4. Request requiring "build:rust" -> served by w-rust
+        let req_rust2 = r#"{"goal":"build","workdir":"/tmp","steps":"cargo test","returns":"status","for":"1.1","files":"docs/guide.md","check":"exists docs/guide.md","do":"Write guide again","requires":["build:rust"]}"#;
+        let reply4 = world.delegate_as(member, req_rust2);
+        assert!(!answers(&reply4)[0].0, "{reply4}");
+        world.request_is("4", "done");
+        assert_eq!(world.requests()["4"]["worker"], "w-rust");
+
+        // Request 3 ("hw:gpu") was evaluated and skipped because neither worker has "hw:gpu",
+        // remaining queued and unassigned while request 4 finished.
         let req3 = &world.requests()["3"];
         assert_eq!(req3["status"], "queued");
         assert!(req3.get("worker").is_none() || req3["worker"].is_null());
