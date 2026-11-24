@@ -118,19 +118,6 @@ pub enum ConfigError {
         /// The agent or investigator that sets the key.
         name: String,
     },
-    /// An agent's or an investigator's `context` is below the bound of its session, so a session it lets the CLI
-    /// compact would be replaced by the harness before it ever filled.
-    #[error("{} of {name}: `context` is {context} tokens, below the bound of its session ({bound} tokens): give a window above the bound, or switch the bound off", key.section())]
-    AgentContextBelowBound {
-        /// The section the agent is in: `agents` or `investigators`.
-        key: ContextKey,
-        /// The agent or investigator that sets the key.
-        name: String,
-        /// The window it asks for, in tokens.
-        context: u64,
-        /// The bound of its session in tokens.
-        bound: u64,
-    },
     /// The text is longer than [`MAX_CONFIG_BYTES`].
     #[error("the configuration is {len} bytes: the limit is {max}")]
     TooLarge {
@@ -1097,23 +1084,13 @@ impl RawConfig {
         } = self;
         check_plan(&plan)?;
         let worker_settings = check_workers(worker_settings)?;
-        // The bound of a session is checked against the key after the lists: nothing is refused that a file without
-        // the key would have loaded before.
+        // The key is checked after the lists, so that the first thing a file is refused for is a list that does not
+        // fit its agents; no file written before this key had it, so no existing configuration is refused.
         for (name, agent) in &agents {
-            check_context(
-                ContextKey::Agent,
-                name.as_str(),
-                agent.context,
-                context_bound(agent.max_context, session.max_context),
-            )?;
+            check_context(ContextKey::Agent, name.as_str(), agent.context)?;
         }
         for (name, investigator) in &investigators {
-            check_context(
-                ContextKey::Investigator,
-                name.as_str(),
-                investigator.context,
-                context_bound(investigator.max_context, session.max_context),
-            )?;
+            check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
         }
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;

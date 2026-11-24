@@ -54,29 +54,17 @@ impl ContextKey {
     }
 }
 
-/// Checks the `context` window `context` of the agent or investigator `name` of `key` against the bound `bound` of its
-/// session. A window at or below the bound would be compacted away by the harness before the CLI came near it, and `0`
-/// is no window at all.
+/// Checks the `context` window `context` of the agent or investigator `name` of `key`. `0` is refused: it would tell the
+/// CLI that the model reads nothing, and no message fits a window of none. Any other window is accepted, also one below
+/// the bound of the session: that is a window at which the CLI compacts a session before the harness replaces it.
 ///
 /// # Errors
-/// [`ConfigError::AgentContextZero`] for `0`; [`ConfigError::AgentContextBelowBound`] for a window below the bound, with
-/// the agent and the key named.
-pub fn check_context(key: ContextKey, name: &str, context: Option<u64>, bound: Option<u64>) -> Result<(), ConfigError> {
-    let Some(context) = context else {
-        return Ok(());
-    };
-    if context == 0 {
-        return Err(ConfigError::AgentContextZero {
+/// [`ConfigError::AgentContextZero`] for `0`, naming the section, the agent and the key.
+pub fn check_context(key: ContextKey, name: &str, context: Option<u64>) -> Result<(), ConfigError> {
+    match context {
+        Some(0) => Err(ConfigError::AgentContextZero {
             key,
             name: name.to_owned(),
-        });
-    }
-    match bound {
-        Some(bound) if context < bound => Err(ConfigError::AgentContextBelowBound {
-            key,
-            name: name.to_owned(),
-            context,
-            bound,
         }),
         Some(_) | None => Ok(()),
     }
