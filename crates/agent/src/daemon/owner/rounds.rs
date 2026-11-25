@@ -922,6 +922,10 @@ mod daemon_log_cause_tests;
 mod history_queries_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/refused_reviewer.rs"]
+mod refused_reviewer_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/turn_limits.rs"]
 mod turn_limits_tests;
 
