@@ -1040,3 +1040,67 @@ async fn refusal_wake_recheck_discards_a_removed_tasks_deadline() {
     owner.wake_due().await.unwrap();
     assert_eq!(owner.wakes.get(&task(59)), None);
 }
+
+#[tokio::test]
+async fn refusal_investigator_solo_waits_when_only_lower_tier_is_free() {
+    refusal_investigator_holder_waits(solo_state(), 1).await;
+}
+
+#[tokio::test]
+async fn refusal_investigator_member_waits_when_only_lower_tier_is_free() {
+    refusal_investigator_holder_waits(pair_state(), 2).await;
+}
+
+/// Verifies that refusal takeover preserves the current holder's capability tier.
+async fn refusal_investigator_holder_waits(mut state: agent_core::state::State, number: u32) {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    state
+        .hand_over_task(&task(number), crate::fixtures::investigator("inv-a"), at(0))
+        .unwrap();
+    state.record_limit_refusals(task(number), 1);
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        r#"
+[agents.claude-1]
+cli = "claude"
+[agents.claude-2]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+[investigators.inv-a]
+cli = "claude"
+[tiers]
+normal = ["claude-1", "claude-2", "codex-1"]
+[replacement]
+agents = ["codex-1"]
+replacements = 3
+[binaries]
+claude = "fake"
+codex = "fake"
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#,
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(number)).unwrap();
+    let result = owner.keep_refusal(
+        &task(number),
+        &located,
+        &Settled::Paused(Pause {
+            until: at(100),
+            reason: PauseReason::RateLimit,
+            kind: agent_core::decide::refusal::Kind::RateLimit,
+            evidence: String::new(),
+        }),
+        &RunEnd::RateLimited,
+        at(0),
+    );
+    let handled = result.expect("a lower-tier candidate must be skipped").unwrap();
+    assert_eq!(handled.status, TaskStatus::Paused);
+    assert!(matches!(handled.notice, Notice::NoFreeAgent { .. }));
+    let member = owner.parts.state.find_task(&task(number)).unwrap().member;
+    assert_eq!(member.agent().name(), "inv-a");
+}
