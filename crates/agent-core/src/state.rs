@@ -126,6 +126,11 @@ pub struct State {
     queued: Vec<TaskId>,
     /// Durable restart reservations, retained after source and replacement removal.
     recoveries: Vec<Recovery>,
+    /// How many refusals by a provider in a row each task had; a task without an entry has none.
+    limit_refusals: BTreeMap<TaskId, u32>,
+    /// Until when an agent refused by its provider is kept out of new tasks, reviews and takeovers; an agent without an
+    /// entry is not refused.
+    refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
 }
 
 /// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
@@ -144,6 +149,12 @@ struct StateOut<'a> {
     /// See [`State`].
     #[serde(skip_serializing_if = "<[_]>::is_empty")]
     recoveries: &'a [Recovery],
+    /// See [`State`]; omitted when no task had a refusal.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    limit_refusals: &'a BTreeMap<TaskId, u32>,
+    /// See [`State`]; omitted when no agent is refused.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    refused_agents: &'a BTreeMap<crate::ids::AgentName, Timestamp>,
 }
 
 impl Serialize for State {
@@ -160,6 +171,8 @@ impl Serialize for State {
             wake_deliveries: &self.wake_deliveries,
             recoveries: &self.recoveries,
             queued,
+            limit_refusals: &self.limit_refusals,
+            refused_agents: &self.refused_agents,
         }
         .serialize(serializer)
     }
@@ -171,6 +184,8 @@ impl PartialEq for State {
             && self.teams == other.teams
             && self.recoveries == other.recoveries
             && self.wake_deliveries == other.wake_deliveries
+            && self.limit_refusals == other.limit_refusals
+            && self.refused_agents == other.refused_agents
             && self.effective_queued() == other.effective_queued()
     }
 }
@@ -192,6 +207,12 @@ struct StateWire {
     /// Optional in state written before recovery reservations were persisted.
     #[serde(default, deserialize_with = "recovery::read_ledger")]
     recoveries: Vec<Recovery>,
+    /// Optional in state written before provider refusals were persisted.
+    #[serde(default)]
+    limit_refusals: BTreeMap<TaskId, u32>,
+    /// Optional in state written before provider refusals were persisted.
+    #[serde(default)]
+    refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -332,28 +353,37 @@ pub struct TaskRef<'a> {
 }
 
 impl State {
-    /// STUB (RED): how many refusals in a row the task had.
+    /// How many refusals by the provider in a row the task had; `0` when none.
     #[must_use]
     pub fn limit_refusals(&self, task: &TaskId) -> u32 {
-        let _ = task;
-        0
+        self.limit_refusals.get(task).copied().unwrap_or(0)
     }
 
-    /// STUB (RED): records the refusals in a row of a task; nothing yet.
+    /// Records how many refusals in a row a task had; `0` forgets them, as a run that ends in any other way does.
     pub fn record_limit_refusals(&mut self, task: TaskId, refusals: u32) {
-        let _ = (task, refusals);
+        if refusals == 0 {
+            self.limit_refusals.remove(&task);
+        } else {
+            self.limit_refusals.insert(task, refusals);
+        }
     }
 
-    /// STUB (RED): until when the agent is refused by its provider.
+    /// Until when the agent is refused by its provider, `None` when it is not refused at all.
     #[must_use]
     pub fn refused_until(&self, agent: &crate::ids::AgentName) -> Option<Timestamp> {
-        let _ = agent;
-        None
+        self.refused_agents.get(agent).copied()
     }
 
-    /// STUB (RED): records until when an agent is refused; nothing yet.
+    /// Records until when an agent is refused by its provider, or forgets the refusal with `None`.
     pub fn record_refused_until(&mut self, agent: crate::ids::AgentName, until: Option<Timestamp>) {
-        let _ = (agent, until);
+        match until {
+            Some(until) => {
+                self.refused_agents.insert(agent, until);
+            }
+            None => {
+                self.refused_agents.remove(&agent);
+            }
+        }
     }
 
     /// The wake delivery budget of a task, including historical tasks no longer in the crew.
@@ -383,6 +413,8 @@ impl State {
             wake_deliveries: BTreeMap::new(),
             queued: Vec::new(),
             recoveries: Vec::new(),
+            limit_refusals: BTreeMap::new(),
+            refused_agents: BTreeMap::new(),
         }
     }
 
@@ -873,6 +905,7 @@ impl State {
         let team = self.teams.remove(index);
         let tasks: HashSet<TaskId> = team_members(&team).map(|member| member.task().clone()).collect();
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
+        self.limit_refusals.retain(|task, _| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
     }
@@ -1035,6 +1068,8 @@ impl TryFrom<StateWire> for State {
             wake_deliveries: wire.wake_deliveries,
             queued: wire.queued,
             recoveries: wire.recoveries,
+            limit_refusals: wire.limit_refusals,
+            refused_agents: wire.refused_agents,
         };
         state.sync_queued();
         Ok(state)

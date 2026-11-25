@@ -52,6 +52,8 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         wake_deliveries: std::collections::BTreeMap::new(),
         queued: Vec::new(),
         recoveries: Vec::new(),
+        limit_refusals: std::collections::BTreeMap::new(),
+        refused_agents: std::collections::BTreeMap::new(),
     })?)
 }
 
