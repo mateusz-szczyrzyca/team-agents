@@ -1334,3 +1334,26 @@ async fn the_line_of_a_stopped_task_without_a_known_stop_is_told_without_a_time(
 
     assert_eq!(owner.resume_line(&stopped, None), format!("you to resume {}", task(1)));
 }
+
+// Rule (#233): a pause the human asks for after a refusal is the human's, though the last run of the task still ended
+// refused and its agent is still kept out: the controls start no run and clear no refusal.
+#[tokio::test]
+async fn a_reviewer_unpaused_and_paused_again_by_the_human_waits_for_the_human() {
+    let until = at(3_600);
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+    let daemon = Daemon::new(&state, None);
+    daemon.clock.advance(time::Duration::seconds(60));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let target = agent_core::protocol::Target::Task(task(4));
+    for steer in [crate::daemon::control::Steer::Unpause, crate::daemon::control::Steer::Pause] {
+        owner
+            .control_request(&agent_core::protocol::Client::Cli, steer, &target)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let found = owner.parts.state.team(&team).unwrap();
+    let round = found.round(&round).unwrap();
+
+    assert_eq!(owner.waiting_for(found, round), Some(Waiting::For(Obligation::Human)));
+}
