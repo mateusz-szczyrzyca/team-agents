@@ -377,8 +377,7 @@ impl State {
     /// Whether the agent is refused by its provider at `now`: refused before its return time, free from it on.
     #[must_use]
     pub fn refused_at(&self, agent: &crate::ids::AgentName, now: Timestamp) -> bool {
-        let _ = (agent, now);
-        false
+        self.refused_until(agent).is_some_and(|until| now < until)
     }
 
     /// Records until when an agent is refused by its provider, or forgets the refusal with `None`.
