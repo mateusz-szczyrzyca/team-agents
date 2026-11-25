@@ -1201,6 +1201,7 @@ mod rounds;
 mod snapshots;
 mod splits;
 pub(crate) mod versions;
+mod workers;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]

@@ -1955,3 +1955,95 @@ agentbus = "{}"
     assert_eq!(shown.text, NO_OPEN_ROUNDS);
     assert_eq!(shown.pool, Some(expected_pool));
 }
+
+// Rule: `--running` names no free worker; under a team it lists each worker that took a request of one of its
+// members, with when it started and ended and what became of its result.
+#[tokio::test]
+async fn the_running_view_lists_the_workers_of_a_team_and_no_free_worker() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let activity = no_activity(dir.path());
+    let bus = dir.path().join("bus");
+    std::fs::write(
+        &bus,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' '{}'\n",
+            r#"[{"id":4,"from":"claude-1","from_task":"task-20261111-153002-k3x9","repo":"team-agents","branch":"agents/claude-1/test","status":"done","worker":"minimax-1","step":"1.2","helper_task":"task-20261125-075745-w8vj","verdict":"used","created":"2026-11-25 08:56:26"}]"#
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    std::fs::write(
+        dir.path().join("agents.toml"),
+        format!(
+            r#"
+[agents.claude-1]
+cli = "claude"
+[agents.glm-1]
+cli = "claude"
+[agents.minimax-1]
+cli = "claude"
+[agents.qwen-1]
+cli = "claude"
+[investigators.inv-opus]
+cli = "claude"
+[tiers]
+normal = ["claude-1"]
+workers = ["glm-1", "minimax-1", "qwen-1"]
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+[binaries]
+agentbus = "{}"
+"#,
+            bus.display()
+        ),
+    )
+    .unwrap();
+    let run_dir = dir
+        .path()
+        .join("tasks/task-20261125-075745-w8vj/runs/run-20261125-075745-ec9d");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join("out.jsonl"), "{}\n").unwrap();
+    std::fs::write(run_dir.join("outcome.json"), "{}").unwrap();
+    let ended: Timestamp = "2026-11-25T08:59:30Z".parse().unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(run_dir.join("outcome.json"))
+        .unwrap()
+        .set_modified(SystemTime::from(time::OffsetDateTime::from(ended.as_utc())))
+        .unwrap();
+    let state = team_with_rounds();
+    let team = TeamSummary::from(&state.teams()[0]);
+    let round = detail(&state);
+    let daemon = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = match request.command {
+            Command::Show(_) => Reply::Round {
+                round: Box::new(round.clone()),
+            },
+            _ => Reply::Teams {
+                teams: vec![team.clone()],
+            },
+        };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+
+    let shown = running_text(&mut connection, &activity, Detail::Short, VersionsQuery::Omit)
+        .await
+        .unwrap();
+
+    assert_eq!(shown.pool, None);
+    let lines: Vec<&str> = shown.text.lines().collect();
+    let count = lines.iter().position(|line| line.starts_with("  tasks:")).unwrap();
+    assert_eq!(
+        lines[count - 1],
+        "  worker H4  minimax-1  step 1.2  2026-11-25 07:57–08:59 +00:00  accepted",
+        "{}",
+        shown.text
+    );
+    assert!(!shown.text.contains("free"), "{}", shown.text);
+}

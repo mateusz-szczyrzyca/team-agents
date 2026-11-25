@@ -56,6 +56,20 @@ pub(crate) fn render_pool_with_unsettled(
     Some(text)
 }
 
+/// The lines of the pool that `agent status --running` prints: only the workers of `configured` that serve something,
+/// and of those only the ones whose team is not among `listed`, which name their workers under them.
+///
+/// Returns `None` when no worker is left.
+pub(crate) fn render_busy(
+    configured: &[AgentName],
+    teams: &[TeamSummary],
+    helpers: Option<&[HelperEntry]>,
+    unsettled: Option<&[UnsettledWorker]>,
+    _listed: &[TeamSummary],
+) -> Option<String> {
+    render_pool_with_unsettled(configured, teams, helpers, unsettled)
+}
+
 fn find_serving(
     worker: &AgentName,
     teams: &[TeamSummary],
