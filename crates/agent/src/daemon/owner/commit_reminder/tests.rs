@@ -535,7 +535,7 @@ async fn a_test_run_started_in_the_worktree_holds_the_cut_back_and_another_does_
 }
 
 #[tokio::test]
-async fn a_reminder_given_before_the_run_started_is_not_cut() {
+async fn a_reminder_given_before_the_run_started_still_cuts_when_overdue() {
     let (_daemon, mut owner, watched) = owner_watching().await;
     let before_the_run = crate::fixtures::at(5);
 
@@ -548,7 +548,13 @@ async fn a_reminder_given_before_the_run_started_is_not_cut() {
         )
         .unwrap();
 
-    assert!(owner.commit_cuts.is_empty());
+    assert_eq!(
+        owner.commit_cuts.get(&task(1)),
+        Some(&super::CommitOrder {
+            lines: 400,
+            minutes: 25
+        })
+    );
 }
 
 #[tokio::test]
