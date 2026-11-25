@@ -9,6 +9,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Enhancements
 - [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
+- [agent] [agent-core] A task paused by a provider's refusal before this version keeps its agent out after a restart of the daemon, as a task paused now does.
 - [agent] [agent-core] A refusal is counted per task: a good run between refusals clears the count. The rule's answer for each refusal is written to the daemon's log at debug level as a `decision_taken` event with `decision` `limit`; the change of agent after the retries is not acted on yet, so a refused task still waits out its pause.
 
 **Action:** none is needed. Both keys are optional and have defaults; add them to `agents.toml` only to change them. Until the next version acts on the rule, their values change only the decision that is logged.
@@ -16,6 +17,12 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Configuration
 - [agent-core] new: `[replacement] limit_retries` (default `1`, `0` to `10`) — how many times a task is tried again in the same session after a pause for a refusal; when the retries are used up the rule answers "change agent". Until the replacement of an agent on a refusal is in place, the task keeps its pause.
 - [agent-core] new: `[replacement] limit_wait_minutes` (default `60`; `0` never waits) — a quota whose reset is named further away than this answers "change agent" at once, because a retry before the reset is certain to be refused.
+
+## 0.100.0 — 25.11.2026 — PR #260
+
+### Enhancements
+- [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with the worker's task, its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
+- [agent] `agent status --running` no longer lists free workers: its `pool:` section shows only the busy workers of teams not listed above.
 
 ## 0.99.0 — 25.11.2026 — PR pending
 
