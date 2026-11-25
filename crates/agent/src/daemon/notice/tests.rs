@@ -1055,3 +1055,31 @@ async fn a_wait_for_another_agent_keeps_the_pause_until_wording() {
     assert!(body.contains("is paused until 2026-11-11 20:15 +00:00"), "{body}");
     assert!(body.contains("stays paused:"), "{body}");
 }
+
+#[tokio::test]
+async fn refusal_notifications_begin_with_a_summary_in_the_note_header() {
+    for (notice, summary) in [
+        (
+            Notice::AgentChanged {
+                refused_agent: "claude-1".parse().unwrap(),
+                refused_provider: "claude".to_owned(),
+                return_at: at(3600),
+                new_agent: "codex-1".parse().unwrap(),
+            },
+            "changed agent",
+        ),
+        (
+            Notice::NoFreeAgent {
+                refused_agent: "claude-1".parse().unwrap(),
+                refused_provider: "claude".to_owned(),
+                return_at: at(3600),
+            },
+            "waits for a free agent",
+        ),
+    ] {
+        let (_, body) = rendered(&notice).await;
+        let expected = format!("Note: claude-1 {summary} ({})", task(1));
+        assert!(body.lines().any(|line| line == expected), "{body}");
+        assert!(!body.contains("agent: \""), "{body}");
+    }
+}
