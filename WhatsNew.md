@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.109.0 — 25.11.2026 — PR #???
+
+### New features
+- [agent-core] The pure function `pick()` in `decide/replacement/refused.rs` chooses the agent that takes over a task whose provider refused it (rate limit, overload or quota): from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, it returns the earliest time a refused agent returns. The daemon is wired in a later item (4.2); this release provides the choice.
+
+### Configuration
+- [agent-core] new clarification: `[replacement] agents` — the list also provides the candidates for a refused-provider takeover, in the same order (to be wired in a later release).
+
 ## agent 0.109.0 — 25.11.2026 — PR #271
 
 ### Enhancements
