@@ -39,7 +39,7 @@ pub(crate) fn of_team<'a>(team: &TeamSummary, records: &'a [HelperRecord]) -> Ve
 /// The width of a task's ID, which the line of a request not yet given a task pads its placeholder to.
 const TASK_WIDTH: usize = "task-20261125-075745-w8vj".len();
 
-/// What the line of a worker under its team says, before [`line`] pads it to the columns of the team's tasks.
+/// What the line of a worker under its team says, before [`line()`] pads it to the columns of the team's tasks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Served {
     /// The worker's task, where its runs and its log are; `no task yet` before the request was given one.
