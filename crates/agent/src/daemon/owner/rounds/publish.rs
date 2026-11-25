@@ -13,7 +13,7 @@ use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
-use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
+use agent_core::state::{CommitId, Completion, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
 use agent_runtime::git::{Git, Revision};
@@ -371,8 +371,25 @@ pub(crate) enum PublishQuestionError {
     },
 }
 
+/// The branch of the item in `phase`, when it has one.
+fn phase_branch(phase: &ItemPhase) -> Option<&BranchName> {
+    match phase {
+        ItemPhase::Pending => None,
+        ItemPhase::InProgress { branch, .. } | ItemPhase::Fixing { branch, .. } => Some(branch),
+        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => Some(&pr.branch),
+        ItemPhase::Done { completion } => match completion {
+            Completion::Listed => None,
+            Completion::Merged { pr, .. } => Some(&pr.branch),
+        },
+    }
+}
+
 impl Owner {
     /// The tip of `branch`, the branch of an item in the worktree of `lead`, and whether the worktree has it out.
+    ///
+    /// The tip is the tip of `branch` when the worktree has the branch of another item of the team out: what is committed
+    /// there is not the work of this item. Otherwise the work is what the worktree has out — also a detached `HEAD` or a
+    /// branch of the lead's own that goes on from the item — and its `HEAD` is the tip.
     ///
     /// # Errors
     /// [`PublishError`] when the worktree's git cannot be opened or cannot name a commit.
@@ -387,9 +404,31 @@ impl Owner {
                 checked_out: true,
             });
         };
-        Ok(ItemTip {
-            checked_out: head == tip,
-            tip,
+        if head == tip {
+            return Ok(ItemTip { tip, checked_out: true });
+        }
+        let out = git.current_branch().await?;
+        if out.is_some_and(|out| out != *branch && self.is_item_branch(lead, &out)) {
+            Ok(ItemTip {
+                tip,
+                checked_out: false,
+            })
+        } else {
+            Ok(ItemTip {
+                tip: head,
+                checked_out: true,
+            })
+        }
+    }
+
+    /// Whether `branch` is the branch of an item of the team of `lead`, in any phase.
+    fn is_item_branch(&self, lead: &Lead, branch: &BranchName) -> bool {
+        self.parts.state.find_task(&lead.task).is_some_and(|found| {
+            found
+                .team
+                .items()
+                .iter()
+                .any(|item| phase_branch(item.phase()) == Some(branch))
         })
     }
 
