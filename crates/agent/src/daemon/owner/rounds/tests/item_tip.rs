@@ -229,7 +229,7 @@ async fn gated_item_tip_publishes_while_off_branch() {
 /// The scenario of the two tests that follow: the fix of 1.1 is committed on its branch, the worktree ends on the branch of
 /// 2.1, and the gate of the run is recorded there, at the tip of 2.1: nothing passed at the tip of 1.1.
 async fn off_branch_fix_pass() -> (Rig, Items) {
-    let mut rig = rig_of("fix-script:bfix", "done").await;
+    let mut rig = rig_of("fix-script-answers:bfix", "done").await;
     let scripts = rig.home.root().join("fake-scripts");
     std::fs::write(
         scripts.join("bfix.sh"),

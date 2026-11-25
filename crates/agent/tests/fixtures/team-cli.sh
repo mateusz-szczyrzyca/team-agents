@@ -808,6 +808,13 @@ case $action in
     record_gate
     result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
     ;;
+  fix-script-answers:*)
+    # A fix pass that commits by the script NAME.sh, records the gate where the script leaves the worktree, and answers both
+    # findings of the pass: the existing fix-script finds none in a prompt whose findings the awk of fix-work cannot read.
+    bash "$home/fake-scripts/${action#fix-script-answers:}.sh"
+    record_gate
+    result 'Finished the item.\nFINDING 1: FIXED\nFINDING 2: FIXED\nSTATUS: DONE'
+    ;;
   fix-script-then:*)
     # A fix pass that commits by the script NAME.sh, records the gate at the commit, and then runs NAME-then.sh, which may
     # leave the worktree on another branch: the gate record is for the tip the script committed, not for where the run ends.
