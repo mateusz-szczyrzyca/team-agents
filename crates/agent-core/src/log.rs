@@ -245,6 +245,9 @@ pub enum LogEvent {
     /// The daemon did not put a task's worktree on the branch of the item the run works on: the tree has changes that a
     /// switch would lose, or the switch failed. The run starts anyway.
     WorktreeSwitchRefused,
+    /// The harness was to publish an item's branch while the lead's worktree had another branch out and no gate had passed at
+    /// the tip of the item's branch: nothing was pushed, and the lead was sent back to switch and run the gate.
+    PublishOffBranch,
 }
 
 impl Keyword for LogEvent {
@@ -292,6 +295,7 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
+            | Self::PublishOffBranch
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::RunNoToolRetry

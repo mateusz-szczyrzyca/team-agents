@@ -1,4 +1,4 @@
-PRAGMA user_version = 30;
+PRAGMA user_version = 31;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -356,7 +356,7 @@ CREATE TABLE daemon_logs (
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
         'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry',
-        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'worktree_switched', 'worktree_switch_refused'
+        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'worktree_switched', 'worktree_switch_refused', 'publish_off_branch'
     )),
     team TEXT,
     task TEXT,
@@ -377,7 +377,7 @@ CREATE TABLE daemon_logs (
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-            'worker_request_damaged', 'worktree_switch_refused'
+            'worker_request_damaged', 'worktree_switch_refused', 'publish_off_branch'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
