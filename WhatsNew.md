@@ -5,6 +5,19 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.102.0 — 25.11.2026 — PR pending
+
+### Enhancements
+- [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, solo tasks queued for it that have not run yet, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
+- [agent] [agent-core] A task paused by a provider's refusal before this version keeps its agent out after a restart of the daemon, as a task paused now does.
+- [agent] [agent-core] A refusal is counted per task: a good run between refusals clears the count. The rule's answer for each refusal is written to the daemon's log at debug level as a `decision_taken` event with `decision` `limit`; the change of agent after the retries is not acted on yet, so a refused task still waits out its pause.
+
+**Action:** none is needed. Both keys are optional and have defaults; add them to `agents.toml` only to change them. Until the next version acts on the rule, their values change only the decision that is logged.
+
+### Configuration
+- [agent-core] new: `[replacement] limit_retries` (default `1`, `0` to `10`) — how many times a task is tried again in the same session after a pause for a refusal; when the retries are used up the rule answers "change agent". Until the replacement of an agent on a refusal is in place, the task keeps its pause.
+- [agent-core] new: `[replacement] limit_wait_minutes` (default `60`; `0` never waits) — a quota whose reset is named further away than this answers "change agent" at once, because a retry before the reset is certain to be refused.
+
 ## 0.101.0 — 25.11.2026 — PR pending
 
 ### New features
