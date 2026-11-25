@@ -14,7 +14,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use crate::daemon::merge::{count, review_deliveries};
-use crate::daemon::review::{Reviewer, Slot, free_reviewers, select_reviewers};
+use crate::daemon::review::{Reviewer, Slot, free_reviewers, refused_investigators, select_reviewers};
 use crate::daemon::team::{Why, task_branch};
 
 use super::super::{Owner, OwnerError};
@@ -106,7 +106,8 @@ impl Owner {
             &self.parts.settings.config,
             team_id,
             required,
-            &std::collections::HashSet::new(),
+            // An investigator its provider refused reviews nothing until its return.
+            &refused_investigators(&self.parts.state, &self.parts.settings.config, now),
         );
         let rounds: Vec<_> = self
             .parts
