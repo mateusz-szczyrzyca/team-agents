@@ -184,6 +184,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::CommitReminded, "commit_reminded", LogLevel::Info),
         (LogEvent::CommitFollowed, "commit_followed", LogLevel::Info),
         (LogEvent::ContextReminded, "context_reminded", LogLevel::Info),
+        (LogEvent::CommitCut, "commit_cut", LogLevel::Info),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());

@@ -366,6 +366,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `commit_reminded` | `info` | A run with `[commit_reminder] lines` uncommitted lines and no commit for `[commit_reminder] minutes` minutes was told once on the bus to commit; with `task`, `run`, `agent`, `lines` and `minutes`. |
 | `commit_followed` | `info` | A run that was reminded to commit has a new commit at the first look after the reminder; with `task`, `run`, `agent` and the `minutes` since the reminder. The run is armed again. |
 | `context_reminded` | `info` | A session whose context reached `[commit_reminder] context_percent` of its bound was told once on the bus to commit and to write down where it is; with `task`, `run`, `agent`, `context` (tokens) and `bound` (tokens). |
+| `commit_cut` | `info` | A run that ignored the reminder to commit for `[commit_reminder] cut_after` minutes was stopped and queued to resume in its session with the order to commit; with `task`, `run`, `agent`, `lines` (the lines uncommitted) and `minutes` since the reminder. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and

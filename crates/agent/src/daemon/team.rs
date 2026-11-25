@@ -27,7 +27,7 @@ pub(super) use self::jobs::{
     BusJob, DoneNoticeError, NoticeRenderError, delegation_again, failure_reason, render_notice,
     team_done_notification, worker_result_brought, worker_result_conflict, worker_step_returned,
 };
-pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, shape_pool_worker, shape_with_answers};
+pub(super) use self::prompts::{TeamPromptError, TeamRun, Why, commit_order, shape_pool_worker, shape_with_answers};
 pub(super) use self::react::{
     BusNotice, NoticeError, RequestOutcome, WorkerEnd, lead_takes_work, notice_for, report as worker_report,
     request_outcome,

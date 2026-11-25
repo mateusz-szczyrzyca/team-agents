@@ -8,7 +8,7 @@
 mod idle;
 pub use idle::IdleMinutes;
 mod commit_reminder;
-pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_LINES, DEFAULT_MINUTES};
+pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_AFTER, DEFAULT_LINES, DEFAULT_MINUTES};
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;

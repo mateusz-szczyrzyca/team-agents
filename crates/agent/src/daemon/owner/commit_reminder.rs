@@ -10,20 +10,33 @@ use std::str::FromStr;
 use agent_core::config::AbsolutePath;
 use agent_core::config::RepoName;
 use agent_core::decide::checks::{FileChange, Lines};
-use agent_core::decide::commit_reminder::{CommitLook, ReminderDue, is_reminded, reminder_due};
+use agent_core::decide::commit_reminder::{CommitLook, CutDue, ReminderDue, cut_due, is_reminded, reminder_due};
 use agent_core::ids::{AgentName, InvalidName, RunId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
-use agent_core::state::{InvalidTimestamp, Round, State, Timestamp};
+use agent_core::protocol::EventKind;
+use agent_core::state::{CommitId, InvalidTimestamp, Round, RunEnd, State, Timestamp};
+use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::Outgoing;
 use agent_runtime::git::{CommitIdentity, CommitTimeError, Git, GitError, Revision};
 use agent_runtime::process::error_chain;
 use agent_runtime::team_prompts::RenderTeamTextError;
 
-use super::{Owner, OwnerError};
+use super::test_lock::{self, LockHolder, TestLockError};
+use super::{Located, Owner, OwnerError};
+use crate::daemon::team::Why;
 
 /// The seconds between two looks at the worktree of one task.
 const LOOK_SECONDS: i64 = 60;
+
+/// What a run that ignored the reminder to commit is told when its session is resumed after the cut.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct CommitOrder {
+    /// The changed lines that stayed uncommitted.
+    pub(super) lines: u64,
+    /// The whole minutes they stayed so after the reminder.
+    pub(super) minutes: u64,
+}
 
 /// A task with a run going that is reminded when it is due.
 pub(super) struct Watched {
@@ -74,6 +87,12 @@ pub(super) enum LookError {
         /// What git refused.
         source: CommitTimeError,
     },
+    /// The machine's test lock cannot be read.
+    #[error("the test lock cannot be read")]
+    TestLock {
+        /// What refused it.
+        source: TestLockError,
+    },
     /// The values of the text of the reminder are refused.
     #[error("the values of the reminder to commit are refused")]
     Values {
@@ -107,7 +126,8 @@ impl LookError {
         match self {
             Self::Bus { .. } => LogEvent::BusDown,
             Self::Git { .. } | Self::CommitTime { .. } => LogEvent::GitCallFailed,
-            Self::Clock { .. }
+            Self::TestLock { .. }
+            | Self::Clock { .. }
             | Self::Agent { .. }
             | Self::Worktree { .. }
             | Self::Values { .. }
@@ -115,6 +135,16 @@ impl LookError {
             | Self::Recipient { .. } => LogEvent::DaemonTaskFailed,
         }
     }
+}
+
+/// What the look saw of a reminder that may be ignored.
+struct Ignored {
+    /// The head the run was reminded at and the time of the reminder, if it was reminded.
+    reminder: Option<(CommitId, Timestamp)>,
+    /// Whether the head moved since the reminder.
+    head_moved: bool,
+    /// The lines that are uncommitted now.
+    lines: u64,
 }
 
 /// The lines the changed files differ by: added plus removed, a binary file counting none.
@@ -225,7 +255,10 @@ impl Owner {
                 return;
             }
         };
-        if let Err(error) = self.remind_one(&target, now, section.lines, section.minutes).await {
+        if let Err(error) = self
+            .remind_one(&target, now, section.lines, section.minutes, section.cut_after)
+            .await
+        {
             tracing::warn!(
                 event = error.event().as_str(),
                 task = %target.task,
@@ -247,6 +280,7 @@ impl Owner {
         now: Timestamp,
         lines: u32,
         minutes: u32,
+        cut_after: u32,
     ) -> Result<(), LookError> {
         // The idle time is counted from the later of the last commit and the start of the run, so it cannot reach `minutes`
         // before the run is that old: a young run needs no look at its worktree.
@@ -266,8 +300,12 @@ impl Owner {
             .rev_parse(&Revision::Head)
             .await
             .map_err(|source| LookError::Git { source })?;
-        if let Some((reminded_head, reminded)) = self.commit_reminded.get(&target.task)
-            && *reminded_head != head
+        let reminder = self.commit_reminded.get(&target.task).cloned();
+        let head_moved = reminder
+            .as_ref()
+            .is_some_and(|(reminded_head, _)| *reminded_head != head);
+        if let Some((_, reminded)) = &reminder
+            && head_moved
         {
             tracing::info!(
                 event = LogEvent::CommitFollowed.as_str(),
@@ -278,6 +316,7 @@ impl Owner {
                 "a run reminded to commit has committed"
             );
             self.commit_reminded.remove(&target.task);
+            self.commit_cut.remove(&target.task);
         }
         let last_commit = git
             .commit_time(&Revision::Head)
@@ -303,7 +342,12 @@ impl Owner {
             minutes: due_minutes,
         } = reminder_due(&look, lines, minutes)
         else {
-            return Ok(());
+            let ignored = Ignored {
+                reminder,
+                head_moved,
+                lines: look.uncommitted,
+            };
+            return self.cut_if_ignored(target, now, cut_after, ignored);
         };
         self.put_commit_reminder(target, due_lines, due_minutes).await?;
         self.commit_reminded.insert(target.task.clone(), (head, now));
@@ -317,6 +361,106 @@ impl Owner {
             "a run with uncommitted work was reminded to commit"
         );
         Ok(())
+    }
+
+    /// Cuts the run of `target` when it was reminded, ignored the reminder for `cut_after` minutes and no
+    /// gate or test run of its worktree is going.
+    ///
+    /// # Errors
+    /// [`LookError::TestLock`] when the test lock cannot be read.
+    fn cut_if_ignored(
+        &mut self,
+        target: &Watched,
+        now: Timestamp,
+        cut_after: u32,
+        ignored: Ignored,
+    ) -> Result<(), LookError> {
+        let Some(reminded) = ignored.reminder.map(|(_, at)| at) else {
+            return Ok(());
+        };
+        let busy = cut_after != 0 && self.worktree_busy(target)?;
+        let cut_already = self.commit_cut.contains(&target.task);
+        let CutDue::Cut { minutes } = cut_due(reminded, now, cut_after, ignored.head_moved, busy, cut_already) else {
+            return Ok(());
+        };
+        self.commit_cut.insert(target.task.clone());
+        self.cut_for_commit(target, ignored.lines, minutes);
+        Ok(())
+    }
+
+    /// Whether a gate of `agent gate` runs for the task, or a test run started in its worktree holds the machine's test
+    /// lock: the run is waiting for them, not ignoring the reminder.
+    ///
+    /// # Errors
+    /// [`LookError::TestLock`] when the test lock cannot be read.
+    fn worktree_busy(&self, target: &Watched) -> Result<bool, LookError> {
+        if self.gate_stops.contains_key(&target.task) {
+            return Ok(true);
+        }
+        let worktree = self.parts.store.home().worktree_dir(&target.repo, &target.task);
+        let holder =
+            test_lock::holder_of(&self.test_lock_file, &worktree).map_err(|source| LookError::TestLock { source })?;
+        Ok(match holder {
+            LockHolder::Worktree => true,
+            LockHolder::Nobody | LockHolder::Elsewhere => false,
+        })
+    }
+
+    /// Stops the run of `target`, as a stop of the human does but without a halt: the end of the run resumes its session
+    /// with the order to commit (see [`Owner::resume_after_cut`]).
+    fn cut_for_commit(&mut self, target: &Watched, lines: u64, minutes: u64) {
+        self.commit_cuts
+            .insert(target.task.clone(), CommitOrder { lines, minutes });
+        if let Some(cancel) = self.cancels.get(&target.task) {
+            cancel.cancel();
+        }
+        tracing::info!(
+            event = LogEvent::CommitCut.as_str(),
+            task = %target.task,
+            run = %target.run,
+            agent = %target.agent,
+            lines,
+            minutes,
+            "a run that ignored the reminder to commit was cut"
+        );
+    }
+
+    /// Ends the run `order` was given for and queues the task to resume in its session with the order: the run ended as a
+    /// stop, which no retry, turn count, rejection or replacement counts; what the cut left in the worktree is
+    /// snapshotted first.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the run cannot be ended, the task moved or the state saved.
+    pub(super) async fn resume_after_cut(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        now: Timestamp,
+        order: CommitOrder,
+        mut events: Vec<EventKind>,
+    ) -> Result<(), OwnerError> {
+        self.end_run(task, &located.team, now, RunEnd::Stopped, false, None, &mut events)?;
+        self.reasons.insert(
+            task.clone(),
+            Why::CommitOrder {
+                lines: order.lines,
+                minutes: order.minutes,
+            },
+        );
+        self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+        self.commit(task, located, now, events, None).await?;
+        self.snapshot_interrupted(std::slice::from_ref(task), now).await;
+        // The session goes on: nobody is briefed from the snapshot, and a later new session takes its own.
+        self.cut_snapshots.remove(task);
+        Ok(())
+    }
+
+    /// Drops the order to commit of `task`, cut or not yet resumed: its task was stopped or paused.
+    pub(super) fn drop_commit_order(&mut self, task: &TaskId) {
+        self.commit_cuts.remove(task);
+        if matches!(self.reasons.get(task), Some(Why::CommitOrder { .. })) {
+            self.reasons.remove(task);
+        }
     }
 
     /// Git in the worktree of the task, committing as its agent.

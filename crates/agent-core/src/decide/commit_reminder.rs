@@ -75,5 +75,54 @@ fn idle_minutes(look: &CommitLook) -> u64 {
     if minutes <= 0 { 0 } else { minutes.unsigned_abs() }
 }
 
+/// What the time since a reminder says about cutting the run that was reminded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CutDue {
+    /// The run is not cut, and nothing is waited for.
+    No,
+    /// The run would be cut, but a gate or a test run of its worktree is going: the look is made again later.
+    Wait,
+    /// The run is cut: the reminder is `minutes` whole minutes old and was ignored.
+    Cut {
+        /// The whole minutes since the reminder.
+        minutes: u64,
+    },
+}
+
+/// Whether a run reminded at `reminded` is cut at `now`, when `[commit_reminder] cut_after` is `cut_after`.
+///
+/// Not when `cut_after` is `0` (the cut is off), when the head moved since the reminder (the run committed: the reminder
+/// worked) or when the run was cut for this reminder already: one cut per reminder. Otherwise a run whose worktree is
+/// `busy` with a gate or a test run is waited for, and any other run is cut when at least `cut_after` whole minutes passed
+/// since the reminder.
+#[must_use]
+pub fn cut_due(
+    reminded: Timestamp,
+    now: Timestamp,
+    cut_after: u32,
+    head_moved: bool,
+    busy: bool,
+    cut_already: bool,
+) -> CutDue {
+    if cut_after == 0 || head_moved || cut_already {
+        return CutDue::No;
+    }
+    if busy {
+        return CutDue::Wait;
+    }
+    let minutes = minutes_between(reminded, now);
+    if minutes >= u64::from(cut_after) {
+        CutDue::Cut { minutes }
+    } else {
+        CutDue::No
+    }
+}
+
+/// The whole minutes from `earlier` to `later`; none when `later` is not after it.
+fn minutes_between(earlier: Timestamp, later: Timestamp) -> u64 {
+    let minutes = (later.as_utc() - earlier.as_utc()).whole_minutes();
+    if minutes <= 0 { 0 } else { minutes.unsigned_abs() }
+}
+
 #[cfg(test)]
 mod tests;

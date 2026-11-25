@@ -39,6 +39,13 @@ pub(in crate::daemon) enum Why {
     Asleep(String),
     /// A run ended without a STATUS: line and is asked again.
     NoStatus,
+    /// The harness cut a run that ignored the reminder to commit: its session is resumed with the order to commit.
+    CommitOrder {
+        /// The changed lines that stayed uncommitted.
+        lines: u64,
+        /// The whole minutes they stayed so after the reminder.
+        minutes: u64,
+    },
 }
 
 /// What a run is shaped from.
@@ -117,7 +124,8 @@ pub(in crate::daemon) fn shape(
             | Why::Checks
             | Why::Gate(_)
             | Why::Asleep(_)
-            | Why::NoStatus,
+            | Why::NoStatus
+            | Why::CommitOrder { .. },
         ) => Vec::new(),
         Some(Why::Woken) => vec![wake(texts, run)?],
         // The prompt of a session that starts names the item its member has; only a resumed one is told of a new item.
@@ -291,6 +299,22 @@ fn context(texts: &TeamPrompts, run: &TeamRun<'_>) -> Result<String, TeamPromptE
         .with("branch", run.branch.as_str())?
         .with("base", run.base.as_str())?;
     Ok(texts.render(TeamPrompt::Context, &values)?)
+}
+
+/// What a run is told when it is resumed after the harness cut it for ignoring the reminder to commit: `lines` changed
+/// lines stayed uncommitted for `minutes` minutes.
+///
+/// # Errors
+/// [`TeamPromptError`] when the text of the order does not take the values.
+pub(in crate::daemon) fn commit_order(
+    texts: &TeamPrompts,
+    lines: u64,
+    minutes: u64,
+) -> Result<String, TeamPromptError> {
+    let values = Variables::new()
+        .with("lines", lines.to_string())?
+        .with("minutes", minutes.to_string())?;
+    Ok(texts.render(TeamPrompt::CommitOrder, &values)?)
 }
 
 /// What a member whose sleep a message ended is told.
