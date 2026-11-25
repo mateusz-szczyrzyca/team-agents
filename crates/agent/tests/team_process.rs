@@ -1573,12 +1573,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&second), 1);
         release(&world, &first);
     }
-    #[test]
-    fn refusal_member_retry_changes_provider_in_place_with_briefing_and_audit() {
-        use agent_core::state::{RunEnd, RunState, State};
-        use agent_core::status::RunOutcome;
-
-        let mut world = World::new(&agents_with(&[
+    /// A member refused by DeepInfra and a replacement that requires takeover context.
+    fn refused_member_world() -> World {
+        let world = World::new(&agents_with(&[
             ("deep-1", "agent", "deepinfra-overload"),
             ("claude-2", "agent", "sleep"),
             (
@@ -1603,6 +1600,15 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             &world,
             "\n[log]\nlevel = \"debug\"\n[replacement]\nagents = [\"claude-3\"]\n",
         );
+        world
+    }
+
+    #[test]
+    fn refusal_member_retry_changes_provider_in_place_with_briefing_and_audit() {
+        use agent_core::state::{RunEnd, RunState, State};
+        use agent_core::status::RunOutcome;
+
+        let mut world = refused_member_world();
         world.start();
         let list = world.repo.join("list.md");
         std::fs::write(&list, LIST).unwrap();

@@ -319,18 +319,6 @@ pub(super) async fn record_task_handed_over(observed: &mut std::collections::BTr
     observed.insert(agent_core::log::LogEvent::TaskHandedOver);
 }
 
-/// Records [`LogEvent::TaskAgentChanged`]: a refused task is taken over by a free agent of another provider.
-/// The full end-to-end test with a refused agent is in the item 4.2 integration tests.
-pub(super) fn record_task_agent_changed(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
-    observed.insert(agent_core::log::LogEvent::TaskAgentChanged);
-}
-
-/// Records [`LogEvent::TaskWaitForFreeAgent`]: a refused task stays paused because no agent is free.
-/// The full end-to-end test with no free agent is in the item 4.2 integration tests.
-pub(super) fn record_task_wait_for_free_agent(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
-    observed.insert(agent_core::log::LogEvent::TaskWaitForFreeAgent);
-}
-
 // Rule: a takeover is logged as `task_handed_over`, with the agent it was taken from and the agent that holds it now.
 #[tokio::test]
 async fn a_takeover_is_logged_with_the_agent_before_and_the_agent_after() {
@@ -621,6 +609,26 @@ async fn a_members_work_owed_to_its_lead_is_told_after_a_restart_when_the_bus_fa
     assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
 }
 
+/// Configures a fake CLI as an opencode agent on DeepInfra.
+fn configure_refused_cli(rig: &Rig, table: &str, name: &str) {
+    let config = std::fs::read_to_string(rig.home.config_file())
+        .unwrap()
+        .replace(
+            &format!("[{table}.{name}]\ncli = \"claude\""),
+            &format!("[{table}.{name}]\ncli = \"opencode\"\nmodel = \"deepinfra/example\""),
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/team-cli.sh")
+                    .display()
+            ),
+        );
+    std::fs::write(rig.home.config_file(), config).unwrap();
+}
+
 /// Exercises both refusal events through real runs, takeover, review and merge.
 pub(super) async fn record_refusal_events(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
     use agent_core::log::LogEvent;
@@ -635,22 +643,7 @@ pub(super) async fn record_refusal_events(observed: &mut std::collections::BTree
         false,
     )
     .await;
-    let config = std::fs::read_to_string(rig.home.config_file())
-        .unwrap()
-        .replace(
-            "[agents.deep-1]\ncli = \"claude\"",
-            "[agents.deep-1]\ncli = \"opencode\"\nmodel = \"deepinfra/example\"",
-        )
-        .replace(
-            "[binaries]\n",
-            &format!(
-                "[binaries]\nopencode = \"{}\"\n",
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("tests/fixtures/team-cli.sh")
-                    .display()
-            ),
-        );
-    std::fs::write(rig.home.config_file(), config).unwrap();
+    configure_refused_cli(&rig, "agents", "deep-1");
     configure(&rig, "[replacement]\nagents = [\"claude-2\"]\nlimit_retries = 0\n");
     start_logging(&mut rig).await;
     let (_, busy) = rig
