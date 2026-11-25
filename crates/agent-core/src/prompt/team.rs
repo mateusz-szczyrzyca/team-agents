@@ -97,6 +97,8 @@ pub enum TeamPrompt {
     LeadTakesWork,
     /// The message to a member that the worker finished its request.
     HelperResult,
+    /// The reminder put on the bus for a run that holds many uncommitted lines and has made no commit for a while.
+    CommitRemind,
     /// The message to a member that the worker failed its request.
     HelperFailed,
     /// How a worker's run that failed a request ended: with `STATUS: FAILED`.
@@ -174,6 +176,7 @@ impl TeamPrompt {
         Self::MemberNoStatusItem,
         Self::LeadTakesWork,
         Self::HelperResult,
+        Self::CommitRemind,
         Self::HelperFailed,
         Self::WorkerFailed,
         Self::WorkerNoResult,
@@ -316,6 +319,9 @@ impl TeamPrompt {
                 Audience::Model,
                 &["worker", "request_id", "summary"],
             ),
+            Self::CommitRemind => {
+                PromptSpec::new("harness/team/commit-remind.md", Audience::Model, &["lines", "minutes"])
+            }
             Self::HelperFailed => PromptSpec::new(
                 "harness/team/bus-helper-failed.md",
                 Audience::Model,
