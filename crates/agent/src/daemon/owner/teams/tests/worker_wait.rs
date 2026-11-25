@@ -72,6 +72,17 @@ async fn queue_two_requests(f: &mut Fixture) -> Waiting {
     waiting
 }
 
+/// Asks the daemon for its status and waits for the answer: the owner answers between two turns of its loop.
+async fn looked(f: &Fixture) {
+    let reply = f
+        .connect()
+        .await
+        .request(Client::Cli, Command::Status(StatusRequest { target: None }))
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Overview { .. }), "{reply:?}");
+}
+
 /// The records of the daemon's log for `event`, once the daemon has stopped.
 fn logged(f: &Fixture, event: LogEvent) -> Vec<agent_core::log::LogEntry> {
     Reader::open(&f.home.history_file())
@@ -99,7 +110,7 @@ async fn a_request_nobody_takes_is_returned_to_its_requester_when_the_wait_is_ov
     let returned = logged(&f, LogEvent::WorkerWaitReturned);
     assert_eq!(returned.len(), 1, "{returned:?}");
     assert_eq!(returned[0].fields()["request"], "H2");
-    assert_eq!(returned[0].fields()["task"], waiting.task.as_str());
+    assert_eq!(returned[0].task(), Some(&waiting.task));
     assert_eq!(returned[0].fields()["step"], "no step");
     assert_eq!(returned[0].fields()["seconds"], PAST_LIMIT);
 }
@@ -109,9 +120,9 @@ async fn a_request_waits_for_ever_when_the_limit_is_zero() {
     let mut f = fixture("wait_seconds = 0");
     let waiting = queue_two_requests(&mut f).await;
 
-    f.clock.advance(time::Duration::seconds(100_000));
+    f.clock.advance(time::Duration::seconds(700));
     for _ in 0..3 {
-        f.answered().await;
+        looked(&f).await;
     }
     let request = f.bus().helper_get(waiting.second).await.unwrap();
     f.stop().await.unwrap();
