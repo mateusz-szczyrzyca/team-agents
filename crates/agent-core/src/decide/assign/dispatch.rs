@@ -58,19 +58,6 @@ pub fn dispatch_in_policy(
     dispatch_with_candidates(team, mode, configured_replacements, &[])
 }
 
-/// STUB (RED): chooses as [`dispatch_with_candidates`] does and does not yet keep the refused agents out.
-#[must_use]
-pub fn dispatch_refusing(
-    team: &Team,
-    mode: crate::decide::replacement::ReplacementMode,
-    configured_replacements: &[AgentName],
-    outside: &[crate::decide::part::Candidate<'_>],
-    refused: &[AgentName],
-) -> Dispatch {
-    let _ = refused;
-    dispatch_with_candidates(team, mode, configured_replacements, outside)
-}
-
 /// Chooses split replacements using configured tiers and availability supplied by the caller.
 #[must_use]
 pub fn dispatch_with_candidates(
@@ -78,6 +65,20 @@ pub fn dispatch_with_candidates(
     mode: crate::decide::replacement::ReplacementMode,
     configured_replacements: &[AgentName],
     outside: &[crate::decide::part::Candidate<'_>],
+) -> Dispatch {
+    dispatch_refusing(team, mode, configured_replacements, outside, &[])
+}
+
+/// Chooses as [`dispatch_with_candidates`] does, but gives no item to an agent in `refused`: an agent its provider
+/// refused is not free until its return. The refused agents are busy for the decision, members and outside candidates
+/// alike, so an item goes to the coordinator or to the next fitting member.
+#[must_use]
+pub fn dispatch_refusing(
+    team: &Team,
+    mode: crate::decide::replacement::ReplacementMode,
+    configured_replacements: &[AgentName],
+    outside: &[crate::decide::part::Candidate<'_>],
+    refused: &[AgentName],
 ) -> Dispatch {
     let sets = super::ItemSets::of(team.items());
     let features = team.task_list().list().features();
@@ -99,12 +100,14 @@ pub fn dispatch_with_candidates(
             matches!(member.status(), TaskStatus::Queued | TaskStatus::Waiting)
                 && !sets.busy.iter().any(|name| name.as_str() == member.agent().name())
                 && !reserved.contains(member.agent().name())
+                && !refused.iter().any(|name| name.as_str() == member.agent().name())
         };
 
         if team.next_part(item).is_some() {
             let ctx = SplitDispatchContext {
                 team,
                 reserved: &reserved,
+                refused,
                 members: &members,
                 mode,
                 configured_replacements,
@@ -196,6 +199,8 @@ struct SplitDispatchContext<'a> {
     team: &'a Team,
     /// Participants already assigned during this decision.
     reserved: &'a std::collections::HashSet<String>,
+    /// Agents their provider refused: busy for the decision, whatever their task.
+    refused: &'a [AgentName],
     /// Members eligible for a replacement assignment.
     members: &'a [&'a Member],
     /// Configured handover policy.
@@ -224,6 +229,7 @@ fn dispatch_split_item<'a>(
                     | ItemPhase::Done { .. } => false,
                 }
         }) || ctx.reserved.contains(agent_name)
+            || ctx.refused.iter().any(|name| name.as_str() == agent_name)
     };
     let candidate_of = |member: &'a Member| crate::decide::part::Candidate {
         agent: member.agent(),
