@@ -4166,7 +4166,12 @@ git commit -qm 'Complete retained work'
             world.request_is("1", if phase == "retry" { "done" } else { "failed" });
             assert_eq!(world.requests()["1"]["helper_task"], worker);
             assert_eq!(
-                std::fs::read_to_string(world.worktree(&worker).join("docs/partial.txt")).unwrap(),
+                std::fs::read_to_string(
+                    world
+                        .worktree(if phase == "retry" { member } else { &worker })
+                        .join("docs/partial.txt"),
+                )
+                .unwrap(),
                 "partial\n"
             );
             if phase == "retry" {
