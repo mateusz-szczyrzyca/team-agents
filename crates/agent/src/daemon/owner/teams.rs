@@ -535,6 +535,9 @@ impl Owner {
             self.serve_requests(team, &mut look).await?;
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
+            for task in self.tasks_with_a_run(team) {
+                self.remind_to_commit(&task).await;
+            }
             if look.changed {
                 self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
                 self.save().await?;

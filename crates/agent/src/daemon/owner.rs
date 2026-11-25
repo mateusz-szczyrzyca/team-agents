@@ -8,6 +8,7 @@
 mod answers;
 mod bound;
 mod briefing;
+mod commit_reminder;
 mod controls;
 mod disk;
 #[cfg(test)]
@@ -571,6 +572,12 @@ pub(super) struct Owner {
     /// The reminders of Serena still to be put on the bus, and the runs whose reminder the bus took, so that each reminder
     /// goes out once and one the bus refused is tried again.
     reminders: reminder::Backlog,
+    /// When each task with a run going was last looked at for the reminder to commit, so that the worktree is read at most
+    /// once a minute.
+    commit_looked_at: HashMap<TaskId, Timestamp>,
+    /// The head and the time of the reminder to commit that went to each task, until a look sees a new head — the end of a
+    /// run does not drop it. Held in memory only: a restart of the daemon re-arms the reminder.
+    commit_reminded: HashMap<TaskId, (agent_core::state::CommitId, Timestamp)>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
     /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
@@ -696,6 +703,8 @@ impl Owner {
             pool_dispatch: Box::default(),
             closed: HashSet::new(),
             reminders: reminder::Backlog::default(),
+            commit_looked_at: HashMap::new(),
+            commit_reminded: HashMap::new(),
             looks: BTreeSet::new(),
             watcher,
             saved,
