@@ -76,6 +76,10 @@ fn default_request<'a>(
 }
 
 #[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the shared decision table keeps all replacement scenarios together"
+)]
 fn chooses_replacements_by_role_availability_provider_and_return_time() {
     let first = name("claude-2");
     let second = name("gemini-2");
@@ -84,11 +88,11 @@ fn chooses_replacements_by_role_availability_provider_and_return_time() {
     let worker = name("glm");
     let team = [first.clone()];
     let early_return: Timestamp = "2026-11-25T12:30:00Z".parse().unwrap();
-    let a = free(&first, "claude", Tier::Normal);
-    let b = free(&second, "gemini", Tier::Normal);
-    let n = free(&normal, "codex", Tier::Normal);
-    let i = free(&investigator, "claude", Tier::Investigator);
-    let w = free(&worker, "opencode", Tier::Worker);
+    let first_free = free(&first, "claude", Tier::Normal);
+    let second_free = free(&second, "gemini", Tier::Normal);
+    let normal_free = free(&normal, "codex", Tier::Normal);
+    let investigator_free = free(&investigator, "claude", Tier::Investigator);
+    let worker_free = free(&worker, "opencode", Tier::Worker);
     let same = free(&first, "openrouter", Tier::Normal);
     let occupied = busy(&first, "claude", Tier::Normal);
     let future = refused(&first, "claude", Tier::Normal, later());
@@ -99,26 +103,26 @@ fn chooses_replacements_by_role_availability_provider_and_return_time() {
     let returns_soon = Pick::NoneFree {
         earliest_return: Some(early_return),
     };
-    let primary = [a];
-    let ordered_free = [a, b];
-    let same_then_free = [same, b];
-    let busy_then_free = [occupied, b];
-    let refused_then_free = [future, b];
+    let primary = [first_free];
+    let ordered_free = [first_free, second_free];
+    let same_then_free = [same, second_free];
+    let busy_then_free = [occupied, second_free];
+    let refused_then_free = [future, second_free];
     let expired = [past];
     let opencode_providers = [
         free(&first, "deepinfra", Tier::Normal),
         free(&second, "openrouter", Tier::Normal),
     ];
     let same_provider = [same];
-    let normal_only = [n];
-    let worker_then_normal = [w, n];
-    let normal_then_investigator = [n, i];
-    let investigator_only = [i];
+    let normal_only = [normal_free];
+    let worker_then_normal = [worker_free, normal_free];
+    let normal_then_investigator = [normal_free, investigator_free];
+    let investigator_only = [investigator_free];
     let all_refused = [future, soon];
     let late_refusal = [future];
     let early_refusal = [soon];
     let all_unavailable = [same, busy(&second, "gemini", Tier::Normal)];
-    let exact_then_free = [exact, b];
+    let exact_then_free = [exact, second_free];
     let expired_busy = [Candidate { busy: true, ..past }];
     let exact_busy = [Candidate { busy: true, ..exact }];
     let investigator_refused = [refused(&investigator, "claude", Tier::Investigator, early_return)];
