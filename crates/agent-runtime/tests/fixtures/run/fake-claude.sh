@@ -22,6 +22,8 @@
 #   hang-then-step        run 1 hangs at once, run 2 says something and hangs, run 3 ends like `done` (count in .fake-runs)
 #   quota                 the provider says the usage limit is reached and resets in 3 hours
 #   ratelimit             the provider answers HTTP 429
+#   rate-limit-window     the account's rate-limit window rejects the request: a rejected rate_limit_event whose resetsAt is
+#                         12:00 UTC on 2026-11-12, then an error result of HTTP 429 whose text says the reset is at 3pm
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
 #   env-git               ends like `done` after writing to .fake-git who a commit would be by and how git would sign it
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
@@ -286,6 +288,12 @@ case $scenario in
   ratelimit)
     init
     result true 'API Error: 429 rate limit exceeded'
+    exit 1
+    ;;
+  rate-limit-window)
+    init
+    printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794484800,"rateLimitType":"five_hour"},"session_id":"%s"}\n' "$session"
+    result true 'API Error: 429 rate limit exceeded · resets 3pm'
     exit 1
     ;;
   env)
