@@ -9,7 +9,8 @@
 //! 2. The task is paused (a quota or a rate limit, which end by themselves, or the human's pause): when it has been
 //!    paused for as long as a reviewer may be, counted from its last run that its provider did not refuse
 //!    ([`quiet_since`]).
-//!    A paused reviewer whose agent the refusal rule changes ([`replace_after_refusal`]) is replaced at once instead.
+//!    A paused reviewer whose agent the refusal rule changes ([`replace_after_refusal`]) is replaced at once instead, and
+//!    one the rule only pauses (its retry is still to come) is kept until the retry.
 //! 3. Otherwise not: a task that is queued, runs or asks the human works on the review; one that waits is about to be
 //!    given it; one that is done reported, and a report without a verdict is asked for again elsewhere.
 
@@ -54,12 +55,15 @@ pub fn replace_now(awaited: &Awaited) -> bool {
 /// Whether the review `awaited` describes is given to another investigator, when the reviewer's last run was refused by
 /// its provider and the refusal rule (`refusal`, from [`crate::decide::limit::decide`]) answered for it; `None` when the
 /// last run was not refused. A paused reviewer whose agent the rule changes is replaced at once, without the patience;
-/// every other case is [`replace_now`].
+/// one the rule pauses is kept until its retry, whatever the silence, since its pause is the provider's to end and not
+/// the patience's; every other case is [`replace_now`].
 #[must_use]
 pub fn replace_after_refusal(awaited: &Awaited, refusal: Option<Decision>) -> bool {
     let lead_over = matches!(awaited.lead, TaskStatus::Stopped | TaskStatus::Failed);
+    let paused = awaited.reviewer == TaskStatus::Paused && !lead_over;
     match refusal {
-        Some(Decision::ChangeAgent) if awaited.reviewer == TaskStatus::Paused && !lead_over => true,
+        Some(Decision::ChangeAgent) if paused => true,
+        Some(Decision::Pause) if paused => false,
         Some(Decision::ChangeAgent | Decision::Pause) | None => replace_now(awaited),
     }
 }
