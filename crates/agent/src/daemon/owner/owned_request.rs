@@ -159,35 +159,7 @@ impl Owner {
                         // The journal write survived but its bus update did not. Replay without charging another return.
                         self.finish_owned_interruption(&journal, &served, &task, run).await?;
                     } else {
-                        let team = self
-                            .parts
-                            .state
-                            .find_task(&entry.from_task)
-                            .ok_or(OwnerError::RequestOwnership)?
-                            .team
-                            .id()
-                            .clone();
-                        let git = self.git_of(&team, &task, worker).ok_or(OwnerError::RequestOwnership)?;
-                        let snapshot = git
-                            .snapshot(&workspace.requester_round, &task)
-                            .await
-                            .map_err(OwnerError::RequestSnapshot)?;
-                        let updated = recovery::advance(
-                            &self.parts.store.home().task_dir(&entry.from_task),
-                            entry.id,
-                            Transition::RestartedQueued {
-                                snapshot: recovery::SnapshotIdentity {
-                                    round: workspace.requester_round.clone(),
-                                    task: task.clone(),
-                                    number: std::num::NonZeroU32::new(snapshot.number)
-                                        .ok_or(OwnerError::RequestOwnership)?,
-                                    commit: snapshot.commit,
-                                    head: snapshot.head,
-                                },
-                            },
-                        )
-                        .await?;
-                        self.finish_owned_interruption(&updated, &served, &task, run).await?;
+                        self.restart_queued_request(&journal, &served, &task, run).await?;
                     }
                 }
                 Phase::Exhausted => {
@@ -197,6 +169,48 @@ impl Owner {
                 Phase::Running(_) | Phase::Queued | Phase::Settled => {}
             }
         }
+        Ok(())
+    }
+
+    /// Snapshots queued partial work before replaying its retained assignment.
+    async fn restart_queued_request(
+        &mut self,
+        journal: &Journal,
+        served: &super::teams::Served,
+        task: &TaskId,
+        run: &RunId,
+    ) -> Result<(), OwnerError> {
+        let workspace = journal.current_workspace().record();
+        let team = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .ok_or(OwnerError::RequestOwnership)?
+            .team
+            .id()
+            .clone();
+        let git = self
+            .git_of(&team, task, &served.worker)
+            .ok_or(OwnerError::RequestOwnership)?;
+        let snapshot = git
+            .snapshot(&workspace.requester_round, task)
+            .await
+            .map_err(OwnerError::RequestSnapshot)?;
+        let updated = recovery::advance(
+            &self.parts.store.home().task_dir(&served.requester_task),
+            served.request,
+            Transition::RestartedQueued {
+                snapshot: recovery::SnapshotIdentity {
+                    round: workspace.requester_round.clone(),
+                    task: task.clone(),
+                    number: std::num::NonZeroU32::new(snapshot.number).ok_or(OwnerError::RequestOwnership)?,
+                    commit: snapshot.commit,
+                    head: snapshot.head,
+                },
+            },
+        )
+        .await?;
+        self.finish_owned_interruption(&updated, served, task, run).await?;
         Ok(())
     }
 

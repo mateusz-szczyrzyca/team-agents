@@ -1369,8 +1369,7 @@ impl Owner {
                         .settings
                         .config
                         .agent(worker)
-                        .map(|config| provider_of(config.cli, config.model.as_ref()))
-                        .unwrap_or("");
+                        .map_or("", |config| provider_of(config.cli, config.model.as_ref()));
                     let elsewhere = agent_core::decide::pool::second_try_pool_elsewhere(
                         &pool_workers,
                         &requires,
