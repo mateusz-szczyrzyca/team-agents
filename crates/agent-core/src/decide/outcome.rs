@@ -122,8 +122,10 @@ pub struct Pause {
     pub until: Timestamp,
     /// Why it waits.
     pub reason: PauseReason,
-    /// The line of the CLI's output that showed the limit, trimmed and cut after [`MAX_EVIDENCE_CHARS`] characters,
-    /// for the notification.
+    /// The kind read from the provider's fields, or from the classified reason for plain text.
+    pub kind: refusal::Kind,
+    /// The provider's status, bounded message and code, with a local structured reset when present.
+    /// Plain text without structured fields is trimmed and bounded by [`MAX_EVIDENCE_CHARS`].
     pub evidence: String,
 }
 
@@ -317,7 +319,10 @@ pub fn classify_outcome(
             (StatusLine::Absent, Some(message)) => ErrorTail::from_text(message, context.limits.tail_lines),
             (StatusLine::Absent, None) | (StatusLine::Reported(_) | StatusLine::Unknown(_), _) => ErrorTail::default(),
         };
-        if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
+        if let Some(limit) = find_limit(
+            output.error_tail.lines().iter().chain(message.lines()),
+            output.error_tail.refusal(),
+        ) {
             return limit.classify(context);
         }
     }
@@ -344,7 +349,9 @@ pub fn classify_outcome(
 struct Limit {
     /// Which limit it is.
     reason: PauseReason,
-    /// The first line that showed it, trimmed and cut.
+    /// The typed refusal kind.
+    kind: refusal::Kind,
+    /// The provider summary, or the first bounded plain-text line.
     evidence: String,
     /// The lines of that kind, in lower case: where the reset time is looked for.
     lines: Vec<String>,
@@ -355,11 +362,14 @@ struct Limit {
 
 /// The provider limit that `lines` — the error tail and the tail of the final message of a failed run — show, if any: an
 /// exhausted quota wins over a rate limit, as in the old harness.
-fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
+fn find_limit<'a>(
+    lines: impl Iterator<Item = &'a String>,
+    description: Option<&refusal::Description>,
+) -> Option<Limit> {
     let lines: Vec<&String> = lines.collect();
     let window = lines.iter().find_map(|line| rejected_window(line));
     let shown: Vec<(&str, String, PauseReason)> = lines
-        .into_iter()
+        .iter()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
@@ -375,13 +385,24 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
     } else {
         PauseReason::RateLimit
     };
-    let evidence = shown
-        .iter()
-        .find(|(_, _, shown)| *shown == reason)
-        .map(|(line, _, _)| {
-            let words = refusal::describe(line).unwrap_or_else(|| (*line).to_owned());
-            words.chars().take(MAX_EVIDENCE_CHARS).collect::<String>()
-        })?;
+    let first = shown.iter().find(|(_, _, shown)| *shown == reason)?;
+    let structured = description.cloned().or_else(|| {
+        lines
+            .iter()
+            .filter_map(|line| refusal::read(line))
+            .reduce(refusal::Description::followed_by)
+    });
+    let kind = structured
+        .as_ref()
+        .and_then(|description| description.kind)
+        .unwrap_or(match reason {
+            PauseReason::Quota => refusal::Kind::Quota,
+            PauseReason::RateLimit => refusal::Kind::RateLimit,
+        });
+    let evidence = structured.map_or_else(
+        || first.0.chars().take(MAX_EVIDENCE_CHARS).collect(),
+        |description| description.evidence(),
+    );
     let lines = shown
         .into_iter()
         .filter(|(_, _, shown)| *shown == reason)
@@ -389,6 +410,7 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
         .collect();
     Some(Limit {
         reason,
+        kind,
         evidence,
         lines,
         window,
@@ -504,6 +526,7 @@ impl Limit {
             pause: Some(Pause {
                 until,
                 reason: self.reason,
+                kind: self.kind,
                 evidence,
             }),
         })
@@ -519,13 +542,11 @@ impl Limit {
     }
 }
 
-/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets <RFC 3339>`. The evidence is
-/// cut first, so that the whole stays within [`MAX_EVIDENCE_CHARS`].
+/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets <RFC 3339>`. The evidence
+/// already bounds message fields, so status and provider code survive the reset suffix.
 fn with_local_reset(evidence: &str, reset: Timestamp, context: &LimitContext<'_>) -> String {
     let suffix = format!(" · resets {}", Zone::Fixed(context.local_offset).rfc3339(reset));
-    let room = MAX_EVIDENCE_CHARS.saturating_sub(suffix.chars().count());
-    let words: String = evidence.chars().take(room).collect();
-    format!("{words}{suffix}")
+    format!("{evidence}{suffix}")
 }
 
 /// `time` as a [`Timestamp`], for the run that ended at `now`.

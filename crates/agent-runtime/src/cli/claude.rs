@@ -486,6 +486,9 @@ impl OutputParser for ClaudeParser {
                 } else {
                     StreamOutcome::Succeeded
                 };
+                if finish.failed() {
+                    self.progress.note_refusal(line);
+                }
                 let mut events: Vec<ActivityEvent> = Vec::new();
                 for message in &finish.errors {
                     self.progress.note_error_line(message);
@@ -503,6 +506,7 @@ impl OutputParser for ClaudeParser {
                 // Only a refusal is kept: an allowed window of every turn would push the lines of the error out of the tail.
                 if window.rejected() {
                     self.progress.note_error_line(line);
+                    self.progress.note_refusal(line);
                 }
                 Ok(Vec::new())
             }

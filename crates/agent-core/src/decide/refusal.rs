@@ -8,13 +8,11 @@
 
 use serde_json::Value;
 
-use super::outcome::PauseReason;
-
 #[cfg(test)]
 mod tests;
 
 /// The kind of a provider's refusal, as the provider's fields say it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     /// The model is busy or overloaded: a pause as short as a rate limit's.
     Overload,
@@ -36,26 +34,41 @@ impl Kind {
     }
 }
 
-/// The kind a pause's evidence names in its first words, when [`describe`] wrote the evidence from a record that has
-/// fields: the inverse of [`Kind::words`]. Evidence that names no kind has none.
-#[must_use]
-pub fn kind_of_evidence(evidence: &str) -> Option<Kind> {
-    [Kind::Overload, Kind::RateLimit, Kind::Quota].into_iter().find(|kind| {
-        evidence
-            .strip_prefix(kind.words())
-            .and_then(|rest| rest.strip_prefix(KIND_SEPARATOR))
-            .is_some()
-    })
+/// Structured refusal evidence retained separately from the classifier's original message lines.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Description {
+    /// The kind supported by the provider's fields, if known.
+    pub kind: Option<Kind>,
+    /// Status, bounded message and provider code in display order.
+    body: String,
 }
 
-/// The kind of a pause: the kind its evidence names, else the kind of its reason. A quota reason is a quota, a rate
-/// limit reason is a rate limit or an overload, which only the evidence can tell apart.
-#[must_use]
-pub fn pause_kind(reason: PauseReason, evidence: &str) -> Kind {
-    kind_of_evidence(evidence).unwrap_or(match reason {
-        PauseReason::Quota => Kind::Quota,
-        PauseReason::RateLimit => Kind::RateLimit,
-    })
+impl Description {
+    /// The complete notice evidence, prefixed with the kind when known.
+    #[must_use]
+    pub fn evidence(&self) -> String {
+        match self.kind {
+            Some(kind) => format!("{}{KIND_SEPARATOR}{}", kind.words(), self.body),
+            None => self.body.clone(),
+        }
+    }
+
+    /// Combines a window record with the following error result; a usage window retains its quota kind.
+    #[must_use]
+    pub fn followed_by(self, mut next: Self) -> Self {
+        if self.kind == Some(Kind::Quota) {
+            next.kind = self.kind;
+        }
+        next
+    }
+}
+
+/// Maximum number of characters from a provider's message; status and code remain intact.
+const MAX_MESSAGE_CHARS: usize = 120;
+
+/// Bounds the message field rather than truncating the composed summary and losing its code.
+fn message_words(message: &str) -> String {
+    message.chars().take(MAX_MESSAGE_CHARS).collect()
 }
 
 /// Separator between the parts of a description.
@@ -77,10 +90,16 @@ const OVERLOADED_STATUSES: [u64; 2] = [503, 529];
 /// has, or `None` when `line` is not a refusal record of a known shape (the caller then shows the line itself).
 #[must_use]
 pub fn describe(line: &str) -> Option<String> {
+    read(line).map(|description| description.evidence())
+}
+
+/// Reads the typed kind and bounded fields of a known refusal record.
+#[must_use]
+pub fn read(line: &str) -> Option<Description> {
     // A line that is not JSON is no record: the caller shows it as it is.
     let record: Value = serde_json::from_str(line).ok()?;
     match record.get("type")?.as_str()? {
-        "error" => describe_error(&record),
+        "error" | "turn.failed" => describe_error(&record),
         "result" => describe_result(&record),
         "rate_limit_event" => describe_rate_limit_event(&record),
         _ => None,
@@ -88,11 +107,11 @@ pub fn describe(line: &str) -> Option<String> {
 }
 
 /// An opencode `error` record, with the provider's fields under `error`, or a codex `error` with a `message`.
-fn describe_error(record: &Value) -> Option<String> {
+fn describe_error(record: &Value) -> Option<Description> {
     let Some(error) = record.get("error") else {
         // codex: the message alone, its kind from the words of the message.
         let message = text(record, "message")?;
-        return compose(kind_of_words(message), vec![message.to_owned()]);
+        return compose(kind_of_words(message), vec![message_words(message)]);
     };
     let error_type = text(error, "type").unwrap_or_default();
     let status = error.get("status").and_then(Value::as_u64);
@@ -101,12 +120,12 @@ fn describe_error(record: &Value) -> Option<String> {
         .pointer("/response/body")
         .and_then(Value::as_str)
         .and_then(provider_code);
-    let kind = kind_of(error_type, status, code.as_deref());
+    let kind = kind_of(error_type, status, code.as_deref()).or_else(|| message.and_then(kind_of_words));
     compose(
         kind,
         [
             status.map(|status| status.to_string()),
-            message.map(str::to_owned),
+            message.map(message_words),
             code,
         ]
         .into_iter()
@@ -115,32 +134,38 @@ fn describe_error(record: &Value) -> Option<String> {
 }
 
 /// A Claude Code error `result`: the status the API gave and the text of the result.
-fn describe_result(record: &Value) -> Option<String> {
+fn describe_result(record: &Value) -> Option<Description> {
     if record.get("is_error").and_then(Value::as_bool) != Some(true) {
         return None;
     }
     let status = record.get("api_error_status").and_then(Value::as_u64);
     let result = text(record, "result");
-    let kind = kind_of("", status, None).or_else(|| result.and_then(kind_of_words));
+    let kind = result.and_then(kind_of_words).or_else(|| kind_of("", status, None));
     compose(
         kind,
-        [status.map(|status| status.to_string()), result.map(str::to_owned)]
+        [status.map(|status| status.to_string()), result.map(message_words)]
             .into_iter()
             .flatten(),
     )
 }
 
 /// A Claude Code `rate_limit_event` that rejected a request: its status and the window it is about.
-fn describe_rate_limit_event(record: &Value) -> Option<String> {
+fn describe_rate_limit_event(record: &Value) -> Option<Description> {
     let info = record.get("rate_limit_info")?;
     let status = text(info, "status")?;
     if status != "rejected" {
         return None;
     }
-    let window = text(info, "rateLimitType").map(str::to_owned);
+    let window = text(info, "rateLimitType");
+    let kind = window.map(|window| match window {
+        "five_hour" | "seven_day" => Kind::Quota,
+        _ => Kind::RateLimit,
+    });
     compose(
-        Some(Kind::RateLimit),
-        [Some(status.to_owned()), window].into_iter().flatten(),
+        kind,
+        [Some(status.to_owned()), window.map(str::to_owned)]
+            .into_iter()
+            .flatten(),
     )
 }
 
@@ -178,7 +203,7 @@ fn kind_of_words(message: &str) -> Option<Kind> {
         Some(Kind::Overload)
     } else if lower.contains("rate limit") {
         Some(Kind::RateLimit)
-    } else if lower.contains("quota") || lower.contains("usage limit") {
+    } else if lower.contains("quota") || lower.contains("usage limit") || lower.contains("hit your limit") {
         Some(Kind::Quota)
     } else {
         None
@@ -186,14 +211,11 @@ fn kind_of_words(message: &str) -> Option<Kind> {
 }
 
 /// Joins the parts of a description, with its kind in front when the kind is known; no parts, no description.
-fn compose(kind: Option<Kind>, parts: impl IntoIterator<Item = String>) -> Option<String> {
+fn compose(kind: Option<Kind>, parts: impl IntoIterator<Item = String>) -> Option<Description> {
     let parts: Vec<String> = parts.into_iter().collect();
     if parts.is_empty() {
         return None;
     }
     let body = parts.join(SEPARATOR);
-    Some(match kind {
-        Some(kind) => format!("{}{KIND_SEPARATOR}{body}", kind.words()),
-        None => body,
-    })
+    Some(Description { kind, body })
 }
