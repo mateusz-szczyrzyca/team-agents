@@ -1320,3 +1320,17 @@ async fn a_clock_that_cannot_be_read_leaves_a_provider_pause_to_the_human() {
 
     assert_eq!(owner.waiting_for(found, round), Some(Waiting::For(Obligation::Human)));
 }
+
+// Rule: a stopped task whose stop time is not known is told without a time.
+#[tokio::test]
+async fn the_line_of_a_stopped_task_without_a_known_stop_is_told_without_a_time() {
+    let (state, _team, _round) = round_for(1, TaskStatus::Queued);
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let stopped = super::resume::StoppedTask {
+        task: task(1),
+        stopped_at: None,
+    };
+
+    assert_eq!(owner.resume_line(&stopped, None), format!("you to resume {}", task(1)));
+}
