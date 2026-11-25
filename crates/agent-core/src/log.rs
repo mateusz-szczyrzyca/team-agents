@@ -245,6 +245,12 @@ pub enum LogEvent {
     /// A worker's request ended: its result was settled (or the request went back to the queue or was returned for its
     /// interruptions), with who asked, who served, the try, the outcome, the time it took and what it cost.
     WorkerRequestEnded,
+    /// The daemon switched a task's worktree to the branch of the item the run works on, because another branch (or a
+    /// detached HEAD) was out and the tree was clean.
+    WorktreeSwitched,
+    /// The daemon did not put a task's worktree on the branch of the item the run works on: the tree has changes that a
+    /// switch would lose, or the switch failed. The run starts anyway.
+    WorktreeSwitchRefused,
 }
 
 impl Keyword for LogEvent {
@@ -291,6 +297,7 @@ impl LogEvent {
             | Self::SnapshotLarge
             | Self::RequestRefused
             | Self::DeliveryClosed
+            | Self::WorktreeSwitchRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::RunNoToolRetry
@@ -321,6 +328,7 @@ impl LogEvent {
             | Self::WorkerRequestRequeued
             | Self::WorkerWaitReturned
             | Self::WorkerRequestEnded
+            | Self::WorktreeSwitched
             | Self::ContextReminded
             | Self::CommitCut
             | Self::TaskHandedOver

@@ -17,6 +17,7 @@ mod fixture;
 mod gate;
 mod history;
 mod idle;
+mod item_branch;
 mod last_step;
 #[cfg(test)]
 mod launch_tests;
@@ -1133,6 +1134,10 @@ impl Owner {
             .filter(|_| matches!(why, Some(Why::Woken)));
         // A session above its agent's bound is started anew first, so that the briefing below is of the new session.
         if let Err(problem) = self.renew_for_context(&task).await {
+            return self.fail_to_start(&task, error_chain(&problem)).await;
+        }
+        // The run works on the branch of its item, whichever branch the worktree was left on.
+        if let Err(problem) = self.checkout_item_branch(&task).await {
             return self.fail_to_start(&task, error_chain(&problem)).await;
         }
         let briefing = match self.briefing_facts(&task).await {

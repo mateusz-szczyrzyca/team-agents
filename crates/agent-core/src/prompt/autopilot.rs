@@ -218,6 +218,9 @@ pub enum AutopilotPrompt {
     ReviewFixPassOpen,
     /// The line that names the file holding the full text of the findings of the fix pass, for every later prompt of it.
     ReviewFixPassFile,
+    /// Tell a lead whose worktree has another branch out, and cannot be switched without losing changes, to commit them
+    /// and switch to the branch of its item before the fix pass.
+    ReviewFixPassOtherBranch,
     /// One reviewer's report among the findings the lead is given.
     ReviewFinding,
     /// What the lead is told when the fix passes are used up: to ask the human.
@@ -374,6 +377,7 @@ impl AutopilotPrompt {
         Self::ReviewFixResponse,
         Self::ReviewFixPassOpen,
         Self::ReviewFixPassFile,
+        Self::ReviewFixPassOtherBranch,
         Self::ReviewFinding,
         Self::ReviewAskHuman,
         Self::ReviewVerdictMissing,
@@ -525,6 +529,7 @@ impl AutopilotPrompt {
             Self::ReviewFixResponse => "harness/review/fix-response.md",
             Self::ReviewFixPassOpen => "harness/review/fix-pass-open.md",
             Self::ReviewFixPassFile => "harness/review/fix-pass-file.md",
+            Self::ReviewFixPassOtherBranch => "harness/review/fix-pass-other-branch.md",
             Self::ReviewResponseNumbers => "harness/review/response-numbers.md",
             Self::ReviewResponseExplain => "harness/review/response-explain.md",
             Self::ReviewResponseFixed => "harness/review/response-fixed.md",
@@ -672,6 +677,7 @@ impl AutopilotPrompt {
             Self::ReviewFixPass | Self::ReviewFixResponse => FIX_PASS_VARIABLES,
             Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewFixPassFile => &["path"],
+            Self::ReviewFixPassOtherBranch => &["checked_out", "branch"],
             Self::WaitBehind => &["agent", "team"],
             Self::WaitProvider => &["agent", "until"],
             Self::WaitResume => &["task", "at"],

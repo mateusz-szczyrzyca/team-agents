@@ -356,7 +356,7 @@ CREATE TABLE daemon_logs (
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
         'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry',
-        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent'
+        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'worktree_switch_refused'
     )),
     team TEXT,
     task TEXT,
@@ -377,14 +377,14 @@ CREATE TABLE daemon_logs (
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-            'worker_request_damaged'
+            'worker_request_damaged', 'worktree_switch_refused'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'serena_reminded', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
-            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent'
+            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
