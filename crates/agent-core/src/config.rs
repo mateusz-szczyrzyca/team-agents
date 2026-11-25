@@ -731,6 +731,12 @@ impl WorkerSettings {
     pub const fn seconds(&self) -> u64 {
         self.seconds
     }
+
+    /// How long a request waits for a free worker before it is returned to its requester, in seconds; `0` has no limit.
+    #[must_use]
+    pub const fn wait_seconds(&self) -> u64 {
+        0
+    }
 }
 
 impl Default for WorkerSettings {
