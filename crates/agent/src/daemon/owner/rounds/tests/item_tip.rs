@@ -1,6 +1,7 @@
 //! An item is judged and published from the tip of its own branch, whatever branch the lead's worktree has out: the checks,
 //! the gate and the push read the item's branch, and a branch without a gate at its tip is not pushed from another one.
 
+use std::collections::BTreeSet;
 use std::num::NonZeroU32;
 
 use agent_core::ids::TaskId;
@@ -378,4 +379,18 @@ async fn approved_push_judges_the_item_tip() {
         2,
         "the refused merge and the merge tried again"
     );
+}
+
+/// Produces the event of a branch that is not published off-branch by its real cause, and records it into `observed`: a lead
+/// that is done with another item's branch out and no gate at the tip of its own.
+pub(in crate::daemon::owner) async fn record_publish_off_branch(observed: &mut BTreeSet<LogEvent>) {
+    let (mut rig, items) = off_branch_fix_pass().await;
+    rig.prompt(&items.task, 4).await;
+    rig.stop().await.unwrap();
+
+    let found = rows(&rig, LogEvent::PublishOffBranch);
+    assert_eq!(found.len(), 1, "{found:#?}");
+    assert_eq!(found[0].level(), LogEvent::PublishOffBranch.level());
+    assert_eq!(found[0].task(), Some(&items.task));
+    observed.insert(LogEvent::PublishOffBranch);
 }
