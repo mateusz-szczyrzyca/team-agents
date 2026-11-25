@@ -688,6 +688,14 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
     }
 }
 
+/// The new status and notice when a refusal was handled by a change of agent or a wait for a free one.
+pub(super) struct RefusalHandled {
+    /// The new status of the task.
+    pub(super) status: TaskStatus,
+    /// The notice to send to the human.
+    pub(super) notice: Notice,
+}
+
 impl Owner {
     /// The summary of `team` as `agent status` shows it: with the limit of returns `[replacement] rejections` sets.
     fn described(&self, team: &agent_core::state::Team) -> TeamSummary {
@@ -2050,7 +2058,7 @@ impl Owner {
             Settled::TurnLimit => Some(Trouble::TurnLimit),
             Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
         };
-        self.keep_refusal(task, located, &settled, &end, now)?;
+        let refusal_handled = self.keep_refusal(task, located, &settled, &end, now)?;
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -2073,13 +2081,18 @@ impl Owner {
             }
             Settled::Paused(pause) => {
                 self.hangs.remove(task);
-                self.wakes.insert(task.clone(), pause.until);
-                let notice = Notice::Paused {
-                    until: pause.until,
-                    reason: pause.reason,
-                    evidence: pause.evidence,
-                };
-                (TaskStatus::Paused, Some(notice))
+                if let Some(handled) = refusal_handled {
+                    // The refusal was handled by a change of agent or a wait for a free one.
+                    (handled.status, Some(handled.notice))
+                } else {
+                    self.wakes.insert(task.clone(), pause.until);
+                    let notice = Notice::Paused {
+                        until: pause.until,
+                        reason: pause.reason,
+                        evidence: pause.evidence,
+                    };
+                    (TaskStatus::Paused, Some(notice))
+                }
             }
             Settled::Hung => self.hung(task, located.role, progress)?,
             Settled::TurnLimit => {
@@ -2097,9 +2110,12 @@ impl Owner {
     }
 
     /// Keeps what a run's end says about the provider's refusals. A refused run counts one more refusal in a row for its
-    /// task and keeps its agent out of new work until the pause ends; any other end clears the count. The answer of
-    /// [`agent_core::decide::limit::decide`] is logged: features 3 and 4 act on a change of agent, until then the pause
-    /// stays and the task is tried again like any other.
+    /// task and keeps its agent out of new work until the pause ends; any other end clears the count. When the rule says
+    /// to change the agent, the task is taken over by the agent [`super::pick_for_refusal`] chooses, or kept paused until
+    /// one is free; the caller replaces the normal pause notice with the returned one.
+    ///
+    /// Returns `Some` with the new status and notice when the refusal was handled by a change of agent or a wait for a
+    /// free one; `None` when the normal pause is what follows.
     fn keep_refusal(
         &mut self,
         task: &TaskId,
@@ -2107,14 +2123,14 @@ impl Owner {
         settled: &Settled,
         end: &RunEnd,
         now: Timestamp,
-    ) -> Result<(), OwnerError> {
+    ) -> Result<Option<RefusalHandled>, OwnerError> {
         let refused = match (settled, limit_of(end, now)) {
             (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
             _ => None,
         };
         let Some((pause, limit)) = refused else {
             self.parts.state.record_limit_refusals(task.clone(), 0);
-            return Ok(());
+            return Ok(None);
         };
         let replacement = self.parts.settings.config.replacement();
         let refusals = next_refusals(self.parts.state.limit_refusals(task), end);
@@ -2152,7 +2168,13 @@ impl Owner {
             return_at = %return_at,
             "a run refused by its provider is counted and the rule answers it"
         );
-        Ok(())
+        // --- RED: ChangeAgent currently returns None (the real handling comes in GREEN). ---
+        // The test `keep_refusal_returns_some_when_the_rule_decides_to_change_agent` expects Some.
+        // TODO: replace with the real pick + takeover / none-free paths in the GREEN commit.
+        if answer == Decision::ChangeAgent {
+            return Ok(None); // RED: should be Some(RefusalHandled { ... })
+        }
+        Ok(None)
     }
 
     /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no

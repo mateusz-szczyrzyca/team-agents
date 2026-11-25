@@ -275,3 +275,35 @@ async fn failure_interruption_and_commit_cut_each_restart_the_refusal_sequence()
         assert_eq!(owner.parts.state.limit_refusals(&task(1)), 1, "{path}");
     }
 }
+
+#[tokio::test]
+async fn keep_refusal_returns_some_when_the_rule_decides_to_change_agent() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+
+    let mut state = solo_state();
+    // One prior refusal: the next one with retries=1 triggers ChangeAgent.
+    state.record_limit_refusals(task(1), 1);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+
+    let result = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(10),
+                reason: PauseReason::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap();
+
+    assert!(
+        result.is_some(),
+        "keep_refusal should return Some when ChangeAgent is decided (retries=1, this is the second refusal)"
+    );
+}
