@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.106.0 — 25.11.2026 — PR #TBD
+## 0.106.0 — 25.11.2026 — PR #266
 
 ### Enhancements
 - [agent] In `agent status --running` the line of a worker under its team is laid out as the lines of the tasks: the worker's task first, then `worker`, the worker with its step, what became of the result and when it ran — `  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00 +01:00`. The request's bus number (`H5`) is no longer shown; look the worker up by its task.
