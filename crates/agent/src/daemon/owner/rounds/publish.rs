@@ -16,7 +16,7 @@ use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, Completion, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
-use agent_runtime::git::{Git, Revision};
+use agent_runtime::git::{Git, GitError, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
@@ -387,48 +387,99 @@ fn phase_branch(phase: &ItemPhase) -> Option<&BranchName> {
 impl Owner {
     /// The tip of `branch`, the branch of an item in the worktree of `lead`, and whether the worktree has it out.
     ///
-    /// The tip is the tip of `branch` when the worktree has the branch of another item of the team out: what is committed
-    /// there is not the work of this item. Otherwise the work is what the worktree has out — also a detached `HEAD` or a
-    /// branch of the lead's own that goes on from the item — and its `HEAD` is the tip.
+    /// The tip is the tip of `branch` when the worktree has the work of another item of the team out — its branch, or a
+    /// detached `HEAD` at that branch's tip: what is committed there is not the work of this item. Otherwise the work is what
+    /// the worktree has out — also a detached `HEAD` or a branch of the lead's own that goes on from the item — and its `HEAD`
+    /// is the tip.
     ///
     /// # Errors
-    /// [`PublishError`] when the worktree's git cannot be opened or cannot name a commit.
+    /// [`PublishError`] when the worktree's git cannot be opened or cannot name a commit, or when another item is out and
+    /// neither `branch` nor its last known tip on `origin` exists.
     pub(super) async fn item_tip(&self, lead: &Lead, branch: &BranchName) -> Result<ItemTip, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let head = git.rev_parse(&Revision::Head).await?;
-        // A branch that is no local branch is a part's or a returned delivery's, which exists only on the remote once it is
-        // pushed: it is made of what the worktree has out.
-        let Some(tip) = git.branch_tip(branch).await? else {
+        let tip = git.branch_tip(branch).await?;
+        if tip.as_ref() == Some(&head) {
             return Ok(ItemTip {
                 tip: head,
                 checked_out: true,
             });
-        };
-        if head == tip {
-            return Ok(ItemTip { tip, checked_out: true });
         }
-        let out = git.current_branch().await?;
-        if out.is_some_and(|out| out != *branch && self.is_item_branch(lead, &out)) {
-            Ok(ItemTip {
-                tip,
-                checked_out: false,
-            })
-        } else {
-            Ok(ItemTip {
+        if !self.another_item_is_out(&git, lead, branch, &head).await? {
+            // A branch that is no local branch is a part's or a returned delivery's, which exists only on the remote once it
+            // is pushed: it is made of what the worktree has out.
+            return Ok(ItemTip {
                 tip: head,
                 checked_out: true,
-            })
+            });
         }
+        let tip = match tip {
+            Some(tip) => tip,
+            None => match git.rev_parse(&Revision::RemoteBranch(branch.clone())).await {
+                Ok(known) => {
+                    // The lead may have merged the item's work into what it has out: then that is the item's work too.
+                    if git
+                        .is_ancestor(&Revision::Commit(known.clone()), &Revision::Head)
+                        .await?
+                    {
+                        return Ok(ItemTip {
+                            tip: head,
+                            checked_out: true,
+                        });
+                    }
+                    known
+                }
+                // Nothing is known of the branch: it is made of what the worktree has out.
+                Err(GitError::UnknownRevision { .. }) => {
+                    return Ok(ItemTip {
+                        tip: head,
+                        checked_out: true,
+                    });
+                }
+                Err(error) => return Err(error.into()),
+            },
+        };
+        Ok(ItemTip {
+            tip,
+            checked_out: false,
+        })
     }
 
-    /// Whether `branch` is the branch of an item of the team of `lead`, in any phase.
-    fn is_item_branch(&self, lead: &Lead, branch: &BranchName) -> bool {
-        self.parts.state.find_task(&lead.task).is_some_and(|found| {
+    /// Whether the worktree of `lead`, which has `head` out, has the work of an item of its team other than the one on
+    /// `branch`: the branch of such an item is out, or `HEAD` is detached at the tip of one.
+    async fn another_item_is_out(
+        &self,
+        git: &Git,
+        lead: &Lead,
+        branch: &BranchName,
+        head: &CommitId,
+    ) -> Result<bool, PublishError> {
+        let items = self.item_branches(lead);
+        if let Some(out) = git.current_branch().await? {
+            return Ok(out != *branch && items.contains(&out));
+        }
+        // A branch that is no item's — the lead's own, which integrates the work of the items — may well be made of the tip
+        // of an item.
+        if !items.contains(branch) {
+            return Ok(false);
+        }
+        for other in items.into_iter().filter(|other| other != branch) {
+            if git.branch_tip(&other).await?.as_ref() == Some(head) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The branches of the items of the team of `lead`, in any phase.
+    fn item_branches(&self, lead: &Lead) -> Vec<BranchName> {
+        self.parts.state.find_task(&lead.task).map_or_else(Vec::new, |found| {
             found
                 .team
                 .items()
                 .iter()
-                .any(|item| phase_branch(item.phase()) == Some(branch))
+                .filter_map(|item| phase_branch(item.phase()).cloned())
+                .collect()
         })
     }
 
