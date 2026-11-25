@@ -381,8 +381,10 @@ built-in tools it has no use for in a headless run (`--disallowedTools`): `CronC
 `DesignSync`, `EnterWorktree`, `ExitWorktree`, `ListAgents`, `ListMcpResourcesTool`, `Monitor`, `NotebookEdit`,
 `PushNotification`, `ReadMcpResourceDirTool`, `ReadMcpResourceTool`, `RemoteTrigger`, `ReportFindings`,
 `ScheduleWakeup`, `SendMessage` and `Workflow`. All of these only cost context at the start of every run. A session
-started by an earlier version resumes as before, with the same flags as a new run. Codex, opencode and Antigravity are
-not changed.
+started by an earlier version resumes as before, with the same flags as a new run. A run also reads no auto memory: the
+settings of every run set `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`, so your own memory
+(`~/.claude/projects/<repo>/memory/`) stays out of it, and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so your claude.ai
+connectors stay out even if a run were not strict. Codex, opencode and Antigravity are not changed.
 
 **Reminder to commit.** A solo agent, a coordinator and a member whose round is open and who hold many uncommitted
 lines are told once, on the bus, to commit what is finished: when the worktree holds `[commit_reminder] lines` changed
