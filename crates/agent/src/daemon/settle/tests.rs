@@ -31,7 +31,7 @@ fn done_finishes_a_solo_task_and_a_review_and_lets_the_rest_of_a_team_wait_for_m
 
     for (role, status) in cases {
         assert_eq!(
-            settle(role, &reported(RunOutcome::Done), None, Some("ok")),
+            settle(role, &reported(RunOutcome::Done), None, None, Some("ok")),
             Settled::Status(status),
             "{role:?}"
         );
@@ -41,15 +41,15 @@ fn done_finishes_a_solo_task_and_a_review_and_lets_the_rest_of_a_team_wait_for_m
 #[test]
 fn sleeping_waits_excluded_is_over_and_questions_ask() {
     assert_eq!(
-        settle(Role::Member, &reported(RunOutcome::Sleeping), None, None),
+        settle(Role::Member, &reported(RunOutcome::Sleeping), None, None, None),
         Settled::Status(TaskStatus::Waiting)
     );
     assert_eq!(
-        settle(Role::Member, &reported(RunOutcome::Excluded), None, None),
+        settle(Role::Member, &reported(RunOutcome::Excluded), None, None, None),
         Settled::Status(TaskStatus::Done)
     );
     assert_eq!(
-        settle(Role::Solo, &reported(RunOutcome::Questions), None, None),
+        settle(Role::Solo, &reported(RunOutcome::Questions), None, None, None),
         Settled::Questions
     );
 }
@@ -59,6 +59,7 @@ fn a_reported_failure_fails_the_task_and_tells_the_human_what_the_agent_said() {
     let settled = settle(
         Role::Solo,
         &reported(RunOutcome::Failed),
+        None,
         None,
         Some("It broke.\nSTATUS: FAILED"),
     );
@@ -75,7 +76,7 @@ fn a_reported_failure_fails_the_task_and_tells_the_human_what_the_agent_said() {
 fn only_the_end_of_a_long_message_is_kept_for_the_human() {
     let long = format!("{}{}", "a".repeat(MAX_MESSAGE_CHARS), "tail żółć");
 
-    let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, Some(&long));
+    let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, None, Some(&long));
 
     let Settled::Failed(Notice::Failed { message }) = settled else {
         panic!("{settled:?}")
@@ -86,7 +87,7 @@ fn only_the_end_of_a_long_message_is_kept_for_the_human() {
 
 #[test]
 fn a_failure_without_a_message_has_an_empty_one() {
-    let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, None);
+    let settled = settle(Role::Solo, &reported(RunOutcome::Failed), None, None, None);
 
     assert_eq!(settled, Settled::Failed(Notice::Failed { message: String::new() }));
 }
@@ -95,7 +96,7 @@ fn a_failure_without_a_message_has_an_empty_one() {
 fn an_end_without_a_status_is_settled_for_no_status_with_its_exit_code() {
     for exit in [Some(3), None] {
         assert_eq!(
-            settle(Role::Member, &RunEnd::NoStatus { exit_code: exit }, None, None),
+            settle(Role::Member, &RunEnd::NoStatus { exit_code: exit }, None, None, None),
             Settled::NoStatus { exit_code: exit }
         );
     }
@@ -112,8 +113,8 @@ fn a_limit_pauses_the_task_with_the_pause_the_classifier_gave() {
         RunEnd::RateLimited,
     ] {
         assert_eq!(
-            settle(Role::Solo, &end, Some(&given), None),
-            Settled::Paused(given.clone())
+            settle(Role::Solo, &end, Some(&given), None, None),
+            Settled::Paused(given.clone(), None)
         );
     }
 }
@@ -121,16 +122,16 @@ fn a_limit_pauses_the_task_with_the_pause_the_classifier_gave() {
 #[test]
 fn a_limit_without_a_pause_cannot_be_waited_for_and_fails_the_task() {
     assert_eq!(
-        settle(Role::Solo, &RunEnd::RateLimited, None, None),
+        settle(Role::Solo, &RunEnd::RateLimited, None, None, None),
         Settled::Failed(Notice::NoStatus { exit: None })
     );
 }
 
 #[test]
 fn a_hang_is_left_to_the_watchdogs_strikes_and_a_stop_stops() {
-    assert_eq!(settle(Role::Solo, &RunEnd::Hung, None, None), Settled::Hung);
+    assert_eq!(settle(Role::Solo, &RunEnd::Hung, None, None, None), Settled::Hung);
     assert_eq!(
-        settle(Role::Solo, &RunEnd::Stopped, None, None),
+        settle(Role::Solo, &RunEnd::Stopped, None, None, None),
         Settled::Status(TaskStatus::Stopped)
     );
 }

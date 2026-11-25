@@ -1388,6 +1388,7 @@ impl Owner {
                 classified: agent_core::decide::outcome::Classified {
                     end: check.end,
                     pause: check.pause,
+                    refusal: None,
                 },
                 finish: agent_core::decide::outcome::RunFinish {
                     exit: agent_core::decide::outcome::ExitStatus::Code(0),

@@ -387,6 +387,8 @@ pub(crate) struct Progress {
     pub(crate) stream: StreamOutcome,
     /// The latest lines of the stream that report an error, each cut, oldest first.
     error_lines: Vec<String>,
+    /// The refusal as structured fields the CLI gave; none when it gave none.
+    pub(crate) refusal: Option<agent_core::decide::outcome::RefusalSummary>,
 }
 
 impl Progress {
@@ -397,6 +399,7 @@ impl Progress {
             final_message: None,
             stream: StreamOutcome::Incomplete,
             error_lines: Vec::new(),
+            refusal: None,
         }
     }
 
@@ -434,6 +437,7 @@ impl Progress {
             session_id: self.session_id,
             stream: self.stream,
             error_tail: ErrorTail::from_text(&errors, tail_lines),
+            refusal: self.refusal,
         }
     }
 }

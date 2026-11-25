@@ -110,6 +110,9 @@ pub enum PauseReason {
     RateLimit,
 }
 
+// Re-exported from the `refusal` module for backward compatibility.
+pub use super::refusal::{RefusalKind, RefusalSummary};
+
 /// A pause a run's end implies.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,6 +133,9 @@ pub struct Classified {
     pub end: RunEnd,
     /// The pause the task takes; only a limit has one.
     pub pause: Option<Pause>,
+    /// The refusal as structured fields the CLI gave; none when it gave none or when the limit was found only
+    /// by matching phrases in the text.
+    pub refusal: Option<RefusalSummary>,
 }
 
 /// Why a run cannot be classified.
@@ -284,7 +290,13 @@ pub fn classify_outcome(
     finish: RunFinish,
     context: &LimitContext<'_>,
 ) -> Result<Classified, ClassifyError> {
-    let done = |end| Ok(Classified { end, pause: None });
+    let done = |end| {
+        Ok(Classified {
+            end,
+            pause: None,
+            refusal: None,
+        })
+    };
     if finish.stopped_by == StoppedBy::Human {
         return done(RunEnd::Stopped);
     }
@@ -308,7 +320,7 @@ pub fn classify_outcome(
             (StatusLine::Absent, None) | (StatusLine::Reported(_) | StatusLine::Unknown(_), _) => ErrorTail::default(),
         };
         if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
-            return limit.classify(context);
+            return limit.classify(context, output.refusal.clone());
         }
     }
     if output.stream == StreamOutcome::TurnLimit {
@@ -440,7 +452,11 @@ fn has_number(text: &str, number: &str) -> bool {
 
 impl Limit {
     /// The end and the pause of a run that stopped on this limit.
-    fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
+    fn classify(
+        self,
+        context: &LimitContext<'_>,
+        refusal: Option<RefusalSummary>,
+    ) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
         let reset = reset_time(&self.lines, now, context.local_offset);
         let wait = match reset {
@@ -465,6 +481,7 @@ impl Limit {
                 reason: self.reason,
                 evidence: self.evidence,
             }),
+            refusal,
         })
     }
 
@@ -917,6 +934,7 @@ mod tests {
             session_id: None,
             stream,
             error_tail: ErrorTail::from_text(stderr, config.limits().tail_lines),
+            refusal: None,
         };
         let context = LimitContext {
             limits: config.limits(),
@@ -1048,7 +1066,8 @@ mod tests {
                 class,
                 Classified {
                     end: RunEnd::Reported { outcome },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 }
             );
         }
@@ -1069,7 +1088,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Stopped,
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1089,7 +1109,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Hung,
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1134,7 +1155,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Hung,
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1205,7 +1227,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1240,7 +1263,8 @@ mod tests {
                 end: RunEnd::Reported {
                     outcome: RunOutcome::Done
                 },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1356,7 +1380,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1369,7 +1394,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1393,7 +1419,8 @@ mod tests {
                 class,
                 Classified {
                     end: RunEnd::NoStatus { exit_code: Some(1) },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 },
                 "{line}"
             );
@@ -1417,7 +1444,8 @@ mod tests {
                 end: RunEnd::Reported {
                     outcome: RunOutcome::Done
                 },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
         let class = clean(Some("May I continue?"), "429 Too Many Requests (retrying in 2s)");
@@ -1425,7 +1453,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(0) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1455,7 +1484,8 @@ mod tests {
                 failed(None, line),
                 Classified {
                     end: RunEnd::NoStatus { exit_code: Some(1) },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 },
                 "{line}"
             );
@@ -1736,7 +1766,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
     }
@@ -1768,6 +1799,7 @@ mod tests {
             session_id: None,
             stream: StreamOutcome::Failed,
             error_tail: ErrorTail::from_text("usage limit reached", NonZeroU32::MIN),
+            refusal: None,
         };
         let now = at("9999-12-31T23:59:00Z");
         let context = LimitContext {
@@ -1849,7 +1881,8 @@ mod tests {
             failed(Some(&early), ""),
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                refusal: None
             }
         );
         let late = format!("{filler}usage limit reached");

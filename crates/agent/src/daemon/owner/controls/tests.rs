@@ -676,6 +676,7 @@ async fn a_pending_stop_overrules_an_already_classified_no_status_end() {
         classified: Classified {
             end: RunEnd::NoStatus { exit_code: Some(0) },
             pause: None,
+            refusal: None,
         },
         finish: RunFinish {
             exit: ExitStatus::Code(0),
@@ -722,6 +723,7 @@ async fn a_run_that_reported_failed_without_a_tool_is_retried() {
                 outcome: agent_core::status::RunOutcome::Failed,
             },
             pause: None,
+            refusal: None,
         },
         finish: RunFinish {
             exit: ExitStatus::Code(0),

@@ -344,6 +344,13 @@ impl OutputParser for CodexParser {
             }
             Event::TurnFailed { error } => {
                 self.progress.stream = StreamOutcome::Failed;
+                self.progress.refusal = Some(agent_core::decide::outcome::RefusalSummary::from_fields(
+                    "",
+                    &error.message,
+                    "",
+                    None,
+                    agent_core::decide::outcome::PauseReason::RateLimit,
+                ));
                 self.failure(error.message)
             }
             Event::Error { message } => self.failure(message),
