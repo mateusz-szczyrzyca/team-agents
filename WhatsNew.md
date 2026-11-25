@@ -5,6 +5,12 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.109.0 — 25.11.2026 — PR #271
+
+### Enhancements
+- [agent] A gate asked again on a clean commit where it already passed, with the same command, is answered with that pass at once instead of running again; one that failed twice in a row on the same commit is answered with its last failure, and its log ends with `gate: not run again: ...` and what to do (fix and commit, or ask in the questions file). A new commit or a changed tree runs the gate. On 25.11 such repeats took 2 of the day's 6 hours of gates.
+- [agent] Each gate answered that way is logged as `checks_decided` with `outcome` `gate_reused`. After a restart of the daemon the first gate of every task runs again.
+
 ## 0.108.0 — 25.11.2026 — PR #270
 
 ### Bug fixes
