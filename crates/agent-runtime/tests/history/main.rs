@@ -92,3 +92,6 @@ mod serena_reminded;
 mod commit_reminder;
 #[cfg(test)]
 mod context_reminder;
+
+#[cfg(test)]
+mod worker_recovery;
