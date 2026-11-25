@@ -1665,6 +1665,7 @@ async fn a_recovered_run_preserves_its_progress_and_pause_across_restart() {
             pause: Some(Pause {
                 until: at(1200),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: "HTTP 429 Too Many Requests".to_owned(),
             }),
             made_progress: true,

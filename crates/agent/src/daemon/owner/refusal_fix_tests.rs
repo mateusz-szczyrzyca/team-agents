@@ -129,6 +129,7 @@ async fn live_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_ca
             &Settled::Paused(Pause {
                 until: capped,
                 reason: PauseReason::Quota,
+                kind: agent_core::decide::refusal::Kind::Quota,
                 evidence: String::new(),
             }),
             &RunEnd::QuotaExhausted { resets_at: Some(reset) },
@@ -189,6 +190,7 @@ async fn refusal_decisions_emit_pause_and_change_agent_log_records() {
                     &Settled::Paused(Pause {
                         until: at(10),
                         reason: PauseReason::RateLimit,
+                        kind: agent_core::decide::refusal::Kind::RateLimit,
                         evidence: String::new(),
                     }),
                     &RunEnd::RateLimited,
@@ -266,6 +268,7 @@ async fn failure_interruption_and_commit_cut_each_restart_the_refusal_sequence()
                 &Settled::Paused(Pause {
                     until: at(10),
                     reason: PauseReason::RateLimit,
+                    kind: agent_core::decide::refusal::Kind::RateLimit,
                     evidence: String::new(),
                 }),
                 &RunEnd::RateLimited,

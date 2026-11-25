@@ -387,6 +387,8 @@ pub(crate) struct Progress {
     pub(crate) stream: StreamOutcome,
     /// The latest lines of the stream that report an error, each cut, oldest first.
     error_lines: Vec<String>,
+    /// Structured refusal fields retained separately from the message tail.
+    refusal: Option<agent_core::decide::refusal::Description>,
 }
 
 impl Progress {
@@ -397,6 +399,7 @@ impl Progress {
             final_message: None,
             stream: StreamOutcome::Incomplete,
             error_lines: Vec::new(),
+            refusal: None,
         }
     }
 
@@ -421,6 +424,16 @@ impl Progress {
         self.error_lines.push(clip(text.trim(), MAX_STREAM_ERROR_CHARS));
     }
 
+    /// Keeps provider fields for the notice while leaving the original classifier lines intact.
+    pub(crate) fn note_refusal(&mut self, line: &str) {
+        if let Some(description) = agent_core::decide::refusal::read(line) {
+            self.refusal = Some(match self.refusal.take() {
+                Some(previous) => previous.followed_by(description),
+                None => description,
+            });
+        }
+    }
+
     /// The end of the run: what the stream showed, and the last `tail_lines` lines of `stderr` and of the stream's
     /// error lines.
     pub(crate) fn finish(self, stderr: &str, tail_lines: NonZeroU32) -> RunOutput {
@@ -433,7 +446,7 @@ impl Progress {
             final_message: self.final_message,
             session_id: self.session_id,
             stream: self.stream,
-            error_tail: ErrorTail::from_text(&errors, tail_lines),
+            error_tail: ErrorTail::from_text(&errors, tail_lines).with_refusal(self.refusal),
         }
     }
 }

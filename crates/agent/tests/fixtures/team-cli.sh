@@ -3,6 +3,8 @@
 # the agent's `args` hold `--scenario LIST`, a comma-separated list of actions; the n-th run of the task takes the n-th
 # action, and the last one stays for the runs after it. The slow actions let the other agents of a test finish first.
 #
+#   deepinfra-overload  as an opencode run on a DeepInfra model: the provider refuses it (an error record naming 429 and
+#                   engine_overloaded), and the run fails without a STATUS line
 #   done            ends with STATUS: DONE
 #   opencode-verdict:V  as an OpenCode reviewer (its JSON records): ends with the line VERDICT: V, SUMMARY and STATUS: DONE
 #   done:TEXT       ends with TEXT, a line break and STATUS: DONE
@@ -327,6 +329,11 @@ case $action in
     ;;
   opencode-done)
     printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: DONE"}}\n' "$n"
+    ;;
+  deepinfra-overload)
+    # The provider of the DeepInfra model refuses the request: the error record of the stream, then the run fails.
+    printf '%s\n' '{"type":"error","timestamp":1793851468252,"sessionID":"ses_fixture_'"$n"'","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"message\":\"Model busy, retry later\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"engine_overloaded\"}}"}}}'
+    exit 1
     ;;
   opencode-verdict:*)
     # As an OpenCode reviewer: its report is the verdict the action names, then STATUS: DONE (the `\\n` is a JSON line break).

@@ -1408,6 +1408,88 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         });
     }
 
+    #[test]
+    fn a_deepinfra_refusal_pauses_the_task_and_its_notice_tells_the_provider_words_and_the_local_resume_time() {
+        // The daemon runs in UTC+01:00 (a POSIX zone string, so no zone database is needed): the notice must give its
+        // resume time with that offset, never in UTC.
+        let mut world = deepinfra_world("deepinfra-overload");
+        start_in_zone(&mut world, "<+01>-1");
+
+        let task = solo_task(&world.agent(&["run", "deep-1", "Its own work."]));
+        let status = world.status_where("the task to be paused for the refusal", |status| {
+            line_of(status, &task).contains("paused")
+        });
+        assert!(line_of(&status, &task).contains("paused"), "{status}");
+
+        eventually("the notice of the refusal to be written", || {
+            std::fs::read_dir(world.home.join("notifications")).is_ok_and(|entries| {
+                entries.into_iter().any(|entry| {
+                    std::fs::read_to_string(entry.unwrap().path())
+                        .unwrap()
+                        .contains("refused its run")
+                })
+            })
+        });
+        let notice: String = std::fs::read_dir(world.home.join("notifications"))
+            .unwrap()
+            .map(|entry| std::fs::read_to_string(entry.unwrap().path()).unwrap())
+            .collect();
+        assert!(notice.contains("refused its run: an overload (rate_limit)"), "{notice}");
+        assert!(
+            notice.contains("429 · Model busy, retry later · engine_overloaded"),
+            "{notice}"
+        );
+        assert!(notice.contains("paused until "), "{notice}");
+        assert!(notice.contains("+01:00"), "{notice}");
+        assert!(!notice.contains('Z'), "{notice}");
+    }
+
+    /// A home of one `opencode` agent `deep-1` on a `DeepInfra` model, running `scenario` through the stand-in. It is a
+    /// home of its own: `World::new` writes only `claude` agents, so this test replaces the configuration it wrote.
+    fn deepinfra_world(scenario: &str) -> World {
+        let world = World::new(&agents_with(&[]));
+        let home = world.home.display().to_string();
+        let bus = agentbus_binary().display().to_string();
+        let cli = script("team-cli.sh").display().to_string();
+        let mut config = format!(
+            "[agents.deep-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n\
+             args = [\"--scenario\", \"{scenario}\", \"--as\", \"deep-1\", \"--bus-bin\", \"{bus}\", \
+             \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n\
+             [plan]\nbounces = 0\n[tiers]\nnormal = [\"deep-1\"]\nworkers = []\n\
+             [binaries]\nclaude = \"{cli}\"\nopencode = \"{cli}\"\nagentbus = \"{bus}\"\n\
+             [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n"
+        );
+        // The daemon needs two investigators outside the team for every pull request: the reviewers of the other tests.
+        for (name, _, scenario) in REVIEWERS {
+            write!(
+                config,
+                "[investigators.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \
+                 \"--bus-bin\", \"{bus}\", \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n"
+            )
+            .unwrap();
+        }
+        std::fs::write(world.home.join("agents.toml"), config).unwrap();
+        world
+    }
+
+    /// Starts the daemon of `world` with the time zone `tz`, as [`World::start`] starts it otherwise.
+    fn start_in_zone(world: &mut World, tz: &str) {
+        let daemon = agent()
+            .arg("daemon")
+            .arg("--prompts-dir")
+            .arg(prompts())
+            .env("AGENTS_HOME", &world.home)
+            .env("TZ", tz)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let socket = world.home.join("agent.sock");
+        eventually("the socket", || socket.exists());
+        world.daemon = Some(daemon);
+    }
+
     /// Checks for `window` that `task` has no run: the daemon is given the time to start it if it would.
     fn never_started_within(world: &World, task: &str, window: Duration) {
         let deadline = Instant::now() + window;

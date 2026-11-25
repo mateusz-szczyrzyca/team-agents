@@ -12,6 +12,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::decide::outcome::PauseReason;
+use agent_core::decide::refusal;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
@@ -247,6 +248,8 @@ pub(super) enum Notice {
         until: Timestamp,
         /// Which limit.
         reason: PauseReason,
+        /// The kind read from the provider fields.
+        kind: refusal::Kind,
         /// What the provider said.
         evidence: String,
     },
@@ -341,13 +344,20 @@ impl Notice {
             Self::Paused {
                 until,
                 reason,
+                kind,
                 evidence,
             } => (
                 HarnessPrompt::NoticePaused,
                 common
-                    .with("until", until.to_string())?
+                    .with("until", context.offset.stamp_minute(*until))?
                     .with("reason", reason.to_string())?
-                    .with("evidence", evidence)?,
+                    .with("kind", kind.words())?
+                    .with(
+                        "evidence",
+                        evidence
+                            .strip_prefix(&format!("{}: ", kind.words()))
+                            .unwrap_or(evidence),
+                    )?,
                 NoticeKind::Paused,
             ),
             Self::Failed { message } => (

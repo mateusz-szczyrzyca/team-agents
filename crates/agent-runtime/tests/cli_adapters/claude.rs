@@ -396,6 +396,38 @@ fn an_error_result_without_a_result_text_keeps_its_errors_in_the_activity_and_th
     Ok(())
 }
 
+// Rule: a rejected rate-limit window is kept in the error tail, where the classifier reads the time it resets at.
+#[test]
+fn a_rejected_rate_limit_window_is_in_the_error_tail() -> TestResult {
+    let replay = replay(&ClaudeAdapter, &fixture("claude", "rejected-window.jsonl")?, "")?;
+
+    let tail = replay.output.error_tail.lines();
+    assert!(
+        tail.iter()
+            .any(|line| line.contains(r#""resetsAt":1794484800"#) && line.contains(r#""status":"rejected""#)),
+        "{tail:?}"
+    );
+    Ok(())
+}
+
+// Rule: an allowed rate-limit window is no refusal and is not kept in the error tail.
+#[test]
+fn an_allowed_rate_limit_window_is_not_in_the_error_tail() -> TestResult {
+    let replay = replay(&ClaudeAdapter, &fixture("claude", "done.jsonl")?, "")?;
+
+    assert!(
+        !replay
+            .output
+            .error_tail
+            .lines()
+            .iter()
+            .any(|line| line.contains("rate_limit_event")),
+        "{:?}",
+        replay.output.error_tail.lines()
+    );
+    Ok(())
+}
+
 // Rule: an empty session ID names no session; it must not cost the result its outcome and final message.
 #[test]
 fn a_result_with_an_empty_session_id_keeps_its_outcome() -> TestResult {

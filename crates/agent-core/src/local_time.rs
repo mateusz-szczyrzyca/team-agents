@@ -12,6 +12,7 @@ mod tests;
 use std::fmt;
 use std::str::FromStr;
 
+use time::format_description::well_known::Rfc3339;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDateTime, UtcOffset};
 
 use crate::state::Timestamp;
@@ -152,6 +153,15 @@ impl Zone {
             return format!("{before}{marker}{}", self.stamp_minute(at));
         }
         waiting.to_owned()
+    }
+
+    /// The moment `at` in this zone as RFC 3339 with the offset it has there: `2026-11-21T17:29:53+01:00`, `Z` where the
+    /// offset is zero. The notices write their times so: the form of the files, in the zone of the host.
+    #[must_use]
+    pub fn rfc3339(&self, at: Timestamp) -> String {
+        let (local, _) = self.localized(at);
+        // A moment of a zone that leaves RFC 3339's years (the offset of a far moment) is written in UTC, as the files are.
+        local.format(&Rfc3339).unwrap_or_else(|_| at.to_string())
     }
 
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always

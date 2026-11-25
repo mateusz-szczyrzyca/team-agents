@@ -7,6 +7,8 @@
 #   serena-globs    finds code files forty-two times with its `glob` tool, then ends with STATUS: DONE
 #   serena-calls    calls a tool of Serena, then reads code files as `serena-reads` does
 #   serena-text     reads forty-two text files as `serena-reads` reads code ones
+#   deepinfra-overload  the provider of a DeepInfra model refuses the request: the error record of the stream that
+#                   names HTTP 429, `Model busy, retry later` and the code `engine_overloaded`, then exits with 1
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -46,6 +48,10 @@ case $scenario in
     many read filePath src/module- .rs 42
     ;;
   serena-text) many read filePath docs/note- .md 42 ;;
+  deepinfra-overload)
+    printf '%s\n' '{"type":"error","timestamp":1793851468252,"sessionID":"'"$session"'","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"message\":\"Model busy, retry later\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"engine_overloaded\"}}"}}}'
+    exit 1
+    ;;
   *) echo "unknown scenario $scenario" >&2; exit 2 ;;
 esac
 finish

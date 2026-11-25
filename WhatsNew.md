@@ -9,12 +9,19 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.112.0 · agent-core 0.112.0 — 25.11.2026 — PR #279
+## agent 0.113.0 · agent-core 0.113.0 — 25.11.2026 — PR #279
 
 ### Bug fixes
 - [agent] [agent-core] A round whose task (a reviewer, a member, a lead or a solo task) is paused because its provider refused its run no longer says in `agent status` that it waits for an answer of the human when no question is open. It says whose provider and until when: `waits for the provider of inv-gemini-argon until 10:07` (local time, no offset; with the date when the return is more than a day away). An open question, or a pause you asked for with `agent pause`, still says the human.
 - [agent] [agent-core] A round whose only wait is a task you stopped with `agent stop` no longer says it waits for an answer of the human: `waits for you to resume task-20261125-161204-67e1 (stopped at 17:12)`.
 - [agent] The line of a provider's wait is written from one look at the clock, so a refusal that ends while `agent status` is being answered no longer leaves `{{agent}}` in it.
+
+## agent 0.112.0 · agent-core 0.112.0 · agent-runtime 0.109.0 — 25.11.2026 — PR #278
+
+### Enhancements
+- [agent] [agent-core] The notice of a provider's refusal says what the provider said: the kind (an overload, a rate limit or a quota), the status, the message and the provider's code, for example `an overload: 429 · Model busy, retry later · engine_overloaded`, instead of the raw JSON line cut off. The raw line stays in the run's files.
+- [agent] The resume time of a paused task in its notice uses the same local minute format and offset as its header, instead of UTC.
+- [agent] [agent-core] [agent-runtime] A Claude run that its account's rate-limit window refused resumes at the window's own reset time (`resetsAt`), not at the time its text names, also when the text says a quota was hit. The notice gives that reset in the host's zone, for example `… · resets 2026-11-12T12:00:00+01:00`.
 
 ## agent 0.111.0 · agent-core 0.111.0 — 25.11.2026 — PR #273
 

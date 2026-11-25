@@ -137,6 +137,78 @@ mod run_engine {
         env_with(&fake_cli(), "", timings()).await
     }
 
+    /// An environment whose agent `claude-1` runs the stand-in of opencode, `fake-opencode.sh`, with the default limits.
+    async fn env_for_opencode_script() -> Env {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let binary = format!("{}/tests/fixtures/run/fake-opencode.sh", env!("CARGO_MANIFEST_DIR"));
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"opencode\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\nopencode = \"{binary}\"\n"
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        let engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::parse("", 0o600).unwrap()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(FixedClock(now().as_utc())),
+            local_offset: time::UtcOffset::UTC,
+            timings: timings(),
+            agent_binary_dir: abs(Path::new("/usr/local/bin")),
+        });
+        Env {
+            home,
+            _home_dir: home_dir,
+            worktree: tempfile::tempdir().unwrap(),
+            engine,
+            task: TaskId::from_str("task-20261112-100000-t1t1").unwrap(),
+        }
+    }
+
+    /// An environment whose agent `claude-1` runs the stand-in of codex, `fake-codex.sh`, with the default limits.
+    async fn env_for_codex_script() -> Env {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let binary = format!("{}/tests/fixtures/run/fake-codex.sh", env!("CARGO_MANIFEST_DIR"));
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"codex\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\ncodex = \"{binary}\"\n"
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        let engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::parse("", 0o600).unwrap()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(FixedClock(now().as_utc())),
+            local_offset: time::UtcOffset::UTC,
+            timings: timings(),
+            agent_binary_dir: abs(Path::new("/usr/local/bin")),
+        });
+        Env {
+            home,
+            _home_dir: home_dir,
+            worktree: tempfile::tempdir().unwrap(),
+            engine,
+            task: TaskId::from_str("task-20261112-100000-t1t1").unwrap(),
+        }
+    }
+
     /// An environment whose agent `claude-1` runs the stand-in CLI as `opencode`, with its own configuration file.
     async fn env_for_opencode() -> Env {
         let home_dir = tempfile::tempdir().unwrap();
@@ -436,6 +508,80 @@ mod run_engine {
         let pause = run.classified.pause.unwrap();
         assert_eq!(pause.reason, PauseReason::RateLimit);
         assert_eq!(pause.until, after(time::Duration::minutes(6)));
+    }
+
+    #[tokio::test]
+    async fn a_rejected_window_pauses_the_task_until_its_reset_and_tells_the_reset_in_local_time() {
+        let env = env().await;
+
+        let run = env.finished("rate-limit-window").await;
+
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        let pause = run.classified.pause.unwrap();
+        assert_eq!(pause.reason, PauseReason::RateLimit);
+        assert_eq!(
+            pause.until,
+            after(time::Duration::hours(2) + time::Duration::minutes(1))
+        );
+        assert!(pause.evidence.starts_with("a quota: API Error: 429"), "{pause:?}");
+        assert!(pause.evidence.ends_with(" · resets 2026-11-12T12:00:00Z"), "{pause:?}");
+    }
+
+    #[tokio::test]
+    async fn a_deepinfra_refusal_pauses_the_task_and_its_evidence_names_the_status_message_and_code() {
+        let env = env_for_opencode_script().await;
+        let mut job = env.job("deepinfra-overload", Env::new_session());
+        job.cli = CliKind::Opencode;
+        job.model = Some("deepinfra/zai-org/GLM-5.3-Flash".parse().unwrap());
+
+        let run = match env.engine.run(job, &CancellationToken::new()).await.unwrap() {
+            RunVerdict::Finished(run) => *run,
+            other @ RunVerdict::Interrupted { .. } => panic!("{other:?}"),
+        };
+
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        let pause = run.classified.pause.unwrap();
+        assert_eq!(pause.reason, PauseReason::RateLimit);
+        assert_eq!(pause.until, after(time::Duration::minutes(6)));
+        assert_eq!(
+            pause.evidence,
+            "an overload: 429 · Model busy, retry later · engine_overloaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_codex_capacity_refusal_keeps_its_structured_evidence() {
+        let env = env_for_codex_script().await;
+        let mut job = env.job("at-capacity", Env::new_session());
+        job.cli = CliKind::Codex;
+        let run = match env.engine.run(job, &CancellationToken::new()).await.unwrap() {
+            RunVerdict::Finished(run) => *run,
+            other @ RunVerdict::Interrupted { .. } => panic!("{other:?}"),
+        };
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        assert_eq!(
+            run.classified.pause.as_ref().unwrap().kind,
+            agent_core::decide::refusal::Kind::Overload
+        );
+        assert_eq!(
+            run.classified.pause.unwrap().evidence,
+            "an overload: Selected model is at capacity. Please try a different model."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_claude_rejected_window_keeps_the_complete_result_evidence() {
+        let env = env().await;
+        let run = env.finished("rejected-window-fixture").await;
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        assert_eq!(
+            run.classified.pause.as_ref().unwrap().kind,
+            agent_core::decide::refusal::Kind::Quota
+        );
+        assert_eq!(
+            run.classified.pause.unwrap().evidence,
+            "a quota: 429 · API Error: 429 rate limit exceeded · resets 3pm · resets 2026-11-12T12:00:00Z"
+        );
     }
 
     #[tokio::test]

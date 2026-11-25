@@ -312,7 +312,12 @@ impl OutputError {
 
 /// The last lines of a run's error output: what the runtime reads to recognise a quota or a rate limit.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct ErrorTail(Vec<String>);
+pub struct ErrorTail(
+    /// Original bounded message lines used to classify the run's end.
+    Vec<String>,
+    /// Structured provider evidence without changing those classifier inputs.
+    Option<crate::decide::refusal::Description>,
+);
 
 impl ErrorTail {
     /// The last `lines` non-blank lines of `text`, trimmed, oldest first.
@@ -327,7 +332,20 @@ impl ErrorTail {
             .map(|(line, _)| line.to_owned())
             .collect();
         last.reverse();
-        Self(last)
+        Self(last, None)
+    }
+
+    /// Attaches the structured evidence read by the CLI adapter.
+    #[must_use]
+    pub fn with_refusal(mut self, description: Option<crate::decide::refusal::Description>) -> Self {
+        self.1 = description;
+        self
+    }
+
+    /// Structured evidence retained alongside the original message lines.
+    #[must_use]
+    pub fn refusal(&self) -> Option<&crate::decide::refusal::Description> {
+        self.1.as_ref()
     }
 
     /// The lines, oldest first.
