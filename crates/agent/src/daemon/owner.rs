@@ -1539,6 +1539,7 @@ impl Owner {
             located.role,
             &run.classified.end,
             run.classified.pause.as_ref(),
+            run.classified.refusal.as_ref(),
             run.final_message.as_deref(),
         );
         let settled = self.solo_waits_for_its_items(located.role, &located.team, settled);
@@ -1636,7 +1637,7 @@ impl Owner {
         let overruled = halt.filter(|_| {
             matches!(
                 settled,
-                Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
+                Settled::Paused(_, _) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
             )
         });
         let end = if overruled.is_some() {
@@ -2041,7 +2042,7 @@ impl Owner {
             Settled::NoStatus { .. } => Some(Trouble::NoStatus),
             Settled::Hung => Some(Trouble::Hang),
             Settled::TurnLimit => Some(Trouble::TurnLimit),
-            Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
+            Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_, _) => None,
         };
         self.keep_refusal(task, located, &settled, &end, now)?;
         let next = match settled {
@@ -2064,13 +2065,14 @@ impl Owner {
                     Asked::Unusable(notice) => (TaskStatus::Failed, Some(notice)),
                 }
             }
-            Settled::Paused(pause) => {
+            Settled::Paused(pause, refusal) => {
                 self.hangs.remove(task);
                 self.wakes.insert(task.clone(), pause.until);
                 let notice = Notice::Paused {
                     until: pause.until,
                     reason: pause.reason,
                     evidence: pause.evidence,
+                    refusal,
                 };
                 (TaskStatus::Paused, Some(notice))
             }
@@ -2102,7 +2104,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let refused = match (settled, limit_of(end, now)) {
-            (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
+            (Settled::Paused(pause, _), Some(limit)) => Some((pause, limit)),
             _ => None,
         };
         let Some((pause, limit)) = refused else {

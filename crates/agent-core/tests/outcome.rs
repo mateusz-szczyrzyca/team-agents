@@ -105,6 +105,7 @@ mod outcome {
                 Stream::Incomplete => StreamOutcome::Incomplete,
             },
             error_tail: ErrorTail::from_text(&case.stderr, config.limits().tail_lines),
+            refusal: None,
         };
         let finish = RunFinish {
             exit: case.exit.map_or(ExitStatus::Signal, ExitStatus::Code),

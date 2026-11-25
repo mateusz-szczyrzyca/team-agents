@@ -152,6 +152,7 @@ impl CliAdapter for ClaudeAdapter {
     fn parser(&self) -> Box<dyn OutputParser> {
         Box::new(ClaudeParser {
             progress: Progress::new(),
+            rate_limit_reset: None,
             usage: UsageTally::default(),
             total_cost_usd: None,
         })
@@ -170,7 +171,10 @@ enum Event {
     User(Turn),
     /// The end of the run.
     Result(Finish),
-    /// Any other event: rate limits, partial messages, ...
+    /// A rate limit event: the provider refused the model.
+    #[serde(rename = "rate_limit_event")]
+    RateLimit(RateLimitEvent),
+    /// Any other event: partial messages, ...
     #[serde(other)]
     Other,
 }
@@ -283,6 +287,32 @@ enum Block {
     Other,
 }
 
+/// The `rate_limit_event` that Claude Code writes when its provider refuses.
+#[derive(Debug, Deserialize)]
+struct RateLimitEvent {
+    /// The details of the limit.
+    #[serde(default)]
+    rate_limit_info: RateLimitInfo,
+}
+
+/// The structured info of a rate limit.
+#[derive(Debug, Default, Deserialize)]
+struct RateLimitInfo {
+    /// `"rejected"`: the call was refused.
+    #[serde(default)]
+    #[expect(dead_code, reason = "stored for possible future use; resetsAt is read")]
+    status: String,
+    /// The Unix epoch second when the rate limit resets.
+    #[serde(default)]
+    #[serde(rename = "resetsAt")]
+    resets_at: Option<u64>,
+    /// E.g. `five_hour`, `daily`.
+    #[serde(default)]
+    #[serde(rename = "rateLimitType")]
+    #[expect(dead_code, reason = "stored for possible future use; resetsAt is read")]
+    rate_limit_type: String,
+}
+
 /// The `result` event: how the run ended.
 #[derive(Debug, Deserialize)]
 struct Finish {
@@ -291,6 +321,9 @@ struct Finish {
     /// Whether the result reports an error, whatever its subtype; absent or null for one that does not.
     #[serde(default)]
     is_error: Option<bool>,
+    /// The HTTP status the API gave for an error result, e.g. 429.
+    #[serde(default)]
+    api_error_status: Option<u16>,
     /// The final message; an error result may have none.
     result: Option<String>,
     /// The messages of an error result (`error_during_execution`, ...), which may come with no `result`.
@@ -358,6 +391,8 @@ fn answer_text(content: &Value) -> String {
 struct ClaudeParser {
     /// What the stream has shown.
     progress: Progress,
+    /// The `resetsAt` epoch second from the most recent `rate_limit_event`; `None` when none was seen.
+    rate_limit_reset: Option<u64>,
     /// The model calls of the run, each counted once.
     usage: UsageTally,
     /// The cost of the run the result line reports; none until it comes.
@@ -436,7 +471,25 @@ impl OutputParser for ClaudeParser {
                     events.push(ActivityEvent::Error(message.clone()));
                 }
                 events.push(ActivityEvent::Info(finish.summary()));
+                // Build a structured refusal from the error result, when the API gave a status.
+                // Read the fields before `finish.result` is moved into `final_message`.
+                let rate_limit_reset = self.rate_limit_reset;
+                let refusal = if finish.failed() {
+                    finish.api_error_status.map(|status| {
+                        let message = finish.result.as_deref().unwrap_or("");
+                        agent_core::decide::refusal::RefusalSummary::from_fields(
+                            &status.to_string(),
+                            message,
+                            "",
+                            rate_limit_reset,
+                            agent_core::decide::outcome::PauseReason::RateLimit,
+                        )
+                    })
+                } else {
+                    None
+                };
                 self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
+                self.progress.refusal = refusal;
                 // The result's usage is the total of the run, never a context: only its output tokens and its cost are
                 // taken from it.
                 self.usage.report_written(finish.usage.and_then(|usage| usage.output));
@@ -444,6 +497,12 @@ impl OutputParser for ClaudeParser {
                 Ok(events)
             }
             Event::System(_) | Event::Other => Ok(Vec::new()),
+            Event::RateLimit(rate) => {
+                if let Some(reset) = rate.rate_limit_info.resets_at {
+                    self.rate_limit_reset = Some(reset);
+                }
+                Ok(Vec::new())
+            }
         }
     }
 

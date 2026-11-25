@@ -97,7 +97,8 @@ hang_strikes = 3
 asleep_minutes = 5
 
 # An exhausted quota pauses the task until the reset time the CLI gives; `quota_pause_minutes` is the pause when it
-# gives none. A rate limit (HTTP 429) is a short pause. `tail_lines`: how many of a run's last lines of error output
+# gives none. A rate limit (HTTP 429) or an overload is a short pause, ended by the reset Claude names when it gives one.
+# `tail_lines`: how many of a run's last lines of error output
 # are read to recognise these limits. `wake_ups_per_message`: a message to a sleeping agent starts a run of it; when
 # that many runs end without the agent reading the message, it is not woken for it again (the message stays unread
 # until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.

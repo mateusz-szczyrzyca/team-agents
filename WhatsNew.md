@@ -5,23 +5,27 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.104.0 — 25.11.2026 — PR #264
-
-### New features
-- [agent] [agent-core] The description of a pull request lists the steps whose request came back to the requester, with the first line of the worker's summary: `- step 1.3 of claude-1's plan — returned to claude-1 (H5): Result: the file is not written.`
-
-## 0.103.0 — 25.11.2026 — PR #262
+## 0.105.0 — 25.11.2026 — PR #262
 
 ### Enhancements
+- [agent] [agent-core] The notice of a refusal names what the provider said, from its own fields: the status, the message and the provider's code, then the kind, for example `429 · Model busy, retry later · engine_overloaded · Overloaded`, instead of the raw JSON line cut at its length. The complete raw line stays in the run's files.
+- [agent] [agent-core] An overload (`engine_overloaded`, or a 503 or 529) is named as an overload, not as a rate limit; it waits the rate-limit pause as before.
+- [agent] [agent-core] Every time in the notice of a pause is in the local time zone of the daemon, as its header is.
+- [agent] [agent-core] A Claude run refused with a rate limit that names its reset ends its pause at that reset, which is more exact than the text of the run. Before this version the reset Claude named was not read, and the pause was the configured one.
 - [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, solo tasks queued for it that have not run yet, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
 - [agent] [agent-core] A task paused by a provider's refusal before this version keeps its agent out after a restart of the daemon, as a task paused now does.
 - [agent] [agent-core] A refusal is counted per task: a good run between refusals clears the count. The rule's answer for each refusal is written to the daemon's log at debug level as a `decision_taken` event with `decision` `limit`; the change of agent after the retries is not acted on yet, so a refused task still waits out its pause.
 
-**Action:** none is needed. Both keys are optional and have defaults; add them to `agents.toml` only to change them. Until the next version acts on the rule, their values change only the decision that is logged.
+- [agent-core] **Action:** none is needed. Both keys are optional and have defaults; add them to `agents.toml` only to change them. Until the next version acts on the rule, their values change only the decision that is logged.
 
 ### Configuration
 - [agent-core] new: `[replacement] limit_retries` (default `1`, `0` to `10`) — how many times a task is tried again in the same session after a pause for a refusal; when the retries are used up the rule answers "change agent". Until the replacement of an agent on a refusal is in place, the task keeps its pause.
 - [agent-core] new: `[replacement] limit_wait_minutes` (default `60`; `0` never waits) — a quota whose reset is named further away than this answers "change agent" at once, because a retry before the reset is certain to be refused.
+
+## 0.104.0 — 25.11.2026 — PR #264
+
+### New features
+- [agent] [agent-core] The description of a pull request lists the steps whose request came back to the requester, with the first line of the worker's summary: `- step 1.3 of claude-1's plan — returned to claude-1 (H5): Result: the file is not written.`
 
 ## 0.102.0 — 25.11.2026 — PR #263
 

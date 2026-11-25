@@ -1600,6 +1600,7 @@ async fn mixed_inline_and_command_checks_keep_inline_states_in_status_when_histo
                         outcome: RunOutcome::Done,
                     },
                     pause: None,
+                    refusal: None,
                 },
                 finish: RunFinish {
                     exit: ExitStatus::Code(0),
@@ -1797,6 +1798,7 @@ async fn deferred_and_reviewer_target_cleanup_waits_until_parked_command_checks_
                         outcome: RunOutcome::Done,
                     },
                     pause: None,
+                    refusal: None,
                 },
                 finish: RunFinish {
                     exit: ExitStatus::Code(0),
@@ -1994,6 +1996,7 @@ async fn completed_check_batch_after_halt_parked_check_is_ignored_without_unknow
                         outcome: RunOutcome::Done,
                     },
                     pause: None,
+                    refusal: None,
                 },
                 finish: RunFinish {
                     exit: ExitStatus::Code(0),
@@ -2160,6 +2163,7 @@ async fn command_check_batch_propagates_clock_error_and_preserves_typed_judgemen
                         outcome: RunOutcome::Done,
                     },
                     pause: None,
+                    refusal: None,
                 },
                 finish: RunFinish {
                     exit: ExitStatus::Code(0),

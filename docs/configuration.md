@@ -181,8 +181,8 @@ was reminded and how many calls of Serena it made after.
 | `watchdog.asleep_minutes` | `5` | every task of a team sleeps this long with an item unfinished: the lead is woken and told that nobody works; after two such wake-ups the human is told |
 | `limits.max_turns` | `300` | positive per-run turn budget, passed as `--max-turns` to Claude Code; CLIs without a turn limit ignore it |
 | `limits.turn_limit_resumes` | `3` | maximum consecutive automatic resumes after a turn limit; `0` fails on the first exhaustion |
-| `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time |
-| `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) |
+| `limits.quota_pause_minutes` | `30` | the pause of an exhausted quota when the CLI gives no reset time; a reset the CLI names (Claude's `rate_limit_event`, or the reset in its text) ends the pause at that time instead |
+| `limits.rate_limit_pause_minutes` | `5` | the pause of a rate limit (HTTP 429) or an overload (503, 529, `engine_overloaded`) when the CLI names no reset; a Claude `rate_limit_event` that names its reset ends the pause at that reset |
 | `limits.idle_team_minutes` | `120` | minutes without a run or new branch commit before automatic team removal; `0` disables it |
 | `limits.idle_team_restarts` | `1` | reserved replacement budget; unused in this removal-only release |
 | `limits.tail_lines` | `30` | how many of a run's last lines of error output are read to recognise a limit |

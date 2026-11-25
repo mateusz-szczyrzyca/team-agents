@@ -367,6 +367,8 @@ pub struct RunOutput {
     pub stream: StreamOutcome,
     /// The last lines of the error output.
     pub error_tail: ErrorTail,
+    /// The refusal as structured fields the CLI gave; none when it gave none.
+    pub refusal: Option<crate::decide::outcome::RefusalSummary>,
 }
 
 /// What a run's stream tells of the size of its context and of what it cost. Each part is `None` where the CLI does

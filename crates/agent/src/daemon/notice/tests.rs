@@ -55,6 +55,7 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
             until: at(3600),
             reason: PauseReason::Quota,
             evidence: "usage limit".to_owned(),
+            refusal: None,
         },
         Notice::Failed {
             message: "It broke.".to_owned(),
@@ -91,6 +92,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         until: at(3600),
         reason: PauseReason::RateLimit,
         evidence: "HTTP 429".to_owned(),
+        refusal: None,
     })
     .await;
     let (_, none) = rendered(&Notice::NoStatus { exit: None }).await;
@@ -101,7 +103,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         "{questions}"
     );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");
-    assert!(paused.contains("2026-11-11T20:15:00Z"), "{paused}");
+    assert!(paused.contains("2026-11-11 20:15 +00:00"), "{paused}");
     assert!(paused.contains("rate_limit") && paused.contains("HTTP 429"), "{paused}");
     assert!(none.contains("exit: signal"), "{none}");
     assert!(code.contains("exit: 3"), "{code}");
@@ -376,6 +378,7 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
         until: at(3600),
         reason: PauseReason::Quota,
         evidence: "quota exceeded".to_owned(),
+        refusal: None,
     };
     let rendered = notice.render(&texts, &context).unwrap();
     assert_eq!(rendered.title(), "⏸ team-agents");
@@ -456,6 +459,7 @@ async fn actual_task_state_notices_render_expected_notes_and_statuses() {
                 until: at(3600),
                 reason: PauseReason::Quota,
                 evidence: "quota exceeded".to_owned(),
+                refusal: None,
             },
             "⏸ team-agents",
             "Status: ⏸ paused",
@@ -864,4 +868,45 @@ async fn the_failed_no_tool_notice_matches_its_complete_golden() {
 
     assert_eq!(rendered.title(), "❌ team-agents");
     assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
+}
+
+#[tokio::test]
+async fn a_refusal_notice_names_status_message_code_and_kind_and_gives_the_return_in_local_time() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(2, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let refusal = agent_core::decide::outcome::RefusalSummary::from_fields(
+        "429",
+        "Model busy, retry later",
+        "engine_overloaded",
+        None,
+        PauseReason::RateLimit,
+    );
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason: PauseReason::RateLimit,
+        evidence: "{\"type\":\"error\",\"error\":{\"status\":429}}".to_owned(),
+        refusal: Some(refusal),
+    };
+
+    let notification = notice.render(&texts().await, &context).unwrap();
+    let body = notification.body();
+
+    assert!(
+        body.contains("429 · Model busy, retry later · engine_overloaded · overloaded"),
+        "{body}"
+    );
+    assert!(body.contains("22:15 +02:00"), "{body}");
+    assert!(!body.contains("+00:00"), "{body}");
+    assert!(!body.contains("{\"type\""), "{body}");
 }

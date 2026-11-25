@@ -24,7 +24,7 @@ pub(super) enum Settled {
     /// The agent asked questions: the questions file decides what follows.
     Questions,
     /// The provider's limit pauses the task.
-    Paused(Pause),
+    Paused(Pause, Option<agent_core::decide::outcome::RefusalSummary>),
     /// The watchdog killed the run: whether it is resumed is [`agent_core::decide::outcome::after_hang`]'s decision.
     Hung,
     /// The run exhausted its turn budget: the persisted streak decides whether it continues.
@@ -37,8 +37,14 @@ pub(super) enum Settled {
 }
 
 /// What the end `end` of a run of the member of role `role` does to its task; `pause` is what the classifier made
-/// of a limit, `final_message` what the agent said last.
-pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_message: Option<&str>) -> Settled {
+/// of a limit, `refusal` the structured refusal data the CLI gave, `final_message` what the agent said last.
+pub(super) fn settle(
+    role: Role,
+    end: &RunEnd,
+    pause: Option<&Pause>,
+    refusal: Option<&agent_core::decide::outcome::RefusalSummary>,
+    final_message: Option<&str>,
+) -> Settled {
     match end {
         RunEnd::Reported { outcome } => match outcome {
             RunOutcome::Done => Settled::Status(after_done(role)),
@@ -56,7 +62,7 @@ pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_mess
             // The classifier gives every limit a pause, so this is not reached; a limit that cannot be waited for is
             // a run that failed.
             Settled::Failed(Notice::NoStatus { exit: None }),
-            |pause| Settled::Paused(pause.clone()),
+            |pause| Settled::Paused(pause.clone(), refusal.cloned()),
         ),
         RunEnd::Hung => Settled::Hung,
         RunEnd::Stopped => Settled::Status(TaskStatus::Stopped),
