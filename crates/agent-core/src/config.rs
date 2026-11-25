@@ -8,7 +8,7 @@
 mod idle;
 pub use idle::IdleMinutes;
 mod commit_reminder;
-pub use commit_reminder::{CommitReminder, DEFAULT_LINES, DEFAULT_MINUTES};
+pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_LINES, DEFAULT_MINUTES};
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;
@@ -115,6 +115,12 @@ pub enum ConfigError {
         required: usize,
         /// Size of the configured investigator roster.
         configured: usize,
+    },
+    /// `[commit_reminder] context_percent` is above `100`: a session cannot hold more than all of its bound.
+    #[error("[commit_reminder] context_percent is {percent}: a percent of the context bound is at most 100")]
+    ContextPercentAbove {
+        /// The value the file gives.
+        percent: u8,
     },
     /// An agent's or an investigator's `context` is `0`, so the CLI would be told that the model reads nothing.
     #[error("{} of {name}: `context` is 0 tokens: a model's window is above 0", key.section())]
