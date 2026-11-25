@@ -163,6 +163,9 @@ fn a_stopped_run_is_read_for_the_clock() {
     );
 }
 
+/// The limit of two hours, which the example configuration gives.
+const LIMIT: &str = "[limits]\nround_minutes = 120";
+
 /// Whether the daemon cuts the run of the member, task 2, after the clock went `minutes` past the start of the tests,
 /// under the configuration `table`; the cut it keeps, if any.
 async fn cut_after(minutes: i64, table: &str) -> Option<OverdueCut> {
@@ -178,7 +181,7 @@ async fn cut_after(minutes: i64, table: &str) -> Option<OverdueCut> {
 #[tokio::test]
 async fn a_round_over_its_limit_is_cut_with_its_minutes() {
     // The round was opened at 5 s: at 125 min the clock reads 124 whole minutes.
-    let cut = cut_after(125, "").await;
+    let cut = cut_after(125, LIMIT).await;
 
     assert_eq!(
         cut,
@@ -193,7 +196,7 @@ async fn a_round_over_its_limit_is_cut_with_its_minutes() {
 
 #[tokio::test]
 async fn a_round_within_its_limit_is_not_cut() {
-    assert_eq!(cut_after(120, "").await, None, "119 whole minutes since the opening");
+    assert_eq!(cut_after(120, LIMIT).await, None, "119 whole minutes since the opening");
 }
 
 #[tokio::test]
@@ -208,6 +211,11 @@ async fn the_limit_of_the_configuration_is_the_one_read() {
 }
 
 #[tokio::test]
+async fn no_round_is_cut_unless_the_configuration_gives_a_limit() {
+    assert_eq!(cut_after(3 * 24 * 60, "").await, None);
+}
+
+#[tokio::test]
 async fn a_limit_of_zero_never_cuts_a_round() {
     assert_eq!(cut_after(3 * 24 * 60, "[limits]\nround_minutes = 0").await, None);
 }
@@ -215,6 +223,7 @@ async fn a_limit_of_zero_never_cuts_a_round() {
 #[tokio::test]
 async fn the_lead_of_a_round_its_member_works_on_is_not_cut() {
     let daemon = Daemon::new(&team_on(Some(in_progress("claude-1"))), None);
+    daemon.configure(LIMIT);
     daemon.clock.advance(time::Duration::days(1));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 

@@ -2325,9 +2325,9 @@ workers = ["qwen", "qwen"]"#,
     }
 
     #[test]
-    fn a_round_may_go_on_two_hours_unless_the_limits_say_otherwise() {
-        assert_eq!(config("").limits().round_minutes, 120);
-        assert_eq!(config("[limits]\ntail_lines = 5\n").limits().round_minutes, 120);
+    fn a_round_has_no_limit_unless_the_limits_give_one() {
+        assert_eq!(config("").limits().round_minutes, 0);
+        assert_eq!(config("[limits]\ntail_lines = 5\n").limits().round_minutes, 0);
         assert_eq!(config("[limits]\nround_minutes = 45\n").limits().round_minutes, 45);
         assert_eq!(config("[limits]\nround_minutes = 0\n").limits().round_minutes, 0);
     }
