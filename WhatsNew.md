@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.108.0 — 25.11.2026 — PR #270
+
+### Bug fixes
+- [agent] A daemon that is stopping or restarting no longer starts a queued task on the agent a stopped run has just freed. Before, such a run was cut a moment later, counted as a run that ended without a status and cost the task one of its retries (or failed it at the last one).
+
 ## 0.107.0 — 25.11.2026 — PR #266
 
 ### Enhancements
