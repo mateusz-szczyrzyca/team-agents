@@ -191,6 +191,8 @@ impl Owner {
     ///
     /// What is kept for the task — the head that was reminded, and the time of the last look — is kept until a look sees
     /// another head: the end of a run does not re-arm the reminder, a commit does.
+    ///
+    /// The clock is read once per call, that is once per look at a task, and only after the task is found to be watched.
     pub(super) async fn remind_to_commit(&mut self, task: &TaskId) {
         let section = *self.parts.settings.config.commit_reminder();
         if section.lines == 0 || section.minutes == 0 {
