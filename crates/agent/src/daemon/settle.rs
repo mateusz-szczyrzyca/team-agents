@@ -120,9 +120,19 @@ pub(super) fn wake_time(
 ///
 /// `now` is when the run ended: a reset that is not after it is no reset, as for the classifier.
 pub(super) fn limit_of(end: &RunEnd, now: Timestamp) -> Option<Limit> {
-    // STUB (RED): names no limit yet.
-    let _ = (end, now);
-    None
+    match end {
+        RunEnd::RateLimited => Some(Limit::RateLimit),
+        RunEnd::QuotaExhausted { resets_at } => Some(Limit::Quota {
+            reset_in: resets_at
+                .map(|reset| reset.as_utc() - now.as_utc())
+                .filter(|wait| wait.is_positive()),
+        }),
+        RunEnd::Reported { .. }
+        | RunEnd::NoStatus { .. }
+        | RunEnd::TurnLimit
+        | RunEnd::Hung
+        | RunEnd::Stopped => None,
+    }
 }
 
 #[cfg(test)]
