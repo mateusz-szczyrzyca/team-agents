@@ -189,7 +189,10 @@ fn a_paused_reviewer_whose_agent_the_rule_changes_is_replaced_at_once() {
 fn a_reviewer_the_rule_keeps_or_that_was_not_refused_waits_the_patience() {
     let almost = PATIENCE.saturating_sub(Duration::from_secs(1));
     for refusal in [Some(Decision::Pause), None] {
-        assert!(!replace_after_refusal(&awaited(TaskStatus::Paused, Duration::ZERO), refusal));
+        assert!(!replace_after_refusal(
+            &awaited(TaskStatus::Paused, Duration::ZERO),
+            refusal
+        ));
         assert!(!replace_after_refusal(&awaited(TaskStatus::Paused, almost), refusal));
         assert!(replace_after_refusal(&awaited(TaskStatus::Paused, PATIENCE), refusal));
     }
@@ -267,7 +270,10 @@ fn the_investigators_of_the_refused_provider_are_picked_out() {
         },
     ];
 
-    assert_eq!(on_provider("deepinfra", &all), BTreeSet::from([kimi.clone(), qwen.clone()]));
+    assert_eq!(
+        on_provider("deepinfra", &all),
+        BTreeSet::from([kimi.clone(), qwen.clone()])
+    );
     assert_eq!(on_provider("deep", &all), BTreeSet::new());
     assert_eq!(on_provider("codex", &all), BTreeSet::new());
     assert_eq!(on_provider("claude", &[]), BTreeSet::new());
