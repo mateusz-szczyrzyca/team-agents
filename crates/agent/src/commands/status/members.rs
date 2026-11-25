@@ -20,7 +20,8 @@ pub(super) struct Columns {
 }
 
 impl Columns {
-    /// Widths of `role` and `agent` characters.
+    /// Widths of `role` and `agent` characters, which the tests of the lines pad to.
+    #[cfg(test)]
     pub(super) const fn new(role: usize, agent: usize) -> Self {
         Self { role, agent }
     }
