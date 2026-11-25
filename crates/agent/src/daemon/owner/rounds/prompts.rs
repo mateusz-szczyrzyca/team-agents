@@ -8,6 +8,7 @@ use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
 use agent_core::ids::{BranchName, InvalidName};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
+use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{
     CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, PullRequest, QuestionState, Review,
@@ -340,7 +341,8 @@ fn fixing_item<'a>(found: &TaskRef<'a>) -> Option<(&'a ItemProgress, &'a BranchN
 /// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass, or, for a
 /// lead that was `woken` and was given the pass already, one line that says the pass is still open. When the worktree
 /// `working` of the lead has another branch than the item's out, which the harness could not switch because the tree has
-/// changes, the text that tells the lead to commit them and switch comes first.
+/// changes, the text that tells the lead to commit them and switch comes first; when git cannot say which branch is out, the
+/// pass is given without it.
 ///
 /// # Errors
 /// [`SectionError`].
@@ -357,7 +359,20 @@ pub(super) async fn fix_pass(
     let Some((_, branch, _)) = fixing_item(found) else {
         return Ok(Some(text));
     };
-    let checked_out = git_of(ctx, found, working)?.current_branch().await?;
+    let checked_out = match git_of(ctx, found, working)?.current_branch().await {
+        Ok(checked_out) => checked_out,
+        Err(error) => {
+            // The same policy as the checkout before a run: a branch that cannot be read is logged and the run goes on, here
+            // with the fix pass alone, because the text about another branch would be a guess.
+            tracing::warn!(
+                event = LogEvent::GitCallFailed.as_str(),
+                to = %branch,
+                error = %agent_runtime::process::error_chain(&error),
+                "the branch the worktree has out cannot be read: the fix pass does not say which one it is"
+            );
+            return Ok(Some(text));
+        }
+    };
     if checked_out.as_ref() == Some(branch) {
         return Ok(Some(text));
     }
