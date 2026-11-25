@@ -1,1 +1,1 @@
-The harness stopped your run: {{lines}} lines, {{minutes}} minutes.
+The harness stopped your run because {{lines}} changed lines stayed uncommitted for {{minutes}} minutes after the reminder. Your files are as you left them. First commit what is finished: a failing new test as its `RED:` commit with its failing output, no debug output. Then go on with your work.
