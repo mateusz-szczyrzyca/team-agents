@@ -24,6 +24,7 @@ pub(crate) fn lead_sections(text: &str) -> String {
             "Unpushed base",
             "Split",
             "Steps done by a worker",
+            "Steps returned to their requesters",
         ],
     )
 }
@@ -198,6 +199,39 @@ pub(crate) fn returned_steps_section(
     texts: &AutopilotPrompts,
     requests: &[(AgentName, Vec<RequestWithSummary>)],
 ) -> Result<Option<String>, PullTextError> {
-    let _ = (texts, requests);
-    Ok(Some(String::new()))
+    let rows: Vec<String> = requests
+        .iter()
+        .flat_map(|(requester, of_task)| of_task.iter().map(move |entry| (requester, entry)))
+        .filter_map(|(requester, (request, summary))| match request.status {
+            DelegationStatus::Failed => request.step.map(|step| {
+                format!(
+                    "- step {step} of {requester}'s plan — returned to {requester} ({}): {}",
+                    request.id,
+                    reason_of(summary)
+                )
+            }),
+            DelegationStatus::Queued
+            | DelegationStatus::Starting
+            | DelegationStatus::Running
+            | DelegationStatus::Done
+            | DelegationStatus::Unclear => None,
+        })
+        .collect();
+    if rows.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(texts.render(
+        AutopilotPrompt::PrReturnedSteps,
+        &Variables::new().with("steps", rows.join("\n"))?,
+    )?))
+}
+
+/// The reason a returned step shows: the first line of `summary`, cut to [`RETURNED_REASON_CHARS`] characters, or
+/// [`NO_REASON_GIVEN`] when that line is empty.
+fn reason_of(summary: &str) -> String {
+    let first = summary.lines().next().unwrap_or_default().trim();
+    if first.is_empty() {
+        return NO_REASON_GIVEN.to_owned();
+    }
+    first.chars().take(RETURNED_REASON_CHARS).collect()
 }
