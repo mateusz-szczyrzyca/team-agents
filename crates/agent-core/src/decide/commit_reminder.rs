@@ -39,7 +39,10 @@ pub enum ReminderDue {
 /// worker is not, because the harness checks its result already, and a reviewer is not, because it commits nothing.
 #[must_use]
 pub const fn is_reminded(role: Role) -> bool {
-    true
+    match role {
+        Role::Solo | Role::Coordinator | Role::Member => true,
+        Role::Worker | Role::Reviewer => false,
+    }
 }
 
 /// Whether the run seen in `look` is reminded to commit, under the bounds `lines` and `minutes` of `[commit_reminder]`.

@@ -38,6 +38,11 @@
 #   serena-three          reads three code files, then ends like `done`
 #   work                  prints a message every 0.2 s until it is stopped: a run that does work
 #   hold                  prints its first line and then waits for .fake-continue to appear before it ends like `done`
+#   dirty-hold            writes dirty.txt of 400 lines and leaves it uncommitted, says something every 0.2 s until
+#                         .fake-continue exists, then ends like `done`
+#   dirty-commit-hold     writes dirty.txt of 400 lines and commits it, then holds and ends as `dirty-hold` does
+#   dirty-twice           writes dirty.txt of 400 lines, holds until .fake-commit exists, commits dirty.txt, writes
+#                         second.txt of 400 lines, then holds and ends as `dirty-hold` does
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -92,6 +97,30 @@ leave_work() {
   git add work.txt
   git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m "Work of the run"
   printf 'left over\nin two lines\n' > left.txt
+}
+
+# Commits what is staged, dated long before any clock of a test, so that the run has made no commit for a long time.
+commit_long_ago() {
+  GIT_AUTHOR_DATE="2020-01-01T00:00:00Z" GIT_COMMITTER_DATE="2020-01-01T00:00:00Z" \
+    git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m "Work of the run"
+}
+
+# Writes the file of 400 lines the commit reminder counts.
+write_400_lines() {
+  seq 1 400 > "$1"
+}
+
+# Says something every 0.2 s until the file named exists, so that the watchdog never takes the run for hung; fails when it
+# does not appear in a minute.
+hold_until() {
+  local file=$1 _
+  for _ in $(seq 1 300); do
+    [[ -f $file ]] && return 0
+    say "working"
+    sleep 0.2
+  done
+  echo "the test never created $file" >&2
+  exit 65
 }
 
 # read_code FIRST N — tool_use blocks of the Read tool over the code files of the worktree, one a line, the first
@@ -329,6 +358,30 @@ case $scenario in
       sleep 0.02
     done
     [[ -f .fake-continue ]] || { echo "the test never created .fake-continue" >&2; exit 65; }
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  dirty-hold)
+    init
+    write_400_lines dirty.txt
+    hold_until .fake-continue
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  dirty-commit-hold)
+    init
+    write_400_lines dirty.txt
+    git add dirty.txt
+    commit_long_ago
+    hold_until .fake-continue
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  dirty-twice)
+    init
+    write_400_lines dirty.txt
+    hold_until .fake-commit
+    git add dirty.txt
+    commit_long_ago
+    write_400_lines second.txt
+    hold_until .fake-continue
     result false 'Finished the item.\nSTATUS: DONE'
     ;;
   *) echo "unknown scenario: $scenario" >&2; exit 64 ;;
