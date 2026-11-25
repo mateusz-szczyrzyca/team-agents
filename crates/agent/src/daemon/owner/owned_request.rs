@@ -3,6 +3,7 @@
 use crate::daemon::team::{BusNotice, render_notice};
 use agent_core::decide::worker_result::WorkerEnding;
 use agent_core::ids::{RoundId, RunId, TaskId};
+use agent_core::log::LogEvent;
 use agent_runtime::agentbus::{DelegationStatus, Outgoing, OwnedChange, OwnedOutcome, RequestOwner, RequestResult};
 use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
