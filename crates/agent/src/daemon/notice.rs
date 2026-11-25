@@ -24,7 +24,7 @@ use agent_runtime::notify::{InvalidNotification, Notification};
 pub(crate) use words::{TaskWords, TaskWordsError, item_line, item_of_notice};
 
 /// Builds a human-readable refusal line from structured refusal data.
-fn refusal_text(refusal: &RefusalSummary, _reason: &PauseReason, fallback: &str) -> String {
+fn refusal_text(refusal: &RefusalSummary, _reason: PauseReason, fallback: &str) -> String {
     let mut parts = Vec::new();
     if !refusal.status.is_empty() {
         parts.push(refusal.status.clone());
@@ -365,7 +365,7 @@ impl Notice {
                 refusal,
             } => {
                 let evidence_text = match refusal {
-                    Some(r) => refusal_text(r, reason, evidence),
+                    Some(r) => refusal_text(r, *reason, evidence),
                     None => evidence.clone(),
                 };
                 (
