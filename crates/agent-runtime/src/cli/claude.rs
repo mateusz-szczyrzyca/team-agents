@@ -4,7 +4,8 @@
 //! the run; the settings turn Claude Code's own attribution off (the commit trailers are the harness's), switch its
 //! tool search off so that the agentbus tools are all there from the first turn, forbid background tasks (a headless
 //! run ends with its turn and would kill them) and give its Bash tool a timeout long enough for a gate. The session of
-//! a new run is the ID the harness made up (`--session-id`); a resumed run names it (`--resume`).
+//! a new run is the ID the harness made up (`--session-id`); a resumed run names it (`--resume`). Every run is strict
+//! about MCP servers, has no skills and is not given the built-in tools it has no use for.
 //!
 //! The stream is one JSON object a line: `system` (`init` names the session and the model), `assistant` and `user`
 //! (their content blocks: text, tool calls and their results) and `result`, which ends the run and holds the final
@@ -39,6 +40,29 @@ const MCP_FILE: &str = "mcp.json";
 
 /// The name of the settings file in the run's directory.
 const SETTINGS_FILE: &str = "claude-settings.json";
+
+/// Built-in tools of Claude Code that a headless run of the harness must not use or that only cost context, in the
+/// order they are passed to `--disallowedTools`.
+const DISALLOWED_TOOLS: [&str; 18] = [
+    "CronCreate",
+    "CronDelete",
+    "CronList",
+    "DesignSync",
+    "EnterWorktree",
+    "ExitWorktree",
+    "ListAgents",
+    "ListMcpResourcesTool",
+    "Monitor",
+    "NotebookEdit",
+    "PushNotification",
+    "ReadMcpResourceDirTool",
+    "ReadMcpResourceTool",
+    "RemoteTrigger",
+    "ReportFindings",
+    "ScheduleWakeup",
+    "SendMessage",
+    "Workflow",
+];
 
 /// The subtype of a `result` that ended well.
 const SUCCESS_SUBTYPE: &str = "success";
@@ -118,11 +142,13 @@ impl CliAdapter for ClaudeAdapter {
         ]
         .map(str::to_owned)
         .into();
-        // A run with no server is given none of the human's own either.
-        if servers.is_empty() {
-            args.push("--strict-mcp-config".to_owned());
-        }
+        // A run is given only the servers of its request, none of the human's own or of their claude.ai connectors,
+        // no skill and none of the tools it has no use for: they only cost context.
         args.extend([
+            "--strict-mcp-config".to_owned(),
+            "--disallowedTools".to_owned(),
+            DISALLOWED_TOOLS.join(","),
+            "--disable-slash-commands".to_owned(),
             "--settings".to_owned(),
             path_text(CliKind::Claude, settings_path.as_path())?.to_owned(),
         ]);
