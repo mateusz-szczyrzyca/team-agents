@@ -205,8 +205,8 @@ async fn compose_run_prompt(
 ) -> Result<(String, Option<String>), StartProblem> {
     if matches!(
         kind,
-        PromptKind::Resume(ResumeReason::TurnLimit | ResumeReason::NoStatus)
-    ) && (ctx.why.is_none() || ctx.why == Some(&Why::NoStatus))
+        PromptKind::Resume(ResumeReason::TurnLimit | ResumeReason::NoStatus | ResumeReason::CommitOrder { .. })
+    ) && (ctx.why.is_none() || matches!(ctx.why, Some(Why::NoStatus | Why::CommitOrder { .. })))
     {
         Ok((prompt, None))
     } else {
@@ -366,6 +366,12 @@ pub(super) async fn plan(
     // A session above its agent's bound is replaced: its next run is a whole new session, whatever the run before ended as.
     let kind = if replaced_by_bound(member) {
         PromptKind::First
+    } else if let (Some(Why::CommitOrder { lines, minutes }), Some(_)) = (ctx.why, &session) {
+        // The order is for the session that was cut: it goes on in it.
+        PromptKind::Resume(ResumeReason::CommitOrder {
+            lines: *lines,
+            minutes: *minutes,
+        })
     } else if ctx.why == Some(&Why::NoStatus) {
         PromptKind::Resume(ResumeReason::NoStatus)
     } else {
@@ -402,6 +408,23 @@ pub(super) async fn plan(
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
+    // The order to commit is a text of the team catalog: it is the whole prompt of the run that follows a cut.
+    let prompt = match kind {
+        PromptKind::Resume(ResumeReason::CommitOrder { lines, minutes }) => {
+            format!(
+                "{}\n",
+                crate::daemon::team::commit_order(ctx.team_texts, lines, minutes)?.trim_end()
+            )
+        }
+        PromptKind::First
+        | PromptKind::Resume(
+            ResumeReason::Hang { .. }
+            | ResumeReason::Restart
+            | ResumeReason::Limit
+            | ResumeReason::TurnLimit
+            | ResumeReason::NoStatus,
+        ) => prompt,
+    };
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
     let prompt = with_run_sections(ctx, &found, kind, prompt, briefing, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;
@@ -893,7 +916,7 @@ pub(super) fn run_why(state: &State, task: &TaskId, why: Option<&Why>) -> RunWhy
         // The gate is one of the checks a round passes before its review: the history has one reason for both.
         Some(Why::Checks | Why::Gate(_)) => RunWhy::Checks,
         // The history has no reason of its own for a merge conflict: the lead is told of it in a continuation.
-        Some(Why::NoStatus | Why::MergeConflict) => RunWhy::Continuation,
+        Some(Why::NoStatus | Why::MergeConflict | Why::CommitOrder { .. }) => RunWhy::Continuation,
         None if matches!(
             member.runs().last().map(Run::state),
             Some(RunState::Ended {

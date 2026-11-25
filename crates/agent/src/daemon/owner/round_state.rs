@@ -64,7 +64,8 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
             | Why::Checks
             | Why::Gate(_)
             | Why::Asleep(_)
-            | Why::NoStatus,
+            | Why::NoStatus
+            | Why::CommitOrder { .. },
         )
         | None
             if goes_on =>
@@ -80,7 +81,8 @@ pub(super) fn rounds_for(state: &State, task: &TaskId, why: Option<&Why>) -> Res
             | Why::Checks
             | Why::Gate(_)
             | Why::Asleep(_)
-            | Why::NoStatus,
+            | Why::NoStatus
+            | Why::CommitOrder { .. },
         )
         | None => RunStart::Work,
     };

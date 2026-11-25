@@ -580,6 +580,16 @@ pub(super) struct Owner {
     /// The head and the time of the reminder to commit that went to each task, until a look sees a new head — the end of a
     /// run does not drop it. Held in memory only: a restart of the daemon re-arms the reminder.
     commit_reminded: HashMap<TaskId, (agent_core::state::CommitId, Timestamp)>,
+    /// The orders to commit of the runs the daemon cut for ignoring the reminder: kept from the cut until the run has
+    /// ended, which moves the order into [`Owner::reasons`]. Not kept over a restart of the daemon: the run that is
+    /// resumed after one is resumed as any interrupted run, without the order.
+    commit_cuts: HashMap<TaskId, commit_reminder::CommitOrder>,
+    /// The tasks whose run was cut for the reminder they have at their head: one cut per reminder. Left when the head
+    /// moves or the run is reminded again.
+    commit_cut: HashSet<TaskId>,
+    /// The file of the machine's test lock (`TEST_LOCK_FILE`, read when the daemon starts); a test run started in a
+    /// task's worktree holds its run from being cut.
+    test_lock_file: PathBuf,
     /// What the session of each task that was reminded of its full context is told by, so that it is told once: a resumed
     /// session keeps its ID, a new one is told anew. Held in memory only: a restart of the daemon re-arms the reminder.
     context_told: HashMap<TaskId, context_reminder::Told>,
@@ -710,6 +720,10 @@ impl Owner {
             reminders: reminder::Backlog::default(),
             commit_looked_at: HashMap::new(),
             commit_reminded: HashMap::new(),
+            commit_cuts: HashMap::new(),
+            commit_cut: HashSet::new(),
+            test_lock_file: std::env::var_os("TEST_LOCK_FILE")
+                .map_or_else(|| PathBuf::from(test_lock::DEFAULT_LOCK_FILE), PathBuf::from),
             context_told: HashMap::new(),
             looks: BTreeSet::new(),
             watcher,
@@ -1042,6 +1056,8 @@ impl Owner {
     /// Starts the run of `task`, or fails the task when it cannot be made ready.
     async fn start(&mut self, task: TaskId) -> Result<(), OwnerError> {
         let why = self.reasons.remove(&task);
+        // An order of a cut that did not end its run in the daemon's own stop is not for this run.
+        self.commit_cuts.remove(&task);
         // What a wake-up noted is for the run it starts, and for no other.
         let woke = self
             .wake_notes
@@ -1432,7 +1448,12 @@ impl Owner {
         let now = Timestamp::now(&self.parts.clock)?;
         let mut events = Vec::new();
         self.attach_session(task, session)?;
+        // The order is for the run the cut ended; a human's stop of the task meanwhile drops it.
+        let order = self.commit_cuts.remove(task);
         let Some(halt) = self.halts.remove(task) else {
+            if let Some(order) = order {
+                return self.resume_after_cut(task, &located, now, order, events).await;
+            }
             self.end_run(
                 task,
                 &located.team,

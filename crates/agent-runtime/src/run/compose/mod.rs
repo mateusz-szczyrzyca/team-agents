@@ -42,6 +42,15 @@ pub enum ResumeReason {
     TurnLimit,
     /// The previous run ended without a STATUS: line.
     NoStatus,
+    /// The harness cut the previous run because `lines` changed lines stayed uncommitted for `minutes` minutes after the
+    /// reminder to commit. Its text is of the team catalog, which this module has no part of: the daemon puts it in
+    /// place of the prompt this module composes for it, which is empty.
+    CommitOrder {
+        /// The changed lines that stayed uncommitted.
+        lines: u64,
+        /// The whole minutes they stayed so after the reminder.
+        minutes: u64,
+    },
 }
 
 /// Whether the prompt starts a session or continues one.
@@ -238,6 +247,7 @@ fn resume_section(texts: &PromptTexts<'_>, reason: ResumeReason) -> Result<Strin
             .render(HarnessPrompt::ResumeTurnLimit, &Variables::new())?,
         ResumeReason::NoStatus => texts.harness.render(HarnessPrompt::ResumeNoStatus, &Variables::new())?,
         ResumeReason::Limit => texts.harness.render(HarnessPrompt::ResumeLimit, &Variables::new())?,
+        ResumeReason::CommitOrder { .. } => String::new(),
     };
     Ok(section)
 }
