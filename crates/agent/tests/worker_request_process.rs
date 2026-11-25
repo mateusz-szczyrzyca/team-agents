@@ -4290,9 +4290,9 @@ git commit -qm 'Complete retained work'
         assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
         assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
     }
-    #[test]
-    fn recovery_keeps_a_request_queued_without_free_workers_and_drops_its_old_answer() {
-        let mut world = World::new_custom(
+    /// Builds the worker pool for queued recovery and late-answer fencing.
+    fn queued_recovery_world() -> World {
+        World::new_custom(
             &[
                 AgentDef {
                     name: "claude-1",
@@ -4312,7 +4312,12 @@ git commit -qm 'Complete retained work'
                 },
             ],
             None,
-        );
+        )
+    }
+
+    #[test]
+    fn recovery_keeps_a_request_queued_without_free_workers_and_drops_its_old_answer() {
+        let mut world = queued_recovery_world();
         world.script(
             "queued-recovery",
             &format!(
