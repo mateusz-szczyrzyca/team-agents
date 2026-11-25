@@ -493,7 +493,7 @@ new session; `b`, `ok` and any other answer stop it. Each hand-over is logged as
 why (`no_status`, `hang`, `turn_limit`, `busy`, `round_overdue`, ...).
 
 **A round that goes on too long.** A solo agent, a member or a coordinator that works on an item for more than
-`[limits] round_minutes` (default `120`) without its pull request in review is stopped by the daemon, and the task is
+`[limits] round_minutes` (off by default; the example configuration gives `120`) without its pull request in review is stopped by the daemon, and the task is
 handed over as above at once, without a new session of the same agent first: to the first fitting agent of `[replacement]
 agents`, which is briefed in a new session on the same worktree and branch; to the team's lead; or, with nobody to take it
 (`mode = "off"`, a solo task with no agent listed), the task fails and you are notified with the round, the item and the
@@ -502,7 +502,7 @@ task to the agent that holds it now, and the first run after a run that ended st
 or one the daemon cut to commit its work, starts its clock again. A round in review, approved or being fixed after a review
 is never stopped by this limit, nor a worker or a reviewer. The cut counts as no retry, turn or rejection. Each cut is the
 debug decision `round_overdue` in the history, and its hand-over the log event `task_handed_over` with
-`reason = "round_overdue"`. `round_minutes = 0` turns it off.
+`reason = "round_overdue"`. `round_minutes = 0`, the default, turns it off.
 
 **Returns of a lead.** When the lead of a team sends the work of a member back instead of taking it, it ends its final
 message with a line `RETURNED: <item>` beside `STATUS:` (its role text says so). The daemon counts the line only where

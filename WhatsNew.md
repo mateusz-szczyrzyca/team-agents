@@ -9,16 +9,16 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.114.0 · agent-core 0.114.0 — 25.11.2026 — PR #282
+## agent 0.114.0 · agent-core 0.114.0 — 25.11.2026 — pushed to main
 
 ### New features
-- [agent] [agent-core] An agent that works on an item for more than two hours without its pull request in review is stopped, and its task is handed over at once to the first fitting agent of `[replacement] agents`, which is briefed in a new session on the same branch, or to the team's lead. With nobody to take it over, the task fails and you are notified with the round, the item and the minutes. No `agent swap` is needed. The clock starts again after a hand-over and when you stop and resume the task.
+- [agent] [agent-core] An agent that works on an item longer than `[limits] round_minutes` (e.g. `120`) without its pull request in review is stopped, and its task is handed over at once to the first fitting agent of `[replacement] agents`, which is briefed in a new session on the same branch, or to the team's lead. With nobody to take it over, the task fails and you are notified with the round, the item and the minutes. No `agent swap` is needed. The clock starts again after a hand-over and when you stop and resume the task.
 
 ### Enhancements
 - [agent] Every `task_handed_over` log record names why the task was handed over in `reason`, e.g. `reason = "round_overdue"` or `reason = "hang"`.
 
 ### Configuration
-- [agent-core] new: `[limits] round_minutes` (default `120`) — minutes an agent may work on an item without its pull request in review before its task is handed over; `0` turns it off.
+- [agent-core] **Action:** new: `[limits] round_minutes` (default `0`, off) — minutes an agent may work on an item without its pull request in review before its task is handed over; add `round_minutes = 120` to `[limits]` to turn it on.
 
 ## agent 0.113.0 · agent-core 0.113.0 — 25.11.2026 — PR #279
 

@@ -92,8 +92,9 @@ const DEFAULT_RUNS_PER_AGENT: u32 = 1;
 /// Runs an agent of `[tiers] workers` may have going at once, by default.
 const DEFAULT_RUNS_PER_WORKER: u32 = 1;
 
-/// Minutes a round may go on without its pull request in review before its task is handed over, by default: two hours.
-const DEFAULT_ROUND_MINUTES: u32 = 120;
+/// Minutes a round may go on without its pull request in review before its task is handed over, by default: `0`, no
+/// limit, so that an installation that does not name the key keeps its behaviour. The example configuration gives `120`.
+const DEFAULT_ROUND_MINUTES: u32 = 0;
 
 /// Lines of a run's error output read to recognise limits, by default.
 const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
