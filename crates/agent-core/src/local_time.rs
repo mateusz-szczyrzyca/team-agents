@@ -112,8 +112,9 @@ impl Zone {
     /// The hour and the minute of the moment `at` in this zone, `21:10`, without the date or the zone: for a line that
     /// shows only the time of the day.
     #[must_use]
-    pub fn clock_minute(&self, _at: Timestamp) -> String {
-        String::new()
+    pub fn clock_minute(&self, at: Timestamp) -> String {
+        let (local, _) = self.localized(at);
+        format!("{:02}:{:02}", local.hour(), local.minute())
     }
 
     /// Formats the timestamp that ends a daemon `waiting` line (`..., next try <timestamp>`, `..., owed by the lead since <timestamp>`) in
@@ -145,14 +146,12 @@ impl Zone {
         self.written(at, Precision::Second)
     }
 
-    /// The moment `at` in this zone, with its clock written at `precision`.
-    fn written(&self, at: Timestamp, precision: Precision) -> String {
-        if matches!(self, Self::Utc) {
-            return at.to_string();
-        }
+    /// The moment `at` as a local time of this zone with the offset it was resolved to; in UTC marked as UTC when the zone
+    /// has no offset or the local time leaves the years 0000 to 9999.
+    fn localized(&self, at: Timestamp) -> (OffsetDateTime, Resolved) {
         let utc = OffsetDateTime::from(at.as_utc());
         let resolved = self.resolve(at.as_utc());
-        let (local, resolved) = match utc
+        match utc
             .checked_to_offset(resolved.offset)
             .filter(|local| (0..=9999).contains(&local.year()))
         {
@@ -164,7 +163,15 @@ impl Zone {
                     marked: true,
                 },
             ),
-        };
+        }
+    }
+
+    /// The moment `at` in this zone, with its clock written at `precision`.
+    fn written(&self, at: Timestamp, precision: Precision) -> String {
+        if matches!(self, Self::Utc) {
+            return at.to_string();
+        }
+        let (local, resolved) = self.localized(at);
         let date = local.date();
         let time = local.time();
         let clock = match precision {
