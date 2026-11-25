@@ -1450,8 +1450,8 @@ async fn a_reviewer_refused_again_and_again_by_its_provider_is_replaced_after_th
     crate::daemon::history::close(step.writer).await;
 }
 
-// Rule: a reviewer that worked after the request and was refused once only since is kept, as the refusal rule says: it
-// is tried again after its pause, and the patience does not replace it.
+// Rule: a reviewer that worked after the request and was refused only since has its patience counted from its work, so
+// it is not replaced before the patience is over.
 #[tokio::test]
 async fn a_reviewer_refused_after_it_worked_waits_the_patience_from_its_work() {
     let (_rig, mut step, team, task, asked) = a_review_to_come().await;
@@ -1465,16 +1465,12 @@ async fn a_reviewer_refused_after_it_worked_waits_the_patience_from_its_work() {
         (24, RunEnd::RateLimited),
     ];
     runs_then_paused(&mut step, &task, asked, &worked);
-    counted_refusals(&mut step, &task, 1);
 
     assert_eq!(
         gone_after(&step, &team, asked, 30),
         Vec::<agent_core::ids::TaskId>::new()
     );
-    assert_eq!(
-        gone_after(&step, &team, asked, 35),
-        Vec::<agent_core::ids::TaskId>::new()
-    );
+    assert_eq!(gone_after(&step, &team, asked, 35), vec![task]);
     crate::daemon::history::close(step.writer).await;
 }
 
