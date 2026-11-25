@@ -1043,3 +1043,15 @@ async fn refusal_change_and_wait_notices_use_the_headers_local_zone() {
         );
     }
 }
+
+#[tokio::test]
+async fn a_wait_for_another_agent_keeps_the_pause_until_wording() {
+    let (_, body) = rendered(&Notice::NoFreeAgent {
+        refused_agent: "claude-1".parse().unwrap(),
+        refused_provider: "claude".to_owned(),
+        return_at: at(3600),
+    })
+    .await;
+    assert!(body.contains("is paused until 2026-11-11 20:15 +00:00"), "{body}");
+    assert!(body.contains("stays paused:"), "{body}");
+}
