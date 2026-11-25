@@ -992,9 +992,30 @@ fn paused_by(
     agent
 }
 
-/// The human has a question open of the task `number`.
-fn question_of(state: &mut State, team: &TeamId, number: u32) {
+/// The human has a question open of the task `number`, which took part in `round`: a task that has not run for it is given a
+/// finished run first.
+fn question_of(state: &mut State, team: &TeamId, round: &RoundId, number: u32) {
     let mut found = state.team_mut(team).unwrap();
+    let ran = found
+        .find(&task(number))
+        .is_some_and(|(_, member)| member.runs().iter().any(|run| run.rounds().contains(round)));
+    if !ran {
+        found
+            .begin_run(
+                &task(number),
+                NewRun {
+                    id: run(30 + number),
+                    at: at(41),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(number)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(42), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Done).unwrap();
+    }
     let (_, mut member) = found.find_mut(&task(number)).unwrap();
     let file = agent_core::config::AbsolutePath::try_from("/home/dev/agents/tasks/questions-1.md".to_owned()).unwrap();
     member
@@ -1041,7 +1062,7 @@ fn round_of_a_paused_reviewer(
     let (mut state, team, round) = idle_round(phase, LEAD_DONE);
     let agent = paused_by(&mut state, &team, &round, 4, end, Some(until));
     if asked {
-        question_of(&mut state, &team, 1);
+        question_of(&mut state, &team, &round, 1);
     }
     (state, team, round, agent)
 }
@@ -1104,7 +1125,7 @@ async fn a_lead_and_a_member_paused_by_their_provider_are_waited_for_at_the_prov
             let (mut state, team, round) = round_for(number, TaskStatus::Queued);
             let agent = paused_by(&mut state, &team, &round, number, RunEnd::RateLimited, Some(until));
             if asked {
-                question_of(&mut state, &team, other);
+                question_of(&mut state, &team, &round, other);
             }
 
             let (waiting, line, clock) = wait_of(&state, &team, &round, 60, until).await;
