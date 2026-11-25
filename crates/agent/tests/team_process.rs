@@ -1383,7 +1383,9 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert!(line_of(&status, &quota_hit).contains("paused"), "{status}");
 
         move_the_refusal_and_the_pause_back(&mut world, "claude-2");
-        eventually("the fresh task to run on claude-2 after its return", || world.runs(&fresh) == 1);
+        eventually("the fresh task to run on claude-2 after its return", || {
+            world.runs(&fresh) == 1
+        });
     }
 
     /// Checks for `window` that `task` has no run: the daemon is given the time to start it if it would.
