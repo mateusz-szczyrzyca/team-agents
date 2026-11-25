@@ -200,9 +200,35 @@ enum Event {
     User(Turn),
     /// The end of the run.
     Result(Finish),
-    /// Any other event: rate limits, partial messages, ...
+    /// A rate-limit window of the account: a refusal when it rejected the request.
+    RateLimitEvent(RateLimitEvent),
+    /// Any other event: partial messages, ...
     #[serde(other)]
     Other,
+}
+
+/// The `rate_limit_event` event: the state of one rate-limit window.
+#[derive(Debug, Deserialize)]
+struct RateLimitEvent {
+    /// The window; absent in an event that names none.
+    rate_limit_info: Option<RateLimitInfo>,
+}
+
+/// The state of a rate-limit window.
+#[derive(Debug, Deserialize)]
+struct RateLimitInfo {
+    /// `allowed`, or `rejected` when the window refused the request.
+    status: Option<String>,
+}
+
+impl RateLimitEvent {
+    /// Whether the window refused the request: such an event is kept for the error tail, where its reset time is read.
+    fn rejected(&self) -> bool {
+        self.rate_limit_info
+            .as_ref()
+            .and_then(|info| info.status.as_deref())
+            .is_some_and(|status| status == "rejected")
+    }
 }
 
 /// What a `system` event says.
@@ -472,6 +498,13 @@ impl OutputParser for ClaudeParser {
                 self.usage.report_written(finish.usage.and_then(|usage| usage.output));
                 self.total_cost_usd = finish.total_cost_usd;
                 Ok(events)
+            }
+            Event::RateLimitEvent(window) => {
+                // Only a refusal is kept: an allowed window of every turn would push the lines of the error out of the tail.
+                if window.rejected() {
+                    self.progress.note_error_line(line);
+                }
+                Ok(Vec::new())
             }
             Event::System(_) | Event::Other => Ok(Vec::new()),
         }
