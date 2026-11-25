@@ -128,8 +128,11 @@ pub(super) mod retries {
         /// # Errors
         /// [`InvalidLimit`] above 10.
         pub fn new(value: u32) -> Result<Self, InvalidLimit> {
-            // STUB (RED): accepts every number.
-            Ok(Self(value))
+            if value <= MAX {
+                Ok(Self(value))
+            } else {
+                Err(InvalidLimit { value })
+            }
         }
 
         /// The number of retries this limit allows.
@@ -155,8 +158,8 @@ pub(super) mod retries {
 
     impl Default for Limit {
         fn default() -> Self {
-            // STUB (RED): wrong default, the GREEN commit sets one retry.
-            Self(0)
+            // One retry after the pause, as the human asked: the task is tried again before its agent changes.
+            Self(1)
         }
     }
 }
