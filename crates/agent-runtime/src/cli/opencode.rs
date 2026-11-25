@@ -456,15 +456,8 @@ fn refusal_from_error(error: &Value) -> Option<agent_core::decide::outcome::Refu
         "provider.quota" => agent_core::decide::outcome::PauseReason::Quota,
         _ => agent_core::decide::outcome::PauseReason::RateLimit,
     };
-    let message = error
-        .get("message")
-        .and_then(Value::as_str)
-        .unwrap_or("")
-        .to_owned();
-    let status = error
-        .get("status")
-        .map(|s| s.to_string())
-        .unwrap_or_default();
+    let message = error.get("message").and_then(Value::as_str).unwrap_or("").to_owned();
+    let status = error.get("status").map(|s| s.to_string()).unwrap_or_default();
     // The provider's code is inside `response.body` which is a JSON string.
     let code = error
         .pointer("/response/body")

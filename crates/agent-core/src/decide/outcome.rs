@@ -519,7 +519,11 @@ fn has_number(text: &str, number: &str) -> bool {
 
 impl Limit {
     /// The end and the pause of a run that stopped on this limit.
-    fn classify(self, context: &LimitContext<'_>, refusal: Option<RefusalSummary>) -> Result<Classified, ClassifyError> {
+    fn classify(
+        self,
+        context: &LimitContext<'_>,
+        refusal: Option<RefusalSummary>,
+    ) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
         let reset = reset_time(&self.lines, now, context.local_offset);
         let wait = match reset {
@@ -1152,7 +1156,7 @@ mod tests {
             Classified {
                 end: RunEnd::Stopped,
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1173,7 +1177,7 @@ mod tests {
             Classified {
                 end: RunEnd::Hung,
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1219,7 +1223,7 @@ mod tests {
             Classified {
                 end: RunEnd::Hung,
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1291,7 +1295,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1327,7 +1331,7 @@ mod tests {
                     outcome: RunOutcome::Done
                 },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1444,7 +1448,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1458,7 +1462,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1508,7 +1512,7 @@ mod tests {
                     outcome: RunOutcome::Done
                 },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
         let class = clean(Some("May I continue?"), "429 Too Many Requests (retrying in 2s)");
@@ -1517,7 +1521,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(0) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1830,7 +1834,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
     }
@@ -1945,7 +1949,7 @@ mod tests {
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
                 pause: None,
-                    refusal: None
+                refusal: None
             }
         );
         let late = format!("{filler}usage limit reached");
@@ -2065,8 +2069,7 @@ mod tests {
 
         #[test]
         fn builds_from_fields_with_quota_kind_for_quota_reason() {
-            let summary =
-                RefusalSummary::from_fields("402", "Insufficient credits", "", PauseReason::Quota);
+            let summary = RefusalSummary::from_fields("402", "Insufficient credits", "", PauseReason::Quota);
             assert_eq!(summary.status, "402");
             assert_eq!(summary.message, "Insufficient credits");
             assert_eq!(summary.code, "");
@@ -2089,12 +2092,7 @@ mod tests {
 
         #[test]
         fn builds_from_fields_with_overloaded_kind_for_503_status() {
-            let summary = RefusalSummary::from_fields(
-                "503",
-                "Service Unavailable",
-                "",
-                PauseReason::RateLimit,
-            );
+            let summary = RefusalSummary::from_fields("503", "Service Unavailable", "", PauseReason::RateLimit);
             assert_eq!(summary.kind, RefusalKind::Overloaded);
         }
 
@@ -2106,8 +2104,7 @@ mod tests {
 
         #[test]
         fn builds_from_fields_with_provider_error_kind_for_non_limit_status() {
-            let summary =
-                RefusalSummary::from_fields("500", "Internal Server Error", "", PauseReason::RateLimit);
+            let summary = RefusalSummary::from_fields("500", "Internal Server Error", "", PauseReason::RateLimit);
             assert_eq!(summary.kind, RefusalKind::ProviderError);
         }
 
