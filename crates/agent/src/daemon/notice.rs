@@ -364,7 +364,6 @@ impl Notice {
                 evidence,
                 refusal,
             } => {
-                let until_local_text = Zone::from(context.offset).stamp_minute(*until);
                 let evidence_text = match refusal {
                     Some(r) => refusal_text(r, reason, evidence),
                     None => evidence.clone(),
@@ -372,7 +371,7 @@ impl Notice {
                 (
                     HarnessPrompt::NoticePaused,
                     common
-                        .with("until", &until_local_text)?
+                        .with("until", until.to_string())?
                         .with("reason", reason.to_string())?
                         .with("evidence", &evidence_text)?,
                     NoticeKind::Paused,
