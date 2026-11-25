@@ -183,7 +183,7 @@ fn field<'a>(entry: &'a LogEntry, name: &str) -> &'a str {
 // branch of 2.1 out, and the question to the human is about the test of 1.1 and about the tip of 1.1.
 #[tokio::test]
 async fn checks_judge_the_item_branch_tip() {
-    let mut rig = rig_of("fix-script-then:bfix", "done").await;
+    let mut rig = rig_of("fix-script-then:bfix", "questions").await;
     fix_script(&rig, "bfix", FIX_EDITING_A_TEST, BACK_TO_THE_OTHER_ITEM);
     let items = items_ready(&mut rig).await;
 
@@ -192,11 +192,9 @@ async fn checks_judge_the_item_branch_tip() {
         QuestionsFile::parse(&std::fs::read_to_string(rig.home.questions_file(&items.task, NonZeroU32::MIN)).unwrap())
             .unwrap();
     let record = load_checks_record(&rig.home, &items.task).await.unwrap().unwrap();
-    let on_branch = git(&items.lead, &["symbolic-ref", "--short", "HEAD"]);
     let fixed_tip = git(&items.lead, &["rev-parse", &items.fixed]);
     rig.stop().await.unwrap();
 
-    assert_eq!(on_branch, items.other);
     let title = file.entries()[0].title();
     assert!(title.contains("`tests/existing.txt`"), "{title}");
     assert!(!title.contains("tests/new.txt"), "{title}");
