@@ -39,21 +39,30 @@ impl Kind {
 /// The kind a pause's evidence names in its first words, when [`describe`] wrote the evidence from a record that has
 /// fields: the inverse of [`Kind::words`]. Evidence that names no kind has none.
 #[must_use]
-pub fn kind_of_evidence(_evidence: &str) -> Option<Kind> {
-    // Stub for the RED step: no kind is ever named.
-    None
+pub fn kind_of_evidence(evidence: &str) -> Option<Kind> {
+    [Kind::Overload, Kind::RateLimit, Kind::Quota].into_iter().find(|kind| {
+        evidence
+            .strip_prefix(kind.words())
+            .and_then(|rest| rest.strip_prefix(KIND_SEPARATOR))
+            .is_some()
+    })
 }
 
 /// The kind of a pause: the kind its evidence names, else the kind of its reason. A quota reason is a quota, a rate
 /// limit reason is a rate limit or an overload, which only the evidence can tell apart.
 #[must_use]
-pub fn pause_kind(_reason: PauseReason, _evidence: &str) -> Kind {
-    // Stub for the RED step: every pause is a rate limit.
-    Kind::RateLimit
+pub fn pause_kind(reason: PauseReason, evidence: &str) -> Kind {
+    kind_of_evidence(evidence).unwrap_or(match reason {
+        PauseReason::Quota => Kind::Quota,
+        PauseReason::RateLimit => Kind::RateLimit,
+    })
 }
 
 /// Separator between the parts of a description.
 const SEPARATOR: &str = " · ";
+
+/// What [`describe`] writes between the kind and the parts of a description: `an overload: 429 · …`.
+const KIND_SEPARATOR: &str = ": ";
 
 /// The HTTP status of a quota that is used up.
 const PAYMENT_REQUIRED: u64 = 402;
@@ -184,7 +193,7 @@ fn compose(kind: Option<Kind>, parts: impl IntoIterator<Item = String>) -> Optio
     }
     let body = parts.join(SEPARATOR);
     Some(match kind {
-        Some(kind) => format!("{}: {body}", kind.words()),
+        Some(kind) => format!("{}{KIND_SEPARATOR}{body}", kind.words()),
         None => body,
     })
 }
