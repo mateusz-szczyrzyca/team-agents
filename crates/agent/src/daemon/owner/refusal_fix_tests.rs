@@ -778,3 +778,199 @@ gate = ["true"]
     assert_eq!(handled.status, TaskStatus::Paused);
     assert_eq!(owner.wakes.get(&task(1)), Some(&at(10)));
 }
+
+#[tokio::test]
+async fn refusal_lead_uses_configured_investigator_priority() {
+    refusal_candidate_case("priority").await;
+}
+
+#[tokio::test]
+async fn refusal_member_never_uses_a_worker_from_the_replacement_list() {
+    refusal_candidate_case("worker").await;
+}
+
+#[tokio::test]
+async fn refusal_candidate_with_remaining_run_capacity_is_available() {
+    refusal_candidate_case("capacity").await;
+}
+
+#[tokio::test]
+async fn refusal_of_an_investigator_skips_its_actual_provider() {
+    refusal_candidate_case("provider").await;
+}
+
+/// Exercises configuration-to-candidate conversion through the refusal boundary.
+async fn refusal_candidate_case(case: &str) {
+    use crate::daemon::settle::Settled;
+    use crate::fixtures::{member, normal, repo};
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use agent_core::state::{Crew, MergeMode, TaskListText, Team};
+
+    let mut state = if case == "capacity" { solo_state() } else { pair_state() };
+    let (number, replacements, expected) = match case {
+        "priority" => (1, "\"inv-b\", \"inv-a\"", "inv-b"),
+        "worker" => (2, "\"worker-1\", \"codex-1\"", "codex-1"),
+        "capacity" => {
+            let mut busy = member(3, normal("codex-1"));
+            busy.transition(TaskStatus::Running).unwrap();
+            busy.begin_run(run(3), at(0), None).unwrap();
+            state
+                .insert_team(Team::new(
+                    team_id(1),
+                    repo(),
+                    at(0),
+                    MergeMode::Autopilot,
+                    TaskListText::new("Other work.".to_owned()).unwrap(),
+                    Crew::solo(busy).unwrap(),
+                ))
+                .unwrap();
+            (1, "\"codex-1\"", "codex-1")
+        }
+        "provider" => {
+            state
+                .hand_over_task(&task(1), crate::fixtures::investigator("inv-a"), at(0))
+                .unwrap();
+            (1, "\"inv-b\", \"inv-c\"", "inv-c")
+        }
+        _ => panic!("unknown case"),
+    };
+    state.record_limit_refusals(task(number), 1);
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        &format!(
+            r#"
+[agents.claude-1]
+cli = "claude"
+[agents.claude-2]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+[agents.worker-1]
+cli = "codex"
+[investigators.inv-a]
+cli = "codex"
+[investigators.inv-b]
+cli = "codex"
+[investigators.inv-c]
+cli = "opencode"
+model = "openrouter/example"
+[tiers]
+normal = ["claude-1", "claude-2", "codex-1"]
+workers = ["worker-1"]
+[limits]
+runs_per_agent = 2
+[replacement]
+agents = [{replacements}]
+replacements = 3
+[binaries]
+claude = "fake"
+codex = "fake"
+opencode = "fake"
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#
+        ),
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(number)).unwrap();
+    let handled = owner
+        .keep_refusal(
+            &task(number),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(100),
+                reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(handled.status, TaskStatus::Queued);
+    assert_eq!(
+        owner
+            .parts
+            .state
+            .find_task(&task(number))
+            .unwrap()
+            .member
+            .agent()
+            .name(),
+        expected
+    );
+}
+
+#[tokio::test]
+async fn refusal_upgrade_rechecks_a_pre_change_paused_quota_without_a_counter() {
+    let state = agent_core::state::State::from_json(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../agent-core/tests/fixtures/state-before-refusal-takeover-paused.json"
+    )))
+    .unwrap();
+    let task_id = state.teams()[0].crew().roster()[0].1.task().clone();
+    assert_eq!(state.limit_refusals(&task_id), 0);
+    let before = state.find_task(&task_id).unwrap().member.clone();
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        r#"
+[agents.claude-1]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+[tiers]
+normal = ["claude-1", "codex-1"]
+[binaries]
+claude = "fake"
+codex = "fake"
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#,
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::seconds(2));
+    owner.recover().await.unwrap();
+    owner.wake_due().await.unwrap();
+    let member = owner.parts.state.find_task(&task_id).unwrap().member;
+    assert_eq!(member.agent().name(), "codex-1");
+    assert_eq!(member.status(), TaskStatus::Queued);
+    assert_eq!(member.runs(), before.runs());
+    assert_eq!(member.bus_agent(), before.bus_agent());
+}
+
+#[tokio::test]
+async fn refusal_with_only_the_same_provider_returns_the_wait_notice() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    let mut state = solo_state();
+    state.record_limit_refusals(task(1), 1);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(100),
+                reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap();
+    assert!(matches!(
+        handled,
+        Some(super::RefusalHandled {
+            status: TaskStatus::Paused,
+            notice: Notice::NoFreeAgent { .. }
+        })
+    ));
+}
