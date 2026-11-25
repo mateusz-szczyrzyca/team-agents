@@ -309,6 +309,15 @@ when every notice has either been accepted or dropped. Only the agents listed in
 for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
 handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
 
+**A refused agent is kept out.** A run that its provider refuses (a rate limit, an overload or an exhausted quota) pauses
+its task until the time the provider names or the configured pause (`[limits] rate_limit_pause_minutes` or
+`quota_pause_minutes`), and the agent is refused until that same time: it gets no new task, review or takeover before
+then, and comes back to the pool by itself. The task is tried again in the same session `[replacement] limit_retries`
+times (default `1`); when the retries are used up, or a quota's reset is later than `[replacement] limit_wait_minutes`
+(default `60`), the rule answers "change the agent", which is logged as a `decision_taken` with `decision` `limit`.
+Acting on that answer (handing the task to another provider's agent) is not in this version: the task keeps its pause.
+`agent status` shows a refused agent with its return time.
+
 **Serena: finding code.** With `[binaries] serena` set, every run is given Serena, the MCP server that finds code
 through language servers, and its first prompt says so in a short section (`prompts/harness/run/serena.md`) right after
 the working context: find a symbol with `find_symbol`, its callers with `find_referencing_symbols`, what a file declares
