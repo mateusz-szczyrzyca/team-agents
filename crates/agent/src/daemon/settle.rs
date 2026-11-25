@@ -3,6 +3,7 @@
 //! Pure functions: the daemon feeds them what the engine observed and carries out what they say.
 
 use agent_core::config::{Limits, Minutes};
+use agent_core::decide::limit::Limit;
 use agent_core::decide::outcome::{ClassifyError, MAX_PAUSE, Pause, RESET_MARGIN};
 use agent_core::kinds::Role;
 use agent_core::state::{RunEnd, Timestamp};
@@ -113,6 +114,15 @@ pub(super) fn wake_time(
     let until =
         Timestamp::from_utc(until).map_err(|source| ClassifyError::PauseOutOfRange { now: ended_at, source })?;
     Ok(Some(until))
+}
+
+/// What a refused run showed of its limit, for [`agent_core::decide::limit`]; `None` for a run that was not refused.
+///
+/// `now` is when the run ended: a reset that is not after it is no reset, as for the classifier.
+pub(super) fn limit_of(end: &RunEnd, now: Timestamp) -> Option<Limit> {
+    // STUB (RED): names no limit yet.
+    let _ = (end, now);
+    None
 }
 
 #[cfg(test)]
