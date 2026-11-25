@@ -681,3 +681,100 @@ async fn old_state_with_a_refused_task_follows_the_change_agent_rule() {
         other => panic!("expected AgentChanged notice, got {other:?}"),
     }
 }
+
+#[tokio::test]
+async fn refusal_waiting_member_takes_first_returned_agent_before_its_own_wake() {
+    let mut state = pair_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(0), None).unwrap();
+        member.end_run(at(1), RunEnd::RateLimited).unwrap();
+        member.transition(TaskStatus::Paused).unwrap();
+    }
+    state.record_limit_refusals(task(2), 2);
+    state.keep_refused_until("claude-2".parse().unwrap(), at(100));
+    state.keep_refused_until("codex-1".parse().unwrap(), at(50));
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        r#"[agents.claude-1]
+cli = "claude"
+[agents.claude-2]
+cli = "claude"
+        [agents.codex-1]
+cli = "codex"
+[tiers]
+normal = ["claude-1", "claude-2", "codex-1"]
+        [binaries]
+claude = "fake"
+codex = "fake"
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#,
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.wakes.insert(task(2), at(100));
+    let before = owner.parts.state.find_task(&task(2)).unwrap().member.clone();
+    daemon.clock.advance(time::Duration::seconds(50));
+
+    owner.wake_due().await.unwrap();
+
+    let found = owner.parts.state.find_task(&task(2)).unwrap();
+    assert_eq!(found.member.agent().name(), "codex-1");
+    assert_eq!(found.member.status(), TaskStatus::Queued);
+    assert_eq!(found.member.task(), before.task());
+    assert_eq!(found.member.runs(), before.runs());
+    assert_eq!(found.member.past_holders().len(), 1);
+    assert!(!owner.wakes.contains_key(&task(2)));
+    // Rechecking must not count the already-ended run twice.
+    assert_eq!(owner.parts.state.limit_refusals(&task(2)), 2);
+}
+
+#[tokio::test]
+async fn refusal_wait_never_outlasts_the_original_agents_return() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    let mut state = solo_state();
+    state.record_limit_refusals(task(1), 1);
+    state.keep_refused_until("codex-1".parse().unwrap(), at(50));
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        r#"[agents.claude-1]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+        [tiers]
+normal = ["claude-1", "codex-1"]
+[binaries]
+claude = "fake"
+codex = "fake"
+        [repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#,
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(10),
+                reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(handled.status, TaskStatus::Paused);
+    assert_eq!(owner.wakes.get(&task(1)), Some(&at(10)));
+}
