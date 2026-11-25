@@ -80,7 +80,7 @@ fn a_history_of_version_26_keeps_its_commit_cut_and_accepts_worker_recovery_even
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 27);
+    assert_eq!(version, 28);
     db.write_logs(&[
         entry(LogEvent::WorkerRequestReturned, 2),
         entry(LogEvent::WorkerRequestRequeued, 3),
