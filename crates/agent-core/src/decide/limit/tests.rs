@@ -65,7 +65,10 @@ fn quota_reset_at_the_wait_limit_waits() {
 
 #[test]
 fn quota_reset_above_the_wait_limit_changes_agent_at_once() {
-    assert_eq!(decide(&quota(Some(Duration::minutes(61)), 1, 60)), Decision::ChangeAgent);
+    assert_eq!(
+        decide(&quota(Some(Duration::minutes(61)), 1, 60)),
+        Decision::ChangeAgent
+    );
 }
 
 #[test]

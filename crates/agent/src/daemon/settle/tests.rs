@@ -213,12 +213,20 @@ fn a_rate_limit_or_a_quota_is_a_refusal_and_anything_else_is_not() {
     let now = at(100);
     let refused = [
         (RunEnd::RateLimited, Some(Limit::RateLimit)),
-        (RunEnd::QuotaExhausted { resets_at: None }, Some(Limit::Quota { reset_in: None })),
+        (
+            RunEnd::QuotaExhausted { resets_at: None },
+            Some(Limit::Quota { reset_in: None }),
+        ),
     ];
     for (end, expected) in refused {
         assert_eq!(limit_of(&end, now), expected, "{end:?}");
     }
-    for end in [RunEnd::Hung, RunEnd::Stopped, RunEnd::TurnLimit, RunEnd::NoStatus { exit_code: Some(1) }] {
+    for end in [
+        RunEnd::Hung,
+        RunEnd::Stopped,
+        RunEnd::TurnLimit,
+        RunEnd::NoStatus { exit_code: Some(1) },
+    ] {
         assert_eq!(limit_of(&end, now), None, "{end:?}");
     }
     assert_eq!(limit_of(&reported(RunOutcome::Done), now), None);
@@ -227,12 +235,18 @@ fn a_rate_limit_or_a_quota_is_a_refusal_and_anything_else_is_not() {
 #[test]
 fn a_quota_names_how_far_away_its_reset_is_only_when_the_reset_is_in_the_future() {
     let now = at(100);
-    let later = RunEnd::QuotaExhausted { resets_at: Some(at(400)) };
+    let later = RunEnd::QuotaExhausted {
+        resets_at: Some(at(400)),
+    };
     assert_eq!(
         limit_of(&later, now),
-        Some(Limit::Quota { reset_in: Some(time::Duration::seconds(300)) })
+        Some(Limit::Quota {
+            reset_in: Some(time::Duration::seconds(300))
+        })
     );
 
-    let past = RunEnd::QuotaExhausted { resets_at: Some(at(50)) };
+    let past = RunEnd::QuotaExhausted {
+        resets_at: Some(at(50)),
+    };
     assert_eq!(limit_of(&past, now), Some(Limit::Quota { reset_in: None }));
 }
