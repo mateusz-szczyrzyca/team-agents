@@ -296,8 +296,13 @@ under `crates/`: its layout, its process model and the rules every item of the p
   see in the diff.
 - The PR description: what and why, how it was tested (commands and results), compatibility notes (rule 9),
   every lint suppression, and anything the reviewer should look at first.
+- **Versions.** Every crate has its own `version` in `crates/<crate>/Cargo.toml`. A PR raises by `0.1.0` (minor + 1,
+  patch 0) the version of each crate whose code it changes — and only of those — from that crate's version on `main`,
+  with `Cargo.lock` in the same commit. A change of the prompts alone raises the crate whose behaviour it changes (its
+  tag in `WhatsNew.md`); docs, tools or tests alone raise none. The heading of the `WhatsNew.md` entry names the raised
+  crates: `## agent 0.110.0 · agent-core 0.109.0 — 26.11.2026 — PR #272`.
 - **Say what the new version brings.** A PR that raises the version adds its entry at the top of
-  [`WhatsNew.md`](WhatsNew.md), in the commit that raises the version: a heading with the version, the date and the
+  [`WhatsNew.md`](WhatsNew.md), in the commit that raises the version: a heading with the raised crates and their versions, the date and the
   PR, then its lines under `### New features`, `### Bug fixes`, `### Enhancements` and `### Configuration` — only the
   headings that have something under them. Every line starts with the tags of the crates or modules whose code the change is in, so
   that the reader knows where to look: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]` —
@@ -315,7 +320,7 @@ under `crates/`: its layout, its process model and the rules every item of the p
   The example to follow:
 
   ```markdown
-  ## 0.17.0 — 19.11.2026 — PR #131
+  ## agent 0.17.0 · agent-core 0.17.0 — 19.11.2026 — PR #131
 
   ### Bug fixes
   - [agent] A message sent to a lead during a fix pass no longer loses the lead's fix response.

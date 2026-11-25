@@ -142,12 +142,15 @@ mod daemon_process {
 
         assert!(status.status.success(), "{status:?}");
         // The versions of the command come first, the daemon being the same build.
-        let version = env!("CARGO_PKG_VERSION");
+        let (version, core, runtime, web) = (
+            env!("CARGO_PKG_VERSION"),
+            agent_core::VERSION,
+            agent_runtime::VERSION,
+            agent_web::VERSION,
+        );
         assert_eq!(
             String::from_utf8(status.stdout).unwrap(),
-            format!(
-                "agent {version} · agent-core {version} · agent-runtime {version} · agent-web {version}\nno teams\n"
-            )
+            format!("agent {version} · agent-core {core} · agent-runtime {runtime} · agent-web {web}\nno teams\n")
         );
         assert_eq!(second.status.code(), Some(1), "{second:?}");
         assert!(String::from_utf8(second.stderr).unwrap().contains("already running"));

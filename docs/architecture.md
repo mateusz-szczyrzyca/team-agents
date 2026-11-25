@@ -1268,6 +1268,15 @@ activity log. **Only a pass on a clean tree is a pass of the commit** (`GateReco
 tree that is not clean says nothing about `head`. The record is the result the autopilot reads ("Pull requests, reviews and the merge"); an agent's word for
 it counts for nothing.
 
+**A gate asked again** (`Service::reusable`). The service remembers, per task and while it runs, the last gate that gated
+its commit (clean before and after): its commit, its command, its record and how many gates failed in a row there. A gate
+asked when the tree is clean at that commit with that command is not run when that gate passed, or when it failed
+`FAILED_RUNS_PER_COMMIT` (2) times in a row — one failure may be a flaky test and runs once more, so the harness's
+`GateStep::Retry` still runs after a lead's single failure. The client is answered with that record, under a log of its own
+holding that gate's output and a last line `gate: not run again: ...` that says why and what to do; the record is saved and
+told as any gate's, the history keeps only the gates that ran, and the answer is logged `checks_decided` with `outcome`
+`gate_reused`. A new commit, a changed tree or command, and a restarted daemon run the gate.
+
 **The command.** It prints first where the result is recorded (`tasks/<task>/gate.json`: a model CLI cuts a shell command
 that runs past its limit (the Bash tool of Claude Code has one, in minutes, and a gate may take 30) while the gate goes on in the daemon, so an agent reads the
 record there), then what it waits for, the last 60 lines of the output (at most the last 64 KiB of the log are

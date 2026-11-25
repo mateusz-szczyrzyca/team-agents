@@ -5,6 +5,17 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+From PR #271 every crate has a version of its own: a pull request raises by `0.1.0` the version of each crate whose
+code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
+0.108.0 the four crates shared one version, and the heading gave that one.
+
+## agent 0.109.0 — 25.11.2026 — PR #271
+
+### Enhancements
+- [agent] Each crate now has its own version: `agent status` shows `agent 0.109.0 · agent-core 0.108.0 · ...`, and a version goes up only when that crate's code changed; a lead that resolves a merge conflict is told to raise only the versions of the crates its branch changes.
+- [agent] A gate asked again on a clean commit where it already passed, with the same command, is answered with that pass at once instead of running again; one that failed twice in a row on the same commit is answered with its last failure, and its log ends with `gate: not run again: ...` and what to do (fix and commit, or ask in the questions file). A new commit or a changed tree runs the gate. On 25.11 such repeats took 2 of the day's 6 hours of gates.
+- [agent] Each gate answered that way is logged as `checks_decided` with `outcome` `gate_reused`. After a restart of the daemon the first gate of every task runs again.
+
 ## 0.108.0 — 25.11.2026 — PR #270
 
 ### Bug fixes
