@@ -70,3 +70,98 @@ async fn a_bus_that_cannot_be_run_says_why_under_each_task() {
         "{line}"
     );
 }
+
+fn shown(now: &str) -> Shown {
+    Shown {
+        now: now.parse().unwrap(),
+        zone: Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+    }
+}
+
+#[test]
+fn a_queued_request_says_since_when_it_waits_in_the_zone_of_the_status() {
+    let queued = request(3, Some("2.1"), None, DelegationStatus::Queued);
+
+    let line = request_line_waiting(
+        &queued,
+        Some("2026-11-25T20:10:30Z".parse().unwrap()),
+        shown("2026-11-25T20:22:45Z"),
+    );
+
+    assert_eq!(
+        line,
+        "    request H3  step 2.1  no worker yet  queued  waiting since 21:10 (12 min)"
+    );
+}
+
+#[test]
+fn the_minutes_of_a_wait_are_whole_and_never_negative() {
+    let queued = request(4, None, None, DelegationStatus::Queued);
+    let since = Some("2026-11-25T20:10:00Z".parse().unwrap());
+
+    assert_eq!(
+        request_line_waiting(&queued, since, shown("2026-11-25T20:10:59Z")),
+        "    request H4  no step  no worker yet  queued  waiting since 21:10 (0 min)"
+    );
+    assert_eq!(
+        request_line_waiting(&queued, since, shown("2026-11-25T20:00:00Z")),
+        "    request H4  no step  no worker yet  queued  waiting since 21:10 (0 min)"
+    );
+}
+
+#[test]
+fn a_request_without_a_note_or_not_queued_says_nothing_of_a_wait() {
+    let rows = [
+        (request(5, None, None, DelegationStatus::Queued), None),
+        (
+            request(6, None, Some("glm-1"), DelegationStatus::Running),
+            Some("2026-11-25T20:10:00Z".parse().unwrap()),
+        ),
+    ];
+    for (request, since) in rows {
+        assert_eq!(
+            request_line_waiting(&request, since, shown("2026-11-25T20:30:00Z")),
+            request_line(&request)
+        );
+    }
+}
+
+#[tokio::test]
+async fn the_note_of_a_queued_request_in_its_task_directory_gives_the_wait() {
+    let dir = tempfile::tempdir().unwrap();
+    let queued = request(3, Some("2.1"), None, DelegationStatus::Queued);
+    worker_wait::write_since(dir.path(), queued.id, "2026-11-25T20:10:00Z".parse().unwrap())
+        .await
+        .unwrap();
+
+    let line = line_of(&queued, dir.path(), shown("2026-11-25T20:22:00Z")).await;
+
+    assert_eq!(
+        line,
+        "    request H3  step 2.1  no worker yet  queued  waiting since 21:10 (12 min)"
+    );
+}
+
+#[tokio::test]
+async fn a_queued_request_without_a_note_is_shown_as_before() {
+    let dir = tempfile::tempdir().unwrap();
+    let queued = request(3, Some("2.1"), None, DelegationStatus::Queued);
+
+    let line = line_of(&queued, dir.path(), shown("2026-11-25T20:22:00Z")).await;
+
+    assert_eq!(line, "    request H3  step 2.1  no worker yet  queued");
+}
+
+#[tokio::test]
+async fn a_note_that_cannot_be_read_is_said_beside_the_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let queued = request(3, Some("2.1"), None, DelegationStatus::Queued);
+    std::fs::write(worker_wait::wait_path(dir.path(), queued.id), "damaged").unwrap();
+
+    let line = line_of(&queued, dir.path(), shown("2026-11-25T20:22:00Z")).await;
+
+    assert!(
+        line.starts_with("    request H3  step 2.1  no worker yet  queued  waiting since unknown ("),
+        "{line}"
+    );
+}

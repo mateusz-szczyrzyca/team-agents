@@ -508,13 +508,19 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
     match detail {
         Detail::Short => requests::Told::default(),
         Detail::Tasks => {
-            requests::told(
-                &activity.requests,
-                teams
-                    .iter()
-                    .flat_map(|team| team.members.iter().map(|member| &member.task)),
-            )
-            .await
+            let tasks = teams
+                .iter()
+                .flat_map(|team| team.members.iter().map(|member| &member.task));
+            match Timestamp::now(&SystemClock) {
+                Ok(now) => {
+                    let shown = requests::Shown {
+                        now,
+                        zone: activity.zone,
+                    };
+                    requests::told_waiting(&activity.requests, tasks, &activity.home, shown).await
+                }
+                Err(error) => requests::told(&requests::Source::Unknown(error_chain(&error)), tasks).await,
+            }
         }
     }
 }

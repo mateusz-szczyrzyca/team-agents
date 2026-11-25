@@ -719,6 +719,8 @@ pub struct WorkerSettings {
     tries: u32,
     /// How long a worker's run may last, in seconds; `0` has no limit.
     seconds: u64,
+    /// How long a request waits for a free worker before it is returned to its requester, in seconds; `0` has no limit.
+    wait_seconds: u64,
 }
 
 impl WorkerSettings {
@@ -733,6 +735,12 @@ impl WorkerSettings {
     pub const fn seconds(&self) -> u64 {
         self.seconds
     }
+
+    /// How long a request waits for a free worker before it is returned to its requester, in seconds; `0` has no limit.
+    #[must_use]
+    pub const fn wait_seconds(&self) -> u64 {
+        self.wait_seconds
+    }
 }
 
 impl Default for WorkerSettings {
@@ -740,6 +748,7 @@ impl Default for WorkerSettings {
         Self {
             tries: DEFAULT_WORKERS_TRIES,
             seconds: 0,
+            wait_seconds: DEFAULT_WORKERS_WAIT_SECONDS,
         }
     }
 }
@@ -752,6 +761,8 @@ struct RawWorkerSettings {
     tries: u32,
     /// See [`WorkerSettings::seconds`].
     seconds: u64,
+    /// See [`WorkerSettings::wait_seconds`].
+    wait_seconds: u64,
 }
 
 impl Default for RawWorkerSettings {
@@ -760,12 +771,16 @@ impl Default for RawWorkerSettings {
         Self {
             tries: defaults.tries,
             seconds: defaults.seconds,
+            wait_seconds: defaults.wait_seconds,
         }
     }
 }
 
 /// How many tries a request for a worker gets, by default.
 const DEFAULT_WORKERS_TRIES: u32 = 2;
+
+/// How long a request waits for a free worker before it is returned to its requester, by default: ten minutes.
+const DEFAULT_WORKERS_WAIT_SECONDS: u64 = 600;
 
 /// How many times a task's runs go back for its plan before the human is asked, by default.
 const DEFAULT_PLAN_BOUNCES: u32 = 3;
@@ -1269,6 +1284,7 @@ fn check_workers(workers: RawWorkerSettings) -> Result<WorkerSettings, ConfigErr
     Ok(WorkerSettings {
         tries: workers.tries,
         seconds: workers.seconds,
+        wait_seconds: workers.wait_seconds,
     })
 }
 

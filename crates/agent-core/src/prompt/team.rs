@@ -127,6 +127,8 @@ pub enum TeamPrompt {
     WorkerStepReturned,
     /// The step returned after bounded attempts supplied no result.
     WorkerInterruptedReturned,
+    /// The request returned to its requester because no worker of the pool took it in time.
+    WorkerWaitReturned,
     /// The coordinator is told that an observed unmerged close returned an item to its member.
     DeliveryClosed,
     /// The bus tells the team who holds an item now after a busy agent's waiting task was handed over.
@@ -196,6 +198,7 @@ impl TeamPrompt {
         Self::WorkerGivenAgain,
         Self::WorkerStepReturned,
         Self::WorkerInterruptedReturned,
+        Self::WorkerWaitReturned,
         Self::NoticeTeamDone,
     ];
 
@@ -362,6 +365,11 @@ impl TeamPrompt {
                 "harness/team/worker-interrupted-returned.md",
                 Audience::Model,
                 &["request_id", "worker", "step", "causes"],
+            ),
+            Self::WorkerWaitReturned => PromptSpec::new(
+                "harness/team/worker-wait-returned.md",
+                Audience::Model,
+                &["request", "step", "minutes"],
             ),
             Self::NoticeTeamDone => PromptSpec::new(
                 "harness/team/notice-team-done.md",

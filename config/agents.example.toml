@@ -157,12 +157,15 @@ check_refuse = ["agent gate", "make gate"]
 #   tries     how many tries a request gets, its first try included; 1 never gives it to a second worker; a request gets one
 #             second try at most, so a value above 2 behaves as 2 (default: 2)
 #   seconds   how long a worker's run may last; a run past it is a wrong result; 0 has no limit (default: 0)
+#   wait_seconds  how long a request waits in the queue for a free worker; after it the request is returned to its
+#             requester, who does the step itself; 0 waits for ever (default: 600)
 # New local requests count declared FAILED or QUESTIONS endings as wrong results, even without file changes.
 # Existing open requests without ownership keep their previous immediate-failure handling for non-DONE endings.
 
 [workers]
 tries = 2
 seconds = 0
+wait_seconds = 600
 
 # Coordinator proposals are approved whole when valid and unchanged in scope.
 # Estimates are compared only when their unit matches the repository unit (case, spaces and a plural s are ignored).

@@ -1197,6 +1197,12 @@ worktree without consuming `[workers] tries`: provider failures prefer another p
 fallback; other interruptions take the first compatible free worker. With none free the request stays queued.
 After three no-result returns, the next interruption returns the step to the requester with all causes.
 The original workspace branch stays fixed even when the serving worker changes. No new configuration key is needed.
+
+**A request nobody takes is returned.** A request that stays queued because no worker of the pool is free is noted at the
+daemon's first look at it (`tasks/<requester task>/worker-wait-<n>.json`; `agent status` shows `waiting since 21:10 (12 min)`).
+After `[workers] wait_seconds` (default `600`; `0` waits for ever) the daemon answers it `failed` and tells the requester, in the
+request's summary, to do the step itself; the log event is `worker_wait_returned`. Opening an older history upgrades its schema to 28
+while preserving its records; older daemons refuse the upgraded history.
 See the [durable format](docs/state.md) and [protocol](docs/architecture.md#request-recovery-protocol).
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
