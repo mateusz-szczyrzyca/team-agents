@@ -73,41 +73,67 @@ fn provider_records_have_their_expected_descriptions() {
 }
 
 #[test]
-fn the_kind_of_evidence_is_the_kind_describe_wrote() {
-    let overload = describe(DEEPINFRA).unwrap();
-    assert_eq!(kind_of_evidence(&overload), Some(Kind::Overload));
-    assert_eq!(
-        kind_of_evidence("a quota: 402 · Insufficient credits · insufficient_quota"),
-        Some(Kind::Quota)
-    );
-    assert_eq!(
-        kind_of_evidence("a rate limit: rejected · five_hour"),
-        Some(Kind::RateLimit)
-    );
+fn structured_records_carry_their_kind_without_parsing_evidence() {
+    for (line, expected) in [
+        (DEEPINFRA, Some(Kind::Overload)),
+        (
+            r#"{"type":"error","error":{"type":"provider.quota","status":402}}"#,
+            Some(Kind::Quota),
+        ),
+        (
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"requests"}}"#,
+            Some(Kind::RateLimit),
+        ),
+    ] {
+        assert_eq!(read(line).and_then(|description| description.kind), expected, "{line}");
+    }
 }
 
 #[test]
-fn evidence_that_names_no_kind_in_its_first_words_has_none() {
+fn plain_text_is_not_a_structured_record() {
     for text in [
         "You've hit your limit · resets 3pm",
         "a rate limitation: x",
         "an overload",
     ] {
-        assert_eq!(kind_of_evidence(text), None, "{text}");
+        assert_eq!(read(text), None, "{text}");
     }
 }
 
 #[test]
-fn a_pause_without_a_kind_in_its_evidence_is_the_kind_of_its_reason() {
-    assert_eq!(pause_kind(PauseReason::Quota, "You've hit your limit"), Kind::Quota);
-    assert_eq!(
-        pause_kind(PauseReason::RateLimit, "API Error: 429 rate limit exceeded"),
-        Kind::RateLimit
-    );
+fn plain_text_pauses_get_the_kind_of_their_reason() {
+    use super::super::outcome::{ExitStatus, LimitContext, RunFinish, StoppedBy, classify_outcome};
+    use crate::cli::{ErrorTail, RunOutput, StreamOutcome};
+    use crate::config::Config;
+    let config = Config::default();
+    for (line, expected) in [
+        ("You've hit your limit", Kind::Quota),
+        ("API Error: 429 rate limit exceeded", Kind::RateLimit),
+    ] {
+        let output = RunOutput {
+            final_message: None,
+            session_id: None,
+            stream: StreamOutcome::Failed,
+            error_tail: ErrorTail::from_text(line, config.limits().tail_lines),
+        };
+        let classified = classify_outcome(
+            &output,
+            RunFinish {
+                exit: ExitStatus::Code(1),
+                stopped_by: StoppedBy::Nobody,
+            },
+            &LimitContext {
+                limits: config.limits(),
+                now: "2026-11-12T10:00:00Z".parse().unwrap(),
+                local_offset: time::UtcOffset::UTC,
+            },
+        )
+        .unwrap();
+        assert_eq!(classified.pause.unwrap().kind, expected, "{line}");
+    }
 }
 
 #[test]
-fn the_kind_the_evidence_names_wins_over_the_reason_of_the_pause() {
-    let evidence = describe(DEEPINFRA).unwrap();
-    assert_eq!(pause_kind(PauseReason::RateLimit, &evidence), Kind::Overload);
+fn a_structured_overload_carries_its_kind() {
+    assert_eq!(read(DEEPINFRA).unwrap().kind, Some(Kind::Overload));
 }

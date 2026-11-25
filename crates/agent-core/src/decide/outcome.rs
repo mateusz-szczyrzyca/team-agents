@@ -1837,7 +1837,7 @@ mod tests {
     fn a_structured_reset_is_told_in_local_time_in_the_evidence() {
         let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
         let evidence = class.pause.unwrap().evidence;
-        assert!(evidence.starts_with("a rate limit: rejected"), "{evidence}");
+        assert!(evidence.starts_with("a quota: rejected"), "{evidence}");
         assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
     }
 

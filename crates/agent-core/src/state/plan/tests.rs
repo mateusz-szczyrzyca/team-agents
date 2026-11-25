@@ -116,6 +116,7 @@ fn legacy_member_without_plan_persists_running_plan_check_without_enabling_plan_
         pause: Some(Pause {
             until: at(600),
             reason: PauseReason::RateLimit,
+            kind: crate::decide::refusal::Kind::RateLimit,
             evidence: "429 Too Many Requests".to_owned(),
         }),
         made_progress: false,

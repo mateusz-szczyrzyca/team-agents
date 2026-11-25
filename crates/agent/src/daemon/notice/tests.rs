@@ -54,6 +54,7 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
         Notice::Paused {
             until: at(3600),
             reason: PauseReason::Quota,
+            kind: agent_core::decide::refusal::Kind::Quota,
             evidence: "usage limit".to_owned(),
         },
         Notice::Failed {
@@ -90,6 +91,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
     let (_, paused) = rendered(&Notice::Paused {
         until: at(3600),
         reason: PauseReason::RateLimit,
+        kind: agent_core::decide::refusal::Kind::RateLimit,
         evidence: "HTTP 429".to_owned(),
     })
     .await;
@@ -375,6 +377,7 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
     let notice = Notice::Paused {
         until: at(3600),
         reason: PauseReason::Quota,
+        kind: agent_core::decide::refusal::Kind::Quota,
         evidence: "quota exceeded".to_owned(),
     };
     let rendered = notice.render(&texts, &context).unwrap();
@@ -455,6 +458,7 @@ async fn actual_task_state_notices_render_expected_notes_and_statuses() {
             Notice::Paused {
                 until: at(3600),
                 reason: PauseReason::Quota,
+                kind: agent_core::decide::refusal::Kind::Quota,
                 evidence: "quota exceeded".to_owned(),
             },
             "⏸ team-agents",
@@ -885,6 +889,7 @@ async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
     let notice = Notice::Paused {
         until: at(3600),
         reason: PauseReason::RateLimit,
+        kind: agent_core::decide::refusal::Kind::Overload,
         evidence: "an overload: 429 · Model busy, retry later · engine_overloaded".to_owned(),
     };
     let notification = notice.render(&texts().await, &context).unwrap();
@@ -892,18 +897,18 @@ async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
     assert!(body.contains("paused until 2026-11-11T21:15:00+01:00"), "{body}");
     assert!(!body.contains("2026-11-11T20:15:00Z"), "{body}");
     assert!(
-        body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
+        body.contains("429 · Model busy, retry later · engine_overloaded"),
         "{body}"
     );
 }
 
 /// The body of the paused notice of a run that `reason` paused, with `evidence` as what the provider said.
-async fn paused_body(reason: PauseReason, evidence: &str) -> String {
-    paused_body_with(reason, evidence, at(3600)).await
+async fn paused_body(reason: PauseReason, kind: refusal::Kind, evidence: &str) -> String {
+    paused_body_with(reason, kind, evidence, at(3600)).await
 }
 
 /// The body of the paused notice of a run that `reason` paused until `until`, with `evidence` as what the provider said.
-async fn paused_body_with(reason: PauseReason, evidence: &str, until: Timestamp) -> String {
+async fn paused_body_with(reason: PauseReason, kind: refusal::Kind, evidence: &str, until: Timestamp) -> String {
     let task_id = task(1);
     let context = NoticeContext {
         repo: "team-agents",
@@ -920,6 +925,7 @@ async fn paused_body_with(reason: PauseReason, evidence: &str, until: Timestamp)
     let notice = Notice::Paused {
         until,
         reason,
+        kind,
         evidence: evidence.to_owned(),
     };
     notice.render(&texts().await, &context).unwrap().body().to_owned()
@@ -931,6 +937,7 @@ async fn a_paused_notice_names_the_kind_of_the_refusal_and_its_reason() {
     // from the reason of the pause.
     let overload = paused_body(
         PauseReason::RateLimit,
+        refusal::Kind::Overload,
         "an overload: 429 · Model busy, retry later · engine_overloaded",
     )
     .await;
@@ -939,7 +946,7 @@ async fn a_paused_notice_names_the_kind_of_the_refusal_and_its_reason() {
         "{overload}"
     );
 
-    let quota = paused_body(PauseReason::Quota, "You've hit your limit").await;
+    let quota = paused_body(PauseReason::Quota, refusal::Kind::Quota, "You've hit your limit").await;
     assert!(quota.contains("refused its run: a quota (quota)"), "{quota}");
 }
 
@@ -968,11 +975,11 @@ async fn a_deepinfra_refusal_notice_tells_the_provider_words_the_kind_and_the_re
         .unwrap()
         .pause
         .unwrap();
-    let body = paused_body_with(pause.reason, &pause.evidence, pause.until).await;
+    let body = paused_body_with(pause.reason, pause.kind, &pause.evidence, pause.until).await;
 
     assert!(body.contains("refused its run: an overload (rate_limit)"), "{body}");
     assert!(
-        body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
+        body.contains("429 · Model busy, retry later · engine_overloaded"),
         "{body}"
     );
     assert!(body.contains("paused until 2026-11-11T20:21:00+01:00"), "{body}");
