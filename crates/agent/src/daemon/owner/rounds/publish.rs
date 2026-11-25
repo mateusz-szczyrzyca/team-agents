@@ -109,6 +109,14 @@ pub(super) struct Site<'a> {
     pub(super) lead: &'a Lead,
 }
 
+/// The tip of the branch of an item, and whether the lead's worktree has that tip out.
+pub(super) struct ItemTip {
+    /// The commit the branch of the item points at.
+    pub(super) tip: CommitId,
+    /// Whether the worktree's `HEAD` is that commit: only then does a gate that runs in the worktree see the item's work.
+    pub(super) checked_out: bool,
+}
+
 /// A branch whose gate passed at its tip.
 pub(super) struct Ready {
     /// Git in the lead's worktree.
@@ -343,6 +351,16 @@ pub(crate) enum PublishQuestionError {
 }
 
 impl Owner {
+    /// The tip of `branch`, the branch of an item in the worktree of `lead`, and whether the worktree has it out.
+    ///
+    /// # Errors
+    /// [`PublishError`] when the worktree's git cannot be opened or cannot name a commit.
+    pub(super) async fn item_tip(&self, lead: &Lead, _branch: &BranchName) -> Result<ItemTip, PublishError> {
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+        let tip = git.rev_parse(&Revision::Head).await?;
+        Ok(ItemTip { tip, checked_out: true })
+    }
+
     /// Publishes the branches of `team_id` that are ready: its pull requests are opened or updated, and its items go in
     /// review.
     pub(super) async fn publish_branches(
@@ -479,7 +497,7 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let tip = git.rev_parse(&Revision::Head).await?;
+        let ItemTip { tip, .. } = self.item_tip(lead, &publication.head_branch).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {

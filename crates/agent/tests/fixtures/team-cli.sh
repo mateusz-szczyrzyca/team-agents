@@ -808,6 +808,15 @@ case $action in
     record_gate
     result 'Finished the item.\nFINDING '"${action#fix-held:}"': FIXED\nSTATUS: DONE'
     ;;
+  fix-script-then:*)
+    # A fix pass that commits by the script NAME.sh, records the gate at the commit, and then runs NAME-then.sh, which may
+    # leave the worktree on another branch: the gate record is for the tip the script committed, not for where the run ends.
+    bash "$home/fake-scripts/${action#fix-script-then:}.sh"
+    record_gate
+    bash "$home/fake-scripts/${action#fix-script-then:}-then.sh"
+    answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: FIXED\\n", $1}' <<< "$prompt")
+    result 'Finished the item.\n'"$answers"'STATUS: DONE'
+    ;;
   held-write)
     # Exercise the same writer as every prompt and marker: hold it after opening its output, before printing.
     # Direct writes expose an empty record here; staging keeps the previous prompt visible until the rename.

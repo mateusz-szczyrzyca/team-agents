@@ -1039,6 +1039,10 @@ mod fix_pass_findings_tests;
 mod item_branch_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/item_tip.rs"]
+mod item_tip_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
 
