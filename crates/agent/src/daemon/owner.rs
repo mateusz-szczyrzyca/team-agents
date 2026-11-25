@@ -9,6 +9,7 @@ mod answers;
 mod bound;
 mod briefing;
 mod commit_reminder;
+mod context_reminder;
 mod controls;
 mod disk;
 #[cfg(test)]
