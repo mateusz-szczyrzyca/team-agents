@@ -328,6 +328,16 @@ impl Notice {
         let common = Variables::new()
             .with("agent", context.agent)?
             .with("task", context.task.as_str())?;
+        let (text, values, kind) = self.parts(common, context)?;
+        let rendered = texts.render(text, &values)?;
+        Ok(layout_notification(kind, context, &rendered)?)
+    }
+
+    fn parts(
+        &self,
+        common: Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
         let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
@@ -427,8 +437,7 @@ impl Notice {
                 (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
             }
         };
-        let rendered = texts.render(text, &values)?;
-        Ok(layout_notification(kind, context, &rendered)?)
+        Ok((text, values, kind))
     }
 }
 
