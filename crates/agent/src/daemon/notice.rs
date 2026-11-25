@@ -436,7 +436,6 @@ impl Notice {
 mod tests;
 
 fn agent_changed_vars(
-    &self,
     common: Variables,
     refused_agent: &AgentName,
     refused_provider: &str,
@@ -451,7 +450,6 @@ fn agent_changed_vars(
 }
 
 fn no_free_agent_vars(
-    &self,
     common: Variables,
     refused_agent: &AgentName,
     refused_provider: &str,

@@ -1452,8 +1452,8 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::delivery_restart_tests::record_delivery_closed_event(&mut observed).await;
     super::turn_limit_restart_tests::record_snapshot_events(&mut observed).await;
     super::last_step_tests::record_task_handed_over(&mut observed).await;
-    super::last_step_tests::record_task_agent_changed(&mut observed).await;
-    super::last_step_tests::record_task_wait_for_free_agent(&mut observed).await;
+    super::last_step_tests::record_task_agent_changed(&mut observed);
+    super::last_step_tests::record_task_wait_for_free_agent(&mut observed);
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
     record_worker_request_recovery(&mut observed).await;
