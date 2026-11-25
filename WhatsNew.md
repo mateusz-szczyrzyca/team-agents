@@ -5,6 +5,14 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.102.0 — 25.11.2026 — PR #263
+
+### New features
+- [agent] [agent-core] [agent-runtime] Every end of a request to a worker is one record of the history, `worker_request_ended`, under the requester's team and round: who asked, which worker served, the try, how it ended (`brought`, `again`, `returned`, `conflict`, `report`, or an interrupted request requeued or returned), when it started, how many seconds the worker's run took and what it cost. Example fields: `request H3, step 2.1, worker glm-1, try 1, outcome brought, seconds 90, cost_usd 0.0123`.
+
+### Enhancements
+- [agent-runtime] A history of version 28 is read and upgraded to version 29, which admits the new log event.
+
 ## 0.101.0 — 25.11.2026 — PR #258
 
 ### New features

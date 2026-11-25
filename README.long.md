@@ -1237,6 +1237,14 @@ After `[workers] wait_seconds` (default `600`; `0` waits for ever) the daemon an
 request's summary, to do the step itself; the log event is `worker_wait_returned`.
 See the [durable format](docs/state.md) and [protocol](docs/architecture.md#request-recovery-protocol).
 
+**Every end of a request is a record of the history.** The daemon writes one `worker_request_ended` record when the result of a
+request is settled (`outcome` `report`, `brought`, `conflict`, `again` or `returned`) and when an interrupted request goes
+back to the queue or is returned for its interruptions (`worker_request_requeued`, `worker_request_returned`); a request
+read again after a restart of the daemon is not recorded twice. The record belongs to the requester's team and round and has
+`request`, `task`, `requester`, `step`, `worker`, `worker_task`, `try`, `outcome`, `started`, `seconds` and `cost_usd` (empty
+when the worker's CLI did not tell it); `agent log` shows it with the others. Opening an older history upgrades its schema to
+29 while preserving its records; older daemons refuse the upgraded history.
+
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
 say it: a step with one result, named files and a check a machine runs, the reading and listing of many files, a

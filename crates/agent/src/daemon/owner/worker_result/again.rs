@@ -8,7 +8,7 @@ use agent_core::decide::worker_result::{Elsewhere, worker_for_second_try};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::log::LogEvent;
-use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpdate};
+use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpdate, RequestId};
 use agent_runtime::process::error_chain;
 use agent_runtime::worker_request::{Pending, Settlement, Try, read_try, write_try};
 
@@ -196,12 +196,18 @@ impl Owner {
     }
 
     /// The try a result is judged as: what the file of its try says, the first when it has none or it cannot be read.
-    pub(super) fn try_of(&self, pending: &Pending) -> Try {
-        let task_dir = self.parts.store.home().task_dir(&pending.worker_task);
-        read_try(&task_dir, pending.request).unwrap_or_else(|error| {
+    pub(in crate::daemon::owner) fn try_of(&self, pending: &Pending) -> Try {
+        self.try_number_of(&pending.worker_task, pending.request)
+    }
+
+    /// The try the request `request` is on in the worker's task `worker_task`: the first when its file is not there or cannot
+    /// be read, which is told.
+    pub(in crate::daemon::owner) fn try_number_of(&self, worker_task: &TaskId, request: RequestId) -> Try {
+        let task_dir = self.parts.store.home().task_dir(worker_task);
+        read_try(&task_dir, request).unwrap_or_else(|error| {
             tracing::warn!(
                 event = LogEvent::WorkerRequestDamaged.as_str(),
-                request = %pending.request,
+                request = %request,
                 error = %error_chain(&error),
                 "the try of a request cannot be read: it is judged as the first"
             );

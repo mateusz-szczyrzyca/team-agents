@@ -34,6 +34,7 @@ use agent_runtime::worker_request::{
     request_of_file, set_aside, write_pending,
 };
 
+use super::request_end::{EndOutcome, EndedRequest};
 use super::teams::{Outbound, Served, is_transient};
 use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, BusNotice, NoticeRenderError};
@@ -596,7 +597,19 @@ impl Owner {
         let task_dir = self.parts.store.home().task_dir(worker_task);
         // Kept first, so that an answer the bus cannot take now is tried again at the next look.
         match write_pending(&task_dir, &pending) {
-            Ok(()) => self.settle_one(&task_dir, pending, None).await,
+            Ok(()) => {
+                // The end is decided and kept here: `settle_one` answers it, and also replays a kept settlement after a
+                // restart, so it does not tell it.
+                if let Stage::Settled { checked, settlement } = &pending.stage {
+                    self.log_request_end(
+                        EndedRequest::from(&pending),
+                        checked.step.map(|step| step.to_string()),
+                        EndOutcome::Settled(settlement),
+                    )
+                    .await;
+                }
+                self.settle_one(&task_dir, pending, None).await
+            }
             Err(failure) => self.settle_unkept(&task_dir, pending, &failure).await,
         }
     }
@@ -700,6 +713,16 @@ impl Owner {
             if let Err(error) = write_pending(task_dir, &pending) {
                 return self.settle_unkept(task_dir, pending, &error).await;
             }
+            // The end is decided and kept: it is told here and nowhere else, so a file read again after a restart, which
+            // goes through the arms above, is not told twice.
+            if let Stage::Settled { checked, settlement } = &pending.stage {
+                self.log_request_end(
+                    EndedRequest::from(&pending),
+                    checked.step.map(|step| step.to_string()),
+                    EndOutcome::Settled(settlement),
+                )
+                .await;
+            }
         }
     }
 
@@ -778,6 +801,12 @@ impl Owner {
             checked: Box::new(checked.clone()),
             settlement: settlement.clone(),
         };
+        self.log_request_end(
+            EndedRequest::from(&pending),
+            checked.step.map(|step| step.to_string()),
+            EndOutcome::Settled(&settlement),
+        )
+        .await;
         if self.answer_requester(&pending, &checked, &settlement).await? {
             self.answered_requests.insert(pending.request);
         }
@@ -1509,7 +1538,7 @@ async fn run_request_check(job: RequestCheck) -> Found {
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 /// Retains the actual rejection causes alongside a retry snapshot.
 pub(super) fn rejection_causes(checked: &Checked, ending: WorkerEnding, seconds: u64, limit: u64) -> Vec<Wrong> {
