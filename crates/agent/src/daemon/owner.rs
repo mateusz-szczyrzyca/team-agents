@@ -27,6 +27,7 @@ mod pool_wait;
 mod refusal_fix_tests;
 mod reminder;
 mod removal;
+mod request_end;
 mod returned;
 mod round_state;
 mod rounds;
