@@ -200,13 +200,13 @@ new_sessions = 1
 replacements = 1
 mode = "auto"
 # The agents that may take a task over when its runs are beyond the ladder, in the order to try them.
-# A refused-provider takeover (the choice is a pure function here; the daemon is wired in a later release)
+# A refused-provider takeover
 # also tries them, skipping a name of the task's team, a busy one, a refused one, or one of the refused
 # provider. When the list is empty or no agent fits, the tier `normal` is tried (for a coordinator, the
 # investigators); a member's task never goes to a worker, and a coordinator's to an investigator.
 agents = []
 rejections = 5
-# A provider that refuses a run (rate limit, overload or exhausted quota) is waited out: the task is tried again in the same session after the pause, `limit_retries` times (0 to 10, default 1). When the retries are used up, or a quota's reset is further away than `limit_wait_minutes` (default 60; 0 never waits for a reset), the rule answers "change agent"; the pick of the new agent is a pure function in agent-core (from `agents` and then the tier `normal`, of another provider, not in the team, not busy and not refused); the daemon is wired in a later release. A refused agent gets no new task, review or takeover until its return time.
+# A provider that refuses a run (rate limit, overload or exhausted quota) is waited out: the task is tried again in the same session after the pause, `limit_retries` times (0 to 10, default 1). When the retries are used up, or a quota's reset is further away than `limit_wait_minutes` (default 60; 0 never waits for a reset), the rule answers "change agent"; the pick of the new agent is a pure function in agent-core (from `agents` and then the tier `normal`, of another provider, not in the team, not busy and not refused). A refused agent gets no new task, review or takeover until its return time.
 limit_retries = 1
 limit_wait_minutes = 60
 # A queued task waits this many seconds for its busy agent (one that runs another task at its limit of runs, see
