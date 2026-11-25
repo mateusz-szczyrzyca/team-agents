@@ -11,6 +11,7 @@ use agent_core::status::TaskStatus;
 use agent_runtime::history::Reader;
 use agent_runtime::store::load_checks_record;
 
+use super::fake_github::{MergeAnswer, SLUG};
 use super::rig::{PARALLEL, Rig, git, investigator, normal};
 
 /// A report that asks for changes on a file that every branch has, held until the test releases the reviewer
@@ -281,4 +282,100 @@ async fn push_never_carries_another_items_tip() {
     // The tip of the other item was never even tried: a push that origin would refuse is a failed call.
     assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
     assert_eq!(rows(&rig, LogEvent::PublishOffBranch).len(), 1);
+}
+
+/// The reports of both reviewers: they approve once the test releases them (`.fake-release-1`).
+const HELD_APPROVAL: &str = "clean-held-done:VERDICT: APPROVE\\nSUMMARY: fine";
+
+/// The run of the lead in a merge conflict pass of 1.1 while the worktree has 2.1 out: it waits until the base has moved, goes
+/// to the branch of 1.1, merges the base there, and (after the gate is recorded at that tip) leaves the worktree on 2.1.
+const MERGE_BASE_ON_THE_ITEM: &str = "while [ ! -e .fake-base-ready ]; do sleep 0.05; done\n\
+    item=$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-1.1')\n\
+    git switch -q \"$item\"\ngit fetch -q origin main\n\
+    git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false merge -q --no-ff --no-edit origin/main\n";
+
+// Rule: an approved item whose merge was refused for a conflict is judged by the tip of its own branch: the lead merged the base
+// on the branch of 1.1 and left the worktree on the branch of 2.1, which does not contain the moved base, and the merged tip is
+// pushed and the pull request merged as when 1.1 is checked out.
+#[tokio::test]
+async fn approved_push_judges_the_item_tip() {
+    let scenario = "work,script:second,fix-script-then:bmerge";
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", scenario),
+            investigator("inv-r1", HELD_APPROVAL),
+            investigator("inv-r2", HELD_APPROVAL),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    let second = "echo two > work-2.txt\ngit add work-2.txt\ncommit -m 'Work of the second item'\n: > .second-started\n\
+         while [ ! -e .second-release ]; do sleep 0.05; done\n";
+    std::fs::write(scripts.join("second.sh"), format!("{PRELUDE}{second}")).unwrap();
+    fix_script(&rig, "bmerge", MERGE_BASE_ON_THE_ITEM, BACK_TO_THE_OTHER_ITEM);
+    // "Pull Request is not mergeable" is a conflict with the base.
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], PARALLEL, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    let lead = rig.worktree(&task);
+    let state = rig
+        .state_where("both reviewers to be running", |state| {
+            state.team(&team).is_some_and(|team| {
+                team.reviewers().len() == 2
+                    && team
+                        .reviewers()
+                        .iter()
+                        .all(|member| rig.worktree(member.task()).join(".fake-prompt-1").is_file())
+            })
+        })
+        .await;
+    rig.wait_for("the run on the other item to be held", || {
+        lead.join(".second-started").exists()
+    })
+    .await;
+    for member in state.team(&team).unwrap().reviewers() {
+        std::fs::write(rig.worktree(member.task()).join(".fake-release-1"), "").unwrap();
+    }
+    rig.state_where("the lead to be sent to merge the base", |state| {
+        state.team(&team).is_some_and(|team| {
+            team.item("1.1".parse().unwrap())
+                .is_some_and(|item| item.merge_conflict().is_some())
+        })
+    })
+    .await;
+
+    // GitHub merges from now on; the base moves, the run on 2.1 ends, and the lead merges the base on the branch of 1.1.
+    rig.github.answer_merges(MergeAnswer::Allow);
+    std::fs::write(rig.repo.join("base-file.txt"), "moved\n").unwrap();
+    git(&rig.repo, &["add", "base-file.txt"]);
+    git(&rig.repo, &["commit", "-q", "-m", "Move the base"]);
+    git(
+        &rig.repo,
+        &["push", "-q", rig.origin.to_str().unwrap(), "HEAD:refs/heads/main"],
+    );
+    std::fs::write(lead.join(".fake-base-ready"), "").unwrap();
+    std::fs::write(lead.join(".second-release"), "").unwrap();
+    rig.item_where("1.1", "done", |phase| {
+        matches!(phase, agent_core::state::ItemPhase::Done { .. })
+    })
+    .await;
+    let fixed = format!("agents/claude-1/{task}-1.1");
+    let item_tip = git(&lead, &["rev-parse", &fixed]);
+    let pushed = remote_tip_of(&rig, &fixed);
+    let other_remote = remote_tip_of(&rig, &format!("agents/claude-1/{task}-2.1"));
+    let on_branch = git(&lead, &["symbolic-ref", "--short", "HEAD"]);
+    rig.stop().await.unwrap();
+
+    assert_eq!(on_branch, format!("agents/claude-1/{task}-2.1"));
+    assert_eq!(pushed, item_tip);
+    assert_ne!(other_remote, item_tip);
+    assert_eq!(
+        rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len(),
+        2,
+        "the refused merge and the merge tried again"
+    );
 }
