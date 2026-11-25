@@ -701,7 +701,10 @@ fn a_task_paused_by_a_limit_before_the_refusals_keeps_its_agent_out_until_its_wa
         .map(|(wake, _)| *wake)
         .expect("the paused task is woken");
     assert_eq!(state.refused_until(&agent), Some(wake));
-    assert!(state.refused_at(&agent, now), "the agent is kept out while its task is paused");
+    assert!(
+        state.refused_at(&agent, now),
+        "the agent is kept out while its task is paused"
+    );
     assert!(!state.refused_at(&agent, wake), "the agent is free again at its return");
     assert_eq!(state.limit_refusals(&paused), 1);
 }
@@ -735,7 +738,9 @@ fn recovery_counts_the_refusals_in_a_row_of_a_paused_task_from_its_runs() {
     let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
     member.transition(TaskStatus::Queued).unwrap();
     member.transition(TaskStatus::Running).unwrap();
-    member.begin_run(run(3), at(30), Some("ses-1".parse().unwrap())).unwrap();
+    member
+        .begin_run(run(3), at(30), Some("ses-1".parse().unwrap()))
+        .unwrap();
     member.end_run(at(40), RunEnd::RateLimited).unwrap();
     member.transition(TaskStatus::Paused).unwrap();
 
