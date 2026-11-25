@@ -31,6 +31,8 @@ mod request_end;
 mod returned;
 mod round_state;
 mod rounds;
+#[cfg(test)]
+mod shutdown_tests;
 mod snapshots;
 mod split;
 mod start;
@@ -954,6 +956,11 @@ impl Owner {
 
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
+        // A stopping daemon starts nothing: its stop ends every run at once, and the loop may settle one of them before
+        // it sees the stop; a queued task would take the agent that run freed, only to be cut a moment later.
+        if self.shutdown.is_cancelled() {
+            return Ok(());
+        }
         let waiting: Vec<Queued> = self
             .parts
             .state
