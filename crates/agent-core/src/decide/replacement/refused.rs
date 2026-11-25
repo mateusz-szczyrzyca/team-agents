@@ -10,7 +10,6 @@ use crate::state::Timestamp;
 
 /// An agent the pick considers as a replacement for a refused task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
 pub struct Candidate<'a> {
     /// Its name.
     pub name: &'a AgentName,
@@ -26,7 +25,6 @@ pub struct Candidate<'a> {
 
 /// The result of picking a replacement for a refused task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
 pub enum Pick<'a> {
     /// The agent that takes the task over.
     Agent(&'a AgentName),
@@ -82,7 +80,6 @@ pub struct Request<'a> {
 /// # Panics
 /// Never.
 #[must_use]
-#[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
 pub fn pick<'a>(request: &Request<'a>) -> Pick<'a> {
     let all_candidates: &[&[Candidate<'_>]] =
         &[request.replacement_agents, request.normal_agents, request.investigators];
