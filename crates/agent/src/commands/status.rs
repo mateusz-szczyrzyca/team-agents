@@ -9,7 +9,7 @@ use std::num::NonZeroUsize;
 
 use agent_core::cli::RunUsage;
 use agent_core::history::HistoryHealth;
-use agent_core::ids::{RoundId, TaskId};
+use agent_core::ids::{AgentName, RoundId, TaskId, TeamId};
 use agent_core::local_time::Zone;
 use agent_core::plan::judge::JudgementState;
 use agent_core::protocol::{
@@ -18,7 +18,7 @@ use agent_core::protocol::{
 use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
-use agent_runtime::agentbus::{AgentBus, AgentBusError};
+use agent_runtime::agentbus::{AgentBus, AgentBusError, HelperEntry, HelperRecord};
 use agent_runtime::clock::SystemClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
@@ -385,7 +385,10 @@ async fn listing_text(
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
-        &|task| requests.of(task).to_vec(),
+        Under {
+            requests: &|task| requests.of(task).to_vec(),
+            workers: &|_| Vec::new(),
+        },
         activity.zone,
     );
     let pool = if !is_targeted && detail == Detail::Short {
@@ -411,18 +414,32 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let pool = if detail == Detail::Short {
-        pool_line(activity, &listing.teams).await?
-    } else {
-        None
-    };
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
         .teams
-        .into_iter()
+        .iter()
         .filter(|team| team.rounds.iter().any(|round| *round.life() == RoundLife::Open))
+        .cloned()
         .collect();
+    // The short view names the workers that serve: under a listed team those that took its requests, in the pool the
+    // busy ones of the other teams; a free worker is not named.
+    let observed = if detail == Detail::Short {
+        observe_pool(activity).await?
+    } else {
+        None
+    };
+    let pool = observed.as_ref().and_then(|observed| {
+        let helpers = observed.entries();
+        pool::render_busy(
+            &observed.workers,
+            &listing.teams,
+            Some(&helpers),
+            Some(&observed.unsettled),
+            &listed,
+        )
+    });
+    let served = served_lines(activity, &listed, observed.as_ref()).await;
     let text = if listed.is_empty() {
         NO_OPEN_ROUNDS.to_owned()
     } else {
@@ -434,7 +451,16 @@ async fn running_text(
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
-            &|task| requests.of(task).to_vec(),
+            Under {
+                requests: &|task| requests.of(task).to_vec(),
+                workers: &|team| {
+                    served
+                        .iter()
+                        .find(|(id, _)| *id == team.id)
+                        .map(|(_, lines)| lines.clone())
+                        .unwrap_or_default()
+                },
+            },
             activity.zone,
         );
         format!("{text}{}", told.unread())
@@ -471,14 +497,33 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
     }
 }
 
-/// Observes the configured pool of workers and reads helper requests asynchronously.
-async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+/// What the pool of workers of a home is doing: its workers, the requests the bus lists and the workspaces that are
+/// not settled.
+struct PoolObservation {
+    /// The workers of `[tiers] workers`.
+    workers: Vec<AgentName>,
+    /// Every request for a worker the bus lists, the finished ones too.
+    records: Vec<HelperRecord>,
+    /// The workspaces of workers whose end is not settled.
+    unsettled: Vec<pool::UnsettledWorker>,
+}
+
+impl PoolObservation {
+    /// The requests as the pool reads them.
+    fn entries(&self) -> Vec<HelperEntry> {
+        self.records.iter().map(|record| record.entry.clone()).collect()
+    }
+}
+
+/// Reads the configured pool of workers of the home of `activity` and the requests for them; `None` when the home has
+/// no configuration or configures no worker.
+async fn observe_pool(activity: &Activity) -> Result<Option<PoolObservation>, StatusError> {
     let settings = match Settings::load(&activity.home).await {
         Ok(s) => s,
         Err(SettingsError::MissingConfig { .. }) => return Ok(None),
         Err(err) => return Err(StatusError::Settings(err)),
     };
-    let workers = settings.config.worker_agents();
+    let workers = settings.config.worker_agents().to_vec();
     if workers.is_empty() {
         return Ok(None);
     }
@@ -486,14 +531,52 @@ async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<
         settings.config.binaries().agentbus.clone(),
         activity.home.absolute_root().clone(),
     );
-    let helpers = bus.helper_list(true).await.map_err(StatusError::Bus)?;
-    let unsettled = scan_unsettled_workspaces(&activity.home, &helpers).await;
-    Ok(pool::render_pool_with_unsettled(
+    let records = bus.helper_records(true).await.map_err(StatusError::Bus)?;
+    let observed = PoolObservation {
         workers,
+        records,
+        unsettled: Vec::new(),
+    };
+    let unsettled = scan_unsettled_workspaces(&activity.home, &observed.entries()).await;
+    Ok(Some(PoolObservation { unsettled, ..observed }))
+}
+
+/// Observes the configured pool of workers and reads helper requests asynchronously.
+async fn pool_line(activity: &Activity, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+    let Some(observed) = observe_pool(activity).await? else {
+        return Ok(None);
+    };
+    Ok(pool::render_pool_with_unsettled(
+        &observed.workers,
         teams,
-        Some(&helpers),
-        Some(&unsettled),
+        Some(&observed.entries()),
+        Some(&observed.unsettled),
     ))
+}
+
+/// The lines of the workers that served each team of `teams`, as `observed` lists their requests, with the times of
+/// their runs in the home of `activity`.
+async fn served_lines(
+    activity: &Activity,
+    teams: &[TeamSummary],
+    observed: Option<&PoolObservation>,
+) -> Vec<(TeamId, Vec<String>)> {
+    let Some(observed) = observed else {
+        return Vec::new();
+    };
+    let mut served = Vec::new();
+    for team in teams {
+        let mut lines = Vec::new();
+        for record in workers::of_team(team, &observed.records) {
+            let span = match &record.helper_task {
+                Some(task) => workers::span_of(&activity.home, task).await,
+                None => workers::Span::default(),
+            };
+            lines.push(workers::line(record, span, activity.zone));
+        }
+        served.push((team.id.clone(), lines));
+    }
+    served
 }
 
 /// Scans task directories in `home` for unsettled workspace records and records damaged entries.
@@ -825,7 +908,28 @@ fn render_in(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_with_requests(teams, view, detail, activity, rounds, &|_| Vec::new(), zone)
+    render_with_requests(
+        teams,
+        view,
+        detail,
+        activity,
+        rounds,
+        Under {
+            requests: &|_| Vec::new(),
+            workers: &|_| Vec::new(),
+        },
+        zone,
+    )
+}
+
+/// What [`render_with_requests`] writes under the lines of a team: the requests for workers under each task's plan,
+/// and the workers that served the team before its count of tasks.
+#[derive(Clone, Copy)]
+struct Under<'a> {
+    /// The lines of the requests for workers of a task.
+    requests: &'a dyn Fn(&TaskId) -> Vec<String>,
+    /// The lines of the workers that served a team.
+    workers: &'a dyn Fn(&TeamSummary) -> Vec<String>,
 }
 
 /// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
@@ -835,7 +939,7 @@ fn render_with_requests(
     detail: Detail,
     activity: &dyn Fn(&TaskId) -> Option<String>,
     rounds: &dyn Fn(&Round) -> String,
-    requests: &dyn Fn(&TaskId) -> Vec<String>,
+    under: Under<'_>,
     zone: Zone,
 ) -> String {
     if teams.is_empty() {
@@ -897,6 +1001,7 @@ fn render_with_requests(
                     .filter(|member| members::listed(member, &team.activities))
                     .map(|member| members::line(member, team, columns, activity, zone)),
             );
+            lines.extend((under.workers)(team));
             lines.push(tasks_line(team));
             continue;
         }
@@ -907,7 +1012,7 @@ fn render_with_requests(
                     lines.push(render_plan_step(step));
                 }
             }
-            lines.extend(requests(&member.task));
+            lines.extend((under.requests)(&member.task));
         }
     }
     let mut text = lines.join("\n");
@@ -1208,6 +1313,7 @@ mod rounds;
 mod snapshots;
 mod splits;
 pub(crate) mod versions;
+mod workers;
 
 #[cfg(test)]
 #[path = "status/history/tests.rs"]

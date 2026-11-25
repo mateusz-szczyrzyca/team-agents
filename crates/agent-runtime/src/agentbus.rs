@@ -876,6 +876,57 @@ pub struct HelperEntry {
     pub request: String,
 }
 
+/// What a requester made of the result of a worker it was given: `delegation_feedback`'s verdict.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    serde::Deserialize,
+    strum::Display,
+    strum::EnumString,
+    strum::IntoStaticStr,
+    strum::VariantNames,
+)]
+#[serde(try_from = "String")]
+#[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<HelperVerdict>)]
+pub enum HelperVerdict {
+    /// The result was used as it came.
+    Used,
+    /// The result was used after the requester fixed it.
+    Corrected,
+    /// The result could not be used.
+    Discarded,
+}
+
+impl Keyword for HelperVerdict {
+    const WHAT: &'static str = "worker result verdict";
+}
+
+impl TryFrom<String> for HelperVerdict {
+    type Error = UnknownKeyword;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+/// A worker request as `helper-list --json` lists it, with what [`HelperEntry`] leaves out: the worker's task and the
+/// requester's verdict on the result.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct HelperRecord {
+    /// The request as the pool reads it.
+    #[serde(flatten)]
+    pub entry: HelperEntry,
+    /// The task the worker runs the request in; absent before a worker took it.
+    #[serde(default)]
+    pub helper_task: Option<TaskId>,
+    /// The requester's verdict on a done result; absent before it gave one.
+    #[serde(default)]
+    pub verdict: Option<HelperVerdict>,
+}
+
 /// A request for a worker as the harness shows it among the requests of its task: its number, the step of the
 /// requester's plan it is for, its worker and its state.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -1338,6 +1389,17 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn helper_list(&self, all: bool) -> Result<Vec<HelperEntry>, AgentBusError> {
+        let command = BusCommand::HelperList;
+        let args = Args::new().switch("--json").switch_if("--all", all);
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
+    }
+
+    /// Lists worker requests as [`helper_list`](Self::helper_list) does, each with its worker's task and its verdict.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn helper_records(&self, all: bool) -> Result<Vec<HelperRecord>, AgentBusError> {
         let command = BusCommand::HelperList;
         let args = Args::new().switch("--json").switch_if("--all", all);
         let output = self.run(command, args, None).await?;
@@ -1844,6 +1906,35 @@ fn parse_status(output: &str) -> Result<BusStatus, AgentBusError> {
 mod tests {
     use super::*;
     use crate::process::{ExitReport, Stream};
+
+    // Rule: a listed request carries the worker's task and the requester's verdict; an old one, or one not taken or
+    // not rated yet, reads without them.
+    #[test]
+    fn a_listed_request_reads_its_workers_task_and_verdict_and_an_old_one_reads_without() {
+        let output = r#"[{"id":4,"from":"claude-1","from_task":"task-20261125-073049-g85c","repo":"example",
+            "branch":"agents/claude-1/test","status":"done","worker":"glm-1","step":"6.1",
+            "helper_task":"task-20261125-075745-w8vj","verdict":"corrected","created":"2026-11-25 08:56:26"},
+            {"id":5,"from":"claude-1","from_task":"task-20261125-073049-g85c","repo":"example",
+            "branch":"agents/claude-1/test","status":"queued"}]"#;
+
+        let read: Vec<HelperRecord> = decode_json(BusCommand::HelperList, output).unwrap();
+
+        assert_eq!(read.len(), 2);
+        assert_eq!(read[0].entry.worker, Some("glm-1".parse().unwrap()));
+        assert_eq!(read[0].helper_task, Some("task-20261125-075745-w8vj".parse().unwrap()));
+        assert_eq!(read[0].verdict, Some(HelperVerdict::Corrected));
+        assert_eq!(read[1].entry.status, DelegationStatus::Queued);
+        assert_eq!(read[1].helper_task, None);
+        assert_eq!(read[1].verdict, None);
+    }
+
+    #[test]
+    fn a_listed_request_with_an_unknown_verdict_is_refused() {
+        let output = r#"[{"id":4,"from":"claude-1","from_task":"task-20261125-073049-g85c","repo":"example",
+            "branch":"agents/claude-1/test","status":"done","verdict":"liked"}]"#;
+
+        decode_json::<Vec<HelperRecord>>(BusCommand::HelperList, output).unwrap_err();
+    }
 
     #[test]
     fn a_request_of_a_task_reads_its_step_and_its_worker_and_an_old_one_reads_without() {

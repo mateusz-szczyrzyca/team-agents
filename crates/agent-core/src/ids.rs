@@ -337,6 +337,21 @@ pub struct RunId(String);
 
 generated_id!(RunId, IdKind::Run);
 
+impl RunId {
+    /// The time the ID was generated with, in UTC: when the run started.
+    ///
+    /// `None` only for a text that names no real date and time, which parsing already refuses.
+    #[must_use]
+    pub fn generated_at(&self) -> Option<UtcDateTime> {
+        let rest = self.0.strip_prefix(IdKind::Run.prefix())?.strip_prefix('-')?;
+        let stamp = Stamp::read(rest)?;
+        let month = Month::try_from(stamp.month).ok()?;
+        let date = Date::from_calendar_date(i32::from(stamp.year), month, stamp.day).ok()?;
+        let time = Time::from_hms(stamp.hour, stamp.minute, stamp.second).ok()?;
+        Some(UtcDateTime::new(date, time))
+    }
+}
+
 /// Which kind of generated ID a text was parsed as, or an ID was made for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum IdKind {
@@ -1474,5 +1489,21 @@ mod tests {
             assert_eq!(text.parse::<BranchName>(), Err(expected), "{text:?}");
             assert_serde_refuses::<BranchName>(text);
         }
+    }
+
+    // Rule: a run's ID tells when the run started, the UTC time it was generated with.
+    #[test]
+    fn a_run_id_tells_the_time_it_was_generated_with() {
+        let run: RunId = "run-20261125-075745-ec9d".parse().unwrap();
+
+        assert_eq!(run.generated_at(), Some(at(2026, Month::November, 25, (7, 57, 45))));
+    }
+
+    #[test]
+    fn a_generated_run_id_gives_back_the_clock_time() {
+        let now = at(2026, Month::November, 11, (15, 36, 1));
+        let run = RunId::generate(&FixedClock(now), &mut rng(6)).unwrap();
+
+        assert_eq!(run.generated_at(), Some(now));
     }
 }

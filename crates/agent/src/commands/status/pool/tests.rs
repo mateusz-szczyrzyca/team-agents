@@ -247,3 +247,66 @@ fn terminal_workers_remain_assigned_to_an_active_legacy_crew() {
         );
     }
 }
+
+/// A running request of `from_task` for step `step`, given to `worker`.
+fn running_request(id: u64, from_task: &str, worker: &str, step: &str) -> HelperEntry {
+    HelperEntry {
+        id: RequestId::new(NonZeroU64::new(id).unwrap()),
+        from: "claude-1".parse().unwrap(),
+        from_task: from_task.parse().unwrap(),
+        repo: "example".parse().unwrap(),
+        branch: "agents/claude-1/test".parse().unwrap(),
+        status: DelegationStatus::Running,
+        worker: Some(worker.parse().unwrap()),
+        requires: vec![],
+        step: Some(step.to_owned()),
+        request: "do something".to_owned(),
+    }
+}
+
+// Rule: the running view's pool leaves out the free workers and those of a team it lists.
+#[test]
+fn the_busy_pool_leaves_out_free_workers_and_those_of_listed_teams() {
+    let workers: Vec<AgentName> = ["glm-1", "glm-2", "glm-3"]
+        .iter()
+        .map(|name| name.parse().unwrap())
+        .collect();
+    let team: TeamSummary = serde_json::from_value(serde_json::json!({
+        "id": "team-20261124-114140-team",
+        "repo": "example",
+        "created_at": "2026-11-24T00:00:00Z",
+        "merge": "autopilot",
+        "items": {"pending": 0, "in_progress": 0, "in_review": 0, "approved": 0, "done": 0},
+        "members": [{
+            "task": "task-20261124-114140-pq68",
+            "agent": {"tier": "normal", "name": "claude-1"},
+            "role": "member",
+            "status": "running"
+        }]
+    }))
+    .unwrap();
+    let helpers = vec![
+        running_request(1, "task-20261124-114140-pq68", "glm-1", "1.1"),
+        running_request(2, "task-20261124-114140-else", "glm-3", "2.1"),
+    ];
+
+    let rendered = render_busy(
+        &workers,
+        std::slice::from_ref(&team),
+        Some(&helpers),
+        None,
+        std::slice::from_ref(&team),
+    );
+
+    assert_eq!(
+        rendered.as_deref(),
+        Some("pool:\n  glm-3  task-20261124-114140-else (step 2.1)\n")
+    );
+}
+
+#[test]
+fn a_busy_pool_of_free_workers_only_is_none() {
+    let workers: Vec<AgentName> = vec!["glm-1".parse().unwrap(), "glm-2".parse().unwrap()];
+
+    assert_eq!(render_busy(&workers, &[], None, None, &[]), None);
+}
