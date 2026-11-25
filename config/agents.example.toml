@@ -297,10 +297,15 @@ max_context = 150000
 # reminded, never a reviewer or a worker. A key at 0 turns the reminder off.
 #   lines     uncommitted lines (added plus removed) at which a run is reminded (default: 300)
 #   minutes   minutes since the later of the run's last commit and its start at which a run is reminded (default: 30)
+# A session whose context reaches a share of its bound (`[session] max_context`, or the agent's own) is told once, on the
+# bus, to commit and to write down where it is, before the next run may start a new session. Codex tells no context, and
+# a session with no bound is never reminded.
+#   context_percent   percent of the bound at which a session is reminded, 0 to 100 (default: 80)
 
 [commit_reminder]
 lines = 300
 minutes = 30
+context_percent = 80
 
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then

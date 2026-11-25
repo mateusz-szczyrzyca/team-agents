@@ -90,3 +90,5 @@ mod serena_reminded;
 
 #[cfg(test)]
 mod commit_reminder;
+#[cfg(test)]
+mod context_reminder;

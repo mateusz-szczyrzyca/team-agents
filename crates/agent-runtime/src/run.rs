@@ -8,6 +8,7 @@
 
 pub mod activity;
 pub mod compose;
+pub mod context;
 mod hold;
 mod launch;
 pub mod outcome;
@@ -578,6 +579,7 @@ impl RunEngine {
             progress: Progress::Nothing,
             used_tool: false,
             unreadable: Unreadable::default(),
+            written_context: None,
         };
         let stopped_by = self.supervise(&job, process, &mut follow, cancel, hold).await?;
         follow.drain().await?;
@@ -908,6 +910,8 @@ struct Follow<'a> {
     used_tool: bool,
     /// What the parser refused.
     unreadable: Unreadable,
+    /// The context this run last wrote to the task's context file; `None` before it wrote one.
+    written_context: Option<u64>,
 }
 
 impl Follow<'_> {
@@ -962,7 +966,7 @@ impl Follow<'_> {
     /// Feeds the lines written since the last call to the parser and its events to the history.
     async fn read_new(&mut self) -> Result<(), RunError> {
         let lines = self.tail.read_new().await?;
-        self.feed(&lines)
+        self.feed(&lines).await
     }
 
     /// Reads what is left of the output after the process ended, the last line without a newline included.
@@ -977,7 +981,7 @@ impl Follow<'_> {
             }
         }
         if let Some(last) = self.tail.finish() {
-            self.feed(&[last])?;
+            self.feed(&[last]).await?;
         }
         if self.tail.dropped() > 0 {
             tracing::warn!(
@@ -992,7 +996,7 @@ impl Follow<'_> {
     }
 
     /// Gives `lines` to the parser and logs the events.
-    fn feed(&mut self, lines: &[String]) -> Result<(), RunError> {
+    async fn feed(&mut self, lines: &[String]) -> Result<(), RunError> {
         for line in lines {
             let events = match self.parser.push_line(line) {
                 Ok(events) => events,
@@ -1029,6 +1033,38 @@ impl Follow<'_> {
                 }
             }
         }
+        if !lines.is_empty() {
+            self.keep_context().await;
+        }
         Ok(())
+    }
+
+    /// Writes the context of the run's latest model call that told one to the context file of the task when it differs from what this
+    /// run wrote last, so that the daemon can remind a session that nears the bound of its context while the run goes
+    /// on. A stream that tells no context writes nothing. Best-effort: a refused write is logged with its cause and tried
+    /// again at the next lines, and the run goes on; the reminder is only lost when no later write succeeds.
+    async fn keep_context(&mut self) {
+        let Some(context) = self.parser.latest_context() else {
+            return;
+        };
+        if self.written_context == Some(context) {
+            return;
+        }
+        let record = context::ContextRecord {
+            run: self.run.clone(),
+            session: self.known_session.clone(),
+            context,
+        };
+        let dir = self.engine.parts.store.home().task_dir(self.task);
+        match context::write_context(&dir, &record).await {
+            Ok(()) => self.written_context = Some(context),
+            Err(error) => tracing::warn!(
+                event = agent_core::log::LogEvent::HistoryRecordIncomplete.as_str(),
+                task = %self.task,
+                run = %self.run,
+                error = %error_chain(&error),
+                "the context of a run was not written: its session is not reminded when it nears its bound"
+            ),
+        }
     }
 }

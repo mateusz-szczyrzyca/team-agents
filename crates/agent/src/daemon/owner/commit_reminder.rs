@@ -26,17 +26,17 @@ use super::{Owner, OwnerError};
 const LOOK_SECONDS: i64 = 60;
 
 /// A task with a run going that is reminded when it is due.
-struct Watched {
+pub(super) struct Watched {
     /// The repository of the task's team.
     repo: RepoName,
     /// The task.
-    task: TaskId,
+    pub(super) task: TaskId,
     /// The run that is going.
-    run: RunId,
+    pub(super) run: RunId,
     /// When the run's CLI was started.
     run_started: Timestamp,
     /// The agent that holds the task.
-    agent: AgentName,
+    pub(super) agent: AgentName,
 }
 
 /// Why a look at a worktree for the reminder to commit came to nothing.
@@ -140,7 +140,7 @@ fn minutes_between(earlier: Timestamp, later: Timestamp) -> u64 {
 ///
 /// # Errors
 /// [`LookError::Agent`] when the agent of the task is no agent name the bus knows.
-fn watched_run(state: &State, task: &TaskId) -> Result<Option<Watched>, LookError> {
+pub(super) fn watched_run(state: &State, task: &TaskId) -> Result<Option<Watched>, LookError> {
     let Some(found) = state.find_task(task) else {
         return Ok(None);
     };
