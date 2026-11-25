@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "agent"
-version = "0.109.0"
+version = "0.110.0"
 dependencies = [
  "agent-core",
  "agent-runtime",
@@ -26,7 +26,7 @@ dependencies = [
 
 [[package]]
 name = "agent-core"
-version = "0.108.0"
+version = "0.109.0"
 dependencies = [
  "rand",
  "serde",
