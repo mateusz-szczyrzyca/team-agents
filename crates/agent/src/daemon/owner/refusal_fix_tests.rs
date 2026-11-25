@@ -512,3 +512,136 @@ async fn quota_of_many_hours_changes_agent_at_once() {
         other => panic!("expected AgentChanged notice, got {other:?}"),
     }
 }
+
+/// A pause whose retries keep the agent returns `None` — no notice, no takeover.
+#[tokio::test]
+async fn pause_and_retry_without_change_agent_returns_none_and_no_notice() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+
+    let mut state = solo_state();
+    // Zero prior refusals with retries=1: the rule says to pause and retry, not change agent.
+    state.record_limit_refusals(task(1), 0);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+
+    let result = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(10),
+                reason: PauseReason::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap();
+
+    assert!(
+        result.is_none(),
+        "a pause with remaining retries should not trigger ChangeAgent"
+    );
+    // The task still belongs to its original agent.
+    let found = owner.parts.state.find_task(&task(1)).unwrap();
+    assert_eq!(found.member.agent().name(), "claude-1");
+}
+
+/// When keep_refusal returns Some, the RefusalHandled carries exactly one notice.
+#[tokio::test]
+async fn a_single_keep_refusal_result_carries_one_notice_only() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+
+    let mut state = solo_state();
+    state.record_limit_refusals(task(1), 1);
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        "[agents.claude-1]\ncli = \"claude\"\n\
+         [agents.codex-1]\ncli = \"codex\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+         [binaries]\nclaude = \"fake\"\ncodex = \"fake\"\n\
+         [replacement]\nagents = [\"codex-1\"]\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(10),
+                reason: PauseReason::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap()
+        .expect("ChangeAgent should produce RefusalHandled");
+
+    // The RefusalHandled has status and notice — no extra side effects.
+    assert_eq!(handled.status, TaskStatus::Queued);
+    // A single AgentChanged notice is exactly what ChangeAgent produces.
+    assert!(
+        matches!(handled.notice, Notice::AgentChanged { .. }),
+        "a tomaover produces exactly one AgentChanged notice"
+    );
+}
+
+/// A state written before the ChangeAgent feature loads and follows the rule: a task with one refusal
+/// triggers ChangeAgent when `keep_refusal` sees another rate-limited end.
+#[tokio::test]
+async fn old_state_with_a_refused_task_follows_the_change_agent_rule() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use agent_core::state::State;
+
+    // The fixture has one limit_refusal recorded for task 1.
+    let state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-change-agent.json"
+    ))
+    .expect("old state fixture loads");
+
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        "[agents.claude-1]\ncli = \"claude\"\n\
+         [agents.codex-1]\ncli = \"codex\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+         [binaries]\nclaude = \"fake\"\ncodex = \"fake\"\n\
+         [replacement]\nagents = [\"codex-1\"]\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+
+    let result = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(10),
+                reason: PauseReason::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap()
+        .expect("old state with one refusal should trigger ChangeAgent");
+
+    assert_eq!(result.status, TaskStatus::Queued);
+    match &result.notice {
+        Notice::AgentChanged { refused_agent, new_agent, .. } => {
+            assert_eq!(refused_agent.as_str(), "claude-1");
+            assert_eq!(new_agent.as_str(), "codex-1");
+        }
+        other => panic!("expected AgentChanged notice, got {other:?}"),
+    }
+}
