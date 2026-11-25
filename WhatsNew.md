@@ -9,13 +9,25 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-core 0.109.0 — 25.11.2026 — PR #275
+## agent 0.110.0 · agent-core 0.110.0 · agent-runtime 0.109.0 — 25.11.2026 — PR #275
 
 ### New features
-- [agent-core] A pure function chooses the agent that takes over a task whose provider refused it (rate limit, overload or quota): from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, the earliest time a refused agent returns is given so the daemon knows when to try again. The daemon is wired in a later release; this one provides the choice.
+- [agent] A task whose provider refuses its agent (rate limit, overload or quota) and whose retries are spent is now
+  handed over to a free agent of another provider through the existing takeover path. The choice, made by the pure
+  function of agent-core 0.109.0, leaves out agents of the same provider, agents in the task's team, busy agents
+  and agents still under cooldown; a coordinator goes to an investigator. When no agent of another provider is free,
+  the task stays paused until one is, with the earliest return time as a wake.
+- [agent] [agent-core] New log events: `task_agent_changed` (Info, when a task is handed over) and
+  `task_wait_for_free_agent` (Info, when a task waits for a free agent of another provider).
+- [agent-runtime] History migration 30 records `task_agent_changed` events.
+- [agent] New notices: `Notice::AgentChanged` (the human sees which agent was refused and which took over) and
+  `Notice::NoFreeAgent` (no agent of another provider is free), with their prompt files.
 
 ### Configuration
-- [agent-core] changed: `[replacement] agents` (default `[]`) — the list now also serves a refused-provider takeover: each candidate is tried in order, skipping a name in the task's team, a busy one, a refused one or one of the refused provider; then the tier `normal` is tried in its order (for a coordinator, the investigators); a member never goes to a worker. The daemon is wired in a later release.
+- [agent] changed: `[replacement] agents` (default `[]`) — the list now drives the refused-provider takeover as well:
+  the daemon wires the pure choice of agent-core 0.109.0. `[replacement] limit_retries` (default `1`) and
+  `[replacement] limit_wait_minutes` (default `60`) control how many refusals are retried before the agent is
+  changed.
 
 ## agent 0.109.0 — 25.11.2026 — PR #271
 

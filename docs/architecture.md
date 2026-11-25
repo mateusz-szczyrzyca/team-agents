@@ -328,6 +328,8 @@ fails before the lead is told tells it at the next turn after all; the item of t
 `mode = "off"`, or once it was taken over `replacements` times. Each choice is logged as `decision_taken` with
 `decision` `takeover`, and each hand-over as `task_handed_over` (history migration 16 admits it).
 
+**Refusal takeover** (`decide/replacement/refused.rs`, `owner.rs`): when a task run ends with a provider refusal (rate limit or quota) and the refusal retries of `[replacement] limit_retries` are spent, the daemon picks a free agent of another provider through `decide::replacement::refused::pick` and uses the existing takeover path to hand the task over. The choice leaves out agents of the same provider, agents already in the team, busy agents and agents still under their own cooldown; a coordinator goes to an investigator when none is in the replacement list, and every other role goes to normal agents first. The task is logged as `task_agent_changed`; the human is notified with `Notice::AgentChanged`. When no agent of another provider is free, the task stays paused with the earliest return time of a refused agent as wake (logged as `task_wait_for_free_agent`, notified as `Notice::NoFreeAgent`), and starts on the first one that is free; a non-quit restart preserves the wake. This differs from the ladder's takeover: it happens at provider refusals, not when the ladder is exhausted, and always goes to another provider.
+
 **Rejections** (`decide/rejection.rs`, `daemon/owner/returned.rs`): when the lead of a team sends the work of a member
 back instead of taking it, it says so in its final message with a line `RETURNED: <item>` beside `STATUS:` (the
 coordinator's role text prescribes it). The line is a claim; the daemon counts it only where its own facts agree
