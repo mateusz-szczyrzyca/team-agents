@@ -62,7 +62,7 @@ use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds::{CliKind, Role};
+use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
 
@@ -2195,6 +2195,7 @@ impl Owner {
     fn refusal_candidates<'a>(
         &'a self,
         names: &'a [AgentName],
+        holder_tier: Tier,
         going: &[Going],
     ) -> Vec<agent_core::decide::replacement::refused::Candidate<'a>> {
         use agent_core::decide::replacement::refused::Candidate;
@@ -2202,6 +2203,9 @@ impl Owner {
             .iter()
             .filter_map(|name| {
                 let tier = self.tier_of(name)?;
+                if tier < holder_tier {
+                    return None;
+                }
                 Some(Candidate {
                     name,
                     provider: self.refusal_provider(name)?,
@@ -2259,12 +2263,13 @@ impl Owner {
         // A holder count larger than u32 already exhausts every permitted budget.
         let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
         let replacements_exhausted = taken_over >= replacement.replacements().get();
+        let holder_tier = found.member.agent().tier();
         let return_at = self.parts.state.refused_until(agent).unwrap_or(until);
         let going = runs_going(self.parts.state.teams());
-        let replacement_agents = self.refusal_candidates(replacement.agents(), &going);
-        let normal_agents = self.refusal_candidates(config.normal_agents(), &going);
+        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going);
+        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going);
         let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
-        let investigators = self.refusal_candidates(&inv_names, &going);
+        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going);
         let request = Request {
             role: located.role,
             team: &team_names,
