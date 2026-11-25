@@ -298,8 +298,9 @@ struct RateLimitEvent {
 /// The structured info of a rate limit.
 #[derive(Debug, Default, Deserialize)]
 struct RateLimitInfo {
-    /// `rejected`: the call was refused.
+    /// `"rejected"`: the call was refused.
     #[serde(default)]
+    #[expect(dead_code, reason = "stored for possible future use; resetsAt is read")]
     status: String,
     /// The Unix epoch second when the rate limit resets.
     #[serde(default)]
@@ -308,6 +309,7 @@ struct RateLimitInfo {
     /// E.g. `five_hour`, `daily`.
     #[serde(default)]
     #[serde(rename = "rateLimitType")]
+    #[expect(dead_code, reason = "stored for possible future use; resetsAt is read")]
     rate_limit_type: String,
 }
 
@@ -389,7 +391,7 @@ fn answer_text(content: &Value) -> String {
 struct ClaudeParser {
     /// What the stream has shown.
     progress: Progress,
-    /// The resetsAt epoch second from the most recent rate_limit_event; none when none was seen.
+    /// The `resetsAt` epoch second from the most recent `rate_limit_event`; `None` when none was seen.
     rate_limit_reset: Option<u64>,
     /// The model calls of the run, each counted once.
     usage: UsageTally,
