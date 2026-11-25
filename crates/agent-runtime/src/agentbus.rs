@@ -920,10 +920,10 @@ pub struct HelperRecord {
     #[serde(flatten)]
     pub entry: HelperEntry,
     /// The task the worker runs the request in; absent before a worker took it.
-    #[serde(default, skip)]
+    #[serde(default)]
     pub helper_task: Option<TaskId>,
     /// The requester's verdict on a done result; absent before it gave one.
-    #[serde(default, skip)]
+    #[serde(default)]
     pub verdict: Option<HelperVerdict>,
 }
 

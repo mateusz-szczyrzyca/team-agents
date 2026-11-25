@@ -343,7 +343,12 @@ impl RunId {
     /// `None` only for a text that names no real date and time, which parsing already refuses.
     #[must_use]
     pub fn generated_at(&self) -> Option<UtcDateTime> {
-        None
+        let rest = self.0.strip_prefix(IdKind::Run.prefix())?.strip_prefix('-')?;
+        let stamp = Stamp::read(rest)?;
+        let month = Month::try_from(stamp.month).ok()?;
+        let date = Date::from_calendar_date(i32::from(stamp.year), month, stamp.day).ok()?;
+        let time = Time::from_hms(stamp.hour, stamp.minute, stamp.second).ok()?;
+        Some(UtcDateTime::new(date, time))
     }
 }
 

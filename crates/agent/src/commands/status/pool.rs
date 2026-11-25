@@ -65,9 +65,23 @@ pub(crate) fn render_busy(
     teams: &[TeamSummary],
     helpers: Option<&[HelperEntry]>,
     unsettled: Option<&[UnsettledWorker]>,
-    _listed: &[TeamSummary],
+    listed: &[TeamSummary],
 ) -> Option<String> {
-    render_pool_with_unsettled(configured, teams, helpers, unsettled)
+    let of_listed = |served: &str| {
+        listed.iter().any(|team| {
+            let id = team.id.as_str();
+            served == id || served.strip_prefix(id).is_some_and(|rest| rest.starts_with(" ("))
+        })
+    };
+    let lines: Vec<String> = configured
+        .iter()
+        .filter_map(|worker| {
+            find_serving(worker, teams, helpers, unsettled)
+                .filter(|served| !of_listed(served))
+                .map(|served| format!("  {worker}  {served}"))
+        })
+        .collect();
+    (!lines.is_empty()).then(|| format!("pool:\n{}\n", lines.join("\n")))
 }
 
 fn find_serving(
