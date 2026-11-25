@@ -686,6 +686,9 @@ impl Owner {
                     return Ok(());
                 }
                 Stage::Settled { checked, settlement } => {
+                    // The durable final settlement carries the retry causes; its notice must not expose a live try.
+                    // Keep the pending settlement until delivery succeeds so a crash can still replay it.
+                    Self::drop_try(task_dir, pending.request);
                     if self.answer_requester(&pending, checked, settlement).await? {
                         self.answered_requests.insert(pending.request);
                         return self.drop_settled(task_dir, &pending, workspace).await;
