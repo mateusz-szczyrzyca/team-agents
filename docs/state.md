@@ -537,6 +537,8 @@ Each is derived or lives elsewhere, so that there is one place for it:
   An interrupted execution reuses its current workspace: its original worker still defines the branch while
   `started.worker` and the bus identify the replacement worker. Startup replays unfinished interruption updates
   and repairs claims saved before their journal assignment; queued requests keep their last provider-failure preference.
+  A bus outage defers startup reconciliation until a later look. Worker dispatch waits for reconciliation;
+  unrelated tasks continue, and the outage is logged as `bus_down`.
   Final settlement uses an ownership-checked bus receipt in the message log. Loading repairs a state save interrupted
   after the receipt was appended, without publishing another notice. Stale ownership cannot settle the request.
   The bus state optionally stores `owned_receipt_offset`, the byte count already consumed from its append-only
