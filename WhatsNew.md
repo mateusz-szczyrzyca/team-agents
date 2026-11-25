@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.115.0 · agent-core 0.115.0 · agent-runtime 0.110.0 — 25.11.2026 — PR #281
+
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] A run for an item of a task that works several items now starts with the worktree on the item's branch: a clean tree is switched (`worktree_switched` in `agent log`); a tree with uncommitted changes is left alone (`worktree_switch_refused`) and the lead is told to commit them and run `git switch <branch>` itself.
+
 ## agent 0.114.0 · agent-core 0.114.0 — 25.11.2026 — pushed to main
 
 ### New features

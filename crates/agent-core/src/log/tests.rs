@@ -106,6 +106,7 @@ fn every_log_level_parses_renders_and_keeps_events_at_or_above_its_severity() {
 }
 
 #[test]
+#[expect(clippy::too_many_lines, reason = "table test of every log event")]
 fn every_log_event_has_its_fixed_snake_case_name_and_level() {
     let expected = [
         (LogEvent::CliOutputUnreadable, "cli_output_unreadable", LogLevel::Warn),
@@ -186,6 +187,12 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::CommitCut, "commit_cut", LogLevel::Info),
         (LogEvent::WorkerWaitReturned, "worker_wait_returned", LogLevel::Info),
         (LogEvent::WorkerRequestEnded, "worker_request_ended", LogLevel::Info),
+        (LogEvent::WorktreeSwitched, "worktree_switched", LogLevel::Info),
+        (
+            LogEvent::WorktreeSwitchRefused,
+            "worktree_switch_refused",
+            LogLevel::Warn,
+        ),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());

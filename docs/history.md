@@ -887,3 +887,7 @@ daemon.
 History version 29 admits the `worker_request_ended` information event. Its migration (`029-worker-request-ended.sql`) preserves
 existing daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
 daemon.
+
+History version 30 admits the `worktree_switched` information event and the `worktree_switch_refused` warning. Its migration
+(`030-worktree-switch.sql`) preserves existing daemon logs. Older daemons refuse the upgraded history; keep a backup before
+upgrading if you need to return to an older daemon.
