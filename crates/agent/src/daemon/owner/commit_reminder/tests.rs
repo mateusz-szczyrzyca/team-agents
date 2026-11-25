@@ -1,6 +1,7 @@
 //! The reminder to commit through a daemon in a temporary home: a stand-in for the CLI that leaves 400 uncommitted
 //! lines, the real `agentbus`, and a clock the test moves.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::process::Command as Process;
 use std::time::{Duration, Instant};
@@ -178,4 +179,26 @@ async fn a_commit_re_arms_the_reminder_and_the_follow_is_logged() {
     assert_eq!(followed[0].task(), Some(&task(1)));
     assert!(followed[0].run().is_some());
     assert_eq!(followed[0].fields()["agent"], "claude-1");
+}
+
+/// Runs a daemon whose run is reminded to commit and then commits, and records the events the daemon logged for it, for
+/// the test that every log event has a production cause.
+pub(in crate::daemon::owner) async fn record_commit_events(observed: &mut BTreeSet<LogEvent>) {
+    let (mut daemon, worktree) = daemon_for("dirty-twice", "[commit_reminder]\nlines = 300\nminutes = 1\n");
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder", || chats(&daemon).len() == 1).await;
+    std::fs::write(worktree.join(".fake-commit"), "").unwrap();
+    until("the stand-in to commit", || worktree.join("second.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the second reminder", || chats(&daemon).len() == 2).await;
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    for event in [LogEvent::CommitReminded, LogEvent::CommitFollowed] {
+        assert!(!logged(&daemon, event).is_empty(), "{event:?} was not logged");
+        observed.insert(event);
+    }
 }
