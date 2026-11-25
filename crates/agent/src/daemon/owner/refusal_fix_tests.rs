@@ -286,6 +286,15 @@ async fn keep_refusal_returns_some_when_the_rule_decides_to_change_agent() {
     // One prior refusal: the next one with retries=1 triggers ChangeAgent.
     state.record_limit_refusals(task(1), 1);
     let daemon = Daemon::new(&state, None);
+    // Add an agent of another provider so keep_refusal can actually change agents.
+    write_config(
+        &daemon,
+        "[agents.claude-1]\ncli = \"claude\"\n\
+         [agents.codex-1]\ncli = \"codex\"\n\
+         [tiers]\nnormal = [\"claude-1\", \"codex-1\"]\n\
+         [binaries]\nclaude = \"fake\"\ncodex = \"fake\"\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    );
     let (mut owner, _sinks) = daemon.bare_owner().await;
     let located = owner.locate(&task(1)).unwrap();
 

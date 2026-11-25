@@ -2333,6 +2333,15 @@ impl Owner {
                 }))
             }
             Pick::NoneFree { earliest_return } => {
+                // When no candidates of another provider exist at all
+                // (every candidate has the same provider as the refused one),
+                // don't handle ChangeAgent — let the caller's pause logic take over.
+                let has_other_provider = replacement_agents.iter().any(|c| c.provider != refused_provider_str)
+                    || normal_agents.iter().any(|c| c.provider != refused_provider_str)
+                    || investigators.iter().any(|c| c.provider != refused_provider_str);
+                if !has_other_provider {
+                    return Ok(None);
+                }
                 let until = earliest_return.unwrap_or(pause.until);
                 // Set the wake so the task is picked up when a candidate returns.
                 self.wakes.insert(task.clone(), until);
