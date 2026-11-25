@@ -15,6 +15,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
+use super::asleep::saved_notice_where;
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
@@ -198,7 +199,7 @@ impl Owner {
                             .waits
                             .insert(round, agent_core::decide::wait::Obligation::FreeInvestigator);
                     }
-                    self.nobody_reviews(pulls, team_id, &lead, &gone, now);
+                    self.nobody_reviews(pulls, team_id, &lead, &gone, now).await;
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -390,9 +391,9 @@ impl Owner {
 
     /// Tells the human, once for a review, that the reviewer of `gone` cannot work and no investigator is free to take
     /// its review.
-    fn nobody_reviews(&mut self, pulls: &Pulls, team_id: &TeamId, lead: &Lead, gone: &Gone, now: Timestamp) {
+    async fn nobody_reviews(&mut self, pulls: &Pulls, team_id: &TeamId, lead: &Lead, gone: &Gone, now: Timestamp) {
         if let Some(refused) = &gone.refused {
-            self.tell_reviewer_waits(pulls, team_id, lead, gone, refused, now);
+            self.tell_reviewer_waits(pulls, team_id, lead, gone, refused, now).await;
             return;
         }
         let announcement = Announcement::NoVerdict {
@@ -423,8 +424,9 @@ impl Owner {
     }
 
     /// Tells the human, once for a review, that the reviewer of `gone` waits for its provider because no investigator of
-    /// another provider is free to take its review.
-    fn tell_reviewer_waits(
+    /// another provider is free to take its review. A notice saved by an earlier life of the daemon counts as told: a
+    /// restart does not tell it again.
+    async fn tell_reviewer_waits(
         &mut self,
         pulls: &Pulls,
         team_id: &TeamId,
@@ -438,6 +440,21 @@ impl Owner {
         };
         if !self.watch.announced.insert(announcement) {
             return;
+        }
+        let told = format!("(task {}) waits: the provider", gone.task);
+        match saved_notice_where(&self.notice_directory(), |text| text.contains(&told)).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                // A failed lookup must not hide that a review waits: telling it twice is the lesser harm.
+                tracing::warn!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    team = %team_id,
+                    task = %gone.task,
+                    error = %error_chain(&error),
+                    "saved notices cannot be inspected; telling that the reviewer waits"
+                );
+            }
         }
         tracing::warn!(
             event = LogEvent::ReviewsRequested.as_str(),
