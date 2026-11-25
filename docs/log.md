@@ -349,6 +349,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `questions_answered` | `info` | The open questions of a task are answered, with `number` and `channel`. |
 | `control_used` | `info` | The human used a control (stop, pause, unpause, resume), with `action` and the number of `tasks` it reached. |
 | `serena_reminded` | `info` | A run with Serena made `serena.remind_after` searches of code without calling Serena, and was told once in its session to find code with Serena; logged once per session with the task, the run, the step, the count of searches and the CLI. |
+| `commit_reminded` | `info` | A run with `[commit_reminder] lines` uncommitted lines and no commit for `[commit_reminder] minutes` minutes was told once on the bus to commit; with `task`, `run`, `agent`, `lines` and `minutes`. |
+| `commit_followed` | `info` | A run that was reminded to commit has a new commit at the first look after the reminder; with `task`, `run`, `agent` and the `minutes` since the reminder. The run is armed again. |
 | `checks_decided` | `info` | The checks before a review send a round back to its team, ask the human, or take the human's answer, with `outcome`; `asked_human` also says in `commits` how many findings about commits the question names. Publication uses `publish_failed_lead` when the configured retry limit releases the lead once, and `publish_failed_human` when further failures ask the human in a questions file. |
 | `reviews_requested` | `info` | The reviews of a pull request are asked for, with `pr` and the number of `reviewers`. |
 | `review_report_late` | `info` | A reviewer's report comes when no review waits for it: it is kept or left out, and changes nothing. |
