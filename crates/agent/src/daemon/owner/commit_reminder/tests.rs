@@ -14,6 +14,7 @@ use agent_runtime::history::Reader;
 
 use super::super::fixture::{Daemon, PATIENCE, agentbus_binary};
 use super::watched_run;
+use super::{Ignored, Watched};
 use crate::fixtures::{solo_state, task};
 
 /// The text of the reminder for 400 lines and 2 minutes, as the catalog has it.
@@ -447,4 +448,142 @@ async fn cut_after_zero_turns_the_cut_off() {
 
     assert_eq!(state.find_task(&task(1)).unwrap().member.runs().len(), 1);
     assert_eq!(logged(&daemon, LogEvent::CommitCut).len(), 0);
+}
+
+/// An owner of the team of [`team_with_runs`] and its daemon home, with the run of task 1 watched.
+async fn owner_watching() -> (Daemon, super::Owner, Watched) {
+    let round: agent_core::ids::RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    let daemon = Daemon::new(&team_with_runs(std::slice::from_ref(&round)), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let watched = watched_run(&owner.parts.state, &task(1))
+        .unwrap()
+        .expect("task 1 is watched");
+    (daemon, owner, watched)
+}
+
+/// What the look saw of a run reminded at the head `1111…` that stays uncommitted at 400 lines.
+fn ignored_since(reminded: agent_core::state::Timestamp) -> Ignored {
+    Ignored {
+        reminder: Some(("1111111111111111111111111111111111111111".parse().unwrap(), reminded)),
+        head_moved: false,
+        lines: 400,
+    }
+}
+
+#[tokio::test]
+async fn a_gate_that_runs_for_the_task_holds_the_cut_back() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    owner
+        .gate_stops
+        .insert(task(1), tokio_util::sync::CancellationToken::new());
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty());
+    owner.gate_stops.remove(&task(1));
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert_eq!(
+        owner.commit_cuts.get(&task(1)),
+        Some(&super::CommitOrder {
+            lines: 400,
+            minutes: 25
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_test_run_started_in_the_worktree_holds_the_cut_back_and_another_does_not() {
+    let (daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1));
+    owner.test_lock_file = dir.path().join(".make.command.lck");
+    std::fs::write(
+        &owner.test_lock_file,
+        format!("label=gate\ndir={}\npid=1\n", worktree.display()),
+    )
+    .unwrap();
+    let holder = std::fs::File::open(&owner.test_lock_file).unwrap();
+    holder.lock().unwrap();
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert!(
+        owner.commit_cuts.is_empty(),
+        "a test run of the worktree holds the lock"
+    );
+
+    holder.unlock().unwrap();
+    std::fs::write(
+        &owner.test_lock_file,
+        "label=gate\ndir=/home/example/agents/worktrees/team-agents/task-other\npid=1\n",
+    )
+    .unwrap();
+    holder.lock().unwrap();
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert_eq!(owner.commit_cuts.len(), 1, "a test run of another worktree does not");
+}
+
+#[tokio::test]
+async fn a_reminder_given_before_the_run_started_is_not_cut() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let before_the_run = crate::fixtures::at(5);
+
+    owner
+        .cut_if_ignored(
+            &watched,
+            crate::fixtures::at(5 + 25 * 60),
+            20,
+            ignored_since(before_the_run),
+        )
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty());
+}
+
+#[tokio::test]
+async fn a_run_is_cut_once_for_one_reminder() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    owner.commit_cuts.clear();
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty());
+}
+
+#[tokio::test]
+async fn the_order_of_a_task_that_is_stopped_or_paused_is_dropped() {
+    use agent_core::ids::TaskId;
+
+    let (_daemon, mut owner, _watched) = owner_watching().await;
+    let one: TaskId = task(1);
+    owner
+        .commit_cuts
+        .insert(one.clone(), super::CommitOrder { lines: 400, minutes: 2 });
+    owner.reasons.insert(
+        one.clone(),
+        crate::daemon::team::Why::CommitOrder { lines: 400, minutes: 2 },
+    );
+
+    owner.drop_commit_order(&one);
+
+    assert!(owner.commit_cuts.is_empty());
+    assert!(owner.reasons.is_empty());
 }
