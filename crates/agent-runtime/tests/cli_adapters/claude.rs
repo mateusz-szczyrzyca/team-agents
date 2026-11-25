@@ -495,3 +495,21 @@ fn a_failed_tool_result_is_an_error_event_whether_its_content_is_text_or_blocks(
     assert_eq!(prompt_echo, []);
     Ok(())
 }
+
+#[test]
+fn a_rate_limit_event_stores_resets_at_in_the_refusal_summary() -> TestResult {
+    // Claude writes a rate_limit_event with resetsAt, then a failed result with api_error_status 429.
+    let lines = [
+        r#"{"type":"system","subtype":"init","session_id":"0c4e9a52-7a11-4d0b-8f3e-5b2c6d1e9a07","model":"claude-sonnet-5-5"}"#,
+        r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794471800,"rateLimitType":"five_hour"},"session_id":"0c4e9a52-7a11-4d0b-8f3e-5b2c6d1e9a07"}"#,
+        r#"{"type":"result","subtype":"success","is_error":true,"api_error_status":429,"num_turns":1,"result":"Rate limit exceeded","session_id":"0c4e9a52-7a11-4d0b-8f3e-5b2c6d1e9a07","total_cost_usd":0,"usage":{"input_tokens":0,"output_tokens":0}}"#,
+    ];
+    let replay = replay(&ClaudeAdapter, &lines.join("\n"), "")?;
+
+    assert_eq!(replay.output.stream, StreamOutcome::Failed);
+    let refusal = replay.output.refusal.expect("refusal should be present");
+    assert_eq!(refusal.status, "429");
+    assert_eq!(refusal.kind, agent_core::decide::outcome::RefusalKind::RateLimit);
+    assert_eq!(refusal.resets_at, Some(1_794_471_800));
+    Ok(())
+}

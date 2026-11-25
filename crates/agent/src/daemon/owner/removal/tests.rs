@@ -765,6 +765,7 @@ async fn removal_refuses_parked_checks_or_joins_them_before_forced_cleanup() {
                             outcome: RunOutcome::Done,
                         },
                         pause: None,
+                        refusal: None,
                     },
                     finish: RunFinish {
                         exit: ExitStatus::Code(0),
@@ -999,6 +1000,7 @@ async fn removal_joins_previously_halted_checks_before_cleanup() {
                         outcome: RunOutcome::Done,
                     },
                     pause: None,
+                    refusal: None,
                 },
                 finish: RunFinish {
                     exit: ExitStatus::Code(0),

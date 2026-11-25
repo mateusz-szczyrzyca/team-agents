@@ -340,6 +340,11 @@ case $action in
     rm ".fake-review-result-$n"
     result "$report\nSTATUS: DONE"
     ;;
+  opencode-refused)
+    # The provider's overload of an opencode run: its error record, then the run fails with the record in its tail.
+    printf '%s\n' '{"type":"error","sessionID":"ses_fixture_refused","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"message\":\"Model busy, retry later\",\"type\":\"invalid_request_error\",\"param\":null,\"code\":\"engine_overloaded\"}}"}}}'
+    exit 1
+    ;;
   turn-limit-quota)
     printf '%s\n' 'quota exhausted' >&2
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"

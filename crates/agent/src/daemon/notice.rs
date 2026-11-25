@@ -11,7 +11,7 @@ pub(crate) mod sample;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
-use agent_core::decide::outcome::PauseReason;
+use agent_core::decide::outcome::{PauseReason, RefusalSummary};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
@@ -22,6 +22,24 @@ use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::notify::{InvalidNotification, Notification};
 
 pub(crate) use words::{TaskWords, TaskWordsError, item_line, item_of_notice};
+
+/// Builds a human-readable refusal line from structured refusal data.
+fn refusal_text(refusal: &RefusalSummary, _reason: PauseReason, fallback: &str) -> String {
+    let mut parts = Vec::new();
+    if !refusal.status.is_empty() {
+        parts.push(refusal.status.clone());
+    }
+    if !refusal.message.is_empty() {
+        parts.push(refusal.message.clone());
+    }
+    if !refusal.code.is_empty() {
+        parts.push(refusal.code.clone());
+    }
+    if parts.is_empty() {
+        return fallback.to_owned();
+    }
+    format!("{} · {}", parts.join(" · "), refusal.kind)
+}
 
 /// Every notice that can be sent to the human.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -249,6 +267,8 @@ pub(super) enum Notice {
         reason: PauseReason,
         /// What the provider said.
         evidence: String,
+        /// The refusal as structured fields the CLI gave; none when it gave none.
+        refusal: Option<agent_core::decide::outcome::RefusalSummary>,
     },
     /// The agent reported `STATUS: FAILED`.
     Failed {
@@ -342,14 +362,21 @@ impl Notice {
                 until,
                 reason,
                 evidence,
-            } => (
-                HarnessPrompt::NoticePaused,
-                common
-                    .with("until", until.to_string())?
-                    .with("reason", reason.to_string())?
-                    .with("evidence", evidence)?,
-                NoticeKind::Paused,
-            ),
+                refusal,
+            } => {
+                let evidence_text = match refusal {
+                    Some(r) => refusal_text(r, *reason, evidence),
+                    None => evidence.clone(),
+                };
+                (
+                    HarnessPrompt::NoticePaused,
+                    common
+                        .with("until", context.offset.stamp_minute(*until))?
+                        .with("reason", reason.to_string())?
+                        .with("evidence", &evidence_text)?,
+                    NoticeKind::Paused,
+                )
+            }
             Self::Failed { message } => (
                 HarnessPrompt::NoticeFailed,
                 common.with("message", message)?,

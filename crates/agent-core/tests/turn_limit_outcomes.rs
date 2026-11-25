@@ -35,6 +35,7 @@ fn turn_limit_is_distinct_and_quota_takes_precedence() {
             session_id: None,
             stream: StreamOutcome::TurnLimit,
             error_tail: ErrorTail::from_text(errors, limits.tail_lines),
+            refusal: None,
         };
         let classified = classify_outcome(
             &output,
