@@ -87,3 +87,6 @@ mod no_tool_events;
 
 mod serena_readable;
 mod serena_reminded;
+
+#[cfg(test)]
+mod commit_reminder;

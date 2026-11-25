@@ -220,6 +220,10 @@ pub enum LogEvent {
     /// request than its name says, a stage cannot be written, or the file, the output of its check or the wording of its answer
     /// fails; the request is settled as a wrong result, or its answer falls back, and the daemon goes on.
     WorkerRequestDamaged,
+    /// A run that held uncommitted work past both bounds of `[commit_reminder]` was told once on the bus to commit it.
+    CommitReminded,
+    /// A run reminded to commit was seen at a new commit: the reminder was followed.
+    CommitFollowed,
 }
 
 impl Keyword for LogEvent {
@@ -290,6 +294,8 @@ impl LogEvent {
             | Self::NotificationSent
             | Self::QuestionsFileOpened
             | Self::BuildDirectoryRemoved
+            | Self::CommitReminded
+            | Self::CommitFollowed
             | Self::TaskHandedOver => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
