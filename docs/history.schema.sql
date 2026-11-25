@@ -1,4 +1,4 @@
-PRAGMA user_version = 28;
+PRAGMA user_version = 29;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
