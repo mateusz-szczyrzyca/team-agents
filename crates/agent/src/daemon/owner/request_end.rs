@@ -9,6 +9,7 @@ use agent_core::log::{LogEvent, LogRecord, LogTaskScope, LogTeamScope};
 use agent_core::state::Timestamp;
 use agent_runtime::agentbus::RequestId;
 use agent_runtime::worker_request::Settlement;
+use serde_json::Value;
 
 /// How a request ended, as the one word of the record's `outcome`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -24,8 +25,11 @@ pub(super) enum EndOutcome<'a> {
 impl EndOutcome<'_> {
     /// The word of the record: the settlement's, or the name of the log event that told the same end before.
     pub(super) const fn word(&self) -> &'static str {
-        let _ = self;
-        ""
+        match self {
+            Self::Settled(settlement) => settlement.outcome(),
+            Self::Requeued => "worker_request_requeued",
+            Self::ReturnedUnfinished => "worker_request_returned",
+        }
     }
 }
 
@@ -61,16 +65,40 @@ pub(super) struct RequestEnd<'a> {
 }
 
 impl RequestEnd<'_> {
-    /// The entry of the daemon's log for this end, made at `at`.
+    /// The entry of the daemon's log for this end, made at `at`: under the requester's team, rounds and task, with the
+    /// fields of the brief. A time, a step or a cost that is not known is the empty text.
     pub(super) fn record(&self, at: Timestamp) -> LogRecord {
+        let text = |value: String| Value::String(value);
+        let fields = BTreeMap::from([
+            ("request".to_owned(), text(self.request.to_string())),
+            ("task".to_owned(), text(self.requester_task.to_string())),
+            ("requester".to_owned(), text(self.requester.to_string())),
+            (
+                "step".to_owned(),
+                text(self.step.as_ref().map(ToString::to_string).unwrap_or_default()),
+            ),
+            ("worker".to_owned(), text(self.worker.to_string())),
+            ("worker_task".to_owned(), text(self.worker_task.to_string())),
+            ("try".to_owned(), Value::from(self.try_number)),
+            ("outcome".to_owned(), text(self.outcome.word().to_owned())),
+            (
+                "started".to_owned(),
+                text(self.started.map(|at| at.to_string()).unwrap_or_default()),
+            ),
+            ("seconds".to_owned(), Value::from(self.seconds)),
+            (
+                "cost_usd".to_owned(),
+                text(self.cost_usd.map(|cost| cost.to_string()).unwrap_or_default()),
+            ),
+        ]);
         LogRecord {
             at,
             module: module_path!().to_owned(),
             event: LogEvent::WorkerRequestEnded,
-            team: Some(LogTeamScope::new(self.team.clone(), Vec::new())),
+            team: Some(LogTeamScope::new(self.team.clone(), self.rounds.iter().cloned())),
             task: Some(LogTaskScope::new(self.requester_task.clone(), None)),
-            message: String::new(),
-            fields: BTreeMap::new(),
+            message: format!("request {} ended: {}", self.request, self.outcome.word()),
+            fields,
             cut: Cut::default(),
         }
     }
