@@ -34,7 +34,7 @@ use agent_runtime::worker_request::{
     request_of_file, set_aside, write_pending,
 };
 
-use super::request_end::EndOutcome;
+use super::request_end::{EndOutcome, EndedRequest};
 use super::teams::{Outbound, Served, is_transient};
 use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, BusNotice, NoticeRenderError};
@@ -704,8 +704,12 @@ impl Owner {
             // The end is decided and kept: it is told here and nowhere else, so a file read again after a restart, which
             // goes through the arms above, is not told twice.
             if let Stage::Settled { checked, settlement } = &pending.stage {
-                self.log_request_end(&pending, checked.step, EndOutcome::Settled(settlement))
-                    .await;
+                self.log_request_end(
+                    EndedRequest::from(&pending),
+                    checked.step.map(|step| step.to_string()),
+                    EndOutcome::Settled(settlement),
+                )
+                .await;
             }
         }
     }
@@ -785,8 +789,12 @@ impl Owner {
             checked: Box::new(checked.clone()),
             settlement: settlement.clone(),
         };
-        self.log_request_end(&pending, checked.step, EndOutcome::Settled(&settlement))
-            .await;
+        self.log_request_end(
+            EndedRequest::from(&pending),
+            checked.step.map(|step| step.to_string()),
+            EndOutcome::Settled(&settlement),
+        )
+        .await;
         if self.answer_requester(&pending, &checked, &settlement).await? {
             self.answered_requests.insert(pending.request);
         }
