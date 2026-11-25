@@ -227,6 +227,9 @@ pub enum LogEvent {
     /// A session whose context reached the share of its bound that `[commit_reminder] context_percent` names was told
     /// once on the bus to commit and to write down where it is.
     ContextReminded,
+    /// A run that ignored the reminder to commit for `[commit_reminder] cut_after` minutes was stopped, to be resumed in
+    /// its session with the order to commit.
+    CommitCut,
 }
 
 impl Keyword for LogEvent {
@@ -300,6 +303,7 @@ impl LogEvent {
             | Self::CommitReminded
             | Self::CommitFollowed
             | Self::ContextReminded
+            | Self::CommitCut
             | Self::TaskHandedOver => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
