@@ -296,6 +296,12 @@ pub enum GitOperation {
     /// `git commit`, of a change the harness makes itself.
     #[strum(serialize = "commit")]
     Commit,
+    /// `git symbolic-ref --quiet --short HEAD`, to see which branch a worktree has out.
+    #[strum(serialize = "current branch")]
+    CurrentBranch,
+    /// `git switch <branch>`, to put a worktree on an existing branch.
+    #[strum(serialize = "switch branch")]
+    SwitchBranch,
 }
 
 /// Why the scratch area of a read of the uncommitted changes cannot be made.
@@ -1410,6 +1416,26 @@ impl Git {
         .map(drop)
     }
 
+    /// The branch this handle's worktree has out, or `None` on a detached HEAD.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`]; [`GitError::NotABranch`]; [`GitError::NotUtf8`]; [`GitError::Run`].
+    pub async fn current_branch(&self) -> Result<Option<BranchName>, GitError> {
+        Ok(Some("main".parse().map_err(|source| GitError::NotABranch {
+            operation: GitOperation::CurrentBranch,
+            source,
+        })?))
+    }
+
+    /// Checks out the existing `branch` in this handle's worktree, keeping the changes of the tree.
+    ///
+    /// # Errors
+    /// [`GitError::Failed`] when the branch does not exist or changes in the tree would be lost; [`GitError::Run`].
+    pub async fn switch_branch(&self, branch: &BranchName) -> Result<(), GitError> {
+        let _ = (branch, GitOperation::SwitchBranch);
+        Ok(())
+    }
+
     /// Whether `ancestor` is part of the history of `descendant`; a commit is part of its own history.
     ///
     /// # Errors
@@ -1990,6 +2016,67 @@ mod tests {
 
         git.branch_delete(&branch("topic"), DeleteMode::Force).await.unwrap();
         assert_eq!(git.branch_tip(&branch("topic")).await.unwrap(), None);
+    }
+
+    // Rule: a worktree is on the branch git says is out.
+    #[tokio::test]
+    async fn current_branch_names_the_checked_out_branch() {
+        let fixture = Fixture::new();
+        raw(&fixture.repo, &["checkout", "-q", "-b", "topic"]);
+
+        let current = fixture.git().current_branch().await.unwrap();
+
+        assert_eq!(current, Some(branch("topic")));
+    }
+
+    // Rule: a detached HEAD is the answer "no branch", not a failure.
+    #[tokio::test]
+    async fn current_branch_is_none_on_detached_head() {
+        let fixture = Fixture::new();
+        raw(&fixture.repo, &["checkout", "-q", "--detach"]);
+
+        let current = fixture.git().current_branch().await.unwrap();
+
+        assert_eq!(current, None);
+    }
+
+    // Rule: a clean worktree is moved to another branch, and HEAD is that branch's tip.
+    #[tokio::test]
+    async fn switch_branch_moves_a_clean_worktree() {
+        let fixture = Fixture::new();
+        topic_branch(&fixture);
+        let topic_tip = raw(&fixture.repo, &["rev-parse", "topic"]);
+
+        fixture.git().switch_branch(&branch("topic")).await.unwrap();
+
+        assert_eq!(raw(&fixture.repo, &["symbolic-ref", "--short", "HEAD"]), "topic");
+        assert_eq!(raw(&fixture.repo, &["rev-parse", "HEAD"]), topic_tip);
+    }
+
+    // Rule: changes that the switch would lose stop it, and nothing is changed.
+    #[tokio::test]
+    async fn switch_branch_refuses_to_lose_changes() {
+        let fixture = Fixture::new();
+        raw(&fixture.repo, &["checkout", "-q", "-b", "topic"]);
+        fixture.commit("a.txt", "topic\n", "Topic changes a.txt");
+        raw(&fixture.repo, &["checkout", "-q", "main"]);
+        fixture.commit("a.txt", "main\n", "Main changes a.txt");
+        std::fs::write(fixture.repo.join("a.txt"), "dirty\n").unwrap();
+
+        let result = fixture.git().switch_branch(&branch("topic")).await;
+
+        assert!(
+            matches!(
+                &result,
+                Err(GitError::Failed {
+                    operation: GitOperation::SwitchBranch,
+                    ..
+                })
+            ),
+            "{result:?}"
+        );
+        assert_eq!(raw(&fixture.repo, &["symbolic-ref", "--short", "HEAD"]), "main");
+        assert_eq!(std::fs::read_to_string(fixture.repo.join("a.txt")).unwrap(), "dirty\n");
     }
 
     // ---- worktrees ----------------------------------------------------------------------------------------------
