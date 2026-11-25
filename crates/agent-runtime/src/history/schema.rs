@@ -446,4 +446,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 23,
         sql: include_str!("023-serena-reminded.sql"),
     },
+    Migration {
+        version: 24,
+        sql: include_str!("024-commit-reminder.sql"),
+    },
 ];

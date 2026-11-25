@@ -5,12 +5,17 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.94.0 — 25.11.2026 — PR pending
+## 0.94.0 — 25.11.2026 — PR #250
 
-### Bug fixes
-- [agent] [agent-runtime] Requests interrupted by a missing worker result or a daemon restart resume in the same worker workspace, preserving partial work and snapshots without spending a wrong-result try. Provider failures prefer a free worker of another provider; requests stay queued while no compatible worker is free.
-- [agent] [agent-core] [agent-runtime] After three returns to the queue, another interruption returns the step to its requester with all recorded causes. Replayed and late results cannot deliver a second final answer.
-- [agentbus] New requests with required capabilities use the same interruption recovery as other requests; requests saved before recovery was enabled keep their earlier rules.
+### New features
+- [agent] [agent-core] [agent-runtime] A solo agent, a coordinator or a member that holds 300 or more uncommitted lines and has made no commit for 30 minutes is told once, on the bus, to commit what is finished. A commit re-arms the reminder; a reviewer or a worker is never reminded, and the daemon never touches the files of the agent. Each reminder is the log event `commit_reminded`, and `commit_followed` says when the run committed after it.
+
+### Enhancements
+- [agent-runtime] A history of version 23 is read and upgraded to version 24, which admits the two new log events.
+
+### Configuration
+- [agent-core] new: `[commit_reminder] lines` (default `300`) — the uncommitted lines (added plus removed) at which a run is reminded to commit; `0` turns the reminder off. A file without `[commit_reminder]` keeps the defaults.
+- [agent-core] new: `[commit_reminder] minutes` (default `30`) — the minutes without a commit (from the later of the last commit and the start of the run) at which a run is reminded; `0` turns the reminder off.
 
 ## 0.93.0 — 25.11.2026 — PR #246
 

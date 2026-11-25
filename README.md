@@ -327,6 +327,15 @@ not remind a session twice. It is logged as
 of Serena it made after. No tool is blocked. See
 [configuration](docs/configuration.md#binaries) and [`[serena]`](docs/configuration.md#serena).
 
+**Reminder to commit.** A solo agent, a coordinator and a member whose round is open and who hold many uncommitted
+lines are told once, on the bus, to commit what is finished: when the worktree holds `[commit_reminder] lines` changed
+lines (300 by default; added plus removed) and the run has made no commit for `[commit_reminder] minutes` minutes (30 by
+default, counted from the later of its last commit and its start). Both bounds must be reached; a key at `0` turns the
+reminder off. The daemon looks at most once a minute per task, never reminds a reviewer or a worker, and reminds again
+only after the run has committed. It never commits, deletes or resets anything in the worktree. Each reminder is the log
+event `commit_reminded`, and `commit_followed` tells when the run committed after it; the reminder is kept in memory, so a
+restart of the daemon arms it again. See [`[commit_reminder]`](docs/configuration.md).
+
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in

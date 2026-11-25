@@ -12,6 +12,7 @@ pub mod assign;
 pub mod busy;
 pub mod checks;
 pub mod commit_guard;
+pub mod commit_reminder;
 pub mod context;
 pub mod delivered;
 pub mod delivery;
