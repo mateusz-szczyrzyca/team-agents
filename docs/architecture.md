@@ -592,16 +592,20 @@ tip, and the lead waits. A lead that ended with `STATUS: SLEEPING` waits for its
 and is published only when the gate it ran itself passed at the tip. What the harness remembers of its own gates and of the
 times it sent a lead back is not in the state: a daemon that restarts starts over.
 
-**A reviewer that cannot work** (`agent_core::decide::reviewer::replace_now`, `owner/rounds/replace.rs`). A review pass waits
+**A reviewer that cannot work** (`agent_core::decide::reviewer::replace_now`, `replace_after_refusal`, `owner/rounds/replace.rs`). A review pass waits
 for every review that was asked. At every look the harness finds the reviews that are still to come and whose reviewer's task
 failed, was stopped, or has been paused for `[review] replace_after_minutes` — counted by `quiet_since` from its last run
 that its provider did not refuse, never before the request —: each goes to another free investigator that is not
 of the team and not of the pass (`ItemMut::replace_review` puts the new review in the place of the old one, so the reviews that
 came stay), with a worktree at the head of the pull request, and the history records it as a review asked. The task of the
 reviewer that was replaced is left as it is: a report it still makes answers no review, is logged (`review_report_late`) and is
-not taken. When no investigator is
-free the human is told once for the review (`harness/review/notice-no-verdict.md`, which also tells of a report without a
-verdict). The reviewers of a team whose lead was stopped or failed are not replaced: stopping a team starts nobody.
+not taken. A reviewer whose last run its provider refused and
+whose agent the refusal rule changes (`decide::limit::decide`, recomputed at every look from the refusals the state counted
+and the run's own end time) is replaced at once, by a free investigator of another provider than the refused one
+(`decide::reviewer::on_provider` names those to skip; the human is told by `harness/review/notice-reviewer-changed.md`);
+with none free the review waits and the human is told once (`harness/review/notice-reviewer-waits.md`). When no investigator
+is free for any other reviewer the human is told once for the review (`harness/review/notice-no-verdict.md`, which also
+tells of a report without a verdict). The reviewers of a team whose lead was stopped or failed are not replaced: stopping a team starts nobody.
 
 **A team that sleeps** (`agent_core::decide::asleep::asleep_step`, `owner/rounds/asleep.rs`). A coordinator that gives work to a
 member and sleeps, and a member that wakes, does nothing and sleeps again, leave a team in which each waits for another. At every
