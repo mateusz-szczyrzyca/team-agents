@@ -509,7 +509,7 @@ fn a_rate_limit_event_stores_resets_at_in_the_refusal_summary() -> TestResult {
     assert_eq!(replay.output.stream, StreamOutcome::Failed);
     let refusal = replay.output.refusal.expect("refusal should be present");
     assert_eq!(refusal.status, "429");
-    assert!(refusal.kind == agent_core::decide::outcome::RefusalKind::RateLimit);
+    assert_eq!(refusal.kind, agent_core::decide::outcome::RefusalKind::RateLimit);
     assert_eq!(refusal.resets_at, Some(1_794_471_800));
     Ok(())
 }
