@@ -15,6 +15,7 @@ use super::publish::{GATE_SEND_BACKS, OwnGate};
 use super::{Announcement, AutopilotNotice, PublishError};
 
 mod github;
+mod provider;
 #[cfg(test)]
 mod tests;
 
@@ -262,6 +263,11 @@ impl Owner {
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
         let waiting = self.waiting_for(team, round)?;
+        if waiting == Waiting::Provider
+            && let Some((pause, now)) = self.provider_pause_of(team, round)
+        {
+            return Some(self.provider_line(&pause, now));
+        }
         // A queued run whose agent runs another task at its limit goes after that run: the line names it.
         let holder = (waiting == Waiting::For(Obligation::QueuedRun))
             .then(|| {
@@ -324,6 +330,9 @@ impl Owner {
         } else {
             Activity::Idle
         };
+        if activity == Activity::Idle && self.provider_pause_of(team, round).is_some() {
+            return Some(Waiting::Provider);
+        }
         let obligation = if self.pulls.is_none() {
             self.stuck_obligation(team, round)
                 .or_else(|| Self::queued_run_obligation(team, round))
@@ -342,6 +351,24 @@ impl Owner {
                 })
         };
         round_wait(activity, obligation)
+    }
+
+    /// The pause of a provider that `round` waits for, with the time it was looked at: `None` when it waits for anybody
+    /// else, and also when the clock cannot be read, which leaves the wait to the human as it was before.
+    fn provider_pause_of(&self, team: &Team, round: &Round) -> Option<(provider::ProviderPause, Timestamp)> {
+        let now = match Timestamp::now(&self.parts.clock) {
+            Ok(now) => now,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    rounds = %round.id(),
+                    operation = "provider_pause",
+                    error = %error,
+                );
+                return None;
+            }
+        };
+        self.provider_pause(team, round, now).map(|pause| (pause, now))
     }
 
     /// What a round with a member that cannot work waits for, or `None` when no member is stuck: the human, or, for a
