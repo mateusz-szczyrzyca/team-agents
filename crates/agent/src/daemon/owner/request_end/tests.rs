@@ -98,7 +98,7 @@ fn a_record_leaves_the_step_the_start_and_the_cost_empty_when_they_are_not_known
     assert_eq!(fields["step"], json!(""));
     assert_eq!(fields["started"], json!(""));
     assert_eq!(fields["cost_usd"], json!(""));
-    assert!(unknown.record(noon()).rounds().is_empty());
+    assert_eq!(unknown.record(noon()).rounds().len(), 0);
 }
 
 #[test]
