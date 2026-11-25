@@ -332,6 +332,28 @@ fn no_tool_call_note(
     Ok(Some(note))
 }
 
+/// The prompt of a run that resumes a session after a cut for ignoring the reminder to commit: the order, a text of the
+/// team catalog, in place of what the module of the prompts composed (nothing); any other prompt as it is.
+///
+/// # Errors
+/// [`StartProblem::Team`] when the text of the order does not take its values.
+fn with_commit_order(ctx: &Context<'_>, kind: PromptKind, prompt: String) -> Result<String, StartProblem> {
+    match kind {
+        PromptKind::Resume(ResumeReason::CommitOrder { lines, minutes }) => {
+            let order = crate::daemon::team::commit_order(ctx.team_texts, lines, minutes)?;
+            Ok(format!("{}\n", order.trim_end()))
+        }
+        PromptKind::First
+        | PromptKind::Resume(
+            ResumeReason::Hang { .. }
+            | ResumeReason::Restart
+            | ResumeReason::Limit
+            | ResumeReason::TurnLimit
+            | ResumeReason::NoStatus,
+        ) => Ok(prompt),
+    }
+}
+
 /// Makes the run of `task` ready; the first run of a new session the ladder started it in is given `briefing`.
 ///
 /// # Errors
@@ -408,23 +430,7 @@ pub(super) async fn plan(
         rules: ctx.rules,
     };
     let prompt = compose(&texts, &input)?;
-    // The order to commit is a text of the team catalog: it is the whole prompt of the run that follows a cut.
-    let prompt = match kind {
-        PromptKind::Resume(ResumeReason::CommitOrder { lines, minutes }) => {
-            format!(
-                "{}\n",
-                crate::daemon::team::commit_order(ctx.team_texts, lines, minutes)?.trim_end()
-            )
-        }
-        PromptKind::First
-        | PromptKind::Resume(
-            ResumeReason::Hang { .. }
-            | ResumeReason::Restart
-            | ResumeReason::Limit
-            | ResumeReason::TurnLimit
-            | ResumeReason::NoStatus,
-        ) => prompt,
-    };
+    let prompt = with_commit_order(ctx, kind, prompt)?;
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
     let prompt = with_run_sections(ctx, &found, kind, prompt, briefing, last_message)?;
     let run = RunId::generate(ctx.clock, rng)?;

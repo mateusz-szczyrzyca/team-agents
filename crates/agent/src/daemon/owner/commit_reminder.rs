@@ -347,7 +347,7 @@ impl Owner {
                 head_moved,
                 lines: look.uncommitted,
             };
-            return self.cut_if_ignored(target, now, cut_after, ignored).await;
+            return self.cut_if_ignored(target, now, cut_after, ignored);
         };
         self.put_commit_reminder(target, due_lines, due_minutes).await?;
         self.commit_reminded.insert(target.task.clone(), (head, now));
@@ -369,7 +369,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`LookError::TestLock`] when the test lock cannot be read.
-    async fn cut_if_ignored(
+    fn cut_if_ignored(
         &mut self,
         target: &Watched,
         now: Timestamp,
