@@ -3012,6 +3012,63 @@ Integrate the guide.
         world.feedback_as(member2, 2, "used");
     }
 
+    /// A worker of the pool as `World::new_custom` takes it: `name`, of the fake `claude`, playing `scenario`.
+    fn claude_worker(name: &'static str, scenario: &'static str) -> AgentDef {
+        AgentDef {
+            name,
+            kind: "worker",
+            scenario,
+            cli: "claude",
+            model: None,
+            capabilities: &[],
+        }
+    }
+
+    // Rule: a worker whose last run brought no result is passed over for the next request while another worker is
+    // free, though it comes first in `[tiers] workers`.
+    #[test]
+    fn a_worker_whose_last_run_failed_is_passed_over_for_the_next_request() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                claude_worker("w-a", "done"),
+                claude_worker("w-b", "script:guide"),
+            ],
+            None,
+        );
+        world.script(
+            "guide",
+            "mkdir -p docs\necho walkthrough >> docs/guide.md\ngit add docs/guide.md\ngit -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the walkthrough'\n",
+        );
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        std::fs::create_dir_all(world.worktree(member).join(".agent")).unwrap();
+        std::fs::write(world.worktree(member).join(".agent/plan.md"), MEMBER_PLAN).unwrap();
+        world.ended(member, 1);
+
+        let reply1 = world.delegate_as(member, MEMBER_REQUEST);
+        assert!(!answers(&reply1)[0].0, "{reply1}");
+        world.request_is("1", "failed");
+        assert_eq!(world.requests()["1"]["worker"], "w-a");
+
+        let reply2 = world.delegate_as(member, MEMBER_REQUEST);
+        assert!(!answers(&reply2)[0].0, "{reply2}");
+        eventually("request 2 to be given to a worker", || {
+            world.requests().get("2").is_some_and(|request| request["worker"].is_string())
+        });
+        assert_eq!(world.requests()["2"]["worker"], "w-b", "w-a failed its last run");
+        world.request_is("2", "done");
+    }
+
     #[test]
     fn pool_unsettled_result_prevents_worker_reuse_until_settled() {
         let mut world = World::new_custom(

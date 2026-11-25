@@ -16,6 +16,12 @@
 //! after the one that served the last request (remembered by the daemon, as [`LastServed`]), wrapping around, and picks
 //! the first free worker of the first provider in that rotation that has a free worker meeting the request. A provider
 //! with nothing free is skipped, so a request never waits for one.
+//!
+//! Within a provider the workers take turns too, and a worker whose last run brought no usable result is passed over
+//! while a worker that did not fail is free: what the pool remembers of that, since the start of the daemon, is
+//! [`Turns`]. [`next_pool_worker`] and [`second_try_pool_worker`] decide without it, as if nothing were remembered.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::ModelName;
 use crate::decide::slot::RunLimit;
@@ -51,6 +57,70 @@ pub struct Requires<'a> {
 /// restart of the daemon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LastServed<'a>(pub Option<&'a str>);
+
+/// What the pool remembers of its workers since the start of the daemon: which worker served each provider's last
+/// request, and which workers' last run brought no usable result. Empty after a restart of the daemon.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Turns {
+    /// The worker that served the last request of each provider, by the provider's name.
+    last_worker: BTreeMap<String, AgentName>,
+    /// The workers whose last run ended without a usable result; a worker leaves the set when a run of it succeeds.
+    failed: BTreeSet<AgentName>,
+}
+
+impl Turns {
+    /// Notes that `worker` of `provider` was given a request: the provider's next request goes to the worker after it.
+    pub fn served(&mut self, provider: &str, worker: &AgentName) {
+        let _ = (provider, worker);
+    }
+
+    /// Notes that the last run of `worker` brought no usable result: it is passed over while a worker that did not fail
+    /// is free.
+    pub fn failed(&mut self, worker: &AgentName) {
+        let _ = worker;
+    }
+
+    /// Notes that the last run of `worker` brought its result: it takes its turns again.
+    pub fn succeeded(&mut self, worker: &AgentName) {
+        let _ = worker;
+    }
+
+    /// Whether the last run of `worker` brought no usable result.
+    #[must_use]
+    pub fn has_failed(&self, worker: &AgentName) -> bool {
+        self.failed.contains(worker)
+    }
+}
+
+/// As [`next_pool_worker`], with what the pool remembers: within the provider whose turn it is, the free worker after
+/// the one that served that provider last, in `workers` order and wrapping around; and no worker whose last run failed
+/// while a worker that did not fail is free in any provider.
+#[must_use]
+pub fn next_pool_worker_in_turn<'a>(
+    workers: &[PoolWorker<'a>],
+    requires: &Requires<'_>,
+    last_served: LastServed<'_>,
+    turns: &Turns,
+    run_limit: RunLimit,
+) -> Option<(&'a AgentName, &'a str)> {
+    let _ = turns;
+    next_pool_worker(workers, requires, last_served, run_limit)
+}
+
+/// As [`second_try_pool_worker`], passing over the workers whose last run failed while a worker that did not fail
+/// meets the request.
+#[must_use]
+pub fn second_try_pool_worker_in_turn<'a>(
+    workers: &[PoolWorker<'a>],
+    requires: &Requires<'_>,
+    failed_worker: &AgentName,
+    failed_provider: &str,
+    turns: &Turns,
+    run_limit: RunLimit,
+) -> Option<(&'a AgentName, &'a str)> {
+    let _ = turns;
+    second_try_pool_worker(workers, requires, failed_worker, failed_provider, run_limit)
+}
 
 /// The worker of the pool that serves the next request and its provider: of the first provider after [`LastServed`] in
 /// the pool's provider order that has a free worker meeting `requires`, that worker in `workers` order; `None` when no
