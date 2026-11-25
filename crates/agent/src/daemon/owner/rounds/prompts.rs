@@ -359,28 +359,40 @@ pub(super) async fn fix_pass(
     let Some((_, branch, _)) = fixing_item(found) else {
         return Ok(Some(text));
     };
-    let checked_out = match git_of(ctx, found, working)?.current_branch().await {
+    let git = git_of(ctx, found, working)?;
+    Ok(Some(match other_branch_text(texts, &git, branch).await? {
+        Some(other) => format!("{}\n\n{text}", other.trim_end()),
+        None => text,
+    }))
+}
+
+/// The text that tells the lead its worktree, in `git`, has another branch out than its item's `branch`, which the harness
+/// could not switch; `None` when the item's branch is out. A branch that git cannot read is logged and counts as no text: the
+/// same policy as the checkout before a run, and the text about another branch would be a guess.
+async fn other_branch_text(
+    texts: &AutopilotPrompts,
+    git: &Git,
+    branch: &BranchName,
+) -> Result<Option<String>, SectionError> {
+    let checked_out = match git.current_branch().await {
         Ok(checked_out) => checked_out,
         Err(error) => {
-            // The same policy as the checkout before a run: a branch that cannot be read is logged and the run goes on, here
-            // with the fix pass alone, because the text about another branch would be a guess.
             tracing::warn!(
                 event = LogEvent::GitCallFailed.as_str(),
                 to = %branch,
                 error = %agent_runtime::process::error_chain(&error),
                 "the branch the worktree has out cannot be read: the fix pass does not say which one it is"
             );
-            return Ok(Some(text));
+            return Ok(None);
         }
     };
     if checked_out.as_ref() == Some(branch) {
-        return Ok(Some(text));
+        return Ok(None);
     }
     let values = Variables::new()
         .with("checked_out", super::super::item_branch::named(checked_out.as_ref()))?
         .with("branch", branch.as_str())?;
-    let other = texts.render(AutopilotPrompt::ReviewFixPassOtherBranch, &values)?;
-    Ok(Some(format!("{}\n\n{text}", other.trim_end())))
+    Ok(Some(texts.render(AutopilotPrompt::ReviewFixPassOtherBranch, &values)?))
 }
 
 /// The text of the fix pass of the lead `found`, without what tells it of the branch its worktree has out.
