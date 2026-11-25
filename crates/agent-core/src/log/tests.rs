@@ -105,9 +105,9 @@ fn every_log_level_parses_renders_and_keeps_events_at_or_above_its_severity() {
     }
 }
 
-#[test]
-fn every_log_event_has_its_fixed_snake_case_name_and_level() {
-    let expected = [
+
+fn expected_log_events() -> Vec<(LogEvent, &'static str, LogLevel)> {
+    vec![
         (LogEvent::CliOutputUnreadable, "cli_output_unreadable", LogLevel::Warn),
         (
             LogEvent::RunEndedWithoutStatus,
@@ -192,7 +192,12 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::CommitCut, "commit_cut", LogLevel::Info),
         (LogEvent::WorkerWaitReturned, "worker_wait_returned", LogLevel::Info),
         (LogEvent::WorkerRequestEnded, "worker_request_ended", LogLevel::Info),
-    ];
+    ]
+}
+
+#[test]
+fn every_log_event_has_its_fixed_snake_case_name_and_level() {
+    let expected = expected_log_events();
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
     for (&actual, &(variant, name, level)) in LogEvent::ALL.iter().zip(expected.iter()) {
