@@ -172,6 +172,7 @@ enum Event {
     /// The end of the run.
     Result(Finish),
     /// A rate limit event: the provider refused the model.
+    #[serde(rename = "rate_limit_event")]
     RateLimit(RateLimitEvent),
     /// Any other event: partial messages, ...
     #[serde(other)]
