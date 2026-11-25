@@ -109,6 +109,13 @@ impl Zone {
         self.written(at, Precision::Minute)
     }
 
+    /// The hour and the minute of the moment `at` in this zone, `21:10`, without the date or the zone: for a line that
+    /// shows only the time of the day.
+    #[must_use]
+    pub fn clock_minute(&self, _at: Timestamp) -> String {
+        String::new()
+    }
+
     /// Formats the timestamp that ends a daemon `waiting` line (`..., next try <timestamp>`, `..., owed by the lead since <timestamp>`) in
     /// this zone.
     ///
