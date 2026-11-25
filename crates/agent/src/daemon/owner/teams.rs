@@ -541,6 +541,7 @@ impl Owner {
             for task in self.tasks_with_a_run(team) {
                 self.remind_to_commit(&task).await;
                 self.remind_of_context(&task).await;
+                self.cut_overdue_round(&task);
             }
             if look.changed {
                 self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);

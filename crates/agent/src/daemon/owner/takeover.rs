@@ -120,14 +120,14 @@ impl Owner {
                     &format!("task={task}, from={}", held.name()),
                     &format!("agent={name}"),
                 );
-                handed_over(&team, task, held.name(), name.as_str());
+                handed_over(&team, task, held.name(), name.as_str(), trouble);
                 Takeover::Agent
             }
             Chosen::Lead => {
                 // The state owes the work to the lead until it is told, so that a restart before then tells it all the same.
                 self.parts.state.owe_lead(task, trouble, at)?;
                 log_decision("takeover", &format!("task={task}, from={}", held.name()), LEAD);
-                handed_over(&team, task, held.name(), LEAD);
+                handed_over(&team, task, held.name(), LEAD, trouble);
                 Takeover::Lead
             }
         };
@@ -609,14 +609,16 @@ impl Owner {
 /// What `task_handed_over` names as the new holder when a member's work goes to its team's lead.
 const LEAD: &str = "lead";
 
-/// Logs that `task` of `team` was handed over from the agent `from` to `to`: an agent's name, or [`LEAD`].
-fn handed_over(team: &agent_core::ids::TeamId, task: &TaskId, from: &str, to: &str) {
+/// Logs that `task` of `team` was handed over from the agent `from` to `to` (an agent's name, or [`LEAD`]) for
+/// `trouble`, whose word is the record's `reason`.
+fn handed_over(team: &agent_core::ids::TeamId, task: &TaskId, from: &str, to: &str, trouble: Trouble) {
     tracing::info!(
         event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
         team = %team,
         task = %task,
         from,
         to,
+        reason = super::briefing::reason_word(trouble),
         "a task whose runs went bad is handed over"
     );
 }

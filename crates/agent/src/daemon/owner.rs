@@ -29,6 +29,7 @@ mod reminder;
 mod removal;
 mod request_end;
 mod returned;
+mod round_limit;
 mod round_state;
 mod rounds;
 #[cfg(test)]
@@ -610,6 +611,9 @@ pub(super) struct Owner {
     /// The tasks whose run was cut for the reminder they have at their head: one cut per reminder. Left when the head
     /// moves or the run is reminded again.
     commit_cut: HashSet<TaskId>,
+    /// The cuts of the runs whose round went on past `[limits] round_minutes`: kept from the cut until the run has ended,
+    /// which hands the task over. Not kept over a restart of the daemon: the next look cuts the resumed run again.
+    overdue_cuts: HashMap<TaskId, round_limit::OverdueCut>,
     /// The file of the machine's test lock (`TEST_LOCK_FILE`, read when the daemon starts); a test run started in a
     /// task's worktree holds its run from being cut.
     test_lock_file: PathBuf,
@@ -746,6 +750,7 @@ impl Owner {
             commit_looked_at: HashMap::new(),
             commit_reminded: HashMap::new(),
             commit_cuts: HashMap::new(),
+            overdue_cuts: HashMap::new(),
             commit_cut: HashSet::new(),
             test_lock_file: std::env::var_os("TEST_LOCK_FILE")
                 .map_or_else(|| PathBuf::from(test_lock::DEFAULT_LOCK_FILE), PathBuf::from),
@@ -1111,6 +1116,7 @@ impl Owner {
         let why = self.reasons.remove(&task);
         // An order of a cut that did not end its run in the daemon's own stop is not for this run.
         self.commit_cuts.remove(&task);
+        self.overdue_cuts.remove(&task);
         // What a wake-up noted is for the run it starts, and for no other.
         let woke = self
             .wake_notes
@@ -1470,7 +1476,11 @@ impl Owner {
         self.attach_session(task, session)?;
         // The order is for the run the cut ended; a human's stop of the task meanwhile drops it.
         let order = self.commit_cuts.remove(task);
+        let overdue = self.overdue_cuts.remove(task);
         let Some(halt) = self.halts.remove(task) else {
+            if let Some(cut) = overdue {
+                return self.hand_over_overdue(task, &located, now, cut, events).await;
+            }
             if let Some(order) = order {
                 return self.resume_after_cut(task, &located, now, order, events).await;
             }

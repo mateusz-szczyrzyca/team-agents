@@ -941,6 +941,9 @@ mod history_queries_tests;
 mod refused_reviewer_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/round_limit.rs"]
+mod round_limit_tests;
+#[cfg(test)]
 #[path = "rounds/tests/turn_limits.rs"]
 mod turn_limits_tests;
 
