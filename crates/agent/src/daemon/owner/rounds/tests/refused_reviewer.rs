@@ -231,6 +231,53 @@ async fn a_refused_reviewer_waits_and_the_human_is_told_once_when_no_investigato
     assert_eq!(tellings, 1);
 }
 
+// Rule: the human is told once that a refused reviewer waits, also when the daemon restarts while it waits (review of
+// #273, finding 2).
+#[tokio::test]
+async fn a_restart_of_the_daemon_does_not_tell_again_that_a_refused_reviewer_waits() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-1", "turn-limit-quota"),
+            investigator("inv-2", "opencode-verdict:APPROVE"),
+            investigator("inv-3", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    with_opencode_investigators(&rig, &["inv-2"]);
+    slow_patience_and_long_quota_pause(&rig);
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let paused = rig
+        .state_where("the reviewer inv-1 paused by its quota", |state| {
+            reviewer_paused(state, "inv-1")
+        })
+        .await;
+    let refused = review_task_of(&paused, "inv-1").unwrap();
+    rig.advance_history_days(1);
+    rig.notification_with("inv-1 waits for its provider").await;
+    rig.stop().await.unwrap();
+
+    rig.start().await;
+    // The pause of the second refusal ends: the third run of inv-1 is refused as well, and the review still waits.
+    rig.advance_history_days(1);
+    rig.wait_for("the third run of inv-1", || rig.runs(&refused) >= 3).await;
+    rig.state_where("the reviewer inv-1 paused again", |state| {
+        reviewer_paused(state, "inv-1")
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let tellings = rig
+        .notifications()
+        .iter()
+        .filter(|text| text.contains("inv-1 waits for its provider"))
+        .count();
+    assert_eq!(tellings, 1);
+}
+
 #[tokio::test]
 async fn the_human_is_told_once_that_a_refused_reviewer_was_replaced() {
     let mut rig = Rig::new(
