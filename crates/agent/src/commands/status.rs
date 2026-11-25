@@ -19,7 +19,7 @@ use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{AgentBus, AgentBusError, HelperEntry, HelperRecord};
-use agent_runtime::clock::SystemClock;
+use agent_runtime::clock::{SharedClock, SystemClock};
 use agent_runtime::debug::{DebugRuntimeError, load_debug_state};
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
@@ -89,15 +89,18 @@ pub(crate) struct Activity {
     zone: Zone,
     /// Where the requests for workers of the tasks shown are read.
     requests: requests::Source,
+    /// The clock used to decide which provider cooldowns are still active.
+    clock: SharedClock,
 }
 
 impl Activity {
     /// The activity of the tasks of `home`, told in the local time `zone` gives.
-    pub(crate) const fn new(home: Home, zone: Zone) -> Self {
+    pub(crate) fn new(home: Home, zone: Zone) -> Self {
         Self {
             home,
             zone,
             requests: requests::Source::Unread,
+            clock: SharedClock::new(SystemClock),
         }
     }
 
@@ -160,10 +163,6 @@ impl Activity {
         }
     }
 
-    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
-    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
-    /// configured CLIs and is the only reason a configuration is omitted.
-    ///
     /// The line of the agents their provider refused at the time of the status, read from the state of the daemon; `None`
     /// when no state is written yet or no agent is refused.
     ///
@@ -175,10 +174,14 @@ impl Activity {
             Err(DebugRuntimeError::Missing { .. }) => return Ok(None),
             Err(source) => return Err(StatusError::Refusals(source)),
         };
-        let now = Timestamp::now(&SystemClock).map_err(StatusError::Clock)?;
+        let now = Timestamp::now(&self.clock).map_err(StatusError::Clock)?;
         Ok(refusals::refused_line(&state.refusals_at(now), self.zone))
     }
 
+    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
+    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
+    /// configured CLIs and is the only reason a configuration is omitted.
+    ///
     /// # Errors
     /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
     pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
