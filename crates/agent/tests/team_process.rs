@@ -1427,7 +1427,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert!(!notice.contains('Z'), "{notice}");
     }
 
-    /// A home of one `opencode` agent `deep-1` on a DeepInfra model, running `scenario` through the stand-in. It is a
+    /// A home of one `opencode` agent `deep-1` on a `DeepInfra` model, running `scenario` through the stand-in. It is a
     /// home of its own: `World::new` writes only `claude` agents, so this test replaces the configuration it wrote.
     fn deepinfra_world(scenario: &str) -> World {
         let world = World::new(&agents_with(&[]));
@@ -1444,10 +1444,12 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         );
         // The daemon needs two investigators outside the team for every pull request: the reviewers of the other tests.
         for (name, _, scenario) in REVIEWERS {
-            config.push_str(&format!(
+            write!(
+                config,
                 "[investigators.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \
                  \"--bus-bin\", \"{bus}\", \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n"
-            ));
+            )
+            .unwrap();
         }
         std::fs::write(world.home.join("agents.toml"), config).unwrap();
         world
