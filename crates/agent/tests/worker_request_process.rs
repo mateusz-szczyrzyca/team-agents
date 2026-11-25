@@ -3024,8 +3024,8 @@ Integrate the guide.
         }
     }
 
-    // Rule: a worker whose last run brought no result is passed over for the next request while another worker is
-    // free, though it comes first in `[tiers] workers`.
+    // Rule: a worker whose last run brought no usable result is passed over for the next request while another worker
+    // is free, though it comes first in `[tiers] workers`.
     #[test]
     fn a_worker_whose_last_run_failed_is_passed_over_for_the_next_request() {
         let mut world = World::new_custom(
@@ -3057,8 +3057,10 @@ Integrate the guide.
 
         let reply1 = world.delegate_as(member, MEMBER_REQUEST);
         assert!(!answers(&reply1)[0].0, "{reply1}");
-        world.request_is("1", "failed");
-        assert_eq!(world.requests()["1"]["worker"], "w-a");
+        // w-a commits nothing for a request that names a file: its second try goes to w-b.
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-b");
+        world.feedback_as(member, 1, "used");
 
         let reply2 = world.delegate_as(member, MEMBER_REQUEST);
         assert!(!answers(&reply2)[0].0, "{reply2}");
