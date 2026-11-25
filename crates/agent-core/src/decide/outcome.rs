@@ -36,6 +36,8 @@ use crate::kinds::Role;
 use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
+use super::refusal;
+
 /// Seconds added to every pause, so that a run does not start a moment before the limit really ends.
 pub const RESET_MARGIN: Duration = Duration::minutes(1);
 
@@ -362,7 +364,10 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
     let evidence = shown
         .iter()
         .find(|(_, _, shown)| *shown == reason)
-        .map(|(line, _, _)| line.chars().take(MAX_EVIDENCE_CHARS).collect::<String>())?;
+        .map(|(line, _, _)| {
+            let words = refusal::describe(line).unwrap_or_else(|| (*line).to_owned());
+            words.chars().take(MAX_EVIDENCE_CHARS).collect::<String>()
+        })?;
     let lines = shown
         .into_iter()
         .filter(|(_, _, shown)| *shown == reason)
