@@ -42,7 +42,26 @@ pub enum ReminderDue {
 /// the run started does not count as a recent one: only the time the run itself has worked does.
 #[must_use]
 pub fn reminder_due(look: &CommitLook, lines: u32, minutes: u32) -> ReminderDue {
-    ReminderDue::NotDue
+    if lines == 0 || minutes == 0 || look.reminded_at.as_ref() == Some(&look.head) {
+        return ReminderDue::NotDue;
+    }
+    let idle = idle_minutes(look);
+    if look.uncommitted >= u64::from(lines) && idle >= u64::from(minutes) {
+        ReminderDue::Due {
+            lines: look.uncommitted,
+            minutes: idle,
+        }
+    } else {
+        ReminderDue::NotDue
+    }
+}
+
+/// The whole minutes from the later of the last commit and the start of the run to the time of the look; none when the
+/// look is before that time (a commit dated in the future).
+fn idle_minutes(look: &CommitLook) -> u64 {
+    let since = look.last_commit.max(look.run_started);
+    let minutes = (look.now.as_utc() - since.as_utc()).whole_minutes();
+    if minutes <= 0 { 0 } else { minutes.unsigned_abs() }
 }
 
 #[cfg(test)]
