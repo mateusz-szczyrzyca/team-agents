@@ -865,3 +865,34 @@ async fn the_failed_no_tool_notice_matches_its_complete_golden() {
     assert_eq!(rendered.title(), "❌ team-agents");
     assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
 }
+
+#[tokio::test]
+async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
+    // Rule: every time a notice shows is in the zone of the host, as its header is, not in UTC.
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason: PauseReason::RateLimit,
+        evidence: "an overload: 429 · Model busy, retry later · engine_overloaded".to_owned(),
+    };
+    let notification = notice.render(&texts().await, &context).unwrap();
+    let body = notification.body();
+    assert!(body.contains("paused until 2026-11-11 21:15"), "{body}");
+    assert!(!body.contains("2026-11-11T20:15:00Z"), "{body}");
+    assert!(
+        body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
+        "{body}"
+    );
+}
