@@ -896,3 +896,44 @@ async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
         "{body}"
     );
 }
+
+/// The body of the paused notice of a run that `reason` paused, with `evidence` as what the provider said.
+async fn paused_body(reason: PauseReason, evidence: &str) -> String {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason,
+        evidence: evidence.to_owned(),
+    };
+    notice.render(&texts().await, &context).unwrap().body().to_owned()
+}
+
+#[tokio::test]
+async fn a_paused_notice_names_the_kind_of_the_refusal_and_its_reason() {
+    // Rule: the notice says which kind of refusal it is: from the provider's words when the evidence has them, else
+    // from the reason of the pause.
+    let overload = paused_body(
+        PauseReason::RateLimit,
+        "an overload: 429 · Model busy, retry later · engine_overloaded",
+    )
+    .await;
+    assert!(
+        overload.contains("refused its run: an overload (rate_limit)"),
+        "{overload}"
+    );
+
+    let quota = paused_body(PauseReason::Quota, "You've hit your limit").await;
+    assert!(quota.contains("refused its run: a quota (quota)"), "{quota}");
+}
