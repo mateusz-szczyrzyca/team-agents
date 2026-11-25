@@ -92,8 +92,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         daemon: Option<Child>,
     }
 
-    /// `(name, kind, scenario)` of an agent: kind `agent`, `worker`, `investigator` or `opencode` (a normal agent of the
-    /// `opencode` CLI on a DeepInfra model).
+    /// `(name, kind, scenario)` of an agent: kind `agent`, `worker` or `investigator`.
     type AgentSpec = (&'static str, &'static str, &'static str);
 
     impl World {
@@ -110,33 +109,26 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
                 } else {
                     "agents"
                 };
-                // An `opencode` agent runs the same stand-in through its own CLI kind, on a DeepInfra model.
-                let (cli, model_line) = if *kind == "opencode" {
-                    ("opencode", "model = \"deepinfra/zai-org/GLM-5.3-Flash\"\n")
-                } else {
-                    ("claude", "")
-                };
                 write!(
                     config,
-                    "[{table}.{name}]\ncli = \"{cli}\"\n{model_line}args = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \
+                    "[{table}.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \
                      \"--bus-bin\", \"{bus}\", \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n",
                     bus = agentbus_binary().display(),
                     home = home.display(),
                 )
                 .unwrap();
                 match *kind {
-                    "agent" | "opencode" => normals.push(format!("\"{name}\"")),
+                    "agent" => normals.push(format!("\"{name}\"")),
                     "worker" => workers.push(format!("\"{name}\"")),
                     _ => {}
                 }
             }
             write!(
                 config,
-                "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nopencode = \"{}\"\nagentbus = \"{}\"\n\
+                "[plan]\nbounces = 0\n[tiers]\nnormal = [{}]\nworkers = [{}]\n[binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
                  [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n",
                 normals.join(", "),
                 workers.join(", "),
-                script("team-cli.sh").display(),
                 script("team-cli.sh").display(),
                 agentbus_binary().display(),
             )
@@ -173,17 +165,11 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         }
 
         fn start(&mut self) {
-            self.start_with_env(&[]);
-        }
-
-        /// Starts the daemon with the environment variables `env` added, for the tests that need a time zone.
-        fn start_with_env(&mut self, env: &[(&str, &str)]) {
             let daemon = agent()
                 .arg("daemon")
                 .arg("--prompts-dir")
                 .arg(prompts())
                 .env("AGENTS_HOME", &self.home)
-                .envs(env.iter().copied())
                 .stdin(Stdio::null())
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
@@ -1409,8 +1395,8 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     fn a_deepinfra_refusal_pauses_the_task_and_its_notice_tells_the_provider_words_and_the_local_resume_time() {
         // The daemon runs in UTC+01:00 (a POSIX zone string, so no zone database is needed): the notice must give its
         // resume time with that offset, never in UTC.
-        let mut world = World::new(&agents_with(&[("deep-1", "opencode", "deepinfra-overload")]));
-        world.start_with_env(&[("TZ", "<+01>-1")]);
+        let mut world = deepinfra_world("deepinfra-overload");
+        start_in_zone(&mut world, "<+01>-1");
 
         let task = solo_task(&world.agent(&["run", "deep-1", "Its own work."]));
         let status = world.status_where("the task to be paused for the refusal", |status| {
@@ -1439,6 +1425,50 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert!(notice.contains("paused until "), "{notice}");
         assert!(notice.contains("+01:00"), "{notice}");
         assert!(!notice.contains('Z'), "{notice}");
+    }
+
+    /// A home of one `opencode` agent `deep-1` on a DeepInfra model, running `scenario` through the stand-in. It is a
+    /// home of its own: `World::new` writes only `claude` agents, so this test replaces the configuration it wrote.
+    fn deepinfra_world(scenario: &str) -> World {
+        let world = World::new(&agents_with(&[]));
+        let home = world.home.display().to_string();
+        let bus = agentbus_binary().display().to_string();
+        let cli = script("team-cli.sh").display().to_string();
+        let mut config = format!(
+            "[agents.deep-1]\ncli = \"opencode\"\nmodel = \"deepinfra/zai-org/GLM-5.3-Flash\"\n\
+             args = [\"--scenario\", \"{scenario}\", \"--as\", \"deep-1\", \"--bus-bin\", \"{bus}\", \
+             \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n\
+             [plan]\nbounces = 0\n[tiers]\nnormal = [\"deep-1\"]\nworkers = []\n\
+             [binaries]\nclaude = \"{cli}\"\nopencode = \"{cli}\"\nagentbus = \"{bus}\"\n\
+             [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n"
+        );
+        // The daemon needs two investigators outside the team for every pull request: the reviewers of the other tests.
+        for (name, _, scenario) in REVIEWERS {
+            config.push_str(&format!(
+                "[investigators.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \
+                 \"--bus-bin\", \"{bus}\", \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n"
+            ));
+        }
+        std::fs::write(world.home.join("agents.toml"), config).unwrap();
+        world
+    }
+
+    /// Starts the daemon of `world` with the time zone `tz`, as [`World::start`] starts it otherwise.
+    fn start_in_zone(world: &mut World, tz: &str) {
+        let daemon = agent()
+            .arg("daemon")
+            .arg("--prompts-dir")
+            .arg(prompts())
+            .env("AGENTS_HOME", &world.home)
+            .env("TZ", tz)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap();
+        let socket = world.home.join("agent.sock");
+        eventually("the socket", || socket.exists());
+        world.daemon = Some(daemon);
     }
 
     /// Checks for `window` that `task` has no run: the daemon is given the time to start it if it would.
