@@ -227,3 +227,48 @@ fn an_investigator_never_used_is_chosen_before_one_used() {
     }
 }
 
+#[test]
+fn an_investigator_with_a_paused_task_is_not_free_for_a_request() {
+    use crate::config::Config;
+    use crate::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team};
+    use crate::status::TaskStatus;
+
+    let config = Config::from_toml_str(
+        r#"
+[investigators.inv-a]
+cli = "claude"
+
+[investigators.inv-b]
+cli = "claude"
+"#,
+    )
+    .unwrap();
+
+    let team_id = team(1);
+    let lead = Member::new(
+        "task-20261119-120000-0001".parse().unwrap(),
+        Participant::Normal("claude-1".parse().unwrap()),
+    );
+    let team = Team::new(
+        team_id.clone(),
+        "team-agents".parse().unwrap(),
+        at(1),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\n".into()).unwrap(),
+        Crew::solo(lead).unwrap(),
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+
+    let mut paused_member = Member::new(
+        "task-20261119-120000-0002".parse().unwrap(),
+        Participant::Investigator("inv-a".parse().unwrap()),
+    );
+    paused_member.transition(TaskStatus::Paused).unwrap();
+    state.add_reviewer(&team_id, paused_member).unwrap();
+
+    let free = free_for_request(&state, &config, at(10));
+    assert!(!free.contains(&"inv-a".parse().unwrap()));
+    assert!(free.contains(&"inv-b".parse().unwrap()));
+}
+

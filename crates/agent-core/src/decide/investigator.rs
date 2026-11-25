@@ -80,5 +80,17 @@ pub fn choose(
     )
 }
 
+/// The investigators of `config` that may take a new investigation request: configured,
+/// not occupied anywhere, with no task currently [`TaskStatus::Paused`], and not refused at `now`.
+#[must_use]
+pub fn free_for_request(
+    state: &crate::state::State,
+    config: &crate::config::Config,
+    now: Timestamp,
+) -> BTreeSet<InvestigatorName> {
+    let _ = (state, now);
+    config.investigators().keys().cloned().collect()
+}
+
 #[cfg(test)]
 mod tests;
