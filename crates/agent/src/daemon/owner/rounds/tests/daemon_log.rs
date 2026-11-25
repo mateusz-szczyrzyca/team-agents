@@ -885,8 +885,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::TaskWaitForFreeAgent,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
-            let event_str = variant.as_str();
-            tracing::info!(event = event_str, variant_name = variant.as_str(), "info event");
+            tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
         }
 
         // debug (2)
