@@ -108,3 +108,49 @@ fn a_lock_file_that_cannot_be_opened_is_an_error_naming_the_file() {
         "{error:?}"
     );
 }
+
+/// A child process (`flock`) that holds the lock of a file as a test run of another process does, ended with the guard.
+struct ChildHolder(std::process::Child);
+
+impl Drop for ChildHolder {
+    fn drop(&mut self) {
+        self.0.kill().unwrap();
+        self.0.wait().unwrap();
+    }
+}
+
+/// Starts a child process that holds the lock of a file that says `text`, and waits until the lock is held.
+fn held_by_a_child(dir: &Path, text: &str) -> (std::path::PathBuf, ChildHolder) {
+    let path = dir.join(".make.command.lck");
+    std::fs::write(&path, text).unwrap();
+    let child = std::process::Command::new("flock")
+        .arg("--exclusive")
+        .arg(&path)
+        .args(["sleep", "60"])
+        .spawn()
+        .unwrap();
+    let holder = ChildHolder(child);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while File::open(&path).unwrap().try_lock_shared().is_ok() {
+        assert!(std::time::Instant::now() < deadline, "the child never took the lock");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    (path, holder)
+}
+
+#[test]
+fn a_lock_held_by_a_child_process_started_in_the_worktree_is_the_worktrees() {
+    let dir = tempfile::tempdir().unwrap();
+    let (path, _child) = held_by_a_child(dir.path(), &format!("label=gate\ndir={WORKTREE}\npid=1\n"));
+
+    assert_eq!(holder_of(&path, Path::new(WORKTREE)).unwrap(), LockHolder::Worktree);
+}
+
+#[test]
+fn a_lock_held_by_a_child_process_started_elsewhere_is_not_the_worktrees() {
+    let dir = tempfile::tempdir().unwrap();
+    let other = "/home/example/agents/worktrees/team-agents/task-20261125-000000-bbbb";
+    let (path, _child) = held_by_a_child(dir.path(), &format!("label=gate\ndir={other}\npid=1\n"));
+
+    assert_eq!(holder_of(&path, Path::new(WORKTREE)).unwrap(), LockHolder::Elsewhere);
+}
