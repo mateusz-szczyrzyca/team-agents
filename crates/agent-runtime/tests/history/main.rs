@@ -97,4 +97,5 @@ mod context_reminder;
 
 #[cfg(test)]
 mod worker_recovery;
+mod worker_request_ended;
 mod worker_wait;
