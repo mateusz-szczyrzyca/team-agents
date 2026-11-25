@@ -1,6 +1,6 @@
 use super::*;
 
-/// The DeepInfra record of 23.11.2026: `engine_overloaded` behind opencode's `provider.rate-limit`.
+/// The record of `DeepInfra` of 23.11.2026: `engine_overloaded` behind opencode's `provider.rate-limit`.
 const DEEPINFRA: &str = r#"{"type":"error","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"code\":\"engine_overloaded\",\"message\":\"Model busy, retry later\"}}"}}}"#;
 
 #[test]
