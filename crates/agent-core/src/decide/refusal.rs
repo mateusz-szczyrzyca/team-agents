@@ -75,15 +75,16 @@ fn describe_error(record: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .and_then(provider_code);
     let kind = kind_of(error_type, status, code.as_deref());
-    let parts = [
-        status.map(|status| status.to_string()),
-        message.map(str::to_owned),
-        code,
-    ]
-    .into_iter()
-    .flatten()
-    .collect();
-    compose(kind, parts)
+    compose(
+        kind,
+        [
+            status.map(|status| status.to_string()),
+            message.map(str::to_owned),
+            code,
+        ]
+        .into_iter()
+        .flatten(),
+    )
 }
 
 /// A Claude Code error `result`: the status the API gave and the text of the result.
@@ -94,11 +95,12 @@ fn describe_result(record: &Value) -> Option<String> {
     let status = record.get("api_error_status").and_then(Value::as_u64);
     let result = text(record, "result");
     let kind = kind_of("", status, None).or_else(|| result.and_then(kind_of_words));
-    let parts = [status.map(|status| status.to_string()), result.map(str::to_owned)]
-        .into_iter()
-        .flatten()
-        .collect();
-    compose(kind, parts)
+    compose(
+        kind,
+        [status.map(|status| status.to_string()), result.map(str::to_owned)]
+            .into_iter()
+            .flatten(),
+    )
 }
 
 /// A Claude Code `rate_limit_event` that rejected a request: its status and the window it is about.
@@ -111,7 +113,7 @@ fn describe_rate_limit_event(record: &Value) -> Option<String> {
     let window = text(info, "rateLimitType").map(str::to_owned);
     compose(
         Some(Kind::RateLimit),
-        [Some(status.to_owned()), window].into_iter().flatten().collect(),
+        [Some(status.to_owned()), window].into_iter().flatten(),
     )
 }
 
@@ -157,7 +159,8 @@ fn kind_of_words(message: &str) -> Option<Kind> {
 }
 
 /// Joins the parts of a description, with its kind in front when the kind is known; no parts, no description.
-fn compose(kind: Option<Kind>, parts: Vec<String>) -> Option<String> {
+fn compose(kind: Option<Kind>, parts: impl IntoIterator<Item = String>) -> Option<String> {
+    let parts: Vec<String> = parts.into_iter().collect();
     if parts.is_empty() {
         return None;
     }
