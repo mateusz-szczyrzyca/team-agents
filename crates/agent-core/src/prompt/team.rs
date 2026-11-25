@@ -101,6 +101,8 @@ pub enum TeamPrompt {
     CommitRemind,
     /// The reminder put on the bus for a session whose context reached a share of its bound.
     ContextRemind,
+    /// What a run is told when it is resumed after the harness cut it for ignoring the reminder to commit.
+    CommitOrder,
     /// The message to a member that the worker failed its request.
     HelperFailed,
     /// How a worker's run that failed a request ended: with `STATUS: FAILED`.
@@ -180,6 +182,7 @@ impl TeamPrompt {
         Self::HelperResult,
         Self::CommitRemind,
         Self::ContextRemind,
+        Self::CommitOrder,
         Self::HelperFailed,
         Self::WorkerFailed,
         Self::WorkerNoResult,
@@ -330,6 +333,9 @@ impl TeamPrompt {
                 Audience::Model,
                 &["context", "bound", "percent"],
             ),
+            Self::CommitOrder => {
+                PromptSpec::new("harness/team/commit-order.md", Audience::Model, &["lines", "minutes"])
+            }
             Self::HelperFailed => PromptSpec::new(
                 "harness/team/bus-helper-failed.md",
                 Audience::Model,
