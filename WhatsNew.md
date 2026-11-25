@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.100.0 — 25.11.2026 — PR pending
+## 0.100.0 — 25.11.2026 — PR #260
 
 ### Enhancements
 - [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with the worker's task, its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
