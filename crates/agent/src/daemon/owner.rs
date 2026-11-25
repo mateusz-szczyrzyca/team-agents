@@ -944,6 +944,9 @@ impl Owner {
 
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
+        // An agent its provider refused starts no queued task before its return, as it takes no new one.
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
         let queued: Vec<Queued> = self
             .parts
             .state
@@ -953,7 +956,8 @@ impl Owner {
                 !(self.in_flight.contains(&item.task)
                     || self.pending_removals.contains(&item.task)
                     || self.request_recovery == owned_request::RequestRecovery::Pending
-                        && item.tier == agent_core::kinds::Tier::Worker)
+                        && item.tier == agent_core::kinds::Tier::Worker
+                    || refused.contains(&item.agent))
             })
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
