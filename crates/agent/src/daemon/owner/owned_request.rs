@@ -9,6 +9,7 @@ use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
 use agent_runtime::worker_request::recovery::{self, Journal, Phase, Transition};
 
+use super::request_end::{EndOutcome, EndedRequest};
 use super::{Outcome, Owner, OwnerError, RunEnd, RunOutcome, RunVerdict};
 
 /// Whether dispatch owns a newly prepared workspace or a retained one.
@@ -426,6 +427,7 @@ impl Owner {
             .team
             .id()
             .clone();
+        let step = self.step_of_request(served.request).await;
         let causes;
         let notice;
         let change = if updated.phase() == &Phase::Exhausted {
@@ -494,12 +496,65 @@ impl Owner {
         }
         self.serving.remove(task);
         self.look_at(&team);
-        if updated.phase() == &Phase::Exhausted {
+        let outcome = if updated.phase() == &Phase::Exhausted {
             tracing::info!(event = LogEvent::WorkerRequestReturned.as_str(), request = %served.request, %run, "worker request exhausted its interruption bound");
+            EndOutcome::ReturnedUnfinished
         } else {
             tracing::info!(event = LogEvent::WorkerRequestRequeued.as_str(), request = %served.request, %run, "worker request retained for another execution");
-        }
+            EndOutcome::Requeued
+        };
+        self.log_request_end(
+            EndedRequest {
+                request: served.request,
+                team: &team,
+                requester: &served.requester,
+                requester_task: &served.requester_task,
+                worker: &served.worker,
+                worker_task: task,
+                seconds: self.seconds_since(served.started),
+                started: Some(served.started),
+            },
+            step,
+            outcome,
+        )
+        .await;
         Ok(())
+    }
+
+    /// The step of the plan that the open request `request` is for, as text; none when the bus does not list it or cannot
+    /// be asked, which is told.
+    async fn step_of_request(&self, request: agent_runtime::agentbus::RequestId) -> Option<String> {
+        match self.parts.bus.helper_list(false).await {
+            Ok(entries) => entries
+                .into_iter()
+                .find(|entry| entry.id == request)
+                .and_then(|entry| entry.step),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    request = %request,
+                    error = %agent_runtime::process::error_chain(&error),
+                    "the step of an interrupted request cannot be read: the record of its end has none"
+                );
+                None
+            }
+        }
+    }
+
+    /// The whole seconds from `since` to now by the clock of the owner; none counted for a clock that gives no time or one
+    /// that is behind `since`.
+    fn seconds_since(&self, since: agent_core::state::Timestamp) -> u64 {
+        match agent_core::state::Timestamp::now(&self.parts.clock) {
+            Ok(now) => (now.as_utc() - since.as_utc()).whole_seconds().max(0).unsigned_abs(),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    error = %agent_runtime::process::error_chain(&error),
+                    "the clock gives no time: the record of the end of an interrupted request counts no seconds"
+                );
+                0
+            }
+        }
     }
 
     /// Keeps a declared ending only for the execution that still owns this request.
