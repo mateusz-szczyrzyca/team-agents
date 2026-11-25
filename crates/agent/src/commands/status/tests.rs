@@ -2041,7 +2041,7 @@ agentbus = "{}"
     let count = lines.iter().position(|line| line.starts_with("  tasks:")).unwrap();
     assert_eq!(
         lines[count - 1],
-        "  worker H4  minimax-1  step 1.2  2026-11-25 07:57–08:59 +00:00  accepted",
+        "  worker H4  minimax-1  task-20261125-075745-w8vj  step 1.2  2026-11-25 07:57–08:59 +00:00  accepted",
         "{}",
         shown.text
     );

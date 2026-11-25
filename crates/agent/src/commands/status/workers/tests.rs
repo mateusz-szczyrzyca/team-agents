@@ -68,12 +68,24 @@ fn same_day() -> Span {
     span(Some("2026-11-25T08:57:45Z"), Some("2026-11-25T08:59:30Z"))
 }
 
+// Rule: the line names the worker's task, whose ID `agent log --task` and the task's directory know.
+#[test]
+fn a_request_not_yet_given_a_task_names_none() {
+    let mut queued = record(6, MEMBER, DelegationStatus::Starting, Some("glm-1"), Some("6.1"), None);
+    queued.helper_task = None;
+
+    assert_eq!(
+        line(&queued, Span::default(), UTC),
+        "  worker H6  glm-1  step 6.1  not started  working"
+    );
+}
+
 // Rule: a worker whose result was used is accepted, with when it started and ended on one day.
 #[test]
 fn a_used_result_is_accepted_with_its_start_and_end() {
     assert_eq!(
         line(&done(Some(HelperVerdict::Used)), same_day(), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted"
     );
 }
 
@@ -81,7 +93,7 @@ fn a_used_result_is_accepted_with_its_start_and_end() {
 fn a_corrected_result_is_accepted_after_correction() {
     assert_eq!(
         line(&done(Some(HelperVerdict::Corrected)), same_day(), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted after correction"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted after correction"
     );
 }
 
@@ -89,7 +101,7 @@ fn a_corrected_result_is_accepted_after_correction() {
 fn a_discarded_result_is_rejected() {
     assert_eq!(
         line(&done(Some(HelperVerdict::Discarded)), same_day(), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +00:00  rejected"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  rejected"
     );
 }
 
@@ -97,7 +109,7 @@ fn a_discarded_result_is_rejected() {
 fn a_done_result_without_a_verdict_is_not_rated_yet() {
     assert_eq!(
         line(&done(None), same_day(), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +00:00  not rated yet"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  not rated yet"
     );
 }
 
@@ -108,7 +120,7 @@ fn a_running_worker_says_since_when_it_works() {
 
     assert_eq!(
         line(&running, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  worker H4  glm-1  step 6.1  since 2026-11-25 08:57 +00:00  working"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  since 2026-11-25 08:57 +00:00  working"
     );
 }
 
@@ -118,7 +130,7 @@ fn a_starting_worker_without_a_step_has_not_started() {
 
     assert_eq!(
         line(&starting, Span::default(), UTC),
-        "  worker H5  glm-1  not started  working"
+        "  worker H5  glm-1  task-20261125-075745-w8vj  not started  working"
     );
 }
 
@@ -128,7 +140,7 @@ fn a_failed_worker_whose_end_was_not_written_says_so() {
 
     assert_eq!(
         line(&failed, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57 +00:00, end not recorded  failed"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57 +00:00, end not recorded  failed"
     );
 }
 
@@ -138,7 +150,7 @@ fn an_unclear_request_asked_back() {
 
     assert_eq!(
         line(&unclear, same_day(), UTC),
-        "  worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +00:00  unclear, asked back"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  unclear, asked back"
     );
 }
 
@@ -150,7 +162,7 @@ fn a_run_over_midnight_writes_both_dates() {
             span(Some("2026-11-25T23:58:00Z"), Some("2026-11-26T00:03:00Z")),
             UTC
         ),
-        "  worker H4  glm-1  step 6.1  2026-11-25 23:58 +00:00 – 2026-11-26 00:03 +00:00  accepted"
+        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 23:58 +00:00 – 2026-11-26 00:03 +00:00  accepted"
     );
 }
 
