@@ -308,6 +308,7 @@ async fn keep_refusal_returns_some_when_the_rule_decides_to_change_agent() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -352,6 +353,7 @@ async fn refused_solo_task_is_handed_over_to_a_free_agent_of_another_provider() 
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -412,6 +414,7 @@ async fn refused_coordinator_is_taken_over_by_a_free_investigator() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -464,6 +467,7 @@ async fn no_free_agent_pauses_the_task_until_first_candidate_returns() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -515,6 +519,7 @@ async fn quota_of_many_hours_changes_agent_at_once() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::Quota,
+                kind: agent_core::decide::refusal::Kind::Quota,
                 evidence: String::new(),
             }),
             &RunEnd::QuotaExhausted { resets_at: Some(far) },
@@ -557,6 +562,7 @@ async fn pause_and_retry_without_change_agent_returns_none_and_no_notice() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -601,6 +607,7 @@ async fn a_single_keep_refusal_result_carries_one_notice_only() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
@@ -652,6 +659,7 @@ async fn old_state_with_a_refused_task_follows_the_change_agent_rule() {
             &Settled::Paused(Pause {
                 until: at(10),
                 reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
                 evidence: String::new(),
             }),
             &RunEnd::RateLimited,
