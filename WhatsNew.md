@@ -16,6 +16,14 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 - [agent] The resume time of a paused task in its notice is in the host's zone with that moment's offset, as the notice's header is, instead of UTC.
 - [agent] [agent-core] [agent-runtime] A Claude run that its account's rate-limit window refused resumes at the window's own reset time (`resetsAt`), not at the time its text names, also when the text says a quota was hit. The notice gives that reset in the host's zone, for example `… · resets 2026-11-12T12:00:00+01:00`.
 
+## agent 0.110.0 · agent-core 0.110.0 — 25.11.2026 — PR #277
+
+### Bug fixes
+- [agent] [agent-core] A worker whose last request brought no usable result is no longer given the next request while another worker is free. Before, the first worker of a provider in `[tiers] workers` got every request of that provider, failed or not: on 25.11 `openrouter-minimax` failed three steps in a row of one task while four other workers stood idle.
+
+### Enhancements
+- [agent] [agent-core] The workers of one provider now take turns: with `deepinfra-qwen` and `deepinfra-glm` in `[tiers] workers`, DeepInfra's requests go to one and then the other, instead of always to `deepinfra-qwen` while it is free.
+
 ## agent-core 0.109.0 — 25.11.2026 — PR #275
 
 ### New features

@@ -274,6 +274,7 @@ impl Owner {
         earlier.push(reason.clone());
         let failed_cli = self.cli_of(&pending.worker).unwrap_or(CliKind::Claude);
         let failed_provider = self.provider_of_agent(&pending.worker);
+        self.pool_dispatch.turns.failed(&pending.worker);
         self.again.insert(
             pending.request,
             Again {
