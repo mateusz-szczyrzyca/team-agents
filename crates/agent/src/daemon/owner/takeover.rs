@@ -161,10 +161,12 @@ impl Owner {
             .map(|member| member.agent().name())
             .collect();
         let busy = self.agents_in_runs();
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
         let listed: Vec<(&AgentName, Tier, Activity)> = replacement
             .agents()
             .iter()
-            .filter(|name| name.as_str() != held.name() && !in_team.contains(&name.as_str()))
+            .filter(|name| name.as_str() != held.name() && !in_team.contains(&name.as_str()) && !refused.contains(name))
             .filter_map(|name| {
                 let activity = if busy.contains(&name.as_str()) {
                     Activity::InRun

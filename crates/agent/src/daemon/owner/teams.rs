@@ -1285,6 +1285,8 @@ impl Owner {
             }
         }
 
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
         let mut pool_workers_data = Vec::new();
         for name in &pool {
             let Some(agent_conf) = self.parts.settings.config.agent(name) else {
@@ -1297,7 +1299,7 @@ impl Owner {
                 name: name.clone(),
                 provider,
                 capabilities,
-                busy: avail.busy || self.is_in_active_crew(name),
+                busy: avail.busy || self.is_in_active_crew(name) || refused.contains(name),
                 runs: avail.runs,
                 unsettled: avail.unsettled,
             });

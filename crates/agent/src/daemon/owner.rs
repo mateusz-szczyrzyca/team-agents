@@ -968,19 +968,20 @@ impl Owner {
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits
             .retain(|task| waiting.iter().any(|item| item.task == *task));
-        // An agent its provider refused gets no new task before its return. A task that has run before is a retry,
-        // which its pause and a resume of the human govern, so only a task with no run yet waits here.
+        // Fresh assignments must wait even when a reused task has earlier runs. Incumbent retries
+        // remain governed by their pause and explicit human resume.
         let now = Timestamp::now(&self.parts.clock)?;
         let refused = self.parts.state.refused_agents_at(now);
         let queued: Vec<Queued> = waiting
             .into_iter()
             .filter(|item| {
                 !(refused.contains(&item.agent)
-                    && self
-                        .parts
-                        .state
-                        .find_task(&item.task)
-                        .is_some_and(|task| task.member.runs().is_empty()))
+                    && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
+                        || self
+                            .parts
+                            .state
+                            .find_task(&item.task)
+                            .is_some_and(|task| task.member.runs().is_empty())))
             })
             .collect();
         if queued.is_empty() {

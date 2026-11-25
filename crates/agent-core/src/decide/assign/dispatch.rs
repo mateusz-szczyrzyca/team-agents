@@ -265,7 +265,9 @@ fn dispatch_split_item<'a>(
                         agent: p.agent,
                         status: p.status,
                         handed_over: p.handed_over,
-                        busy: p.busy || ctx.reserved.contains(p.agent.name()),
+                        busy: p.busy
+                            || ctx.reserved.contains(p.agent.name())
+                            || ctx.refused.iter().any(|name| name.as_str() == p.agent.name()),
                     });
                 }
             }
