@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.105.0 — 25.11.2026 — PR #262
 
 ### Enhancements
-- [agent] [agent-core] The notice of a refusal names what the provider said, from its own fields: the status, the message and the provider's code, then the kind, for example `429 · Model busy, retry later · engine_overloaded · Overloaded`, instead of the raw JSON line cut at its length. The raw line stays in the run's files.
+- [agent] [agent-core] The notice of a refusal names what the provider said, from its own fields: the status, the message and the provider's code, then the kind, for example `429 · Model busy, retry later · engine_overloaded · Overloaded`, instead of the raw JSON line cut at its length. The complete raw line stays in the run's files.
 - [agent] [agent-core] An overload (`engine_overloaded`, or a 503 or 529) is named as an overload, not as a rate limit; it waits the rate-limit pause as before.
 - [agent] [agent-core] Every time in the notice of a pause is in the local time zone of the daemon, as its header is.
 - [agent] [agent-core] A Claude run refused with a rate limit that names its reset ends its pause at that reset, which is more exact than the text of the run. Before this version the reset Claude named was not read, and the pause was the configured one.
