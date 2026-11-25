@@ -198,6 +198,18 @@ fn a_reviewer_the_rule_keeps_or_that_was_not_refused_waits_the_patience() {
     }
 }
 
+// Rule: a reviewer the rule pauses (refused once, its retry still to come) is kept until the retry, however long its
+// pause lasts: the silence of a refused run is not the patience's to count (review of #273).
+#[test]
+fn a_reviewer_the_rule_pauses_is_kept_whatever_the_silence() {
+    for quiet_for in [Duration::ZERO, PATIENCE, Duration::from_hours(8)] {
+        assert!(
+            !replace_after_refusal(&awaited(TaskStatus::Paused, quiet_for), Some(Decision::Pause)),
+            "{quiet_for:?}"
+        );
+    }
+}
+
 // Rule: the answer of the rule moves only a paused reviewer: one that works, waits, asks or reported is never replaced
 // by it, and one that failed or was stopped is replaced at once whatever the answer.
 #[test]
