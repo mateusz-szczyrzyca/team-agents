@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.98.0 — 25.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent log --reminders [--days N]` shows, agent by agent and model by model, how the reminders work over the last `N` days (default `7`): how many reminders to commit and context reminders were given, how many commit reminders were followed and the median minutes until the commit, and how many runs were cut. With nothing to show it says `no reminders in the last 7 days`. It reads the history without the daemon.
+
 ## 0.97.0 — 25.11.2026 — PR #253
 
 ### New features

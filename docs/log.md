@@ -19,6 +19,7 @@ agent log --round <id> --json                       # the records as JSON lines
 agent log --json                                   # the newest daemon log rows as JSON lines
 agent log --round <id> --show log                   # only this round's daemon log rows
 agent log --team <id> --level warn -n 20            # this team's newest 20 warning rows
+agent log --reminders --days 7                      # the reminders of the harness, agent by agent
 ```
 
 A lone `--round` or `--team`, with only `--prompts`, `--no-steps` or `--json`, prints the existing story.
@@ -26,6 +27,19 @@ A lone `--round` or `--team`, with only `--prompts`, `--no-steps` or `--json`, p
 selects daemon log rows instead. Row filters are `--task`, `--run`, `--agent`, `--level`, `--event`, `--since`,
 `--until`, `--grep`, `-n` and `-f`. Tests of the round and team
 filters use explicit `--show log` so they compare the same kind of rows.
+
+`--reminders [--days N]` (`7` days by default) prints a table instead: one line for each agent and model with the
+count of `commit_reminded` (`commit`), `context_reminded` (`context`), `commit_followed` (`followed`) and `commit_cut`
+(`cuts`) rows of the last `N` days, and the median of the `minutes` of the followed rows (`median`; of an even count the
+lower of the two middle values, `-` for none). The agent is the `agent` field of the row, the model that of the run's
+record (`-` when it has none). The columns are separated by two spaces and padded; with no rows the command prints
+`no reminders in the last 7 days`, also for a history written before these events. It takes no round, team, row
+filter or `--json`, and exits with `1` when given one.
+
+```text
+agent     model       commit  context  followed  median  cuts
+claude-1  sonnet-5-5  3       1        2         9 min   1
+```
 
 Filters intersect. `--level` matches exactly one severity; `--agent` matches the agent of the associated run.
 `--since` and `--until` are inclusive timestamps: one with its zone (`Z` or an offset) is read as written, one without

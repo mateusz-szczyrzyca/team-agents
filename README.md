@@ -253,7 +253,7 @@ agent say <task|team> <text>      says something to a task or a team, through th
 agent stop | pause | unpause | resume <task|team>
 agent remove <team> [--force]     takes a team out: its unmerged branches are bundled, its pull requests closed, its files deleted
 agent gate                        runs the repository's gate for a task and records its result
-agent log ...                     reads the history: rounds, teams, tasks, prompts, steps
+agent log ...                     reads the history: rounds, teams, tasks, prompts, steps; --reminders: the reminders
 agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong and the context of each run, with the sessions above their bound
 ```
 
@@ -599,6 +599,20 @@ prints the steps of the runs it covers — the agent's messages, commands and to
 rows, as one text of the newest `-n` lines (default `100`); `-f` goes on with the new rows and steps as they are recorded,
 across runs and daemon restarts, and says what the round waits for when a run ends. `--no-steps` leaves the steps out;
 `--json` is unchanged. See [`docs/log.md`](docs/log.md).
+
+`agent log --reminders [--days N]` tells, agent by agent, whether the reminders of the harness work: from the rows
+of `commit_reminded`, `context_reminded`, `commit_followed` and `commit_cut` of the last `N` days (`7` by default) it
+prints one line for each agent and model — how many times a run was reminded to commit (`commit`), how many times a
+session was told its context is large (`context`), how many commit reminders were followed by a commit (`followed`),
+the median minutes from the reminder to that commit (`median`, the lower middle value for an even count; `-` when
+none was followed) and how many runs were cut (`cuts`); the model is the one of the run's record, `-` when it has
+none. It reads the history without the daemon and takes no round, team, row filter or `--json`. With no rows it
+prints `no reminders in the last 7 days`, also for a history written before these events.
+
+```text
+agent     model       commit  context  followed  median  cuts
+claude-1  sonnet-5-5  3       1        2         9 min   1
+```
 
 Use `--grep TEXT` for literal FTS5 search, `-f` to follow new rows across daemon restarts, and `--stats` for database
 size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, `agents`, `worktrees`, `runs`, `prompts`,
