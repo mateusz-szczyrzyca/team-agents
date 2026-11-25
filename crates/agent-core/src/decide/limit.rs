@@ -54,7 +54,9 @@ pub const fn next_refusals(previous: u32, refused: bool) -> u32 {
 /// named reset is further away than the configured wait; the pause otherwise.
 #[must_use]
 pub fn decide(refusal: &Refusal) -> Decision {
-    if let Limit::Quota { reset_in: Some(reset_in) } = refusal.limit
+    if let Limit::Quota {
+        reset_in: Some(reset_in),
+    } = refusal.limit
         && reset_in > refusal.wait_limit
     {
         return Decision::ChangeAgent;

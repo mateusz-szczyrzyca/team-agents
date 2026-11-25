@@ -32,6 +32,8 @@ mod removal_tests;
 pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
+#[cfg(test)]
+mod limit_tests;
 mod renewal;
 #[cfg(test)]
 mod renewal_tests;
@@ -43,8 +45,6 @@ mod team;
 mod values;
 #[cfg(test)]
 mod waiting_tests;
-#[cfg(test)]
-mod limit_tests;
 mod wake_delivery;
 
 pub use base::UnpushedBase;

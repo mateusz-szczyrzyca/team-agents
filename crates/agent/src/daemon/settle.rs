@@ -127,11 +127,7 @@ pub(super) fn limit_of(end: &RunEnd, now: Timestamp) -> Option<Limit> {
                 .map(|reset| reset.as_utc() - now.as_utc())
                 .filter(|wait| wait.is_positive()),
         }),
-        RunEnd::Reported { .. }
-        | RunEnd::NoStatus { .. }
-        | RunEnd::TurnLimit
-        | RunEnd::Hung
-        | RunEnd::Stopped => None,
+        RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::TurnLimit | RunEnd::Hung | RunEnd::Stopped => None,
     }
 }
 
