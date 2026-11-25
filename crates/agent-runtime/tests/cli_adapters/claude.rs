@@ -416,7 +416,12 @@ fn an_allowed_rate_limit_window_is_not_in_the_error_tail() -> TestResult {
     let replay = replay(&ClaudeAdapter, &fixture("claude", "done.jsonl")?, "")?;
 
     assert!(
-        !replay.output.error_tail.lines().iter().any(|line| line.contains("rate_limit_event")),
+        !replay
+            .output
+            .error_tail
+            .lines()
+            .iter()
+            .any(|line| line.contains("rate_limit_event")),
         "{:?}",
         replay.output.error_tail.lines()
     );
