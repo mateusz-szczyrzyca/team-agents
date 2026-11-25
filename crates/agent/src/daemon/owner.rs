@@ -528,6 +528,8 @@ struct PoolDispatch {
     run_teams: HashMap<TaskId, TeamId>,
     /// Provider of the last successful pool dispatch; reset on restart.
     last_served_provider: Option<String>,
+    /// Which worker served each provider last and which workers' last run failed; empty after a restart.
+    turns: agent_core::decide::pool::Turns,
     /// The requests whose note of the wait the daemon holds, with the task whose directory has it: the notes to take away
     /// when the request is no longer queued, whether or not the bus still lists it. Empty after a restart of the daemon.
     waits_noted: HashMap<agent_runtime::agentbus::RequestId, TaskId>,

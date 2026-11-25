@@ -71,18 +71,18 @@ pub struct Turns {
 impl Turns {
     /// Notes that `worker` of `provider` was given a request: the provider's next request goes to the worker after it.
     pub fn served(&mut self, provider: &str, worker: &AgentName) {
-        let _ = (provider, worker);
+        self.last_worker.insert(provider.to_owned(), worker.clone());
     }
 
     /// Notes that the last run of `worker` brought no usable result: it is passed over while a worker that did not fail
     /// is free.
     pub fn failed(&mut self, worker: &AgentName) {
-        let _ = worker;
+        self.failed.insert(worker.clone());
     }
 
     /// Notes that the last run of `worker` brought its result: it takes its turns again.
     pub fn succeeded(&mut self, worker: &AgentName) {
-        let _ = worker;
+        self.failed.remove(worker);
     }
 
     /// Whether the last run of `worker` brought no usable result.
@@ -103,8 +103,8 @@ pub fn next_pool_worker_in_turn<'a>(
     turns: &Turns,
     run_limit: RunLimit,
 ) -> Option<(&'a AgentName, &'a str)> {
-    let _ = turns;
-    next_pool_worker(workers, requires, last_served, run_limit)
+    in_turn(workers, requires, last_served, turns, run_limit, false)
+        .or_else(|| in_turn(workers, requires, last_served, turns, run_limit, true))
 }
 
 /// As [`second_try_pool_worker`], passing over the workers whose last run failed while a worker that did not fail
@@ -118,8 +118,43 @@ pub fn second_try_pool_worker_in_turn<'a>(
     turns: &Turns,
     run_limit: RunLimit,
 ) -> Option<(&'a AgentName, &'a str)> {
-    let _ = turns;
-    second_try_pool_worker(workers, requires, failed_worker, failed_provider, run_limit)
+    let healthy: Vec<PoolWorker<'a>> = workers
+        .iter()
+        .filter(|worker| !turns.has_failed(worker.name))
+        .copied()
+        .collect();
+    second_try_pool_worker(&healthy, requires, failed_worker, failed_provider, run_limit)
+        .or_else(|| second_try_pool_worker(workers, requires, failed_worker, failed_provider, run_limit))
+}
+
+/// The worker [`next_pool_worker_in_turn`] picks, considering the workers whose last run failed only when `with_failed`.
+fn in_turn<'a>(
+    workers: &[PoolWorker<'a>],
+    requires: &Requires<'_>,
+    last_served: LastServed<'_>,
+    turns: &Turns,
+    run_limit: RunLimit,
+    with_failed: bool,
+) -> Option<(&'a AgentName, &'a str)> {
+    let providers = provider_order(workers);
+    let start = last_served
+        .0
+        .and_then(|provider| providers.iter().position(|existing| *existing == provider))
+        .map_or(0, |index| index + 1);
+    for &provider in providers.iter().cycle().skip(start).take(providers.len()) {
+        let own: Vec<&PoolWorker<'a>> = workers.iter().filter(|worker| worker.provider == provider).collect();
+        let after = turns
+            .last_worker
+            .get(provider)
+            .and_then(|last| own.iter().position(|worker| worker.name == last))
+            .map_or(0, |index| index + 1);
+        if let Some(worker) = own.iter().cycle().skip(after).take(own.len()).find(|worker| {
+            available(worker, run_limit) && meets(worker, requires) && (with_failed || !turns.has_failed(worker.name))
+        }) {
+            return Some((worker.name, worker.provider));
+        }
+    }
+    None
 }
 
 /// The worker of the pool that serves the next request and its provider: of the first provider after [`LastServed`] in

@@ -16,7 +16,9 @@ use std::str::FromStr;
 use agent_core::cli::{McpServerKind, RunMode};
 use agent_core::config::{AbsolutePath, CommandLine, Config};
 use agent_core::decide::assign::first_free_worker;
-use agent_core::decide::pool::{LastServed, PoolWorker, Requires, next_pool_worker, provider_of};
+use agent_core::decide::pool::{
+    LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
+};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
@@ -1348,11 +1350,12 @@ impl Owner {
                     .collect();
 
                 if let Some(again) = self.again.get(&req.id) {
-                    agent_core::decide::pool::second_try_pool_worker(
+                    second_try_pool_worker_in_turn(
                         &pool_workers,
                         &requires,
                         &again.worker,
                         &again.failed_provider,
+                        &self.pool_dispatch.turns,
                         run_limit,
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
@@ -1360,8 +1363,14 @@ impl Owner {
                     self.recovery_worker(journal, &pool_workers, &requires, run_limit)
                 } else {
                     let last_served = LastServed(self.pool_dispatch.last_served_provider.as_deref());
-                    next_pool_worker(&pool_workers, &requires, last_served, run_limit)
-                        .map(|(name, prov)| (name.clone(), prov.to_owned()))
+                    next_pool_worker_in_turn(
+                        &pool_workers,
+                        &requires,
+                        last_served,
+                        &self.pool_dispatch.turns,
+                        run_limit,
+                    )
+                    .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 }
             };
 
@@ -1418,6 +1427,7 @@ impl Owner {
             };
 
             if let Taken::Served = self.dispatch_pool_request(&worker_name, request).await {
+                self.pool_dispatch.turns.served(&provider, &worker_name);
                 self.pool_dispatch.last_served_provider = Some(provider);
             }
 
@@ -1813,6 +1823,7 @@ impl Owner {
                     self.look_at(&team_id);
                 }
                 Some(outcome @ RequestOutcome::Failed { .. }) => {
+                    self.pool_dispatch.turns.failed(&served.worker);
                     Self::drop_try(&self.parts.store.home().task_dir(task), served.request);
                     for job in answer_jobs(&self.parts.team_texts, served, outcome)? {
                         self.outbox.push_back(Outbound {
