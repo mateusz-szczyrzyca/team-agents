@@ -12,6 +12,8 @@ pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_A
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;
+#[cfg(test)]
+mod replacement_limit_tests;
 mod restart;
 mod session;
 pub use restart::{Restart, RestartSession};

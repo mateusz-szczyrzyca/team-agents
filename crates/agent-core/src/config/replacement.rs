@@ -25,6 +25,11 @@ pub struct Replacement {
     rejections: rejections::Limit,
     /// Seconds a queued task waits for its busy agent before it is handed over to a free agent; `0` never hands one over.
     busy_after: u32,
+    /// How many times a task is tried again after the pause a provider's refusal gives it, before the agent changes.
+    limit_retries: retries::Limit,
+    /// Minutes a quota whose reset the provider named may wait for that reset; a longer wait changes the agent at once,
+    /// `0` never waits for a named reset.
+    limit_wait_minutes: u32,
 }
 
 /// Seconds a queued task waits for its busy agent by default: five minutes.
@@ -39,6 +44,8 @@ impl Default for Replacement {
             replacements: replacements::Limit::default(),
             rejections: rejections::Limit::default(),
             busy_after: DEFAULT_BUSY_AFTER,
+            limit_retries: retries::Limit::default(),
+            limit_wait_minutes: DEFAULT_LIMIT_WAIT_MINUTES,
         }
     }
 }
@@ -78,6 +85,79 @@ impl Replacement {
     #[must_use]
     pub const fn busy_after(&self) -> u32 {
         self.busy_after
+    }
+
+    /// How many times a task is tried again after the pause a provider's refusal gives it; `0` changes the agent at
+    /// the first refusal.
+    #[must_use]
+    pub const fn limit_retries(&self) -> retries::Limit {
+        self.limit_retries
+    }
+
+    /// Minutes a quota whose reset the provider named may wait for that reset; `0` never waits for one.
+    #[must_use]
+    pub const fn limit_wait_minutes(&self) -> u32 {
+        self.limit_wait_minutes
+    }
+}
+
+/// Minutes a quota whose named reset is further away changes the agent instead of waiting: one hour by default.
+const DEFAULT_LIMIT_WAIT_MINUTES: u32 = 60;
+
+/// `[replacement] limit_retries`: how many times a task is tried again after a provider's refusal.
+pub(super) mod retries {
+    /// The most retries a task may be given: a configuration above it is refused.
+    const MAX: u32 = 10;
+
+    /// How many retries a task gets after a refusal: `0` to 10.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+    #[serde(try_from = "u32", into = "u32")]
+    pub struct Limit(u32);
+
+    /// A number of retries a task cannot have.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+    #[error("{value} retries after a refusal is not a limit: it is 0 to {MAX}")]
+    pub struct InvalidLimit {
+        /// The refused number.
+        pub value: u32,
+    }
+
+    impl Limit {
+        /// A limit of `value` retries.
+        ///
+        /// # Errors
+        /// [`InvalidLimit`] above 10.
+        pub fn new(value: u32) -> Result<Self, InvalidLimit> {
+            // STUB (RED): accepts every number.
+            Ok(Self(value))
+        }
+
+        /// The number of retries this limit allows.
+        #[must_use]
+        pub const fn get(self) -> u32 {
+            self.0
+        }
+    }
+
+    impl TryFrom<u32> for Limit {
+        type Error = InvalidLimit;
+
+        fn try_from(value: u32) -> Result<Self, Self::Error> {
+            Self::new(value)
+        }
+    }
+
+    impl From<Limit> for u32 {
+        fn from(limit: Limit) -> Self {
+            limit.get()
+        }
+    }
+
+    impl Default for Limit {
+        fn default() -> Self {
+            // STUB (RED): wrong default, the GREEN commit sets one retry.
+            Self(0)
+        }
     }
 }
 
