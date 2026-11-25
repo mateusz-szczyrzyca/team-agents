@@ -323,6 +323,10 @@ impl Notice {
     ///
     /// # Errors
     /// [`NoticeError`] when the text of the notice cannot be rendered or is not a notification.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one exhaustive match keeps notification templates and their variables together"
+    )]
     pub(super) fn render(
         &self,
         texts: &HarnessPrompts,
@@ -331,16 +335,6 @@ impl Notice {
         let common = Variables::new()
             .with("agent", context.agent)?
             .with("task", context.task.as_str())?;
-        let (text, values, kind) = self.parts(common, context)?;
-        let rendered = texts.render(text, &values)?;
-        Ok(layout_notification(kind, context, &rendered)?)
-    }
-
-    fn parts(
-        &self,
-        common: Variables,
-        context: &NoticeContext<'_>,
-    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
         let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
@@ -435,7 +429,13 @@ impl Notice {
                 return_at,
                 new_agent,
             } => {
-                let values = agent_changed_vars(common, refused_agent, refused_provider, return_at, new_agent)?;
+                let values = refusal_vars(
+                    common,
+                    refused_agent,
+                    refused_provider,
+                    context.offset.stamp_minute(*return_at),
+                )?
+                .with("new_agent", new_agent.as_str())?;
                 (HarnessPrompt::NoticeAgentChanged, values, NoticeKind::AgentChanged)
             }
             Self::NoFreeAgent {
@@ -443,39 +443,32 @@ impl Notice {
                 refused_provider,
                 return_at,
             } => {
-                let values = no_free_agent_vars(common, refused_agent, refused_provider, return_at)?;
+                let values = refusal_vars(
+                    common,
+                    refused_agent,
+                    refused_provider,
+                    context.offset.stamp_minute(*return_at),
+                )?;
                 (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
             }
         };
-        Ok((text, values, kind))
+        let rendered = texts.render(text, &values)?;
+        Ok(layout_notification(kind, context, &rendered)?)
     }
 }
 
 #[cfg(test)]
 mod tests;
 
-fn agent_changed_vars(
+/// Common facts of the provider refusal, with a return time already in the notice zone.
+fn refusal_vars(
     common: Variables,
     refused_agent: &AgentName,
     refused_provider: &str,
-    return_at: &Timestamp,
-    new_agent: &AgentName,
+    return_at: String,
 ) -> Result<Variables, NoticeError> {
     Ok(common
         .with("refused_agent", refused_agent.as_str())?
         .with("refused_provider", refused_provider)?
-        .with("return_at", return_at.to_string())?
-        .with("new_agent", new_agent.as_str())?)
-}
-
-fn no_free_agent_vars(
-    common: Variables,
-    refused_agent: &AgentName,
-    refused_provider: &str,
-    return_at: &Timestamp,
-) -> Result<Variables, NoticeError> {
-    Ok(common
-        .with("refused_agent", refused_agent.as_str())?
-        .with("refused_provider", refused_provider)?
-        .with("return_at", return_at.to_string())?)
+        .with("return_at", return_at)?)
 }
