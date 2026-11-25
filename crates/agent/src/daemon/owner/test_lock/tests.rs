@@ -109,7 +109,7 @@ fn a_lock_file_that_cannot_be_opened_is_an_error_naming_the_file() {
     );
 }
 
-/// A child process (`flock`) that holds the lock of a file as a test run of another process does, ended with the guard.
+/// A child process (`flock --no-fork`, so that killing it kills the `sleep` it runs too) that holds the lock of a file as a test run of another process does, ended with the guard.
 struct ChildHolder(std::process::Child);
 
 impl Drop for ChildHolder {
@@ -125,6 +125,7 @@ fn held_by_a_child(dir: &Path, text: &str) -> (std::path::PathBuf, ChildHolder) 
     std::fs::write(&path, text).unwrap();
     let child = std::process::Command::new("flock")
         .arg("--exclusive")
+        .arg("--no-fork")
         .arg(&path)
         .args(["sleep", "60"])
         .spawn()
