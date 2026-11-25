@@ -1032,6 +1032,10 @@ mod split_refusal_tests;
 mod fix_pass_findings_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/item_branch.rs"]
+mod item_branch_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/tier_assignment.rs"]
 mod tier_assignment_tests;
 
