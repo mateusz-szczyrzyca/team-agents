@@ -358,7 +358,7 @@ impl HarnessPrompt {
             Self::NoticePaused => PromptSpec::new(
                 "harness/run/notice-paused.md",
                 Audience::Human,
-                &["agent", "task", "until", "reason", "evidence"],
+                &["agent", "task", "until", "reason", "kind", "evidence"],
             ),
             Self::NoticeFailed => PromptSpec::new(
                 "harness/run/notice-failed.md",
