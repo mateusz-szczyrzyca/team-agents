@@ -31,6 +31,8 @@
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
 #   context-from-file     reads the size N in `.fake-context`, reports one model call whose input is N tokens (usage with
 #                         its ID, and a cost of 0.5 dollars in the result), ends like `done`
+#   two-contexts          reports two model calls, the first with an input of 100 tokens and the second with 200, ends like
+#                         `done`
 #   serena-reads          reads forty-two code files of `src` with its `Read` tool, then ends like `done`
 #   serena-calls          calls a tool of Serena, then reads code files as `serena-reads` does
 #   serena-text           reads forty-two text files as `serena-reads` reads code ones
@@ -324,6 +326,13 @@ case $scenario in
     init
     printf '{"type":"assistant","message":{"id":"msg-%s","role":"assistant","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":%s,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":100}},"session_id":"%s"}\n' "$context" "$context" "$session"
     printf '{"type":"result","subtype":"success","is_error":false,"result":"Finished the item.\\nSTATUS: DONE","session_id":"%s","total_cost_usd":0.5}\n' "$session"
+    ;;
+  two-contexts)
+    init
+    for context in 100 200; do
+      printf '{"type":"assistant","message":{"id":"msg-%s","role":"assistant","content":[{"type":"text","text":"working"}],"usage":{"input_tokens":%s,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"output_tokens":10}},"session_id":"%s"}\n' "$context" "$context" "$session"
+    done
+    result false 'Finished the item.\nSTATUS: DONE'
     ;;
   env-incremental)
     printf '%s\n' "${CARGO_INCREMENTAL:-unset}" > .fake-incremental
