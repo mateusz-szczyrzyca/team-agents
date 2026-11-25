@@ -5,6 +5,13 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.95.0 — 25.11.2026 — PR pending
+
+### Bug fixes
+- [agent] [agent-runtime] Requests interrupted by a missing worker result or a daemon restart resume in the same worker workspace, preserving partial work and snapshots without spending a wrong-result try. Provider failures prefer a free worker of another provider; requests stay queued while no compatible worker is free.
+- [agent] [agent-core] [agent-runtime] After three returns to the queue, another interruption returns the step to its requester with all recorded causes. Replayed and late results cannot deliver a second final answer.
+- [agentbus] New requests with required capabilities use the same interruption recovery as other requests; requests saved before recovery was enabled keep their earlier rules.
+
 ## 0.94.0 — 25.11.2026 — PR #250
 
 ### New features
