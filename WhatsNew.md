@@ -5,7 +5,16 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.98.0 — 25.11.2026 — PR pending
+## 0.99.0 — 25.11.2026 — PR pending
+
+### Bug fixes
+- [agent] A restart after a worker result was recorded but before its pending result was saved now finishes the request and tells the requester once who served it.
+- [agent] [agent-core] [agent-runtime] Recovery uses one retained-workspace context for startup and dispatch, preserving the failed provider preference across queued restarts.
+
+### Enhancements
+- [agent-core] [agent-runtime] Worker request returns and requeues are typed log events stored in history; a history of version 26 is upgraded to version 27 automatically while preserving its records.
+
+## 0.98.0 — 25.11.2026 — PR #254
 
 ### New features
 - [agent] [agent-core] [agent-runtime] `agent log --reminders [--days N]` shows, agent by agent and model by model, how the reminders work over the last `N` days (default `7`): how many reminders to commit and context reminders were given, how many commit reminders were followed and the median minutes until the commit, and how many runs were cut. With nothing to show it says `no reminders in the last 7 days`. It reads the history without the daemon.
@@ -21,7 +30,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Configuration
 - [agent-core] new: `[commit_reminder] cut_after` (default `20`) — the minutes after the reminder to commit at which a run that has not committed is cut and resumed with the order to commit; `0` turns the cut off.
 
-## 0.96.0 — 25.11.2026 — PR pending
+## 0.96.0 — 25.11.2026 — PR #252
 
 ### Bug fixes
 - [agent] [agent-runtime] Requests interrupted by a missing worker result or a daemon restart resume in the same worker workspace, preserving partial work and snapshots without spending a wrong-result try. Provider failures prefer a free worker of another provider; requests stay queued while no compatible worker is free.

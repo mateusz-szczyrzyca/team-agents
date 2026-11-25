@@ -458,4 +458,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 26,
         sql: include_str!("026-commit-cut.sql"),
     },
+    Migration {
+        version: 27,
+        sql: include_str!("027-worker-request-recovery.sql"),
+    },
 ];

@@ -41,3 +41,17 @@ fn recovery_table_separates_missing_results_from_wrong_and_stale_results() {
         );
     }
 }
+
+#[test]
+fn cause_notice_names_match_the_serialized_journal_names() {
+    for cause in [
+        Cause::Died,
+        Cause::Refused,
+        Cause::Quota,
+        Cause::NoStatus,
+        Cause::RestartQueued,
+        Cause::RestartRunning,
+    ] {
+        assert_eq!(serde_json::to_value(cause).unwrap(), serde_json::json!(cause.as_str()));
+    }
+}

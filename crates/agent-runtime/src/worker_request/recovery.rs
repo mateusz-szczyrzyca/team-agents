@@ -60,6 +60,17 @@ pub struct Attempt {
     pub run: RunId,
 }
 
+/// Validated queued recovery context, preserving the workspace and provider-failure preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retained<'a> {
+    /// Workspace to reuse without changing its immutable branch identity.
+    pub workspace: &'a RequestWorkspace,
+    /// Last interruption cause, retained across queued restarts.
+    pub cause: Cause,
+    /// Worker whose execution last owned the workspace.
+    pub worker: &'a AgentName,
+}
+
 /// One durable change, replayed in order to validate the journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
@@ -308,6 +319,57 @@ impl Journal {
         self.record.events.iter().rev().find_map(|event| match event {
             Transition::Observed { run, ending } if run == &attempt.run => Some(*ending),
             _ => None,
+        })
+    }
+
+    /// Returns recovery context only for a queued interruption, never a wrong-result retry.
+    #[must_use]
+    pub fn retained(&self) -> Option<Retained<'_>> {
+        if self.phase != Phase::Queued {
+            return None;
+        }
+        match self.events().last()? {
+            Transition::Interrupted { .. } | Transition::RestartedQueued { .. } => {}
+            Transition::Started { .. }
+            | Transition::Assigned { .. }
+            | Transition::Rejected { .. }
+            | Transition::Observed { .. }
+            | Transition::Settled { .. } => return None,
+        }
+        // Queued restarts must not erase the provider preference of the failed execution.
+        let cause = self
+            .events()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Transition::Interrupted { cause, .. } => Some(*cause),
+                Transition::Started { .. }
+                | Transition::Assigned { .. }
+                | Transition::RestartedQueued { .. }
+                | Transition::Rejected { .. }
+                | Transition::Observed { .. }
+                | Transition::Settled { .. } => None,
+            })
+            .unwrap_or(Cause::RestartQueued);
+        let workspace = self.current_workspace();
+        let worker = self
+            .events()
+            .iter()
+            .rev()
+            .find_map(|event| match event {
+                Transition::Started { worker, .. } => Some(worker),
+                Transition::Assigned { workspace, .. } => Some(&workspace.record().worker),
+                Transition::Interrupted { .. }
+                | Transition::RestartedQueued { .. }
+                | Transition::Rejected { .. }
+                | Transition::Observed { .. }
+                | Transition::Settled { .. } => None,
+            })
+            .unwrap_or(&workspace.record().worker);
+        Some(Retained {
+            workspace,
+            cause,
+            worker,
         })
     }
 

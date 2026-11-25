@@ -864,6 +864,8 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
         // info (6)
         for variant in [
+            LogEvent::WorkerRequestReturned,
+            LogEvent::WorkerRequestRequeued,
             LogEvent::RunNoToolRetry,
             LogEvent::TeamChanged,
             LogEvent::RoundChanged,
@@ -1447,6 +1449,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::last_step_tests::record_task_handed_over(&mut observed).await;
     super::agent_slots_tests::record_task_waits_for_agent(&mut observed).await;
     super::worker_request_damaged_tests::record_worker_request_damaged(&mut observed).await;
+    record_worker_request_recovery(&mut observed).await;
     super::removal_tests::record_team_removed(&mut observed).await;
     super::serena_reminder_tests::record_serena_reminded(&mut observed).await;
     crate::daemon::owner::commit_reminder::tests::record_commit_events(&mut observed).await;
@@ -1500,6 +1503,48 @@ async fn record_no_tool_startup_events(observed: &mut BTreeSet<LogEvent>) {
         assert_eq!(row.rounds(), std::slice::from_ref(round));
         assert_eq!(row.task(), Some(&tasks[1]));
         assert_eq!(row.run(), Some(run.id()));
+        observed.insert(event);
+    }
+}
+
+/// Records real recovery transitions under the history subscriber and checks their scope.
+async fn record_worker_request_recovery(observed: &mut BTreeSet<LogEvent>) {
+    let daemon = Daemon::new(&pair_state(), None);
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+    let (team, run) = crate::daemon::owner::Owner::produce_recovery_log_events()
+        .with_subscriber(dispatch)
+        .await;
+    started.writer.close().unwrap();
+    let rows = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    for (event, count) in [
+        (LogEvent::WorkerRequestRequeued, 3),
+        (LogEvent::WorkerRequestReturned, 1),
+    ] {
+        let selected: Vec<_> = rows.iter().filter(|row| row.event() == event).collect();
+        assert_eq!(selected.len(), count);
+        for row in selected {
+            assert_eq!(row.level(), LogLevel::Info);
+            assert_eq!(row.team(), Some(&team));
+            assert_eq!(row.task(), Some(&task(2)));
+            assert_eq!(row.run(), Some(&run));
+            assert_eq!(row.fields().get("request"), Some(&json!("H1")));
+        }
         observed.insert(event);
     }
 }

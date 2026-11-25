@@ -4487,4 +4487,72 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
             assert_eq!(journal["workspace"]["worker"], "w-cl");
         }
     }
+    #[test]
+    fn observed_startup_reconstructs_missing_pending_and_names_worker_once() {
+        for observed in [false, true] {
+            let mut world = queued_recovery_world();
+            world.script(
+                "queued-recovery",
+                &format!(
+                    "if test ! -f .fake-committed; then\n{}\ntouch .fake-committed\nfi\nwhile test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done",
+                    commit_script("the walkthrough", &[])
+                ),
+            );
+            world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+            world.start();
+            let tasks = world.run(&["claude-1", "inv-opus"]);
+            let member = task(&tasks, "claude-1");
+            world.ended(member, 1);
+            eventually("worker committed before crash", || {
+                world
+                    .requests()
+                    .get("1")
+                    .and_then(|r| r["helper_task"].as_str())
+                    .is_some_and(|t| world.worktree(t).join(".fake-committed").exists())
+            });
+            let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+            let path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+            let mut journal: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            let bus = std::fs::read(world.home.join("bus/state.json")).unwrap();
+            world.stop();
+            if observed {
+                let run = journal["events"].as_array().unwrap().last().unwrap()["run"].clone();
+                journal["events"].as_array_mut().unwrap().push(serde_json::json!({
+                    "event": "observed", "run": run, "ending": "done"
+                }));
+                let outcome = world
+                    .home
+                    .join("tasks")
+                    .join(&worker)
+                    .join("runs")
+                    .join(run.as_str().unwrap())
+                    .join("outcome.json");
+                std::fs::write(
+                    outcome,
+                    r#"{"last_context":null,"final_message":"Recovered walkthrough\nSTATUS: DONE"}"#,
+                )
+                .unwrap();
+            }
+            // Restore the durable running claim; observed models the gap before the pending write.
+            std::fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
+            std::fs::write(world.home.join("bus/state.json"), bus).unwrap();
+            assert!(
+                !world
+                    .home
+                    .join("tasks")
+                    .join(&worker)
+                    .join("worker-request-1.json")
+                    .exists()
+            );
+            std::fs::write(world.home.join("release-worker"), "").unwrap();
+            world.start();
+            world.request_is("1", "done");
+            assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+            assert_eq!(world.count_told("claude-1", "The worker w-one did step 1.1"), 1);
+            world.stop();
+            world.start();
+            world.request_is("1", "done");
+            assert_eq!(world.count_told("claude-1", "The worker w-one did step 1.1"), 1);
+        }
+    }
 }

@@ -483,3 +483,55 @@ async fn assigned_retry_retains_original_workspace_and_updates_snapshot_owner() 
     .await
     .unwrap();
 }
+
+#[test]
+fn retained_context_distinguishes_interruptions_from_results_and_keeps_provider_cause() {
+    let original = workspace();
+    let initial = Journal::new(original.clone()).unwrap();
+    let running = initial.advance(start(1)).unwrap();
+    let interrupted = running.advance(interrupted(1, Cause::Quota)).unwrap();
+    let restarted = interrupted
+        .advance(Transition::RestartedQueued { snapshot: snapshot() })
+        .unwrap();
+    let queued = initial
+        .advance(Transition::RestartedQueued { snapshot: snapshot() })
+        .unwrap();
+    let observed = running
+        .advance(Transition::Observed {
+            run: run(1),
+            ending: WorkerEnding::Done,
+        })
+        .unwrap();
+    let settled = observed.advance(Transition::Settled { run: run(1) }).unwrap();
+    let rejected = running
+        .advance(Transition::Rejected {
+            run: run(1),
+            wrong: vec![Wrong::EndedOtherwise(WorkerEnding::Failed)],
+            snapshot: snapshot(),
+        })
+        .unwrap();
+    let mut exhausted = initial.clone();
+    for n in 1..=4 {
+        exhausted = exhausted
+            .advance(start(n))
+            .unwrap()
+            .advance(super::tests::interrupted(n, Cause::Died))
+            .unwrap();
+    }
+    for (journal, expected) in [
+        (&initial, None),
+        (&running, None),
+        (&observed, None),
+        (&settled, None),
+        (&rejected, None),
+        (&exhausted, None),
+        (&interrupted, Some((Cause::Quota, "worker-2"))),
+        (&restarted, Some((Cause::Quota, "worker-2"))),
+        (&queued, Some((Cause::RestartQueued, "worker-1"))),
+    ] {
+        assert_eq!(
+            journal.retained().map(|r| (r.workspace, r.cause, r.worker.as_str())),
+            expected.map(|(cause, worker)| (&original, cause, worker))
+        );
+    }
+}

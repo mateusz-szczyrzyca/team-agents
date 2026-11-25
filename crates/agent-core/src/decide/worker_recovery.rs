@@ -25,6 +25,21 @@ pub enum Cause {
     RestartRunning,
 }
 
+impl Cause {
+    /// Stable journal name used in recovery notices.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Died => "died",
+            Self::Refused => "refused",
+            Self::Quota => "quota",
+            Self::NoStatus => "no_status",
+            Self::RestartQueued => "restart_queued",
+            Self::RestartRunning => "restart_running",
+        }
+    }
+}
+
 /// What happened to the attempt whose ownership has already been checked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Event {

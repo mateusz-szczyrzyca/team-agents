@@ -222,6 +222,9 @@ pub(crate) enum OwnerError {
     /// The request of a worker whose run ended cannot be kept or read.
     #[error(transparent)]
     WorkerRequest(#[from] agent_runtime::worker_request::PendingError),
+    /// The durable outcome of an observed worker run cannot be read.
+    #[error(transparent)]
+    RequestOutcome(#[from] agent_runtime::run::outcome::OutcomeError),
     /// The state cannot be saved.
     #[error("the state cannot be saved")]
     Store(#[from] StoreError),

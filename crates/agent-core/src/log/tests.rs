@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use serde_json::json;
 
+use super::LogEvent::{WorkerRequestRequeued, WorkerRequestReturned};
 use super::*;
 use crate::history::{MaxTextBytes, UnknownCutField};
 use crate::ids::{RoundId, RunId, TaskId, TeamId};
@@ -181,6 +182,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::TaskHandedOver, "task_handed_over", LogLevel::Info),
         (LogEvent::TaskWaitsForAgent, "task_waits_for_agent", LogLevel::Info),
         (LogEvent::WorkerRequestDamaged, "worker_request_damaged", LogLevel::Warn),
+        (WorkerRequestReturned, "worker_request_returned", LogLevel::Info),
+        (WorkerRequestRequeued, "worker_request_requeued", LogLevel::Info),
         (LogEvent::CommitReminded, "commit_reminded", LogLevel::Info),
         (LogEvent::CommitFollowed, "commit_followed", LogLevel::Info),
         (LogEvent::ContextReminded, "context_reminded", LogLevel::Info),

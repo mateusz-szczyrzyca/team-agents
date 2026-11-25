@@ -1174,12 +1174,16 @@ answered keeps it busy until its workspace is released. The lines of `agent stat
 notice names the serving worker and is published once, even when settlement is replayed after a daemon restart.
 Late results are dropped and logged. Failed preparation leaves a request dispatchable and never removes a
 running worker's workspace. Receipt recovery reads only newly appended messages after its first scan.
+Recovery log events `worker_request_requeued` and `worker_request_returned` are also stored in daemon history.
+Opening an older history upgrades its schema to 26 while preserving its records; older daemons refuse the upgraded
+history, so retain a backup if you need to downgrade.
+
 Before a wrong-result retry, the daemon retains a snapshot of the failed
 worker's work; a pool retry starts in a fresh workspace from the original requester's commit. The journal lives
 in the requester's task directory and preserves both workspace identities and the observed ending.
 Existing open requests without the opt-in marker keep their previous handling; loading never opts them in.
 A dead CLI, missing status, provider refusal or quota failure returns the request to the queue with its worker
-worktree and snapshot. Startup recovers queued and running requests the same way. A fresh execution reuses that
+worktree and snapshot. Startup recovers queued and running requests the same way. If the daemon stops after recording a worker's ending but before saving its pending result, startup rebuilds that result from the saved run outcome before dispatch. A fresh execution reuses that
 worktree without consuming `[workers] tries`: provider failures prefer another provider, with same-provider
 fallback; other interruptions take the first compatible free worker. With none free the request stays queued.
 After three no-result returns, the next interruption returns the step to the requester with all causes.

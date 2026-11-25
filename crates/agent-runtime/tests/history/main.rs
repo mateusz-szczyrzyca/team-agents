@@ -94,3 +94,6 @@ mod commit_cut;
 mod commit_reminder;
 #[cfg(test)]
 mod context_reminder;
+
+#[cfg(test)]
+mod worker_recovery;

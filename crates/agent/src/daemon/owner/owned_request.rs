@@ -3,6 +3,7 @@
 use crate::daemon::team::{BusNotice, render_notice};
 use agent_core::decide::worker_result::WorkerEnding;
 use agent_core::ids::{RoundId, RunId, TaskId};
+use agent_core::log::LogEvent;
 use agent_runtime::agentbus::{DelegationStatus, Outgoing, OwnedChange, OwnedOutcome, RequestOwner, RequestResult};
 use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
@@ -177,12 +178,10 @@ impl Owner {
                     )
                     .await?;
                 }
-                Phase::Queued
-                    if matches!(
-                        journal.events().last(),
-                        Some(Transition::Interrupted { .. } | Transition::RestartedQueued { .. })
-                    ) =>
-                {
+                Phase::Running(attempt) => {
+                    self.restore_observed_result(&served, &task, &attempt.run).await?;
+                }
+                Phase::Queued if journal.retained().is_some() => {
                     let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
                     if entry.status == DelegationStatus::Running {
                         // The journal write survived but its bus update did not. Replay without charging another return.
@@ -195,7 +194,7 @@ impl Owner {
                     let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
                     self.finish_owned_interruption(&journal, &served, &task, run).await?;
                 }
-                Phase::Running(_) | Phase::Queued | Phase::Settled => {}
+                Phase::Queued | Phase::Settled => {}
             }
         }
         Ok(())
@@ -434,15 +433,10 @@ impl Owner {
                 .events()
                 .iter()
                 .filter_map(|event| match event {
-                    Transition::Interrupted { cause, .. } => Some(match cause {
-                        agent_core::decide::worker_recovery::Cause::Died => "died",
-                        agent_core::decide::worker_recovery::Cause::Refused => "refused",
-                        agent_core::decide::worker_recovery::Cause::Quota => "quota",
-                        agent_core::decide::worker_recovery::Cause::NoStatus => "no_status",
-                        agent_core::decide::worker_recovery::Cause::RestartQueued => "restart_queued",
-                        agent_core::decide::worker_recovery::Cause::RestartRunning => "restart_running",
-                    }),
-                    Transition::RestartedQueued { .. } => Some("restart_queued"),
+                    Transition::Interrupted { cause, .. } => Some(cause.as_str()),
+                    Transition::RestartedQueued { .. } => {
+                        Some(agent_core::decide::worker_recovery::Cause::RestartQueued.as_str())
+                    }
                     Transition::Started { .. }
                     | Transition::Assigned { .. }
                     | Transition::Rejected { .. }
@@ -501,9 +495,9 @@ impl Owner {
         self.serving.remove(task);
         self.look_at(&team);
         if updated.phase() == &Phase::Exhausted {
-            tracing::info!(event = "worker_request_returned", request = %served.request, %run, "worker request exhausted its interruption bound");
+            tracing::info!(event = LogEvent::WorkerRequestReturned.as_str(), request = %served.request, %run, "worker request exhausted its interruption bound");
         } else {
-            tracing::info!(event = "worker_request_requeued", request = %served.request, %run, "worker request retained for another execution");
+            tracing::info!(event = LogEvent::WorkerRequestRequeued.as_str(), request = %served.request, %run, "worker request retained for another execution");
         }
         Ok(())
     }
@@ -550,6 +544,70 @@ impl Owner {
         self.serving.remove(task);
         Ok(true)
     }
+    /// Applies the recovery preference to the current installation-wide worker availability.
+    pub(super) fn recovery_worker(
+        &self,
+        journal: &Journal,
+        pool: &[agent_core::decide::pool::PoolWorker<'_>],
+        requires: &agent_core::decide::pool::Requires<'_>,
+        run_limit: agent_core::decide::slot::RunLimit,
+    ) -> Option<(agent_core::ids::AgentName, String)> {
+        use agent_core::decide::pool::{
+            LastServed, next_pool_worker, provider_of, second_try_pool_elsewhere, second_try_pool_worker,
+        };
+        use agent_core::decide::worker_recovery::{Decision, Event, Preference, decide};
+        let retained = journal.retained()?;
+        let provider = self
+            .parts
+            .settings
+            .config
+            .agent(retained.worker)
+            .map_or("", |config| provider_of(config.cli, config.model.as_ref()));
+        let elsewhere = second_try_pool_elsewhere(pool, requires, retained.worker, provider, run_limit);
+        let chosen = match decide(
+            Event::NoResult(retained.cause),
+            journal.returns().saturating_sub(1),
+            elsewhere,
+        ) {
+            Decision::Serve(Preference::OtherProvider) => {
+                second_try_pool_worker(pool, requires, retained.worker, provider, run_limit)
+            }
+            Decision::Serve(Preference::FirstFree) => next_pool_worker(pool, requires, LastServed(None), run_limit),
+            Decision::Wait(_) | Decision::Return | Decision::Settle | Decision::Drop => None,
+        };
+        chosen.map(|(worker, provider)| (worker.clone(), provider.to_owned()))
+    }
+
+    /// Rebuilds a missing pending result from the outcome persisted before its observed ending.
+    async fn restore_observed_result(
+        &mut self,
+        served: &super::teams::Served,
+        task: &TaskId,
+        run: &RunId,
+    ) -> Result<(), OwnerError> {
+        let dir = self.parts.store.home().task_dir(task);
+        let pending = agent_runtime::worker_request::read_pending_each(&dir)
+            .await?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        // A pending result may already have advanced through its check or settlement.
+        if pending.iter().any(|pending| pending.request == served.request) {
+            return Ok(());
+        }
+        let outcome = agent_runtime::run::outcome::read_outcome(&self.parts.store.home().run_dir(task, run)).await?;
+        let summary = outcome.and_then(|outcome| outcome.final_message).unwrap_or_default();
+        if let Some(team) = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .map(|found| found.team.id().clone())
+        {
+            self.keep_worker_result(&team, served, task, crate::daemon::team::worker_report(&summary))?;
+            self.look_at(&team);
+        }
+        Ok(())
+    }
+
     /// Publishes an owned final notice atomically, including crash replays.
     pub(super) async fn settle_owned_request(
         &self,
