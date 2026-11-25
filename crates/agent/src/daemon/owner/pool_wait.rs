@@ -57,10 +57,12 @@ impl Owner {
         let tasks_dir = self.parts.store.home().tasks_dir();
         match worker_wait::find_notes(&tasks_dir).await {
             Ok(found) => {
+                let mut all_removed = true;
                 for note in found.into_iter().filter(|note| !queued.contains(&note.request)) {
-                    self.clear_wait(note.request, note.task_dir).await;
+                    all_removed &= self.clear_wait(note.request, note.task_dir).await;
                 }
-                self.pool_dispatch.waits_swept = true;
+                // A note that could not be removed is not held in `waits_noted`: only another sweep finds it again.
+                self.pool_dispatch.waits_swept = all_removed;
             }
             Err(error) => {
                 tracing::warn!(
@@ -72,11 +74,13 @@ impl Owner {
         }
     }
 
-    /// Removes the note of the wait of `request` from `task_dir` and stops holding it.
-    async fn clear_wait(&mut self, request: RequestId, task_dir: PathBuf) {
+    /// Removes the note of the wait of `request` from `task_dir` and stops holding it; `false` when the note could not be
+    /// removed.
+    async fn clear_wait(&mut self, request: RequestId, task_dir: PathBuf) -> bool {
         match worker_wait::clear(&task_dir, request).await {
             Ok(()) => {
                 self.pool_dispatch.waits_noted.remove(&request);
+                true
             }
             Err(error) => {
                 tracing::warn!(
@@ -85,6 +89,7 @@ impl Owner {
                     error = %error_chain(&error),
                     "the note of the wait of a request cannot be removed"
                 );
+                false
             }
         }
     }
