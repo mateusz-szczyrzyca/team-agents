@@ -156,7 +156,7 @@ fn in_crew(team: &Team, name: &InvestigatorName) -> bool {
 }
 
 /// The investigator that works in the task of `member`, if it is one.
-fn investigator_of(member: &Member) -> Option<&InvestigatorName> {
+pub(super) fn investigator_of(member: &Member) -> Option<&InvestigatorName> {
     match member.agent() {
         Participant::Investigator(name) => Some(name),
         Participant::Normal(_) | Participant::Worker(_) => None,

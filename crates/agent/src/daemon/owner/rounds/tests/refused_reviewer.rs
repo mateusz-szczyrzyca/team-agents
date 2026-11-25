@@ -186,3 +186,83 @@ async fn a_reviewer_refused_once_keeps_its_review_after_a_good_retry() {
             .all(|item| matches!(item.phase(), ItemPhase::Done { .. }))
     );
 }
+
+#[tokio::test]
+async fn a_refused_reviewer_waits_and_the_human_is_told_once_when_no_investigator_of_another_provider_is_free() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-1", "turn-limit-quota"),
+            investigator("inv-2", "opencode-verdict:APPROVE"),
+            investigator("inv-3", "done:VERDICT: APPROVE\\nSUMMARY: fine"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    with_opencode_investigators(&rig, &["inv-2"]);
+    slow_patience_and_long_quota_pause(&rig);
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+
+    let paused = rig
+        .state_where("the reviewer inv-1 paused by its quota", |state| {
+            reviewer_paused(state, "inv-1")
+        })
+        .await;
+    let refused = review_task_of(&paused, "inv-1").unwrap();
+    rig.advance_history_days(1);
+
+    let told = rig.notification_with("inv-1 waits for its provider").await;
+    assert!(told.contains("no investigator of another provider is free"), "{told}");
+    let state = rig.state();
+    assert_eq!(
+        reviewer_names(&state),
+        ["inv-1", "inv-2"],
+        "inv-3 shares the provider, so it is not asked"
+    );
+    assert_eq!(rig.runs(&refused), 2, "one retry, then the wait");
+    let tellings = rig
+        .notifications()
+        .iter()
+        .filter(|text| text.contains("inv-1 waits for its provider"))
+        .count();
+    rig.stop().await.unwrap();
+    assert_eq!(tellings, 1);
+}
+
+#[tokio::test]
+async fn the_human_is_told_once_that_a_refused_reviewer_was_replaced() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-1", "turn-limit-quota"),
+            investigator("inv-2", "opencode-verdict:APPROVE"),
+            investigator("inv-4", "opencode-verdict:APPROVE"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    with_opencode_investigators(&rig, &["inv-2", "inv-4"]);
+    slow_patience_and_long_quota_pause(&rig);
+    rig.start().await;
+    rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.state_where("the reviewer inv-1 paused by its quota", |state| {
+        reviewer_paused(state, "inv-1")
+    })
+    .await;
+    rig.advance_history_days(1);
+
+    let told = rig.notification_with("inv-4 reviews pull request").await;
+    rig.item_where("1.1", "merged", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    let tellings = rig
+        .notifications()
+        .iter()
+        .filter(|text| text.contains("inv-1 was refused by its provider"))
+        .count();
+    rig.stop().await.unwrap();
+    assert!(told.contains("the provider claude refused inv-1"), "{told}");
+    assert_eq!(tellings, 1);
+}
