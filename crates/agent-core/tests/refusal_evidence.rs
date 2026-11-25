@@ -14,7 +14,7 @@ fn long_provider_messages_keep_the_status_and_code() {
         "response":{"body":"{\"error\":{\"code\":\"engine_overloaded\"}}"}
     }})
     .to_string();
-    let pause = classify(&line);
+    let pause = classify(&line).unwrap();
     assert!(pause.evidence.starts_with("an overload: 429 · "), "{pause:?}");
     assert!(pause.evidence.ends_with(" · engine_overloaded"), "{pause:?}");
     assert!(pause.evidence.chars().count() < message.chars().count(), "{pause:?}");
@@ -30,7 +30,7 @@ fn invalid_or_elapsed_structured_resets_fall_back_to_the_result_text() {
         let line = format!(
             "{{\"type\":\"rate_limit_event\",\"rate_limit_info\":{{\"status\":\"rejected\",\"rateLimitType\":\"five_hour\",\"resetsAt\":{reset}}}}}\nAPI Error: 429 rate limit exceeded · resets 3pm"
         );
-        let pause = classify(&line);
+        let pause = classify(&line).unwrap();
         assert_eq!(
             pause.until,
             "2026-11-12T15:01:00Z".parse::<Timestamp>().unwrap(),
@@ -39,7 +39,7 @@ fn invalid_or_elapsed_structured_resets_fall_back_to_the_result_text() {
     }
 }
 
-fn classify(lines: &str) -> agent_core::decide::outcome::Pause {
+fn classify(lines: &str) -> Result<agent_core::decide::outcome::Pause, Box<dyn std::error::Error>> {
     let config = Config::default();
     let output = RunOutput {
         final_message: None,
@@ -55,11 +55,10 @@ fn classify(lines: &str) -> agent_core::decide::outcome::Pause {
         },
         &LimitContext {
             limits: config.limits(),
-            now: "2026-11-12T10:00:00Z".parse().unwrap(),
+            now: "2026-11-12T10:00:00Z".parse()?,
             local_offset: UtcOffset::UTC,
         },
-    )
-    .unwrap()
+    )?
     .pause
-    .unwrap()
+    .ok_or_else(|| std::io::Error::other("the provider refusal must pause the run").into())
 }
