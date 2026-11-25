@@ -217,18 +217,15 @@ impl Owner {
     }
 
     /// What the refusal rule answers for the last run of the reviewer `member`, counted as the daemon counted it when the
-    /// run ended; `None` when that run was not refused by its provider, or was refused before the daemon counted refusals
-    /// (a pause from before the upgrade): such a reviewer is held to `replace_after_minutes` as it was, until its next
-    /// run is counted. The run's own end time is used, so the answer does not change as a named reset comes nearer.
+    /// run ended; `None` when that run was not refused by its provider. The daemon counts every refusal and, at its start,
+    /// recovers the count of a task its provider paused, so a paused reviewer whose last run was refused has a count.
+    /// The run's own end time is used, so the answer does not change as a named reset comes nearer.
     fn refusal_of(&self, member: &Member) -> Option<Decision> {
         let Some(RunState::Ended { at, end }) = member.runs().last().map(Run::state) else {
             return None;
         };
         let limit = limit_of(end, *at)?;
         let refusals = self.parts.state.limit_refusals(member.task());
-        if refusals == 0 {
-            return None;
-        }
         Some(decide(&self.refusal_facts(limit, refusals)))
     }
 
