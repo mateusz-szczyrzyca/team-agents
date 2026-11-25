@@ -53,6 +53,15 @@ pub const fn next_refusals(previous: u32, refused: bool) -> u32 {
 /// What the rule says about a refused task: the change of agent when its retries are used up, or when the provider's
 /// named reset is further away than the configured wait; the pause otherwise.
 #[must_use]
-pub fn decide(_refusal: &Refusal) -> Decision {
-    Decision::Pause
+pub fn decide(refusal: &Refusal) -> Decision {
+    if let Limit::Quota { reset_in: Some(reset_in) } = refusal.limit
+        && reset_in > refusal.wait_limit
+    {
+        return Decision::ChangeAgent;
+    }
+    if refusal.refusals > refusal.retries {
+        Decision::ChangeAgent
+    } else {
+        Decision::Pause
+    }
 }
