@@ -3,6 +3,8 @@
 //! The lock is an `flock` on one file. Its holder writes who it is into the file (`dir=` is the directory the run was
 //! started in); the file stays when the lock is let go, so what it says counts only while the lock is held.
 
+use std::fs::{File, TryLockError};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// The file of the test lock when `TEST_LOCK_FILE` does not name another.
@@ -53,8 +55,38 @@ pub(super) enum TestLockError {
 /// # Errors
 /// [`TestLockError`] when the file exists and cannot be opened, tried or read.
 pub(super) fn holder_of(lock_file: &Path, worktree: &Path) -> Result<LockHolder, TestLockError> {
-    let _ = (lock_file, worktree);
-    Ok(LockHolder::Nobody)
+    let mut file = match File::open(lock_file) {
+        Ok(file) => file,
+        // No test run has ever taken the lock on this machine.
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(LockHolder::Nobody),
+        Err(source) => {
+            return Err(TestLockError::Open {
+                path: lock_file.to_path_buf(),
+                source,
+            });
+        }
+    };
+    match file.try_lock_shared() {
+        // Free. The shared lock is let go when `file` is dropped at the end of this call.
+        Ok(()) => return Ok(LockHolder::Nobody),
+        Err(TryLockError::WouldBlock) => {}
+        Err(TryLockError::Error(source)) => {
+            return Err(TestLockError::Lock {
+                path: lock_file.to_path_buf(),
+                source,
+            });
+        }
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text).map_err(|source| TestLockError::Read {
+        path: lock_file.to_path_buf(),
+        source,
+    })?;
+    let started_in = text.lines().find_map(|line| line.strip_prefix("dir="));
+    Ok(match started_in {
+        Some(dir) if Path::new(dir).starts_with(worktree) => LockHolder::Worktree,
+        Some(_) | None => LockHolder::Elsewhere,
+    })
 }
 
 #[cfg(test)]
