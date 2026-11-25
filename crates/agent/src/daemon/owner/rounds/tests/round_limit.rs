@@ -96,7 +96,8 @@ async fn an_overdue_round_is_cut_and_its_task_handed_over_to_a_fitting_agent() {
 // Rule: with nobody to take the task over, an overdue round fails its task and the human is told why.
 #[tokio::test]
 async fn an_overdue_round_with_nobody_to_take_it_over_fails_its_task_and_tells_the_human() {
-    let mut rig = rig_under("[replacement]\nagents = [\"claude-2\"]\nmode = \"off\"\n").await;
+    let mut rig =
+        rig_under("[replacement]\nagents = [\"claude-2\"]\nmode = \"off\"\n[limits]\nround_minutes = 120\n").await;
     let task = holding(&mut rig).await;
 
     rig.advance_history_days(1);
