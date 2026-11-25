@@ -236,6 +236,9 @@ pub enum LogEvent {
     CommitCut,
     /// A request that no worker of the pool took for `[workers] wait_seconds` was failed and returned to its requester.
     WorkerWaitReturned,
+    /// A worker's request ended: its result was settled (or the request went back to the queue or was returned for its
+    /// interruptions), with who asked, who served, the try, the outcome, the time it took and what it cost.
+    WorkerRequestEnded,
 }
 
 impl Keyword for LogEvent {
@@ -311,6 +314,7 @@ impl LogEvent {
             | Self::WorkerRequestReturned
             | Self::WorkerRequestRequeued
             | Self::WorkerWaitReturned
+            | Self::WorkerRequestEnded
             | Self::ContextReminded
             | Self::CommitCut
             | Self::TaskHandedOver => LogLevel::Info,

@@ -883,3 +883,7 @@ history; keep a backup before upgrading if you need to return to an older daemon
 History version 28 admits the `worker_wait_returned` information event. Its migration (`028-worker-wait.sql`) preserves
 existing daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
 daemon.
+
+History version 29 admits the `worker_request_ended` information event. Its migration (`029-worker-request-ended.sql`) preserves
+existing daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
+daemon.
