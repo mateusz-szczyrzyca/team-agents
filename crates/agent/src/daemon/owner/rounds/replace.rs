@@ -273,6 +273,7 @@ impl Owner {
             team_id,
             std::num::NonZeroUsize::MIN,
             &excluded,
+            &mut self.parts.rng,
         )
         .and_then(|reviewers| reviewers.into_iter().next()) else {
             return Ok(None);

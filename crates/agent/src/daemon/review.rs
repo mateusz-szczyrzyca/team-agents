@@ -228,6 +228,7 @@ pub(super) fn select_reviewers(
     team: &TeamId,
     required: NonZeroUsize,
     excluded: &HashSet<InvestigatorName>,
+    rng: &mut impl rand::Rng,
 ) -> Option<Vec<Reviewer>> {
     let free = free_reviewers(state, config, team);
     let configured = config.investigators().keys().cloned().collect();
@@ -245,7 +246,7 @@ pub(super) fn select_reviewers(
         })
         .collect();
     let excluded: BTreeSet<_> = excluded.iter().cloned().collect();
-    let chosen = choose(&configured, &available, &activities, team, &excluded, required)?;
+    let chosen = choose(&configured, &available, &activities, team, &excluded, required, rng)?;
     let order: std::collections::BTreeMap<_, _> = chosen.into_iter().zip(0_usize..).collect();
     let mut selected: Vec<_> = free
         .into_iter()

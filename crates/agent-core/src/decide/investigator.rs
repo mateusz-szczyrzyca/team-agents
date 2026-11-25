@@ -3,6 +3,8 @@
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
+use rand::Rng;
+
 use crate::ids::{InvestigatorName, TeamId};
 use crate::kinds::ActivityKind;
 use crate::state::Timestamp;
@@ -35,7 +37,9 @@ pub fn choose(
     team: &TeamId,
     excluded: &BTreeSet<InvestigatorName>,
     required: NonZeroUsize,
+    rng: &mut impl Rng,
 ) -> Option<Vec<InvestigatorName>> {
+    let _ = rng;
     let mut candidates = Vec::new();
     for name in configured.intersection(free) {
         if excluded.contains(name) {

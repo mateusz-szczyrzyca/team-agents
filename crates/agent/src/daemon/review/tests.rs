@@ -766,12 +766,13 @@ fn opinions_exclude_reporter_and_entire_answered_pass_over_many_seeds() {
 
 // Adapt the former draw fixtures to the common pure selector. Slots are worktree
 // locations, not activity evidence; pass indices supply strictly ordered fixture times.
-fn choose_reviewers(free: Vec<super::Reviewer>, _rng: &mut impl rand::Rng) -> Option<Vec<super::Reviewer>> {
+fn choose_reviewers(free: Vec<super::Reviewer>, rng: &mut impl rand::Rng) -> Option<Vec<super::Reviewer>> {
     select_pool(
         free,
         &[],
         &std::collections::HashSet::new(),
         std::num::NonZeroUsize::new(2).unwrap(),
+        rng,
     )
 }
 
@@ -779,22 +780,23 @@ fn choose_verifiers(
     free: Vec<super::Reviewer>,
     required: agent_core::config::ReviewCount,
     history: &[agent_core::state::FixPass],
-    _rng: &mut impl rand::Rng,
+    rng: &mut impl rand::Rng,
 ) -> Option<Vec<super::Reviewer>> {
     select_pool(
         free,
         history,
         &std::collections::HashSet::new(),
         std::num::NonZeroUsize::new(required.get()).unwrap(),
+        rng,
     )
 }
 
 fn choose_opinion(
     free: Vec<super::Reviewer>,
     excluded: &std::collections::HashSet<agent_core::ids::InvestigatorName>,
-    _rng: &mut impl rand::Rng,
+    rng: &mut impl rand::Rng,
 ) -> Option<super::Reviewer> {
-    select_pool(free, &[], excluded, std::num::NonZeroUsize::MIN).and_then(|v| v.into_iter().next())
+    select_pool(free, &[], excluded, std::num::NonZeroUsize::MIN, rng).and_then(|v| v.into_iter().next())
 }
 
 fn select_pool(
@@ -802,6 +804,7 @@ fn select_pool(
     history: &[agent_core::state::FixPass],
     excluded: &std::collections::HashSet<agent_core::ids::InvestigatorName>,
     required: std::num::NonZeroUsize,
+    rng: &mut impl rand::Rng,
 ) -> Option<Vec<super::Reviewer>> {
     use agent_core::decide::investigator::{Activity, choose};
     let team = crate::fixtures::team_id(0);
@@ -826,6 +829,7 @@ fn select_pool(
         &team,
         &excluded.iter().cloned().collect(),
         required,
+        rng,
     )?;
     let mut slots: std::collections::BTreeMap<_, _> = free.into_iter().map(|r| (r.name.clone(), r)).collect();
     Some(names.iter().map(|name| slots.remove(name).unwrap()).collect())

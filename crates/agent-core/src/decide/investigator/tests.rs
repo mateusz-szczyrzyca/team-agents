@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::state::Timestamp;
+use rand::SeedableRng;
 
 fn name(raw: &str) -> InvestigatorName {
     raw.parse().unwrap()
@@ -18,6 +19,17 @@ fn select(
     available: &[&str],
     excluded: &[&str],
     count: usize,
+) -> Option<Vec<String>> {
+    let mut rng = rand::rngs::StdRng::seed_from_u64(0);
+    select_with_rng(records, available, excluded, count, &mut rng)
+}
+
+fn select_with_rng(
+    records: &[(&str, u32, ActivityKind, u32)],
+    available: &[&str],
+    excluded: &[&str],
+    count: usize,
+    rng: &mut impl rand::Rng,
 ) -> Option<Vec<String>> {
     let names: Vec<_> = records.iter().map(|(n, _, _, _)| name(n)).collect();
     let teams: Vec<_> = records.iter().map(|(_, t, _, _)| team(*t)).collect();
@@ -38,6 +50,7 @@ fn select(
         &team(1),
         &excluded.iter().map(|n| name(n)).collect(),
         NonZeroUsize::new(count).unwrap(),
+        rng,
     )
     .map(|names| names.into_iter().map(|n| n.to_string()).collect())
 }
@@ -178,3 +191,39 @@ fn the_pair_of_the_latest_request_comes_back_only_after_the_others_and_in_order(
     // ...but never beyond the permanent exclusions.
     assert_eq!(select(&records, &["a", "b"], &["a"], 2), None);
 }
+
+#[test]
+fn two_investigators_tied_on_oldest_activity_are_both_chosen_over_seeds() {
+    use std::collections::BTreeSet;
+    let records = vec![("a", 1, ActivityKind::Reviewer, 10), ("b", 1, ActivityKind::Reviewer, 10)];
+    let mut chosen_names = BTreeSet::new();
+    for seed in 1..=32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen = select_with_rng(&records, &["a", "b"], &[], 1, &mut rng).unwrap();
+        assert_eq!(chosen.len(), 1);
+        chosen_names.insert(chosen[0].clone());
+    }
+    assert!(chosen_names.contains("a"), "seed 1..=32 should choose a");
+    assert!(chosen_names.contains("b"), "seed 1..=32 should choose b");
+}
+
+#[test]
+fn the_least_recently_used_investigator_is_chosen_whatever_the_seed() {
+    let records = vec![("a", 1, ActivityKind::Reviewer, 10), ("b", 1, ActivityKind::Reviewer, 20)];
+    for seed in 1..=32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen = select_with_rng(&records, &["a", "b"], &[], 1, &mut rng).unwrap();
+        assert_eq!(chosen, vec!["a"]);
+    }
+}
+
+#[test]
+fn an_investigator_never_used_is_chosen_before_one_used() {
+    let records = vec![("b", 1, ActivityKind::Reviewer, 10)];
+    for seed in 1..=32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen = select_with_rng(&records, &["a", "b"], &[], 1, &mut rng).unwrap();
+        assert_eq!(chosen, vec!["a"]);
+    }
+}
+

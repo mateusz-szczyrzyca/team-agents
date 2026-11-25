@@ -108,6 +108,7 @@ impl Owner {
             required,
             // An investigator its provider refused reviews nothing until its return.
             &refused_investigators(&self.parts.state, &self.parts.settings.config, now),
+            &mut self.parts.rng,
         );
         let rounds: Vec<_> = self
             .parts
