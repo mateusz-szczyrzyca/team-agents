@@ -888,21 +888,23 @@ impl Owner {
         let replacement = self.parts.settings.config.replacement();
         let outside = self.split_replacements(team);
         let busy = self.agents_in_runs();
+        // An agent its provider refused takes no item until its return: busy for the assignment, as a running one is.
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
         let candidates: Vec<_> = outside
             .iter()
             .map(|agent| agent_core::decide::part::Candidate {
                 agent,
                 status: TaskStatus::Waiting,
                 handed_over: false,
-                busy: busy.contains(&agent.name()),
+                busy: busy.contains(&agent.name()) || refused.iter().any(|name| name.as_str() == agent.name()),
             })
             .collect();
-        let given = assignable_with_candidates(team, replacement.mode(), replacement.agents(), &candidates).map_err(
-            |source| OwnerError::Assign {
-                team: team_id.clone(),
-                source,
-            },
-        )?;
+        let given = assignable_with_candidates(team, replacement.mode(), replacement.agents(), &candidates, &refused)
+            .map_err(|source| OwnerError::Assign {
+            team: team_id.clone(),
+            source,
+        })?;
         let repo = team.repo().clone();
         for assigned in given {
             let Some(base) = self
