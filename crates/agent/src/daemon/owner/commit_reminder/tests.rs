@@ -8,10 +8,12 @@ use std::time::{Duration, Instant};
 
 use agent_core::log::LogEvent;
 use agent_core::protocol::{Command, StatusRequest};
+use agent_core::state::{State, TaskListText};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::Reader;
 
 use super::super::fixture::{Daemon, PATIENCE, agentbus_binary};
+use super::watched_run;
 use crate::fixtures::{solo_state, task};
 
 /// The text of the reminder for 400 lines and 2 minutes, as the catalog has it.
@@ -201,4 +203,81 @@ pub(in crate::daemon::owner) async fn record_commit_events(observed: &mut BTreeS
         assert!(!logged(&daemon, event).is_empty(), "{event:?} was not logged");
         observed.insert(event);
     }
+}
+
+/// A team on a task list without items: a coordinator (task 1), a member (task 2), a worker (task 3) and a reviewer
+/// (task 4), each with a run going that names `rounds`, and the one round of the team, which is open.
+fn team_with_runs(rounds: &[agent_core::ids::RoundId]) -> State {
+    use crate::fixtures::{at, investigator, member, normal, repo, run, team_id, worker};
+    use agent_core::state::{Crew, MergeMode, NewRun, Team, TeamMembers};
+
+    let crew = Crew::team(TeamMembers {
+        coordinator: member(1, investigator("inv-opus")),
+        members: vec![member(2, normal("claude-1"))],
+        workers: vec![member(3, worker("glm-1"))],
+    })
+    .unwrap();
+    let team = Team::new(
+        team_id(0),
+        repo(),
+        at(0),
+        MergeMode::Autopilot,
+        TaskListText::new("Fix the typo in the README.\n".to_owned()).unwrap(),
+        crew,
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+    state
+        .add_reviewer(&team_id(0), member(4, investigator("inv-codex")))
+        .unwrap();
+    state
+        .open_round(&team_id(0), "round-20261111-193001-q1w2".parse().unwrap(), None, at(0))
+        .unwrap();
+    for n in 1..=4 {
+        state
+            .begin_run(
+                &task(n),
+                NewRun {
+                    id: run(n),
+                    at: at(10),
+                    session: None,
+                    rounds: rounds.to_vec(),
+                },
+            )
+            .unwrap();
+    }
+    state
+}
+
+/// The tasks of the team of [`team_with_runs`] whose run is looked at for the reminder.
+fn watched_tasks(state: &State) -> Vec<agent_core::ids::TaskId> {
+    (1..=4)
+        .filter_map(|n| watched_run(state, &task(n)).unwrap().map(|watched| watched.task))
+        .collect()
+}
+
+#[test]
+fn only_the_runs_of_a_coordinator_and_a_member_in_an_open_round_are_watched() {
+    let round: agent_core::ids::RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    let state = team_with_runs(std::slice::from_ref(&round));
+
+    assert_eq!(watched_tasks(&state), vec![task(1), task(2)]);
+}
+
+#[test]
+fn a_run_whose_rounds_are_all_closed_is_not_watched() {
+    let round: agent_core::ids::RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    let mut state = team_with_runs(std::slice::from_ref(&round));
+    state
+        .close_round(&round, crate::fixtures::at(20), agent_core::state::RoundEnd::Abandoned)
+        .unwrap();
+
+    assert_eq!(watched_tasks(&state), Vec::<agent_core::ids::TaskId>::new());
+}
+
+#[test]
+fn a_run_that_names_no_round_is_not_watched() {
+    let state = team_with_runs(&[]);
+
+    assert_eq!(watched_tasks(&state), Vec::<agent_core::ids::TaskId>::new());
 }

@@ -14,7 +14,7 @@ use agent_core::decide::commit_reminder::{CommitLook, ReminderDue, is_reminded, 
 use agent_core::ids::{AgentName, InvalidName, RunId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
-use agent_core::state::{InvalidTimestamp, Timestamp};
+use agent_core::state::{InvalidTimestamp, State, Timestamp};
 use agent_runtime::agentbus::Outgoing;
 use agent_runtime::git::{CommitIdentity, CommitTimeError, Git, GitError, Revision};
 use agent_runtime::process::error_chain;
@@ -130,6 +130,28 @@ fn changed_lines(changes: &[FileChange]) -> u64 {
 fn minutes_between(earlier: Timestamp, later: Timestamp) -> u64 {
     let minutes = (later.as_utc() - earlier.as_utc()).whole_minutes();
     if minutes <= 0 { 0 } else { minutes.unsigned_abs() }
+}
+
+/// The run of `task` that is to be looked at for the reminder, when it has one: its task, its run and its agent.
+fn watched_run(state: &State, task: &TaskId) -> Result<Option<Watched>, LookError> {
+    let Some(found) = state.find_task(task) else {
+        return Ok(None);
+    };
+    let Some(run) = found.member.current_run() else {
+        return Ok(None);
+    };
+    let agent = found
+        .member
+        .agent()
+        .name()
+        .parse()
+        .map_err(|source| LookError::Agent { source })?;
+    Ok(Some(Watched {
+        task: task.clone(),
+        run: run.id().clone(),
+        run_started: run.started_at(),
+        agent,
+    }))
 }
 
 impl Owner {
