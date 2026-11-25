@@ -1,1 +1,1 @@
-You have {{lines}} changed lines and {{minutes}} minutes.
+You have {{lines}} changed lines uncommitted and no commit for {{minutes}} minutes. Commit what is finished now, in small commits. A new test that fails goes in as its `RED:` commit with its failing output. Never commit debug output (`eprintln!`, `dbg!`, probes). Do not commit only to silence this message. Then go on with your work.
