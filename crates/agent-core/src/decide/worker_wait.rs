@@ -22,8 +22,15 @@ pub enum WaitVerdict {
 
 /// Whether a request first seen queued at `since` is returned at `now`, given `[workers] wait_seconds`.
 #[must_use]
-pub fn wait_verdict(_since: Timestamp, _now: Timestamp, _wait_seconds: u64) -> WaitVerdict {
-    WaitVerdict::Return { seconds: 0 }
+pub fn wait_verdict(since: Timestamp, now: Timestamp, wait_seconds: u64) -> WaitVerdict {
+    // A clock that went back since `since` shows no wait; `max(0)` makes the difference non-negative, so
+    // `unsigned_abs` loses nothing.
+    let seconds = (now.as_utc() - since.as_utc()).whole_seconds().max(0).unsigned_abs();
+    if wait_seconds > 0 && seconds >= wait_seconds {
+        WaitVerdict::Return { seconds }
+    } else {
+        WaitVerdict::Waits { seconds }
+    }
 }
 
 #[cfg(test)]
