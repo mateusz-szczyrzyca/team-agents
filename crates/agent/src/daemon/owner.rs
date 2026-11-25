@@ -53,7 +53,7 @@ use std::time::Duration;
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
-use agent_core::decide::limit::{Decision, Refusal, decide, next_refusals};
+use agent_core::decide::limit::{Decision, Limit, Refusal, decide, next_refusals};
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::replacement::ReplacementMode;
@@ -2119,14 +2119,8 @@ impl Owner {
             self.parts.state.record_limit_refusals(task.clone(), 0);
             return Ok(());
         };
-        let replacement = self.parts.settings.config.replacement();
         let refusals = next_refusals(self.parts.state.limit_refusals(task), end);
-        let answer = decide(&Refusal {
-            limit,
-            refusals,
-            retries: replacement.limit_retries().get(),
-            wait_limit: time::Duration::minutes(i64::from(replacement.limit_wait_minutes())),
-        });
+        let answer = decide(&self.refusal_facts(limit, refusals));
         self.parts.state.record_limit_refusals(task.clone(), refusals);
         let agent: AgentName = located.agent.parse()?;
         let return_at = match end {
@@ -2156,6 +2150,18 @@ impl Owner {
             "a run refused by its provider is counted and the rule answers it"
         );
         Ok(())
+    }
+
+    /// The facts of a refusal that showed `limit`, the `refusals`-th in a row of its task, with the configured retries and
+    /// the longest wait for a named reset.
+    pub(super) fn refusal_facts(&self, limit: Limit, refusals: u32) -> Refusal {
+        let replacement = self.parts.settings.config.replacement();
+        Refusal {
+            limit,
+            refusals,
+            retries: replacement.limit_retries().get(),
+            wait_limit: time::Duration::minutes(i64::from(replacement.limit_wait_minutes())),
+        }
     }
 
     /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no

@@ -126,7 +126,8 @@ runs_per_worker = 1
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
 # before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose
 # task failed or was stopped is replaced by another free investigator at once, and one that is paused (a quota, a rate
-# limit) after `replace_after_minutes`; when no investigator is free you are told.
+# limit) after `replace_after_minutes`; one its provider refused again after `[replacement] limit_retries` is replaced at
+# once by an investigator of another provider; when no investigator is free you are told.
 
 [review]
 # Stored permission for the later second-opinion activation; requests are still refused in this release.

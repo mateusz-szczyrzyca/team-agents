@@ -9,11 +9,16 @@
 //! 2. The task is paused (a quota or a rate limit, which end by themselves, or the human's pause): when it has been
 //!    paused for as long as a reviewer may be, counted from its last run that its provider did not refuse
 //!    ([`quiet_since`]).
+//!    A paused reviewer whose agent the refusal rule changes ([`replace_after_refusal`]) is replaced at once instead, and
+//!    one the rule only pauses (its retry is still to come) is kept until the retry.
 //! 3. Otherwise not: a task that is queued, runs or asks the human works on the review; one that waits is about to be
 //!    given it; one that is done reported, and a report without a verdict is asked for again elsewhere.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
+use crate::decide::limit::Decision;
+use crate::ids::InvestigatorName;
 use crate::state::{RunEnd, RunState, Timestamp};
 use crate::status::TaskStatus;
 
@@ -45,6 +50,42 @@ pub fn replace_now(awaited: &Awaited) -> bool {
             false
         }
     }
+}
+
+/// Whether the review `awaited` describes is given to another investigator, when the reviewer's last run was refused by
+/// its provider and the refusal rule (`refusal`, from [`crate::decide::limit::decide`]) answered for it; `None` when the
+/// last run was not refused. A paused reviewer whose agent the rule changes is replaced at once, without the patience;
+/// one the rule pauses is kept until its retry, whatever the silence, since its pause is the provider's to end and not
+/// the patience's; every other case is [`replace_now`].
+#[must_use]
+pub fn replace_after_refusal(awaited: &Awaited, refusal: Option<Decision>) -> bool {
+    let lead_over = matches!(awaited.lead, TaskStatus::Stopped | TaskStatus::Failed);
+    let paused = awaited.reviewer == TaskStatus::Paused && !lead_over;
+    match refusal {
+        Some(Decision::ChangeAgent) if paused => true,
+        Some(Decision::Pause) if paused => false,
+        Some(Decision::ChangeAgent | Decision::Pause) | None => replace_now(awaited),
+    }
+}
+
+/// An investigator and the provider it runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provided<'a> {
+    /// The investigator.
+    pub name: &'a InvestigatorName,
+    /// Its provider, as [`crate::decide::pool::provider_of`] names it.
+    pub provider: &'a str,
+}
+
+/// The investigators of `investigators` that run on `provider`: a refusal replaces a reviewer by an investigator of
+/// another provider, since one of the same provider meets the same refusal.
+#[must_use]
+pub fn on_provider(provider: &str, investigators: &[Provided<'_>]) -> BTreeSet<InvestigatorName> {
+    investigators
+        .iter()
+        .filter(|investigator| investigator.provider == provider)
+        .map(|investigator| investigator.name.clone())
+        .collect()
 }
 
 /// When the reviewer of a review asked at `requested_at` last did anything but get refused by its provider, given its

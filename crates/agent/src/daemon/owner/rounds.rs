@@ -236,6 +236,11 @@ pub(super) enum Announcement {
         /// The reviewer's task.
         task: TaskId,
     },
+    /// A reviewer its provider refused waits, and no investigator of another provider is free to take its review.
+    ReviewerWaits {
+        /// The reviewer's task.
+        task: TaskId,
+    },
     /// The checks before a review need a question put to the human, and the lead did not put it.
     NotAsked {
         /// The team.
@@ -419,6 +424,10 @@ pub(super) enum AutopilotNotice {
     Decision,
     /// Reviewer completed without a verdict.
     NoVerdict,
+    /// A reviewer its provider refused again after its retries is replaced by an investigator of another provider.
+    ReviewerChanged,
+    /// A reviewer its provider refused waits for the provider: no investigator of another provider is free.
+    ReviewerWaits,
     /// An unanswered second opinion holds the round.
     Opinion,
     /// The lead repeatedly supplied an invalid fix response.
@@ -454,6 +463,8 @@ impl AutopilotNotice {
         match self {
             Self::Decision => AutopilotPrompt::NoticeDecision,
             Self::NoVerdict => AutopilotPrompt::NoticeNoVerdict,
+            Self::ReviewerChanged => AutopilotPrompt::NoticeReviewerChanged,
+            Self::ReviewerWaits => AutopilotPrompt::NoticeReviewerWaits,
             Self::Opinion => AutopilotPrompt::NoticeOpinion,
             Self::ResponseRefused => AutopilotPrompt::NoticeResponseRefused,
             Self::ReportRefused => AutopilotPrompt::NoticeReportRefused,
@@ -476,6 +487,7 @@ impl AutopilotNotice {
         match self {
             Self::Decision | Self::ResponseRefused | Self::ReportRefused => NoticeKind::Decision,
             Self::NoVerdict => NoticeKind::NoVerdict,
+            Self::ReviewerChanged | Self::ReviewerWaits => NoticeKind::Paused,
             Self::Opinion => NoticeKind::Opinion,
             Self::PublishFailed | Self::HandoverHeld | Self::GithubRefused => NoticeKind::PublishFailed,
             Self::TeamAsleep | Self::StandingItem | Self::MemberWorkLeft => NoticeKind::TeamAsleep,
@@ -920,6 +932,10 @@ mod daemon_log_cause_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_queries.rs"]
 mod history_queries_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/refused_reviewer.rs"]
+mod refused_reviewer_tests;
 
 #[cfg(test)]
 #[path = "rounds/tests/turn_limits.rs"]
