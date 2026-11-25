@@ -27,7 +27,7 @@ fn a_version_21_history_is_upgraded_to_version_23() {
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
 
-    assert_eq!(version, 31);
+    assert_eq!(version, 32);
 }
 
 #[test]
