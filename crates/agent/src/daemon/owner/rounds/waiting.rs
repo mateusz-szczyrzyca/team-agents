@@ -262,11 +262,11 @@ impl Owner {
 
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
-        let waiting = self.waiting_for(team, round)?;
-        if waiting == Waiting::Provider
-            && let Some((pause, now)) = self.provider_pause_of(team, round)
-        {
-            return Some(self.provider_line(&pause, now));
+        let (activity, pause) = self.activity_and_pause(team, round);
+        let waiting = self.waiting_from(team, round, activity, pause.is_some())?;
+        // The pause that decided the wait names it: a second look at the clock could find the refusal over.
+        if let (Waiting::Provider, Some((pause, now))) = (waiting, &pause) {
+            return Some(self.provider_line(pause, *now));
         }
         // A queued run whose agent runs another task at its limit goes after that run: the line names it.
         let holder = (waiting == Waiting::For(Obligation::QueuedRun))
@@ -320,6 +320,16 @@ impl Owner {
 
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
+        let (activity, pause) = self.activity_and_pause(team, round);
+        self.waiting_from(team, round, activity, pause.is_some())
+    }
+
+    /// How busy `round` is and, for an idle one, the pause of the provider it waits at, read with one look at the clock.
+    fn activity_and_pause(
+        &self,
+        team: &Team,
+        round: &Round,
+    ) -> (Activity, Option<(provider::ProviderPause, Timestamp)>) {
         let activity = if *round.life() != RoundLife::Open {
             Activity::Closed
         } else if round_tasks(team, round)
@@ -330,7 +340,15 @@ impl Owner {
         } else {
             Activity::Idle
         };
-        if activity == Activity::Idle && self.provider_pause_of(team, round).is_some() {
+        let pause = (activity == Activity::Idle)
+            .then(|| self.provider_pause_of(team, round))
+            .flatten();
+        (activity, pause)
+    }
+
+    /// What `round` waits for given its `activity` and whether a provider's pause holds it.
+    fn waiting_from(&self, team: &Team, round: &Round, activity: Activity, provider_pause: bool) -> Option<Waiting> {
+        if provider_pause {
             return Some(Waiting::Provider);
         }
         let obligation = if self.pulls.is_none() {
