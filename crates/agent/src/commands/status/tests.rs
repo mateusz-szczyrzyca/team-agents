@@ -2047,3 +2047,27 @@ agentbus = "{}"
     );
     assert!(!shown.text.contains("free"), "{}", shown.text);
 }
+
+#[tokio::test]
+async fn status_reads_recorded_provider_cooldowns_and_omits_them_after_return() {
+    use crate::fixtures::{at, solo_state};
+    use crate::testing::ManualClock;
+
+    let dir = tempfile::tempdir().unwrap();
+    let mut activity = no_activity(dir.path());
+    let clock = ManualClock::new(at(0));
+    activity.clock = SharedClock::new(clock.clone());
+    let mut state = solo_state();
+    state.keep_refused_until("claude-1".parse().unwrap(), at(10));
+    std::fs::write(activity.home.state_file(), state.to_json().unwrap()).unwrap();
+
+    assert_eq!(
+        activity.refused_line().await.unwrap(),
+        Some(format!(
+            "refused by their provider, kept out of new tasks, reviews and takeovers: claude-1 until {}\n",
+            activity.zone.stamp(at(10))
+        ))
+    );
+    clock.advance(time::Duration::seconds(10));
+    assert_eq!(activity.refused_line().await.unwrap(), None);
+}

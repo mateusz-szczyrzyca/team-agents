@@ -146,3 +146,135 @@ async fn live_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_ca
     );
     assert_eq!(owner.parts.state.refused_at(&"claude-1".parse().unwrap(), reset), false);
 }
+
+/// Captured structured fields of refusal decisions, shared with the tracing layer.
+#[derive(Clone, Default)]
+struct Decisions(std::sync::Arc<std::sync::Mutex<Vec<std::collections::BTreeMap<String, String>>>>);
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Decisions {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        /// Fields of one event, preserving the values the subscriber receives.
+        #[derive(Default)]
+        struct Fields(std::collections::BTreeMap<String, String>);
+        impl tracing::field::Visit for Fields {
+            fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+                self.0.insert(field.name().to_owned(), format!("{value:?}"));
+            }
+            fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+                self.0.insert(field.name().to_owned(), value.to_owned());
+            }
+        }
+        let mut fields = Fields::default();
+        event.record(&mut fields);
+        if fields.0.get("decision").map(String::as_str) == Some("limit") {
+            self.0.lock().unwrap().push(fields.0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn refusal_decisions_emit_pause_and_change_agent_log_records() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+    let decisions = Decisions::default();
+    let subscriber = tracing_subscriber::registry().with(decisions.clone());
+    tracing::subscriber::with_default(subscriber, || {
+        for _ in 0..2 {
+            owner
+                .keep_refusal(
+                    &task(1),
+                    &located,
+                    &Settled::Paused(Pause {
+                        until: at(10),
+                        reason: PauseReason::RateLimit,
+                        evidence: String::new(),
+                    }),
+                    &RunEnd::RateLimited,
+                    at(0),
+                )
+                .unwrap();
+        }
+    });
+    let records = decisions.0.lock().unwrap();
+    let actual: Vec<_> = records
+        .iter()
+        .map(|record| {
+            ["event", "decision", "result", "agent", "refusals", "return_at", "task"]
+                .map(|key| record.get(key).cloned())
+        })
+        .collect();
+    let expected: Vec<_> = [("pause", "1"), ("change_agent", "2")]
+        .into_iter()
+        .map(|(result, count)| {
+            [
+                "decision_taken".to_owned(),
+                "limit".to_owned(),
+                result.to_owned(),
+                "claude-1".to_owned(),
+                count.to_owned(),
+                at(10).to_string(),
+                task(1).to_string(),
+            ]
+            .map(Some)
+        })
+        .collect();
+    assert_eq!(actual, expected);
+}
+
+#[tokio::test]
+async fn failure_interruption_and_commit_cut_each_restart_the_refusal_sequence() {
+    use super::commit_reminder::CommitOrder;
+    use crate::daemon::control::Halt;
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+
+    for path in ["failed", "interrupted", "stopped", "commit_cut"] {
+        let mut state = solo_state();
+        {
+            let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+            member.transition(TaskStatus::Running).unwrap();
+            member.begin_run(run(1), at(0), None).unwrap();
+        }
+        state.record_limit_refusals(task(1), 1);
+        let daemon = Daemon::new(&state, None);
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        daemon.clock.advance(time::Duration::seconds(1));
+        match path {
+            "failed" => owner
+                .failed(&task(1), "a process could not finish".to_owned())
+                .await
+                .unwrap(),
+            "interrupted" => owner.interrupted(&task(1), None).await.unwrap(),
+            "stopped" => {
+                owner.halts.insert(task(1), Halt::Stop);
+                owner.interrupted(&task(1), None).await.unwrap();
+            }
+            "commit_cut" => {
+                owner.commit_cuts.insert(task(1), CommitOrder { lines: 10, minutes: 1 });
+                owner.interrupted(&task(1), None).await.unwrap();
+            }
+            _ => unreachable!("table lists the four daemon paths"),
+        }
+        assert_eq!(owner.parts.state.limit_refusals(&task(1)), 0, "{path}");
+        let located = owner.locate(&task(1)).unwrap();
+        owner
+            .keep_refusal(
+                &task(1),
+                &located,
+                &Settled::Paused(Pause {
+                    until: at(10),
+                    reason: PauseReason::RateLimit,
+                    evidence: String::new(),
+                }),
+                &RunEnd::RateLimited,
+                at(1),
+            )
+            .unwrap();
+        assert_eq!(owner.parts.state.limit_refusals(&task(1)), 1, "{path}");
+    }
+}
