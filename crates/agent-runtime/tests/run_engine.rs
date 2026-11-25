@@ -173,6 +173,42 @@ mod run_engine {
         }
     }
 
+    /// An environment whose agent `claude-1` runs the stand-in of codex, `fake-codex.sh`, with the default limits.
+    async fn env_for_codex_script() -> Env {
+        let home_dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(home_dir.path()));
+        let store = Arc::new(StateStore::open(home.clone()).await.unwrap());
+        let binary = format!("{}/tests/fixtures/run/fake-codex.sh", env!("CARGO_MANIFEST_DIR"));
+        let config = Config::from_toml_str(&format!(
+            "[agents.claude-1]\ncli = \"codex\"\n[tiers]\nnormal = [\"claude-1\"]\n[binaries]\ncodex = \"{binary}\"\n"
+        ))
+        .unwrap();
+        let texts = HarnessPrompts::load(
+            &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+            &Language::default(),
+        )
+        .await
+        .unwrap();
+        let engine = RunEngine::new(EngineParts {
+            store,
+            texts: Arc::new(texts),
+            config: Arc::new(config),
+            secrets: Arc::new(Secrets::parse("", 0o600).unwrap()),
+            supervisor: Supervisor::new(NonZeroUsize::new(4).unwrap()),
+            clock: SharedClock::new(FixedClock(now().as_utc())),
+            local_offset: time::UtcOffset::UTC,
+            timings: timings(),
+            agent_binary_dir: abs(Path::new("/usr/local/bin")),
+        });
+        Env {
+            home,
+            _home_dir: home_dir,
+            worktree: tempfile::tempdir().unwrap(),
+            engine,
+            task: TaskId::from_str("task-20261112-100000-t1t1").unwrap(),
+        }
+    }
+
     /// An environment whose agent `claude-1` runs the stand-in CLI as `opencode`, with its own configuration file.
     async fn env_for_opencode() -> Env {
         let home_dir = tempfile::tempdir().unwrap();
@@ -510,6 +546,41 @@ mod run_engine {
         assert_eq!(
             pause.evidence,
             "an overload: 429 · Model busy, retry later · engine_overloaded"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_codex_capacity_refusal_keeps_its_structured_evidence() {
+        let env = env_for_codex_script().await;
+        let mut job = env.job("at-capacity", Env::new_session());
+        job.cli = CliKind::Codex;
+        let run = match env.engine.run(job, &CancellationToken::new()).await.unwrap() {
+            RunVerdict::Finished(run) => *run,
+            other @ RunVerdict::Interrupted { .. } => panic!("{other:?}"),
+        };
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        assert_eq!(
+            run.classified.pause.as_ref().unwrap().kind,
+            agent_core::decide::refusal::Kind::Overload
+        );
+        assert_eq!(
+            run.classified.pause.unwrap().evidence,
+            "an overload: Selected model is at capacity. Please try a different model."
+        );
+    }
+
+    #[tokio::test]
+    async fn a_claude_rejected_window_keeps_the_complete_result_evidence() {
+        let env = env().await;
+        let run = env.finished("rate-limit-window").await;
+        assert_eq!(run.classified.end, RunEnd::RateLimited);
+        assert_eq!(
+            run.classified.pause.as_ref().unwrap().kind,
+            agent_core::decide::refusal::Kind::Quota
+        );
+        assert_eq!(
+            run.classified.pause.unwrap().evidence,
+            "a quota: 429 · API Error: 429 rate limit exceeded · resets 3pm · resets 2026-11-12T12:00:00Z"
         );
     }
 
