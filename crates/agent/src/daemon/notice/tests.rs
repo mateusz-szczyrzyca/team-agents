@@ -324,6 +324,8 @@ fn notice_kind_maps_to_expected_status() {
         (NoticeKind::RunFailed, NoticeStatus::Failed),
         (NoticeKind::TurnLimitExhausted, NoticeStatus::Failed),
         (NoticeKind::TurnLimitNoSession, NoticeStatus::Failed),
+        (NoticeKind::AgentChanged, NoticeStatus::Paused),
+        (NoticeKind::NoFreeAgent, NoticeStatus::Paused),
     ];
     for (kind, expected_status) in expected {
         assert_eq!(kind.status(), expected_status, "{kind:?} status mismatch");

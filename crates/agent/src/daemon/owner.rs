@@ -2317,27 +2317,43 @@ impl Owner {
 
         // We need `agent` later; clone it now before the mutable borrow for hand_over_refused_task.
         let agent_clone = agent.clone();
+        let refused_provider_str = refused_provider.clone();
         match pick(&request) {
             Pick::Agent(new_agent) => {
                 let new_agent = new_agent.clone();
                 self.hand_over_refused_task(task, &new_agent, located, &agent_clone, now)?;
                 Ok(Some(RefusalHandled {
                     status: TaskStatus::Queued,
-                    notice: Notice::Paused {
-                        until: pause.until,
-                        reason: pause.reason,
-                        evidence: String::new(),
+                    notice: Notice::AgentChanged {
+                        refused_agent: agent_clone.clone(),
+                        refused_provider: refused_provider_str,
+                        return_at: self.parts.state.refused_until(&agent_clone).unwrap_or(pause.until),
+                        new_agent,
                     },
                 }))
             }
-            Pick::NoneFree { earliest_return } => Ok(Some(RefusalHandled {
-                status: TaskStatus::Paused,
-                notice: Notice::Paused {
-                    until: earliest_return.unwrap_or(pause.until),
-                    reason: pause.reason,
-                    evidence: String::new(),
-                },
-            })),
+            Pick::NoneFree { earliest_return } => {
+                let until = earliest_return.unwrap_or(pause.until);
+                // Set the wake so the task is picked up when a candidate returns.
+                self.wakes.insert(task.clone(), until);
+                tracing::info!(
+                    event = LogEvent::TaskWaitForFreeAgent.as_str(),
+                    team = %located.team,
+                    task = %task,
+                    agent = located.agent,
+                    refused_provider = %refused_provider_str,
+                    return_at = %until,
+                    "no agent is free to take over a task whose agent was refused by its provider"
+                );
+                Ok(Some(RefusalHandled {
+                    status: TaskStatus::Paused,
+                    notice: Notice::NoFreeAgent {
+                        refused_agent: agent_clone,
+                        refused_provider: refused_provider_str,
+                        return_at: until,
+                    },
+                }))
+            }
         }
     }
 
@@ -2354,15 +2370,13 @@ impl Owner {
             .participant_of(refused_agent)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         self.hand_task_over(task, new_agent, &held, Trouble::NoStatus, now)?;
-        let team = located.team.clone();
         tracing::info!(
-            event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
-            team = %team,
+            event = LogEvent::TaskAgentChanged.as_str(),
+            team = %located.team,
             task = %task,
-            from = refused_agent.as_str(),
-            to = new_agent.as_str(),
-            reason = "provider_refusal",
-            "a task whose agent was refused by its provider is handed over"
+            refused_agent = refused_agent.as_str(),
+            new_agent = new_agent.as_str(),
+            "a task whose agent was refused by its provider was handed over to a free agent"
         );
         Ok(())
     }

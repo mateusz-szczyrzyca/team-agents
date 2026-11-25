@@ -12,7 +12,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::decide::outcome::PauseReason;
-use agent_core::ids::{TaskId, TeamId};
+use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
 use agent_core::notice_status::NoticeStatus;
@@ -74,6 +74,10 @@ pub(super) enum NoticeKind {
     TeamAsleep,
     /// Team done (`team/notice-team-done`).
     TeamDone,
+    /// Task handed to another agent after its provider's refusal (`run/notice-agent-changed`).
+    AgentChanged,
+    /// No agent free to take the task over after its provider's refusal (`run/notice-no-free-agent`).
+    NoFreeAgent,
 }
 
 impl NoticeKind {
@@ -93,7 +97,7 @@ impl NoticeKind {
             | Self::TurnLimitExhausted
             | Self::TurnLimitNoSession => NoticeStatus::Failed,
             Self::Hung => NoticeStatus::Hung,
-            Self::Paused => NoticeStatus::Paused,
+            Self::Paused | Self::AgentChanged | Self::NoFreeAgent => NoticeStatus::Paused,
             Self::Approved => NoticeStatus::Approved,
             Self::MergeFailed => NoticeStatus::NotMerged,
             Self::Closed => NoticeStatus::Closed,
@@ -275,6 +279,26 @@ pub(super) enum Notice {
         /// Why, as the chain of its errors.
         reason: String,
     },
+    /// The task was handed to another agent after the refused agent's retries were spent.
+    AgentChanged {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+        /// The agent the task was handed to.
+        new_agent: AgentName,
+    },
+    /// No agent was free to take over the task; it stays paused until one is free.
+    NoFreeAgent {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+    },
 }
 
 /// Why a notice cannot be made into a notification.
@@ -384,6 +408,32 @@ impl Notice {
                 HarnessPrompt::NoticeRunFailed,
                 common.with("reason", reason)?,
                 NoticeKind::RunFailed,
+            ),
+            Self::AgentChanged {
+                refused_agent,
+                refused_provider,
+                return_at,
+                new_agent,
+            } => (
+                HarnessPrompt::NoticeAgentChanged,
+                common
+                    .with("refused_agent", refused_agent.as_str())?
+                    .with("refused_provider", refused_provider)?
+                    .with("return_at", &return_at.to_string())?
+                    .with("new_agent", new_agent.as_str())?,
+                NoticeKind::AgentChanged,
+            ),
+            Self::NoFreeAgent {
+                refused_agent,
+                refused_provider,
+                return_at,
+            } => (
+                HarnessPrompt::NoticeNoFreeAgent,
+                common
+                    .with("refused_agent", refused_agent.as_str())?
+                    .with("refused_provider", refused_provider)?
+                    .with("return_at", &return_at.to_string())?,
+                NoticeKind::NoFreeAgent,
             ),
         };
         let rendered = texts.render(text, &values)?;
