@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.96.0 — 25.11.2026 — PR #253
+## 0.97.0 — 25.11.2026 — PR #253
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A run that was reminded to commit and has not committed 20 minutes later is stopped, and its session is resumed at once with the order to commit what is finished first. It is never cut while a gate (`agent gate`) or a test run of its worktree holds the test lock. The cut counts as no retry, turn, rejection or replacement of the task, and what the run left in its worktree is snapshotted first. Each cut is the log event `commit_cut`.
@@ -15,6 +15,14 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 
 ### Configuration
 - [agent-core] new: `[commit_reminder] cut_after` (default `20`) — the minutes after the reminder to commit at which a run that has not committed is cut and resumed with the order to commit; `0` turns the cut off.
+
+## 0.96.0 — 25.11.2026 — PR pending
+
+### Bug fixes
+- [agent] [agent-runtime] Requests interrupted by a missing worker result or a daemon restart resume in the same worker workspace, preserving partial work and snapshots without spending a wrong-result try. Provider failures prefer a free worker of another provider; requests stay queued while no compatible worker is free.
+- [agent] [agent-core] [agent-runtime] After three returns to the queue, another interruption returns the step to its requester with all recorded causes. Replayed and late results cannot deliver a second final answer.
+- [agentbus] New requests with required capabilities use the same interruption recovery as other requests; requests saved before recovery was enabled keep their earlier rules.
+- [agent] Final failure notices arrive after retry metadata is removed; the durable settlement remains available until delivery completes.
 
 ## 0.95.0 — 25.11.2026 — PR #251
 

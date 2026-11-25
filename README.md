@@ -1164,9 +1164,13 @@ Before a wrong-result retry, the daemon retains a snapshot of the failed
 worker's work; a pool retry starts in a fresh workspace from the original requester's commit. The journal lives
 in the requester's task directory and preserves both workspace identities and the observed ending.
 Existing open requests without the opt-in marker keep their previous handling; loading never opts them in.
-Automatic recovery for a dead CLI, missing status or interrupted running request is not enabled yet.
-The three-return no-result bound is prepared independently of wrong-result tries, with no new configuration key.
-See the [durable format](docs/state.md) and [protocol](docs/architecture.md#prepared-request-recovery-protocol).
+A dead CLI, missing status, provider refusal or quota failure returns the request to the queue with its worker
+worktree and snapshot. Startup recovers queued and running requests the same way. A fresh execution reuses that
+worktree without consuming `[workers] tries`: provider failures prefer another provider, with same-provider
+fallback; other interruptions take the first compatible free worker. With none free the request stays queued.
+After three no-result returns, the next interruption returns the step to the requester with all causes.
+The original workspace branch stays fixed even when the serving worker changes. No new configuration key is needed.
+See the [durable format](docs/state.md) and [protocol](docs/architecture.md#request-recovery-protocol).
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
 instructions of every run that may call `delegate` (an investigator answering an investigation request among them),
