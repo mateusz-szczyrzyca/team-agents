@@ -1,4 +1,4 @@
--- Preserve logs, round links, search and cursors while admitting the log events of a agent change and free-agent wait.
+-- Preserve logs, round links, search and cursors while admitting the log events for agent change and free-agent wait.
 PRAGMA defer_foreign_keys = ON;
 CREATE TEMP TABLE saved_logs AS SELECT * FROM daemon_logs;
 DROP TABLE daemon_logs;

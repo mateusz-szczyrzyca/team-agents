@@ -41,3 +41,22 @@ fn a_version_29_history_keeps_its_logs_and_accepts_both_refusal_takeover_events(
         assert_eq!(rows.iter().filter(|row| row.event() == event).count(), 1);
     }
 }
+
+#[test]
+fn a_version_30_history_preserves_both_worktree_events_when_refusal_events_are_added() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let raw = rusqlite::Connection::open(&path).unwrap();
+    raw.execute_batch(include_str!("../fixtures/history-before-refusal-takeover-30.sql"))
+        .unwrap();
+    drop(raw);
+    drop(HistoryDb::open(&path, roomy()).unwrap());
+    let rows = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(rows.len(), 3);
+    for event in [
+        agent_core::log::LogEvent::WorktreeSwitched,
+        agent_core::log::LogEvent::WorktreeSwitchRefused,
+    ] {
+        assert_eq!(rows.iter().filter(|row| row.event() == event).count(), 1);
+    }
+}
