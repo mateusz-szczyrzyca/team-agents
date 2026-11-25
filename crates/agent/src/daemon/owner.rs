@@ -31,6 +31,8 @@ mod request_end;
 mod returned;
 mod round_state;
 mod rounds;
+#[cfg(test)]
+mod shutdown_tests;
 mod snapshots;
 mod split;
 mod start;
