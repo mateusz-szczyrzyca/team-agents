@@ -2363,6 +2363,49 @@ Integrate the guide.
     }
 
     #[test]
+    fn a_deepinfra_overload_notice_names_the_provider_code_and_the_kind() {
+        let mut world = World::new_custom(
+            &[AgentDef {
+                name: "w-di",
+                kind: "agent",
+                scenario: "opencode-refused",
+                cli: "opencode",
+                model: Some("deepinfra/kimi"),
+                capabilities: &[],
+            }],
+            None,
+        );
+        world.start();
+
+        let output = world.agent(&["run", "w-di", "Its own work."]);
+
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let deadline = Instant::now() + Duration::from_secs(60);
+        let notice = loop {
+            let found = std::fs::read_dir(world.home.join("notifications"))
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter_map(|entry| std::fs::read_to_string(entry.path()).ok())
+                .find(|text| text.contains("engine_overloaded"));
+            if let Some(text) = found {
+                break text;
+            }
+            assert!(Instant::now() < deadline, "no notice names the provider code");
+            std::thread::sleep(Duration::from_millis(100));
+        };
+
+        assert!(
+            notice.contains("429 · Model busy, retry later · engine_overloaded · overloaded"),
+            "{notice}"
+        );
+        assert!(
+            !notice.contains("provider.rate-limit"),
+            "the raw record is not in the notice: {notice}"
+        );
+    }
+
+    #[test]
     fn pool_alternates_providers_across_three_requests() {
         let mut world = World::new_custom(
             &[
