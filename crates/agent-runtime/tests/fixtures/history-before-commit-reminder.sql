@@ -411,4 +411,5 @@ END,'') AS body
 FROM history_records h WHERE sequence=new.sequence;
 END;
 
+INSERT INTO history_cursors (name, value) VALUES ('daemon_logs', 0);
 INSERT INTO daemon_logs (id, first_at, at, level, module, event, team, task, run, message, fields, count, cut) VALUES (1, '2026-11-25T09:00:10Z', '2026-11-25T09:00:10Z', 'info', 'agent::daemon', 'daemon_started', NULL, NULL, NULL, 'the daemon serves its socket', '{}', 1, '');
