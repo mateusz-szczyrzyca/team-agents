@@ -163,11 +163,7 @@ pub(super) fn layout_notification<Z: Into<Zone> + Copy>(
     let status = notice.status();
     let title = format!("{} {}", status.icon(), context.repo);
 
-    let time_str = if notice == NoticeKind::Paused {
-        context.offset.into().rfc3339(context.time)
-    } else {
-        context.offset.into().stamp_minute(context.time)
-    };
+    let time_str = context.offset.into().stamp_minute(context.time);
 
     let client = client_label(context.cli, context.model);
     let agent_str = if client.is_empty() {
@@ -353,7 +349,7 @@ impl Notice {
             } => (
                 HarnessPrompt::NoticePaused,
                 common
-                    .with("until", context.offset.rfc3339(*until))?
+                    .with("until", context.offset.stamp_minute(*until))?
                     .with("reason", reason.to_string())?
                     .with("kind", kind.words())?
                     .with(
