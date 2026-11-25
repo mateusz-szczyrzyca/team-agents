@@ -271,7 +271,8 @@ A file without `[workers]`, or without `wait_seconds`, gets these defaults, so e
 The daemon notes since when a queued request waits in `tasks/<requester task>/worker-wait-<n>.json` and removes the file when the
 request leaves the queue; `agent status` shows the time next to a queued request (`waiting since 21:10 (12 min)`). A request that
 was queued before the upgrade starts counting at the daemon's first look at it. The daemon logs `worker_wait_returned` for each
-request it returns.
+request it returns. A request that went back to the queue after a failed run waits by the same rule. At its first look after a start
+the daemon also removes the notes of requests that ended while it was down.
 
 The keys are read and checked at load. A run past `seconds` is a wrong result, subject to the same
 `tries` limit. At most one second try is made; after that the requester does the step itself.
