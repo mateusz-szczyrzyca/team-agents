@@ -1752,6 +1752,18 @@ mod tests {
         assert!(long.starts_with(&evidence));
     }
 
+    // Rule: a provider's record that names its status, message and code is the evidence as it is described, not the
+    // raw line; a line of another shape stays the evidence as it is.
+    #[test]
+    fn a_refusal_record_is_the_evidence_in_its_words() {
+        let record = r#"{"type":"error","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"code\":\"engine_overloaded\"}}"}}}"#;
+        let class = failed(None, record);
+        assert_eq!(
+            class.pause.map(|p| p.evidence),
+            Some("an overload: 429 · Model busy, retry later · engine_overloaded".to_owned())
+        );
+    }
+
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.
     #[test]
     fn the_pause_reasons_have_their_texts() {
