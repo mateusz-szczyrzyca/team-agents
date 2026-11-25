@@ -1421,10 +1421,27 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`]; [`GitError::NotABranch`]; [`GitError::NotUtf8`]; [`GitError::Run`].
     pub async fn current_branch(&self) -> Result<Option<BranchName>, GitError> {
-        Ok(Some("main".parse().map_err(|source| GitError::NotABranch {
-            operation: GitOperation::CurrentBranch,
-            source,
-        })?))
+        let operation = GitOperation::CurrentBranch;
+        let captured = self
+            .run(
+                operation,
+                Reach::Local,
+                &[arg("symbolic-ref"), arg("--quiet"), arg("--short"), arg("HEAD")],
+            )
+            .await?;
+        match captured.exit {
+            ExitReport::Exited { code: 0 } => {
+                let printed = text(operation, &captured.stdout)?;
+                printed
+                    .trim()
+                    .parse()
+                    .map(Some)
+                    .map_err(|source| GitError::NotABranch { operation, source })
+            }
+            // With `--quiet`, 1 and no output is git's answer for a HEAD that is not a branch.
+            ExitReport::Exited { code: 1 } if captured.stderr.bytes.is_empty() => Ok(None),
+            ExitReport::Exited { .. } | ExitReport::Signaled { .. } => Err(failed(operation, &captured)),
+        }
     }
 
     /// Checks out the existing `branch` in this handle's worktree, keeping the changes of the tree.
@@ -1432,8 +1449,13 @@ impl Git {
     /// # Errors
     /// [`GitError::Failed`] when the branch does not exist or changes in the tree would be lost; [`GitError::Run`].
     pub async fn switch_branch(&self, branch: &BranchName) -> Result<(), GitError> {
-        let _ = (branch, GitOperation::SwitchBranch);
-        Ok(())
+        self.run_ok(
+            GitOperation::SwitchBranch,
+            Reach::Local,
+            &[arg("switch"), arg(branch.as_str())],
+        )
+        .await
+        .map(drop)
     }
 
     /// Whether `ancestor` is part of the history of `descendant`; a commit is part of its own history.
