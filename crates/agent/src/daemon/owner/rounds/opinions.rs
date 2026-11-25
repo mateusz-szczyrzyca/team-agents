@@ -152,12 +152,7 @@ impl Owner {
                 .collect();
             for (number, request) in waiting {
                 let mut excluded = opinion_exclusions(&item, &ledger, number);
-                // An investigator its provider refused reviews nothing until its return.
-                excluded.extend(refused_investigators(
-                    &self.parts.state,
-                    &self.parts.settings.config,
-                    Timestamp::now(&self.parts.clock)?,
-                ));
+                excluded.extend(self.refused_reviewers()?);
                 let Some(reviewer) = select_reviewers(
                     &self.parts.state,
                     &self.parts.settings.config,
@@ -654,5 +649,16 @@ impl Owner {
             }
         }
         Ok(())
+    }
+}
+
+impl Owner {
+    /// The investigators their provider refused at the moment: they review nothing until their return.
+    fn refused_reviewers(&self) -> Result<HashSet<agent_core::ids::InvestigatorName>, OwnerError> {
+        Ok(refused_investigators(
+            &self.parts.state,
+            &self.parts.settings.config,
+            Timestamp::now(&self.parts.clock)?,
+        ))
     }
 }
