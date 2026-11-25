@@ -2375,4 +2375,4 @@ pub(in crate::daemon::owner) struct CleanupObligation {
 }
 
 #[cfg(test)]
-mod tests;
+pub(in crate::daemon::owner) mod tests;
