@@ -110,7 +110,9 @@ async fn a_run_with_uncommitted_work_past_both_bounds_is_reminded_once() {
     assert_eq!(reminded.len(), 1);
     assert_eq!(reminded[0].fields()["lines"], 400);
     assert_eq!(reminded[0].fields()["minutes"], 2);
-    assert_eq!(reminded[0].fields()["task"], task(1).to_string());
+    assert_eq!(reminded[0].task(), Some(&task(1)));
+    assert!(reminded[0].run().is_some());
+    assert_eq!(reminded[0].fields()["agent"], "claude-1");
 }
 
 #[tokio::test]
@@ -173,5 +175,7 @@ async fn a_commit_re_arms_the_reminder_and_the_follow_is_logged() {
     assert_eq!(logged(&daemon, LogEvent::CommitReminded).len(), 2);
     let followed = logged(&daemon, LogEvent::CommitFollowed);
     assert_eq!(followed.len(), 1);
-    assert_eq!(followed[0].fields()["task"], task(1).to_string());
+    assert_eq!(followed[0].task(), Some(&task(1)));
+    assert!(followed[0].run().is_some());
+    assert_eq!(followed[0].fields()["agent"], "claude-1");
 }
