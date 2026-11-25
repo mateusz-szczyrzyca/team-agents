@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.111.0 · agent-core 0.111.0 · agent-runtime 0.109.0 — 25.11.2026 — PR #278
+## agent 0.112.0 · agent-core 0.112.0 · agent-runtime 0.109.0 — 25.11.2026 — PR #278
 
 ### Enhancements
 - [agent] [agent-core] The notice of a provider's refusal says what the provider said: the kind (an overload, a rate limit or a quota), the status, the message and the provider's code, for example `an overload: 429 · Model busy, retry later · engine_overloaded`, instead of the raw JSON line cut off. The raw line stays in the run's files.
