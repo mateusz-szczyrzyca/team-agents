@@ -58,6 +58,19 @@ pub fn dispatch_in_policy(
     dispatch_with_candidates(team, mode, configured_replacements, &[])
 }
 
+/// STUB (RED): chooses as [`dispatch_with_candidates`] does and does not yet keep the refused agents out.
+#[must_use]
+pub fn dispatch_refusing(
+    team: &Team,
+    mode: crate::decide::replacement::ReplacementMode,
+    configured_replacements: &[AgentName],
+    outside: &[crate::decide::part::Candidate<'_>],
+    refused: &[AgentName],
+) -> Dispatch {
+    let _ = refused;
+    dispatch_with_candidates(team, mode, configured_replacements, outside)
+}
+
 /// Chooses split replacements using configured tiers and availability supplied by the caller.
 #[must_use]
 pub fn dispatch_with_candidates(
@@ -319,6 +332,8 @@ pub fn required_tier(team: &Team, item: ItemId) -> Tier {
     team.task_list().list().required_tier(item).unwrap_or(Tier::Normal)
 }
 
+#[cfg(test)]
+mod refusal_tests;
 #[cfg(test)]
 mod tests;
 
