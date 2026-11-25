@@ -32,7 +32,8 @@ pub(crate) fn of_team<'a>(team: &TeamSummary, records: &'a [HelperRecord]) -> Ve
     served
 }
 
-/// The line `agent status --running` prints of `record` under its team, with the times of `span` in `zone`.
+/// The line `agent status --running` prints of `record` under its team, with the times of `span` in `zone`: the
+/// request's number on the bus, the worker, the worker's task (where its runs are), the step, the times and the result.
 pub(crate) fn line(record: &HelperRecord, span: Span, zone: Zone) -> String {
     let entry = &record.entry;
     let worker = entry.worker.as_ref().map_or("?", |worker| worker.as_str());
@@ -41,9 +42,13 @@ pub(crate) fn line(record: &HelperRecord, span: Span, zone: Zone) -> String {
         .as_deref()
         .filter(|step| !step.is_empty())
         .map_or_else(String::new, |step| format!("  step {step}"));
+    let task = record
+        .helper_task
+        .as_ref()
+        .map_or_else(String::new, |task| format!("  {task}"));
     let working = matches!(entry.status, DelegationStatus::Starting | DelegationStatus::Running);
     format!(
-        "  worker H{}  {worker}{step}  {}  {}",
+        "  worker H{}  {worker}{task}{step}  {}  {}",
         entry.id.number(),
         times(span, working, zone),
         result(entry.status, record.verdict)

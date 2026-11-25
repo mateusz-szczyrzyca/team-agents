@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.100.0 — 25.11.2026 — PR pending
 
 ### Enhancements
-- [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
+- [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with the worker's task, its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
 - [agent] `agent status --running` no longer lists free workers: its `pool:` section shows only the busy workers of teams not listed above.
 
 ## 0.99.0 — 25.11.2026 — PR pending
