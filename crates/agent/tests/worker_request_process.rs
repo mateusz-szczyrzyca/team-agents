@@ -856,6 +856,40 @@ Integrate the guide.
         assert!(prompt.contains("the check `exists docs/guide.md` failed"), "{prompt}");
     }
 
+    // Rule: a worker given a request that names files is told to commit them in its own worktree, because the check runs
+    // there and only its commit is brought over; the worker that does as told has its commit on the requester's branch.
+    #[test]
+    fn a_worker_told_to_commit_the_requested_files_in_its_own_worktree_has_its_commit_brought_over() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
+        let (member, worker) = (task(&tasks, "claude-1"), task(&tasks, "glm-1"));
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "done");
+        let prompts = request_prompts(&world, worker, 1, world.runs(worker));
+        assert_eq!(prompts.len(), 1, "{prompts:?}");
+        for line in [
+            "commit them in your own worktree",
+            "runs the request's check in your worktree",
+            "brings only your commit over",
+            "even when the requester's worktree seems to have it already",
+        ] {
+            assert!(prompts[0].contains(line), "{line:?} is not in:\n{}", prompts[0]);
+        }
+        assert!(
+            !prompts[0].contains("Commit or push only when the request says so"),
+            "{}",
+            prompts[0]
+        );
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+    }
+
     #[test]
     fn a_commit_that_conflicts_with_the_requesters_branch_is_not_applied_and_the_requester_is_told() {
         let mut world = World::new(&[

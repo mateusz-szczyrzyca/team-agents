@@ -259,6 +259,29 @@ async fn a_worker_asked_to_serve_a_request_gets_the_request_the_context_and_the_
     assert!(!prompt.contains("THE COMPOSED PROMPT"), "{prompt}");
 }
 
+// Rule: a pool worker is told to commit the files a request names in its own worktree, since the harness checks and
+// brings over only its commit, and to do the job there even when the requester's worktree seems to have it already.
+#[tokio::test]
+async fn a_pool_worker_is_told_to_commit_the_requested_files_in_its_own_worktree() {
+    let texts = texts().await;
+
+    let prompt = shape_pool_worker(&texts.team, "THE COMPOSED PROMPT\n", &request()).unwrap();
+
+    for line in [
+        "commit them in your own worktree, on your own branch, before you end",
+        "runs the request's check in your worktree and brings only your commit over",
+        "work you leave uncommitted is thrown away",
+        "A request that names no files needs no commit. Never push.",
+        "Do the job in your own worktree, even when the requester's worktree seems to have it already.",
+    ] {
+        assert!(prompt.contains(line), "{line:?} is not in:\n{prompt}");
+    }
+    assert!(
+        !prompt.contains("Commit or push only when the request says so"),
+        "{prompt}"
+    );
+}
+
 #[tokio::test]
 async fn a_worker_that_starts_a_session_for_a_request_gets_its_prompt_the_team_and_the_request() {
     let texts = texts().await;
