@@ -956,3 +956,407 @@ async fn a_round_waiting_for_free_investigators_keeps_its_team_alive() {
     assert!(daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1)).exists());
     assert_eq!(daemon.notifications(), Vec::<String>::new());
 }
+
+/// The task `number` runs for `round`, ends the run with `end` and is paused: what a refusal by the provider makes of
+/// it. Its agent is refused until `until`, when there is a time.
+fn paused_by(
+    state: &mut State,
+    team: &TeamId,
+    round: &RoundId,
+    number: u32,
+    end: RunEnd,
+    until: Option<agent_core::state::Timestamp>,
+) -> agent_core::ids::AgentName {
+    let agent = {
+        let mut found = state.team_mut(team).unwrap();
+        found
+            .begin_run(
+                &task(number),
+                NewRun {
+                    id: run(10 + number),
+                    at: at(40),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(number)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(50), end).unwrap();
+        member.transition(TaskStatus::Paused).unwrap();
+        member.agent().agent_name()
+    };
+    if let Some(until) = until {
+        state.keep_refused_until(agent.clone(), until);
+    }
+    agent
+}
+
+/// The human has a question open of the task `number`, which took part in `round`: a task that has not run for it is given a
+/// finished run first.
+fn question_of(state: &mut State, team: &TeamId, round: &RoundId, number: u32) {
+    let mut found = state.team_mut(team).unwrap();
+    let ran = found
+        .find(&task(number))
+        .is_some_and(|(_, member)| member.runs().iter().any(|run| run.rounds().contains(round)));
+    if !ran {
+        found
+            .begin_run(
+                &task(number),
+                NewRun {
+                    id: run(30 + number),
+                    at: at(41),
+                    session: None,
+                    rounds: vec![round.clone()],
+                },
+            )
+            .unwrap();
+        let (_, mut member) = found.find_mut(&task(number)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.end_run(at(42), LEAD_DONE).unwrap();
+        member.transition(TaskStatus::Done).unwrap();
+    }
+    let (_, mut member) = found.find_mut(&task(number)).unwrap();
+    let file = agent_core::config::AbsolutePath::try_from("/home/dev/agents/tasks/questions-1.md".to_owned()).unwrap();
+    member
+        .ask_question(agent_core::state::Question::new(
+            std::num::NonZeroU32::MIN,
+            file,
+            at(45),
+        ))
+        .unwrap();
+}
+
+/// What the owner says `round` waits for `later` seconds after its clock was at zero: the wait, its line, and the local
+/// clock time of `until` as the line writes it.
+async fn wait_of(
+    state: &State,
+    team: &TeamId,
+    round: &RoundId,
+    later: i64,
+    until: agent_core::state::Timestamp,
+) -> (Option<Waiting>, Option<String>, String) {
+    let daemon = Daemon::new(state, None);
+    daemon.clock.advance(time::Duration::seconds(later));
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let found = owner.parts.state.team(team).unwrap();
+    let round = found.round(round).unwrap();
+    (
+        owner.waiting_for(found, round),
+        owner.wait_line(found, round),
+        owner.parts.zone.clock_minute(until),
+    )
+}
+
+/// The round of a review whose reviewer is `inv-codex`, task 4, paused by `end` until `until`; the lead's task 1 has a
+/// question open when `asked`.
+fn round_of_a_paused_reviewer(
+    end: RunEnd,
+    asked: bool,
+    until: agent_core::state::Timestamp,
+) -> (State, TeamId, RoundId, agent_core::ids::AgentName) {
+    let phase = ItemPhase::InReview {
+        pr: crate::fixtures::pr(7),
+        reviews: vec![crate::fixtures::review("inv-codex", 4)],
+    };
+    let (mut state, team, round) = idle_round(phase, LEAD_DONE);
+    let agent = paused_by(&mut state, &team, &round, 4, end, Some(until));
+    if asked {
+        question_of(&mut state, &team, &round, 1);
+    }
+    (state, team, round, agent)
+}
+
+// Rule (#233): a reviewer whose provider refused it is waited for at its provider, until the agent returns: the line names
+// the agent and the time, and nobody is told the human owes anything while no question is open.
+#[tokio::test]
+async fn a_reviewer_paused_by_its_provider_is_waited_for_at_the_provider_until_it_returns() {
+    for end in [RunEnd::RateLimited, RunEnd::QuotaExhausted { resets_at: None }] {
+        let until = at(3_600);
+        let (state, team, round, agent) = round_of_a_paused_reviewer(end.clone(), false, until);
+
+        let (waiting, line, clock) = wait_of(&state, &team, &round, 60, until).await;
+
+        assert_eq!(waiting, Some(Waiting::Provider), "{end:?}");
+        assert_eq!(line, Some(format!("the provider of {agent} until {clock}")), "{end:?}");
+    }
+}
+
+// Rule: an open question is still the human's to answer, so it is the human's line.
+#[tokio::test]
+async fn a_round_with_an_open_question_waits_for_the_human_though_its_reviewer_is_paused_by_its_provider() {
+    let until = at(3_600);
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, true, until);
+
+    let (waiting, line, _) = wait_of(&state, &team, &round, 60, until).await;
+
+    assert_eq!(waiting, Some(Waiting::For(Obligation::Human)));
+    assert!(line.is_some_and(|line| line.starts_with("an answer of the human")));
+}
+
+// Rule: a pause the human asked for is the human's: the last run was stopped, not refused.
+#[tokio::test]
+async fn a_reviewer_paused_by_the_human_still_waits_for_the_human() {
+    let until = at(3_600);
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::Stopped, false, until);
+
+    let (waiting, _, _) = wait_of(&state, &team, &round, 60, until).await;
+
+    assert_eq!(waiting, Some(Waiting::For(Obligation::Human)));
+}
+
+// Rule: the provider's wait ends with the refusal: an agent that has returned is not waited for.
+#[tokio::test]
+async fn a_reviewer_whose_agent_has_returned_is_not_waited_for_at_its_provider() {
+    let until = at(3_600);
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+
+    let (waiting, _, _) = wait_of(&state, &team, &round, 3_601, until).await;
+
+    assert_ne!(waiting, Some(Waiting::Provider));
+}
+
+// Rule: the same holds for a lead and a member of the team, with and without an open question.
+#[tokio::test]
+async fn a_lead_and_a_member_paused_by_their_provider_are_waited_for_at_the_provider() {
+    for (number, other) in [(1, 2), (2, 1)] {
+        for asked in [false, true] {
+            let until = at(7_200);
+            let (mut state, team, round) = round_for(number, TaskStatus::Queued);
+            let agent = paused_by(&mut state, &team, &round, number, RunEnd::RateLimited, Some(until));
+            if asked {
+                question_of(&mut state, &team, &round, other);
+            }
+
+            let (waiting, line, clock) = wait_of(&state, &team, &round, 60, until).await;
+
+            if asked {
+                assert_eq!(waiting, Some(Waiting::For(Obligation::Human)), "task {number}");
+            } else {
+                assert_eq!(waiting, Some(Waiting::Provider), "task {number}");
+                assert_eq!(
+                    line,
+                    Some(format!("the provider of {agent} until {clock}")),
+                    "task {number}"
+                );
+            }
+        }
+    }
+}
+
+/// A clock that shows the given moments one after the other, the last one for good: the moments at which a refusal ends
+/// between two readings of one status look.
+struct SteppingClock(Mutex<std::collections::VecDeque<agent_core::state::Timestamp>>);
+
+impl agent_core::ids::Clock for SteppingClock {
+    fn now(&self) -> time::UtcDateTime {
+        let mut readings = self.0.lock().unwrap();
+        let reading = if readings.len() > 1 {
+            readings.pop_front()
+        } else {
+            readings.front().copied()
+        };
+        reading.unwrap().as_utc()
+    }
+}
+
+// Rule: the status looks at the clock once. A refusal that ends between two readings must not leave the line half written.
+#[tokio::test]
+async fn a_provider_wait_that_ends_while_the_line_is_written_is_still_told_whole() {
+    let until = at(100);
+    let (state, team, round, agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.parts.clock =
+        agent_runtime::clock::SharedClock::new(SteppingClock(Mutex::new([at(99), at(100)].into_iter().collect())));
+    let found = owner.parts.state.team(&team).unwrap();
+    let found = found.round(&round).map(|round| (found, round)).unwrap();
+
+    let line = owner.wait_line(found.0, found.1);
+
+    let clock = owner.parts.zone.clock_minute(until);
+    assert_eq!(line, Some(format!("the provider of {agent} until {clock}")));
+}
+
+/// The task `number` runs for `round`, and the human stops it: its run ended `Stopped` at second 50.
+fn stopped_by_the_human(state: &mut State, team: &TeamId, round: &RoundId, number: u32) {
+    let mut found = state.team_mut(team).unwrap();
+    found
+        .begin_run(
+            &task(number),
+            NewRun {
+                id: run(10 + number),
+                at: at(40),
+                session: None,
+                rounds: vec![round.clone()],
+            },
+        )
+        .unwrap();
+    let (_, mut member) = found.find_mut(&task(number)).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member.end_run(at(50), RunEnd::Stopped).unwrap();
+    member.transition(TaskStatus::Stopped).unwrap();
+}
+
+/// The line of `round` `later` seconds after the clock of the fixture was at zero, with the zone it is written in.
+async fn line_in_zone(
+    state: &State,
+    team: &TeamId,
+    round: &RoundId,
+    later: i64,
+) -> (Option<Waiting>, Option<String>, agent_core::local_time::Zone) {
+    let daemon = Daemon::new(state, None);
+    daemon.clock.advance(time::Duration::seconds(later));
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let found = owner.parts.state.team(team).unwrap();
+    let round = found.round(round).unwrap();
+    (
+        owner.waiting_for(found, round),
+        owner.wait_line(found, round),
+        owner.parts.zone,
+    )
+}
+
+// Rule (#233): what the human owes for a stopped task is `agent resume`, not an answer: the line names the task and when it
+// was stopped, for a lead and for a member; an open question is still an answer.
+#[tokio::test]
+async fn a_round_whose_task_is_stopped_waits_for_the_human_to_resume_it_unless_a_question_is_open() {
+    for (number, other) in [(1, 2), (2, 1)] {
+        for asked in [false, true] {
+            let (mut state, team, round) = round_for(number, TaskStatus::Queued);
+            stopped_by_the_human(&mut state, &team, &round, number);
+            if asked {
+                question_of(&mut state, &team, &round, other);
+            }
+
+            let (waiting, line, zone) = line_in_zone(&state, &team, &round, 60).await;
+
+            let case = format!("task {number}, asked {asked}");
+            if asked {
+                assert_eq!(waiting, Some(Waiting::For(Obligation::Human)), "{case}");
+                assert!(
+                    line.is_some_and(|line| line.starts_with("an answer of the human")),
+                    "{case}"
+                );
+            } else {
+                assert_eq!(waiting, Some(Waiting::Resume), "{case}");
+                let clock = zone.clock_minute(at(50));
+                assert_eq!(
+                    line,
+                    Some(format!("you to resume {} (stopped at {clock})", task(number))),
+                    "{case}"
+                );
+            }
+        }
+    }
+}
+
+// Rule: a task stopped days ago is told with the date it was stopped.
+#[tokio::test]
+async fn the_line_of_a_task_stopped_days_ago_is_told_with_its_date() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Queued);
+    stopped_by_the_human(&mut state, &team, &round, 1);
+    let (_, line, zone) = line_in_zone(&state, &team, &round, 3 * 86_400).await;
+    let stamp = zone.local_minute(at(50));
+    assert_eq!(line, Some(format!("you to resume {} (stopped at {stamp})", task(1))));
+}
+
+// Rule: a task that failed, or that the human paused, is still the human's: only a stopped task is resumed.
+#[tokio::test]
+async fn a_failed_task_still_waits_for_the_human_as_before() {
+    let (state, team, round) = round_for(1, TaskStatus::Failed);
+
+    let (waiting, line, _) = line_in_zone(&state, &team, &round, 60).await;
+
+    assert_eq!(waiting, Some(Waiting::For(Obligation::Human)));
+    assert!(line.is_some_and(|line| line.starts_with("an answer of the human")));
+}
+
+// Rule: the return of an agent more than a day away is told with its date and without the offset of the host's zone.
+#[tokio::test]
+async fn a_provider_return_more_than_a_day_away_is_told_with_its_date_and_no_offset() {
+    let until = at(200_000);
+    let (state, team, round, agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+
+    let (_, line, zone) = line_in_zone(&state, &team, &round, 60).await;
+
+    let stamp = zone.local_minute(until);
+    assert_eq!(line, Some(format!("the provider of {agent} until {stamp}")));
+}
+
+// Rule: with several tasks paused by their providers the round waits for the first agent to return.
+#[tokio::test]
+async fn a_round_with_several_tasks_paused_by_their_providers_waits_for_the_first_to_return() {
+    let (mut state, team, round) = round_for(1, TaskStatus::Queued);
+    let later = paused_by(&mut state, &team, &round, 1, RunEnd::RateLimited, Some(at(7_200)));
+    let sooner = paused_by(&mut state, &team, &round, 2, RunEnd::RateLimited, Some(at(3_600)));
+    assert_ne!(later, sooner);
+
+    let (waiting, line, zone) = line_in_zone(&state, &team, &round, 60).await;
+
+    assert_eq!(waiting, Some(Waiting::Provider));
+    let clock = zone.clock_minute(at(3_600));
+    assert_eq!(line, Some(format!("the provider of {sooner} until {clock}")));
+}
+
+/// A clock whose reading is before the year 0000, which no moment of the state may be.
+struct BeforeYearZero;
+
+impl agent_core::ids::Clock for BeforeYearZero {
+    fn now(&self) -> time::UtcDateTime {
+        time::UtcDateTime::from_unix_timestamp(-100_000_000_000).unwrap()
+    }
+}
+
+// Rule: a clock that cannot be read leaves the wait to the human, as it was before the provider's wait was told.
+#[tokio::test]
+async fn a_clock_that_cannot_be_read_leaves_a_provider_pause_to_the_human() {
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, at(3_600));
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.parts.clock = agent_runtime::clock::SharedClock::new(BeforeYearZero);
+    let found = owner.parts.state.team(&team).unwrap();
+    let round = found.round(&round).unwrap();
+
+    assert_eq!(owner.waiting_for(found, round), Some(Waiting::For(Obligation::Human)));
+}
+
+// Rule: a stopped task whose stop time is not known is told without a time.
+#[tokio::test]
+async fn the_line_of_a_stopped_task_without_a_known_stop_is_told_without_a_time() {
+    let (state, _team, _round) = round_for(1, TaskStatus::Queued);
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let stopped = super::resume::StoppedTask {
+        task: task(1),
+        stopped_at: None,
+    };
+
+    assert_eq!(owner.resume_line(&stopped, None), format!("you to resume {}", task(1)));
+}
+
+// Rule (#233): a pause the human asks for after a refusal is the human's, though the last run of the task still ended
+// refused and its agent is still kept out: the controls start no run and clear no refusal.
+#[tokio::test]
+async fn a_reviewer_unpaused_and_paused_again_by_the_human_waits_for_the_human() {
+    let until = at(3_600);
+    let (state, team, round, _agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+    let daemon = Daemon::new(&state, None);
+    daemon.clock.advance(time::Duration::seconds(60));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let target = agent_core::protocol::Target::Task(task(4));
+    for steer in [
+        crate::daemon::control::Steer::Unpause,
+        crate::daemon::control::Steer::Pause,
+    ] {
+        owner
+            .control_request(&agent_core::protocol::Client::Cli, steer, &target)
+            .await
+            .unwrap()
+            .unwrap();
+    }
+    let found = owner.parts.state.team(&team).unwrap();
+    let round = found.round(&round).unwrap();
+
+    assert_eq!(owner.waiting_for(found, round), Some(Waiting::For(Obligation::Human)));
+}

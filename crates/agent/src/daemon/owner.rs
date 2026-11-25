@@ -562,6 +562,9 @@ pub(super) struct Owner {
     halts: HashMap<TaskId, Halt>,
     /// When each paused task is queued again.
     wakes: HashMap<TaskId, Timestamp>,
+    /// The tasks the human paused with `agent pause`: a task in it is paused for the human whatever its last run ended with
+    /// (a refusal by its provider included), until a control moves it again.
+    human_pauses: HashSet<TaskId>,
     /// How many hangs in a row each task has had without progress.
     hangs: HashMap<TaskId, u32>,
     /// Why a queued task of a team starts now; read when its run is made ready.
@@ -726,6 +729,7 @@ impl Owner {
             cancels: HashMap::new(),
             halts: HashMap::new(),
             wakes: HashMap::new(),
+            human_pauses: HashSet::new(),
             hangs: HashMap::new(),
             reasons: HashMap::new(),
             leads_being_told: HashSet::new(),

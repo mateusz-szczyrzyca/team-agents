@@ -1011,6 +1011,14 @@ the lead and the reviewers are told what is expected of them in their next promp
 question or a notification, and the harness's own work (a gate, a merge, a queued run, a free investigator) needs no telling.
 A test lists every state a round can wait in with its owner and fails when one is added without.
 
+When a task of the round (a reviewer, a member, a lead or a solo task) is paused because its provider refused its run,
+the line names the agent and the time it returns, in the local time zone, for example `waits for the provider of inv-gemini-argon until 10:07`
+(with the date, `2026-11-27 10:07`, and never an offset, when the return is more than a day away);
+it never says the round waits for an answer of the human unless a question is open; a pause the human asked for with `agent pause`
+still says the human. When the only thing the round waits for is a task you stopped with `agent stop`, the line says
+what you owe, `waits for you to resume task-20261125-161204-67e1 (stopped at 17:12)` (with the date when the stop is more
+than a day away): `agent resume <task>`, not an answer. A task that failed, or a question that is open, is still the human's as before.
+
 When another pull request of the same team already contains an item's deliverable (code, documents, images or
 anything else), the coordinator can report it instead of creating an empty pull request. It writes the standalone
 line `DELIVERED: #N` before its final `STATUS: DONE`. The harness checks that the report identifies one current

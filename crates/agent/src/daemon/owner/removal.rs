@@ -721,6 +721,7 @@ impl Owner {
         self.outbox.retain(|outbound| outbound.team != *team);
         let gone = |task: &TaskId| tasks.contains(task);
         self.wakes.retain(|task, _| !gone(task));
+        self.human_pauses.retain(|task| !gone(task));
         self.hangs.retain(|task, _| !gone(task));
         self.reasons.retain(|task, _| !gone(task));
         self.leads_being_told.retain(|task| !gone(task));

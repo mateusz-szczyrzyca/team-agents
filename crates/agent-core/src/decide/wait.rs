@@ -1,6 +1,6 @@
 //! The obligation that can advance an idle round, independent of I/O and scheduling.
 
-use crate::ids::{AgentName, TeamId};
+use crate::ids::{AgentName, TaskId, TeamId};
 
 /// Whether a round still needs work and whether an agent can currently do it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -99,6 +99,12 @@ impl WaitOwner {
 pub enum Waiting {
     /// An outstanding action has an owner.
     For(Obligation),
+    /// A task of the round is paused because its provider refused it: only the provider's return, or another agent, can
+    /// advance the round. The agent and the time are told by [`provider_line`].
+    Provider,
+    /// A task of the round was stopped by the human and nothing else holds it: only `agent resume` advances the round. The
+    /// task and the time are told by [`resume_line`].
+    Resume,
     /// Nothing can advance the round: the harness has lost an obligation.
     Defect,
 }
@@ -109,6 +115,29 @@ pub fn behind_run(agent: &AgentName, team: &TeamId) -> String {
     include_str!("../../../../prompts/harness/pr/wait-behind.md")
         .replace("{{agent}}", agent.as_str())
         .replace("{{team}}", team.as_str())
+}
+
+/// The wait line of a round whose task of `agent` is paused by its provider until `until`, the time as the reader is shown it.
+#[must_use]
+pub fn provider_line(agent: &AgentName, until: &str) -> String {
+    Waiting::Provider
+        .text()
+        .replace("{{agent}}", agent.as_str())
+        .replace("{{until}}", until)
+}
+
+/// The wait line of a round whose `task` the human stopped, at `stopped_at` as the reader is shown it when it is known.
+#[must_use]
+pub fn resume_line(task: &TaskId, stopped_at: Option<&str>) -> String {
+    match stopped_at {
+        Some(at) => Waiting::Resume
+            .text()
+            .replace("{{task}}", task.as_str())
+            .replace("{{at}}", at),
+        None => {
+            include_str!("../../../../prompts/harness/pr/wait-resume-undated.md").replace("{{task}}", task.as_str())
+        }
+    }
 }
 
 impl Waiting {
@@ -126,6 +155,8 @@ impl Waiting {
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
             Self::For(Obligation::QueuedRun) => include_str!("../../../../prompts/harness/pr/wait-queued.md"),
+            Self::Provider => include_str!("../../../../prompts/harness/pr/wait-provider.md"),
+            Self::Resume => include_str!("../../../../prompts/harness/pr/wait-resume.md"),
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
     }

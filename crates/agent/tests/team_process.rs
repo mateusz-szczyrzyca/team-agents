@@ -1340,6 +1340,23 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     #[test]
+    fn a_round_whose_task_is_paused_by_its_provider_says_which_provider_and_not_the_human() {
+        let mut world = World::new(&agents_with(&[("claude-2", "agent", "turn-limit-quota")]));
+        world.start();
+        let refused = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+
+        let status = world.status_where("the round of the refused task to wait at its provider", |status| {
+            status.contains("waits for the provider of claude-2 until ")
+        });
+
+        assert!(line_of(&status, &refused).contains("paused"), "{status}");
+        assert!(
+            !status.contains("waits for an answer of the human"),
+            "a refusal by the provider is not the human's to answer: {status}"
+        );
+    }
+
+    #[test]
     fn a_refused_agent_gets_a_waiting_task_after_its_return_and_a_good_retry() {
         let mut world = World::new(&agents_with(&[
             ("claude-1", "agent", "hold"),

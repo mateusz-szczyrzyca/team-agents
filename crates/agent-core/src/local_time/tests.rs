@@ -312,6 +312,22 @@ fn a_clock_minute_is_the_hour_and_the_minute_in_the_zone_without_the_date() {
     assert_eq!(Zone::Utc.clock_minute(at), "20:10");
 }
 
+// Rule: a moment far from now is shown with its date and no zone, as the wait lines show it: the offset is the host's.
+#[test]
+fn a_local_minute_writes_the_date_the_hour_and_the_minute_without_the_zone() {
+    let at = stamp("2026-11-21T12:50:02Z");
+
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid")).local_minute(at),
+        "2026-11-21 13:50"
+    );
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid")).local_minute(stamp("2026-11-21T02:50:00Z")),
+        "2026-11-20 21:50"
+    );
+    assert_eq!(Zone::Utc.local_minute(at), "2026-11-21 12:50");
+}
+
 #[test]
 fn rfc3339_writes_the_moment_with_the_offset_of_its_zone() {
     // Rule: the notices' times are RFC 3339 in the zone of the host: an offset, or `Z` where the offset is zero.

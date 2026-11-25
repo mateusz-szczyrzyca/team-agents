@@ -15,6 +15,8 @@ use super::publish::{GATE_SEND_BACKS, OwnGate};
 use super::{Announcement, AutopilotNotice, PublishError};
 
 mod github;
+mod provider;
+mod resume;
 #[cfg(test)]
 mod tests;
 
@@ -261,7 +263,15 @@ impl Owner {
 
     /// What `agent status` says `round` waits for: the wait and who owes it, since when.
     pub(in crate::daemon::owner) fn wait_line(&self, team: &Team, round: &Round) -> Option<String> {
-        let waiting = self.waiting_for(team, round)?;
+        let (activity, pause) = self.activity_and_pause(team, round);
+        let waiting = self.waiting_from(team, round, activity, pause.is_some())?;
+        // The pause that decided the wait names it: a second look at the clock could find the refusal over.
+        if let (Waiting::Provider, Some((pause, now))) = (waiting, &pause) {
+            return Some(self.provider_line(pause, *now));
+        }
+        if let (Waiting::Resume, Some(stopped)) = (waiting, Self::stopped_task(team, round)) {
+            return Some(self.resume_line(&stopped, self.now_for_line(round)));
+        }
         // A queued run whose agent runs another task at its limit goes after that run: the line names it.
         let holder = (waiting == Waiting::For(Obligation::QueuedRun))
             .then(|| {
@@ -298,7 +308,7 @@ impl Owner {
                 .iter()
                 .filter_map(|member| member.open_question().map(agent_core::state::Question::asked_at))
                 .min(),
-            Waiting::For(_) | Waiting::Defect => None,
+            Waiting::For(_) | Waiting::Provider | Waiting::Resume | Waiting::Defect => None,
         };
         let idle = tasks
             .iter()
@@ -314,6 +324,16 @@ impl Owner {
 
     /// The action that owns the next step of an idle round.
     pub(in crate::daemon::owner) fn waiting_for(&self, team: &Team, round: &Round) -> Option<Waiting> {
+        let (activity, pause) = self.activity_and_pause(team, round);
+        self.waiting_from(team, round, activity, pause.is_some())
+    }
+
+    /// How busy `round` is and, for an idle one, the pause of the provider it waits at, read with one look at the clock.
+    fn activity_and_pause(
+        &self,
+        team: &Team,
+        round: &Round,
+    ) -> (Activity, Option<(provider::ProviderPause, Timestamp)>) {
         let activity = if *round.life() != RoundLife::Open {
             Activity::Closed
         } else if round_tasks(team, round)
@@ -324,6 +344,20 @@ impl Owner {
         } else {
             Activity::Idle
         };
+        let pause = (activity == Activity::Idle)
+            .then(|| self.provider_pause_of(team, round))
+            .flatten();
+        (activity, pause)
+    }
+
+    /// What `round` waits for given its `activity` and whether a provider's pause holds it.
+    fn waiting_from(&self, team: &Team, round: &Round, activity: Activity, provider_pause: bool) -> Option<Waiting> {
+        if provider_pause {
+            return Some(Waiting::Provider);
+        }
+        if activity == Activity::Idle && Self::stopped_task(team, round).is_some() {
+            return Some(Waiting::Resume);
+        }
         let obligation = if self.pulls.is_none() {
             self.stuck_obligation(team, round)
                 .or_else(|| Self::queued_run_obligation(team, round))
@@ -342,6 +376,30 @@ impl Owner {
                 })
         };
         round_wait(activity, obligation)
+    }
+
+    /// The pause of a provider that `round` waits for, with the time it was looked at: `None` when it waits for anybody
+    /// else, and also when the clock cannot be read, which leaves the wait to the human as it was before.
+    fn provider_pause_of(&self, team: &Team, round: &Round) -> Option<(provider::ProviderPause, Timestamp)> {
+        let now = self.now_for_line(round)?;
+        self.provider_pause(team, round, now).map(|pause| (pause, now))
+    }
+
+    /// The time at which a wait line is written, or `None` when the clock cannot be read: that is logged, and the line goes
+    /// without what depends on the time.
+    fn now_for_line(&self, round: &Round) -> Option<Timestamp> {
+        match Timestamp::now(&self.parts.clock) {
+            Ok(now) => Some(now),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    rounds = %round.id(),
+                    operation = "provider_pause",
+                    error = %error,
+                );
+                None
+            }
+        }
     }
 
     /// What a round with a member that cannot work waits for, or `None` when no member is stuck: the human, or, for a
