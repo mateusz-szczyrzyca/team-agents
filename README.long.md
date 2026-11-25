@@ -358,7 +358,9 @@ Acting on that answer (handing the task to another provider's agent) is not in t
 record when it writes them: the kind of refusal (an overload, a rate limit or a quota), then the status, the message and
 the provider's code, for example `an overload: 429 · Model busy, retry later · engine_overloaded`. The raw line stays in
 the run's files. The resume time in the notice is in the zone of the host, with that moment's offset, as the notice's
-header is.
+header is. A Claude run refused by its account's rate-limit window waits until the window's own reset time (`resetsAt` of the
+`rate_limit_event`), and the notice gives that reset in the zone of the host; the text's time of day is used only when the
+window names none.
 
 ### Serena and the reminders
 
