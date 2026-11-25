@@ -44,10 +44,10 @@ impl RefusalSummary {
     ///
     /// `status` is the HTTP status code as a string (`"429"`, `"402"`, or empty),
     /// `message` is the provider's message, `code` is the provider's error code.
-    /// The `kind` is inferred from the status and the pause reason.
+    /// The `kind` is inferred from the status, the code and the pause reason.
     #[must_use]
     pub fn from_fields(status: &str, message: &str, code: &str, reason: PauseReason) -> Self {
-        let kind = refusal_kind(status, reason);
+        let kind = refusal_kind(status, code, reason);
         Self {
             status: status.to_owned(),
             message: message.to_owned(),
@@ -57,17 +57,23 @@ impl RefusalSummary {
     }
 }
 
-/// Infers the [`RefusalKind`] from the HTTP status and the pause reason.
+/// The provider's error codes that, in lower case, show a model overloaded.
+const OVERLOAD_CODES: [&str; 2] = ["overloaded", "at_capacity"];
+
+/// Infers the [`RefusalKind`] from the HTTP status, the provider's error code and the pause reason.
 #[must_use]
-fn refusal_kind(status: &str, reason: PauseReason) -> RefusalKind {
+fn refusal_kind(status: &str, code: &str, reason: PauseReason) -> RefusalKind {
     if reason == PauseReason::Quota {
         return RefusalKind::Quota;
     }
-    // Overloaded: 503, 529
-    if matches!(status, "503" | "529") {
+    let lower_code = code.to_lowercase();
+    // Overloaded: 503, 529, or a code that says so (e.g. engine_overloaded).
+    if matches!(status, "503" | "529")
+        || OVERLOAD_CODES.iter().any(|phrase| lower_code.contains(phrase))
+    {
         return RefusalKind::Overloaded;
     }
-    // Rate limit: 429, or rate-limited reason with no specific overload/error status
+    // Rate limit: 429, or rate-limited reason with no specific overload/error status.
     if matches!(status, "429" | "") {
         RefusalKind::RateLimit
     } else {
