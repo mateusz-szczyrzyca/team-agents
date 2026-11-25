@@ -95,7 +95,8 @@ workers = ["deepinfra-glm"]
 `normal`: agents that take task-list items, solo or in a team, and may coordinate a team. `workers`: cheap models that
 never coordinate and take no items; they serve `delegate` requests as an installation-wide pool. The workers are
 chosen alternately across providers (turns taking in configured order of first appearance of each provider; within
-a provider, in configured order), skipping busy providers without waiting. The provider is the part of `model`
+a provider, the workers take turns in configured order), skipping busy providers without waiting. A worker whose last
+request ended without a usable result is passed over while another worker that meets the request is free. The provider is the part of `model`
 before the first `/` for `cli = "opencode"` with a slash, and the `cli` itself when `model` has no slash or for any
 other CLI (`claude`, `codex`, `agy`). On daemon restart, the rotation resets to the first provider. An explicit-worker
 `agent run` continues to be supported for manual worker runs, while team and solo delegation requests draw from the
@@ -327,7 +328,7 @@ and a member are started anew; a worker and a reviewer are not.
 | Key | Default | Meaning |
 |---|---|---|
 | `new_sessions` | `1` | how many new sessions of its agent a task is started in after its runs went bad; `0` turns them off; at most `10`. The count is kept in the state, so it survives a restart of the daemon |
-| `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list, `mode = "auto"` gives a member's work to the team's lead, as `lead` does |
+| `agents` | `[]` | the agents that may take a task over when its new session went bad too, in the order to try them: names from `[agents.NAME]` or `[investigators.NAME]`. A name that is not configured, or given twice, is refused. With an empty list, `mode = "auto"` gives a member's work to the team's lead, as `lead` does. For a refused-provider takeover (the choice is a pure function here; the daemon wiring is in item 4.2): a name in the task's team, busy, refused itself or of the refused provider is skipped; when the list is empty or no agent fits, the tier `normal` is tried (for a coordinator, the investigators); a member's task never goes to a worker, and a coordinator's to an investigator |
 | `mode` | `"auto"` | how far the harness goes without you: `auto` — another agent of `agents`, then, for a member, the team's lead, then you; `lead` — a member's work goes to the team's lead at once, other tasks fail; `off` — the task fails at once, as before `agents` existed |
 | `replacements` | `1` | how many times a task is taken over by another agent; `0` takes none over; at most `10`. The count is in the state |
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
