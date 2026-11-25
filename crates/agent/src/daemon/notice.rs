@@ -323,10 +323,6 @@ impl Notice {
     ///
     /// # Errors
     /// [`NoticeError`] when the text of the notice cannot be rendered or is not a notification.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one exhaustive match keeps notification templates and their variables together"
-    )]
     pub(super) fn render(
         &self,
         texts: &HarnessPrompts,
@@ -335,6 +331,16 @@ impl Notice {
         let common = Variables::new()
             .with("agent", context.agent)?
             .with("task", context.task.as_str())?;
+        let (text, values, kind) = self.parts(common, context)?;
+        let rendered = texts.render(text, &values)?;
+        Ok(layout_notification(kind, context, &rendered)?)
+    }
+
+    fn parts(
+        &self,
+        common: Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
         let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
@@ -376,16 +382,7 @@ impl Notice {
                 evidence,
             } => (
                 HarnessPrompt::NoticePaused,
-                common
-                    .with("until", context.offset.stamp_minute(*until))?
-                    .with("reason", reason.to_string())?
-                    .with("kind", kind.words())?
-                    .with(
-                        "evidence",
-                        evidence
-                            .strip_prefix(&format!("{}: ", kind.words()))
-                            .unwrap_or(evidence),
-                    )?,
+                paused_vars(common, evidence, *kind, *reason, context.offset.stamp_minute(*until))?,
                 NoticeKind::Paused,
             ),
             Self::Failed { message } => (
@@ -393,20 +390,11 @@ impl Notice {
                 common.with("message", message)?,
                 NoticeKind::Failed,
             ),
-            Self::FailedNoTool { message } => {
-                let cli = context
-                    .cli
-                    .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
-                let model = context.model.unwrap_or("configured");
-                (
-                    HarnessPrompt::NoticeFailedNoTool,
-                    common
-                        .with("message", message)?
-                        .with("cli", cli)?
-                        .with("model", model)?,
-                    NoticeKind::FailedNoTool,
-                )
-            }
+            Self::FailedNoTool { message } => (
+                HarnessPrompt::NoticeFailedNoTool,
+                failed_no_tool_vars(common, message, context)?,
+                NoticeKind::FailedNoTool,
+            ),
             Self::NoStatus { exit: Some(code) } => (
                 HarnessPrompt::NoticeNoStatus,
                 common.with("exit", code.to_string())?,
@@ -452,8 +440,7 @@ impl Notice {
                 (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
             }
         };
-        let rendered = texts.render(text, &values)?;
-        Ok(layout_notification(kind, context, &rendered)?)
+        Ok((text, values, kind))
     }
 }
 
@@ -471,4 +458,39 @@ fn refusal_vars(
         .with("refused_agent", refused_agent.as_str())?
         .with("refused_provider", refused_provider)?
         .with("return_at", return_at)?)
+}
+
+/// Supplies the configured CLI and model alongside a no-tool failure.
+fn failed_no_tool_vars(
+    common: Variables,
+    message: &str,
+    context: &NoticeContext<'_>,
+) -> Result<Variables, NoticeError> {
+    let cli = context
+        .cli
+        .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
+    Ok(common
+        .with("message", message)?
+        .with("cli", cli)?
+        .with("model", context.model.unwrap_or("configured"))?)
+}
+
+/// Renders the provider's evidence once alongside the local return time.
+fn paused_vars(
+    common: Variables,
+    evidence: &str,
+    kind: refusal::Kind,
+    reason: PauseReason,
+    until: String,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("until", until)?
+        .with("reason", reason.to_string())?
+        .with("kind", kind.words())?
+        .with(
+            "evidence",
+            evidence
+                .strip_prefix(&format!("{}: ", kind.words()))
+                .unwrap_or(evidence),
+        )?)
 }
