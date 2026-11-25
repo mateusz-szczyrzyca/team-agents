@@ -138,6 +138,13 @@ impl Zone {
         waiting.to_owned()
     }
 
+    /// The moment `at` in this zone as RFC 3339 with the offset it has there: `2026-11-21T17:29:53+01:00`, `Z` where the
+    /// offset is zero. The notices write their times so: the form of the files, in the zone of the host.
+    #[must_use]
+    pub fn rfc3339(&self, _at: Timestamp) -> String {
+        String::new()
+    }
+
     /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
     /// written: its offset, or `UTC` when the zone cannot be found or the offset would leave the four-digit years.
     /// [`Zone::Utc`] writes the RFC 3339 text of the files.

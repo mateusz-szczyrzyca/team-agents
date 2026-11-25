@@ -311,3 +311,13 @@ fn a_clock_minute_is_the_hour_and_the_minute_in_the_zone_without_the_date() {
     assert_eq!(Zone::Lookup(unknown).clock_minute(at), "20:10");
     assert_eq!(Zone::Utc.clock_minute(at), "20:10");
 }
+
+#[test]
+fn rfc3339_writes_the_moment_with_the_offset_of_its_zone() {
+    // Rule: the notices' times are RFC 3339 in the zone of the host: an offset, or `Z` where the offset is zero.
+    let at = Timestamp::from_str("2026-11-21T16:29:53Z").unwrap();
+    let fixed = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).unwrap());
+
+    assert_eq!(fixed.rfc3339(at), "2026-11-21T17:29:53+01:00");
+    assert_eq!(Zone::Utc.rfc3339(at), "2026-11-21T16:29:53Z");
+}
