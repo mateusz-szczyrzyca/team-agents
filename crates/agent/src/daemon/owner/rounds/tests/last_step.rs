@@ -321,13 +321,13 @@ pub(super) async fn record_task_handed_over(observed: &mut std::collections::BTr
 
 /// Records [`LogEvent::TaskAgentChanged`]: a refused task is taken over by a free agent of another provider.
 /// The full end-to-end test with a refused agent is in the item 4.2 integration tests.
-pub(super) async fn record_task_agent_changed(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+pub(super) fn record_task_agent_changed(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
     observed.insert(agent_core::log::LogEvent::TaskAgentChanged);
 }
 
 /// Records [`LogEvent::TaskWaitForFreeAgent`]: a refused task stays paused because no agent is free.
 /// The full end-to-end test with no free agent is in the item 4.2 integration tests.
-pub(super) async fn record_task_wait_for_free_agent(
+pub(super) fn record_task_wait_for_free_agent(
     observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>,
 ) {
     observed.insert(agent_core::log::LogEvent::TaskWaitForFreeAgent);

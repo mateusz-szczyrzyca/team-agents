@@ -474,7 +474,7 @@ async fn no_free_agent_pauses_the_task_until_first_candidate_returns() {
     assert!(owner.wakes.contains_key(&task(1)));
 }
 
-/// A quota reset 134 hours in the future triggers ChangeAgent on the first refusal.
+/// A quota reset 134 hours in the future triggers `ChangeAgent` on the first refusal.
 #[tokio::test]
 async fn quota_of_many_hours_changes_agent_at_once() {
     use crate::daemon::settle::Settled;
@@ -561,7 +561,7 @@ async fn pause_and_retry_without_change_agent_returns_none_and_no_notice() {
     assert_eq!(found.member.agent().name(), "claude-1");
 }
 
-/// When keep_refusal returns Some, the RefusalHandled carries exactly one notice.
+/// When `keep_refusal` returns `Some`, the `RefusalHandled` carries exactly one notice.
 #[tokio::test]
 async fn a_single_keep_refusal_result_carries_one_notice_only() {
     use crate::daemon::settle::Settled;
@@ -606,8 +606,8 @@ async fn a_single_keep_refusal_result_carries_one_notice_only() {
     );
 }
 
-/// A state written before the ChangeAgent feature loads and follows the rule: a task with one refusal
-/// triggers ChangeAgent when `keep_refusal` sees another rate-limited end.
+/// A state written before the `ChangeAgent` feature loads and follows the rule: a task with one refusal
+/// triggers `ChangeAgent` when `keep_refusal` sees another rate-limited end.
 #[tokio::test]
 async fn old_state_with_a_refused_task_follows_the_change_agent_rule() {
     use crate::daemon::settle::Settled;

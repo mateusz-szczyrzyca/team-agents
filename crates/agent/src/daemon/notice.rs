@@ -414,27 +414,18 @@ impl Notice {
                 refused_provider,
                 return_at,
                 new_agent,
-            } => (
-                HarnessPrompt::NoticeAgentChanged,
-                common
-                    .with("refused_agent", refused_agent.as_str())?
-                    .with("refused_provider", refused_provider)?
-                    .with("return_at", &return_at.to_string())?
-                    .with("new_agent", new_agent.as_str())?,
-                NoticeKind::AgentChanged,
-            ),
+            } => {
+                let values = self.agent_changed_vars(common, refused_agent, refused_provider, return_at, new_agent)?;
+                (HarnessPrompt::NoticeAgentChanged, values, NoticeKind::AgentChanged)
+            }
             Self::NoFreeAgent {
                 refused_agent,
                 refused_provider,
                 return_at,
-            } => (
-                HarnessPrompt::NoticeNoFreeAgent,
-                common
-                    .with("refused_agent", refused_agent.as_str())?
-                    .with("refused_provider", refused_provider)?
-                    .with("return_at", &return_at.to_string())?,
-                NoticeKind::NoFreeAgent,
-            ),
+            } => {
+                let values = self.no_free_agent_vars(common, refused_agent, refused_provider, return_at)?;
+                (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
+            }
         };
         let rendered = texts.render(text, &values)?;
         Ok(layout_notification(kind, context, &rendered)?)
@@ -443,3 +434,31 @@ impl Notice {
 
 #[cfg(test)]
 mod tests;
+
+    fn agent_changed_vars(
+        &self,
+        common: Variables,
+        refused_agent: &AgentName,
+        refused_provider: &str,
+        return_at: &Timestamp,
+        new_agent: &AgentName,
+    ) -> Result<Variables, NoticeError> {
+        Ok(common
+            .with("refused_agent", refused_agent.as_str())?
+            .with("refused_provider", refused_provider)?
+            .with("return_at", return_at.to_string())?
+            .with("new_agent", new_agent.as_str())?)
+    }
+
+    fn no_free_agent_vars(
+        &self,
+        common: Variables,
+        refused_agent: &AgentName,
+        refused_provider: &str,
+        return_at: &Timestamp,
+    ) -> Result<Variables, NoticeError> {
+        Ok(common
+            .with("refused_agent", refused_agent.as_str())?
+            .with("refused_provider", refused_provider)?
+            .with("return_at", return_at.to_string())?)
+    }
