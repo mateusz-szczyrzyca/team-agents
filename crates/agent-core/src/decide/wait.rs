@@ -99,6 +99,9 @@ impl WaitOwner {
 pub enum Waiting {
     /// An outstanding action has an owner.
     For(Obligation),
+    /// A task of the round is paused because its provider refused it: only the provider's return, or another agent, can
+    /// advance the round. The agent and the time are told by [`provider_line`].
+    Provider,
     /// Nothing can advance the round: the harness has lost an obligation.
     Defect,
 }
@@ -109,6 +112,12 @@ pub fn behind_run(agent: &AgentName, team: &TeamId) -> String {
     include_str!("../../../../prompts/harness/pr/wait-behind.md")
         .replace("{{agent}}", agent.as_str())
         .replace("{{team}}", team.as_str())
+}
+
+/// The wait line of a round whose task of `agent` is paused by its provider until `until`, the time as the reader is shown it.
+#[must_use]
+pub fn provider_line(_agent: &AgentName, _until: &str) -> String {
+    String::new()
 }
 
 impl Waiting {
@@ -126,6 +135,7 @@ impl Waiting {
             Self::For(Obligation::Human) => include_str!("../../../../prompts/harness/pr/wait-human.md"),
             Self::For(Obligation::LeadCorrection) => include_str!("../../../../prompts/harness/pr/wait-correction.md"),
             Self::For(Obligation::QueuedRun) => include_str!("../../../../prompts/harness/pr/wait-queued.md"),
+            Self::Provider => include_str!("../../../../prompts/harness/pr/wait-provider.md"),
             Self::Defect => include_str!("../../../../prompts/harness/pr/wait-nothing.md"),
         }
     }

@@ -298,7 +298,7 @@ impl Owner {
                 .iter()
                 .filter_map(|member| member.open_question().map(agent_core::state::Question::asked_at))
                 .min(),
-            Waiting::For(_) | Waiting::Defect => None,
+            Waiting::For(_) | Waiting::Provider | Waiting::Defect => None,
         };
         let idle = tasks
             .iter()

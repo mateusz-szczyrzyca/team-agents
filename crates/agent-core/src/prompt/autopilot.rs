@@ -34,6 +34,8 @@ pub enum AutopilotPrompt {
     WaitQueued,
     /// Add to a wait of a queued run that goes after the run of its agent in another team: the agent and the team.
     WaitBehind,
+    /// The wait of a round whose task is paused by its provider: the agent whose provider refused it and the time it returns.
+    WaitProvider,
     /// The wait of a round with its owner and the time since which it is owed.
     WaitOwned,
     /// The wait of a round with its owner, when the time since which it is owed is not known.
@@ -267,6 +269,7 @@ impl AutopilotPrompt {
         Self::WaitGate,
         Self::WaitQueued,
         Self::WaitBehind,
+        Self::WaitProvider,
         Self::WaitOwned,
         Self::WaitOwnedUndated,
         Self::WaitOwnerLead,
@@ -439,6 +442,7 @@ impl AutopilotPrompt {
             Self::WaitGate => "harness/pr/wait-gate.md",
             Self::WaitQueued => "harness/pr/wait-queued.md",
             Self::WaitBehind => "harness/pr/wait-behind.md",
+            Self::WaitProvider => "harness/pr/wait-provider.md",
             Self::WaitOwned => "harness/pr/wait-owned.md",
             Self::WaitOwnedUndated => "harness/pr/wait-owned-undated.md",
             Self::WaitOwnerLead => "harness/pr/wait-owner-lead.md",
@@ -651,6 +655,7 @@ impl AutopilotPrompt {
             Self::ReviewFixPassOpen => &["pr", "pass"],
             Self::ReviewFixPassFile => &["path"],
             Self::WaitBehind => &["agent", "team"],
+            Self::WaitProvider => &["agent", "until"],
             Self::WaitOwned => &["wait", "owner", "since"],
             Self::WaitOwnedUndated => &["wait", "owner"],
             Self::ReviewResponseInvalid => &["line", "number", "allowed"],

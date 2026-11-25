@@ -193,3 +193,24 @@ fn line_with_holder_appends_the_holding_run_only_for_a_queued_run() {
         );
     }
 }
+
+// Rule: a round whose task is paused by its provider names the provider's agent and the time it returns, whoever it is, and
+// never the human.
+#[test]
+fn the_provider_wait_line_names_the_agent_and_the_time_it_returns() {
+    let cases = [
+        (
+            "inv-gemini-argon",
+            "10:07",
+            "the provider of inv-gemini-argon until 10:07",
+        ),
+        (
+            "claude-1",
+            "2026-11-30 03:12",
+            "the provider of claude-1 until 2026-11-30 03:12",
+        ),
+    ];
+    for (agent, until, expected) in cases {
+        assert_eq!(super::provider_line(&agent.parse().unwrap(), until), expected);
+    }
+}
