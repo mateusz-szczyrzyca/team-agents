@@ -13,7 +13,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent] [agent-core] The notice of a provider's refusal says what the provider said: the kind (an overload, a rate limit or a quota), the status, the message and the provider's code, for example `an overload: 429 · Model busy, retry later · engine_overloaded`, instead of the raw JSON line cut off. The raw line stays in the run's files.
-- [agent] The resume time of a paused task in its notice is in the host's zone with that moment's offset, as the notice's header is, instead of UTC.
+- [agent] The resume time of a paused task in its notice uses the same local minute format and offset as its header, instead of UTC.
 - [agent] [agent-core] [agent-runtime] A Claude run that its account's rate-limit window refused resumes at the window's own reset time (`resetsAt`), not at the time its text names, also when the text says a quota was hit. The notice gives that reset in the host's zone, for example `… · resets 2026-11-12T12:00:00+01:00`.
 
 ## agent 0.110.0 · agent-core 0.110.0 — 25.11.2026 — PR #277
