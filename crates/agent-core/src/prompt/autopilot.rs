@@ -244,6 +244,10 @@ pub enum AutopilotPrompt {
     ReviewFindingsInvalid,
     /// The notification that a reviewer gave no verdict.
     NoticeNoVerdict,
+    /// The notification that a reviewer was refused by its provider and replaced.
+    NoticeReviewerChanged,
+    /// The notification that a reviewer waits for its provider and no other is free.
+    NoticeReviewerWaits,
     /// Retain an unsuccessful opinion assignment in the human notice.
     OpinionAttemptFailed,
     /// Retain an unsuccessful opinion assignment in the human notice.
@@ -383,6 +387,8 @@ impl AutopilotPrompt {
         Self::ReviewOpenFindings,
         Self::ReviewFindingsInvalid,
         Self::NoticeNoVerdict,
+        Self::NoticeReviewerChanged,
+        Self::NoticeReviewerWaits,
         Self::OpinionAttemptFailed,
         Self::OpinionAttemptNoStatus,
         Self::OpinionAttemptMissingReport,
@@ -413,6 +419,8 @@ impl AutopilotPrompt {
                 | Self::NoticeGithubRefused
                 | Self::NoticeClosed
                 | Self::NoticeNoVerdict
+                | Self::NoticeReviewerChanged
+                | Self::NoticeReviewerWaits
                 | Self::NoticeOpinion
                 | Self::NoticeDecision
                 | Self::NoticeReviewRotation
@@ -560,6 +568,8 @@ impl AutopilotPrompt {
             Self::OpinionAttemptInterrupted => "harness/review/opinion-attempt-interrupted.md",
             Self::NoticeOpinion => "harness/review/notice-opinion.md",
             Self::NoticeNoVerdict => "harness/review/notice-no-verdict.md",
+            Self::NoticeReviewerChanged => "harness/review/notice-reviewer-changed.md",
+            Self::NoticeReviewerWaits => "harness/review/notice-reviewer-waits.md",
             Self::NoticeReviewRotation => "harness/review/notice-rotation.md",
             Self::NoticeDecision => "harness/review/notice-decision.md",
         }
@@ -689,6 +699,8 @@ impl AutopilotPrompt {
             | Self::OpinionAttemptInterrupted => OPINION_ATTEMPT_VARIABLES,
             Self::NoticeOpinion => OPINION_NOTICE_VARIABLES,
             Self::NoticeNoVerdict => &["reviewer", "pr", "task", "why"],
+            Self::NoticeReviewerChanged => &["reviewer", "replacement", "pr", "task", "provider", "until"],
+            Self::NoticeReviewerWaits => &["reviewer", "pr", "task", "provider", "until"],
             Self::NoticeReviewRotation => &["reviews"],
             Self::NoticeDecision => &["team", "pr", "passes", "additional_passes", "findings"],
         }

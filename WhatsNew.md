@@ -9,10 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.111.0 · agent-core 0.111.0 — 25.11.2026 — PR #278
+## agent 0.111.0 · agent-core 0.111.0 — 25.11.2026 — PR #273
 
-### Bug fixes
-- [agent] [agent-core] A round whose task (a reviewer, a member, a lead or a solo task) is paused because its provider refused its run no longer says in `agent status` that it waits for an answer of the human when no question is open. It says whose provider and until when: `waits for the provider of inv-gemini-argon until 10:07` (local time; with the date and the offset when the return is more than a day away). An open question, or a pause you asked for with `agent pause`, still says the human.
+### Enhancements
+- [agent] [agent-core] A reviewer whose agent the refusal rule changes (its provider refused it again after its retry, or the first time when `[replacement] limit_retries` is `0` or a quota's reset is further away than `[replacement] limit_wait_minutes`) is replaced at once by a free investigator of another provider, not after `replace_after_minutes`. On 23.11 a review waited 35 minutes behind such a reviewer while other investigators were free. A reviewer refused once is kept and tried again after its pause, in the same session.
+- [agent] With no investigator of another provider free, the review waits for the first that is, or for the refused reviewer's return, and you get one notification naming the provider and the time (also after a restart of the daemon). You are also told once when a refused reviewer is replaced.
+
+### Configuration
+- [agent] [agent-core] changed: `[review] replace_after_minutes` (default `15`, unchanged) — a reviewer refused by its provider after `[replacement] limit_retries` no longer waits for it; it still bounds a reviewer that is paused for any other reason.
 
 ## agent 0.110.0 · agent-core 0.110.0 — 25.11.2026 — PR #277
 

@@ -1,0 +1,2 @@
+{{reviewer}} was refused by its provider: {{replacement}} reviews pull request {{pr}}
+The review of pull request #{{pr}} by {{reviewer}} (task {{task}}) is given to {{replacement}}: the provider {{provider}} refused {{reviewer}} and its agent is to be changed (its retries are used up, or the reset of its quota is too far away), and {{reviewer}} gets no new work until {{until}}. Nothing is needed from you.

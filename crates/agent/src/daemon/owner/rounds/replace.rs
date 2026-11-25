@@ -1,22 +1,26 @@
 //! A reviewer that cannot work: another free investigator takes its review, and when none is free the human is told.
 
-use agent_core::decide::reviewer::{Awaited, quiet_since, replace_now};
+use agent_core::decide::limit::{Decision, decide};
+use agent_core::decide::pool::provider_of;
+use agent_core::decide::reviewer::{Awaited, Provided, on_provider, quiet_since, replace_after_refusal};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::prompt::Variables;
-use agent_core::state::{ItemPhase, PullRequest, ReviewOutcome, Timestamp};
+use agent_core::prompt::{Variables, VariablesError};
+use agent_core::state::{ItemPhase, Member, PullRequest, ReviewOutcome, Run, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
+use super::asleep::saved_notice_where;
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
-use crate::daemon::review::{free_reviewers, refused_investigators, select_reviewers};
+use crate::daemon::review::{free_reviewers, investigator_of, refused_investigators, select_reviewers};
+use crate::daemon::settle::limit_of;
 
 /// A review that does not come: its reviewer cannot work.
 pub(super) struct Gone {
@@ -32,6 +36,18 @@ pub(super) struct Gone {
     status: TaskStatus,
     /// The reviewers of the review pass, the one that is gone included: none of them takes the review.
     pass: Vec<InvestigatorName>,
+    /// Set when the refusal rule changed the reviewer's agent: the provider that refused it, whose investigators meet the
+    /// same refusal and so do not take the review, and when the reviewer is back. `None` for a reviewer that failed, was
+    /// stopped or was quiet for another reason, which any free investigator may replace.
+    refused: Option<Refused>,
+}
+
+/// The provider that refused a reviewer, after the refusal rule changed its agent.
+struct Refused {
+    /// The provider, as [`provider_of`] names it.
+    provider: String,
+    /// When the refused agent is back in the pool; `None` when no return time is recorded.
+    until: Option<Timestamp>,
 }
 
 impl Owner {
@@ -133,7 +149,11 @@ impl Owner {
                     quiet_for,
                     patience,
                 };
-                if replace_now(&awaited) {
+                let refusal = self.refusal_of(member);
+                if replace_after_refusal(&awaited, refusal) {
+                    let refused = (refusal == Some(Decision::ChangeAgent))
+                        .then(|| self.refused_by(member))
+                        .flatten();
                     found.push(Gone {
                         pr: pr.clone(),
                         items: vec![progress.id()],
@@ -141,6 +161,7 @@ impl Owner {
                         task: review.task.clone(),
                         status: member.status(),
                         pass: reviews.iter().map(|review| review.reviewer.clone()).collect(),
+                        refused,
                     });
                 }
             }
@@ -165,19 +186,20 @@ impl Owner {
         for gone in gone {
             let rounds = self.rounds_of_items(team_id, &gone.items);
             match self.try_replace(team_id, &lead, &gone, now).await {
-                Ok(true) => {
+                Ok(Some(chosen)) => {
                     for round in &rounds {
                         self.watch.waits.remove(round);
                     }
+                    self.tell_replaced(pulls, &lead, &gone, &chosen, now);
                     look.changed = true;
                 }
-                Ok(false) => {
+                Ok(None) => {
                     for round in rounds {
                         self.watch
                             .waits
                             .insert(round, agent_core::decide::wait::Obligation::FreeInvestigator);
                     }
-                    self.nobody_reviews(pulls, team_id, &lead, &gone, now);
+                    self.nobody_reviews(pulls, team_id, &lead, &gone, now).await;
                 }
                 Err(error) => {
                     tracing::warn!(
@@ -194,7 +216,34 @@ impl Owner {
         Ok(())
     }
 
-    /// Gives the review of `gone` to a free investigator that is not of its review pass; `false` when none is free.
+    /// What the refusal rule answers for the last run of the reviewer `member`, counted as the daemon counted it when the
+    /// run ended; `None` when that run was not refused by its provider, or was refused before the daemon counted refusals
+    /// (a pause from before the upgrade): such a reviewer is held to `replace_after_minutes` as it was, until its next
+    /// run is counted. The run's own end time is used, so the answer does not change as a named reset comes nearer.
+    fn refusal_of(&self, member: &Member) -> Option<Decision> {
+        let Some(RunState::Ended { at, end }) = member.runs().last().map(Run::state) else {
+            return None;
+        };
+        let limit = limit_of(end, *at)?;
+        let refusals = self.parts.state.limit_refusals(member.task());
+        if refusals == 0 {
+            return None;
+        }
+        Some(decide(&self.refusal_facts(limit, refusals)))
+    }
+
+    /// The provider that refused the reviewer `member` and when its agent is back; `None` when it is no configured
+    /// investigator.
+    fn refused_by(&self, member: &Member) -> Option<Refused> {
+        let name = investigator_of(member)?;
+        let config = self.parts.settings.config.investigators().get(name)?;
+        Some(Refused {
+            provider: provider_of(config.cli, config.model.as_ref()).to_owned(),
+            until: self.parts.state.refused_until(&name.into()),
+        })
+    }
+
+    /// Gives the review of `gone` to a free investigator that is not of its review pass; `None` when none is free, else the investigator that was given it.
     ///
     /// As for the first reviewers, the worktree is ready before the state names the reviewer, and what was made is
     /// removed again when the state cannot be changed.
@@ -204,7 +253,7 @@ impl Owner {
         lead: &Lead,
         gone: &Gone,
         now: Timestamp,
-    ) -> Result<bool, PublishError> {
+    ) -> Result<Option<InvestigatorName>, PublishError> {
         let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
         let among: Vec<_> = free.iter().map(|reviewer| reviewer.name.clone()).collect();
         let mut excluded: HashSet<InvestigatorName> = gone.pass.iter().cloned().collect();
@@ -214,6 +263,10 @@ impl Owner {
             &self.parts.settings.config,
             now,
         ));
+        // An investigator of the provider that refused the reviewer meets the same refusal: it is no replacement.
+        if let Some(refused) = &gone.refused {
+            excluded.extend(self.on_provider(&refused.provider));
+        }
         let Some(chosen) = select_reviewers(
             &self.parts.state,
             &self.parts.settings.config,
@@ -222,7 +275,7 @@ impl Owner {
             &excluded,
         )
         .and_then(|reviewers| reviewers.into_iter().next()) else {
-            return Ok(false);
+            return Ok(None);
         };
         log_decision(
             "replace_reviewer",
@@ -234,8 +287,9 @@ impl Owner {
         );
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let Some(head) = git.branch_tip(&gone.pr.branch).await? else {
-            return Ok(false);
+            return Ok(None);
         };
+        let replacement = chosen.name.clone();
         let mut prepared = Prepared::default();
         self.prepare_reviewer(&git, lead, chosen, &head, now, &mut prepared)
             .await?;
@@ -270,7 +324,35 @@ impl Owner {
                 "a reviewer cannot work: its review is asked of another"
             );
         }
-        Ok(true)
+        Ok(Some(replacement))
+    }
+
+    /// The investigators that run on `provider`.
+    fn on_provider(&self, provider: &str) -> BTreeSet<InvestigatorName> {
+        let investigators = self.parts.settings.config.investigators();
+        let all: Vec<_> = investigators
+            .iter()
+            .map(|(name, config)| Provided {
+                name,
+                provider: provider_of(config.cli, config.model.as_ref()),
+            })
+            .collect();
+        on_provider(provider, &all)
+    }
+
+    /// The variables of a notice about the review of `gone`, a reviewer its provider refused: the reviewer, the pull
+    /// request, the task, the provider and the time the refused agent is back, in the local time zone.
+    fn refused_values(&self, gone: &Gone, refused: &Refused) -> Result<Variables, VariablesError> {
+        let until = refused.until.map_or_else(
+            || "the end of its pause".to_owned(),
+            |until| self.parts.zone.stamp_minute(until),
+        );
+        Variables::new()
+            .with("reviewer", gone.reviewer.as_str())
+            .and_then(|values| values.with("pr", gone.pr.number.to_string()))
+            .and_then(|values| values.with("task", gone.task.as_str()))
+            .and_then(|values| values.with("provider", refused.provider.as_str()))
+            .and_then(|values| values.with("until", until))
     }
 
     /// Records the new reviewer and puts its review in the place of the one of `gone`, in every item of the pull request,
@@ -292,9 +374,32 @@ impl Owner {
         Ok(())
     }
 
+    /// Tells the human that the review of `gone`, a reviewer its provider refused again after its retries, is given to
+    /// `replacement`; a reviewer that failed or was stopped is not announced, as before.
+    fn tell_replaced(
+        &mut self,
+        pulls: &Pulls,
+        lead: &Lead,
+        gone: &Gone,
+        replacement: &InvestigatorName,
+        now: Timestamp,
+    ) {
+        let Some(refused) = &gone.refused else {
+            return;
+        };
+        let values = self
+            .refused_values(gone, refused)
+            .and_then(|values| values.with("replacement", replacement.as_str()));
+        self.tell_human(pulls, AutopilotNotice::ReviewerChanged, values, lead, now);
+    }
+
     /// Tells the human, once for a review, that the reviewer of `gone` cannot work and no investigator is free to take
     /// its review.
-    fn nobody_reviews(&mut self, pulls: &Pulls, team_id: &TeamId, lead: &Lead, gone: &Gone, now: Timestamp) {
+    async fn nobody_reviews(&mut self, pulls: &Pulls, team_id: &TeamId, lead: &Lead, gone: &Gone, now: Timestamp) {
+        if let Some(refused) = &gone.refused {
+            self.tell_reviewer_waits(pulls, team_id, lead, gone, refused, now).await;
+            return;
+        }
         let announcement = Announcement::NoVerdict {
             task: gone.task.clone(),
         };
@@ -320,5 +425,51 @@ impl Owner {
             .and_then(|values| values.with("task", gone.task.as_str()))
             .and_then(|values| values.with("why", why));
         self.tell_human(pulls, AutopilotNotice::NoVerdict, values, lead, now);
+    }
+
+    /// Tells the human, once for a review, that the reviewer of `gone` waits for its provider because no investigator of
+    /// another provider is free to take its review. A notice saved by an earlier life of the daemon counts as told: a
+    /// restart does not tell it again.
+    async fn tell_reviewer_waits(
+        &mut self,
+        pulls: &Pulls,
+        team_id: &TeamId,
+        lead: &Lead,
+        gone: &Gone,
+        refused: &Refused,
+        now: Timestamp,
+    ) {
+        let announcement = Announcement::ReviewerWaits {
+            task: gone.task.clone(),
+        };
+        if !self.watch.announced.insert(announcement) {
+            return;
+        }
+        let told = format!("(task {}) waits: the provider", gone.task);
+        match saved_notice_where(&self.notice_directory(), |text| text.contains(&told)).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                // A failed lookup must not hide that a review waits: telling it twice is the lesser harm.
+                tracing::warn!(
+                    event = LogEvent::NotificationFailed.as_str(),
+                    team = %team_id,
+                    task = %gone.task,
+                    error = %error_chain(&error),
+                    "saved notices cannot be inspected; telling that the reviewer waits"
+                );
+            }
+        }
+        tracing::warn!(
+            event = LogEvent::ReviewsRequested.as_str(),
+            team = %team_id,
+            pr = %gone.pr.number,
+            reviewer = %gone.reviewer,
+            task = %gone.task,
+            provider = %refused.provider,
+            "a reviewer its provider refused waits: no investigator of another provider is free to take its review"
+        );
+        let values = self.refused_values(gone, refused);
+        self.tell_human(pulls, AutopilotNotice::ReviewerWaits, values, lead, now);
     }
 }
