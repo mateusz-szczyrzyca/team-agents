@@ -5,6 +5,17 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.96.0 — 25.11.2026 — PR #253
+
+### New features
+- [agent] [agent-core] [agent-runtime] A run that was reminded to commit and has not committed 20 minutes later is stopped, and its session is resumed at once with the order to commit what is finished first. It is never cut while a gate (`agent gate`) or a test run of its worktree holds the test lock. The cut counts as no retry, turn, rejection or replacement of the task, and what the run left in its worktree is snapshotted first. Each cut is the log event `commit_cut`.
+
+### Enhancements
+- [agent-runtime] A history of version 25 is read and upgraded to version 26, which admits the new log event.
+
+### Configuration
+- [agent-core] new: `[commit_reminder] cut_after` (default `20`) — the minutes after the reminder to commit at which a run that has not committed is cut and resumed with the order to commit; `0` turns the cut off.
+
 ## 0.95.0 — 25.11.2026 — PR #251
 
 ### New features

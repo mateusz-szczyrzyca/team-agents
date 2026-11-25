@@ -297,6 +297,10 @@ max_context = 150000
 # reminded, never a reviewer or a worker. A key at 0 turns the reminder off.
 #   lines     uncommitted lines (added plus removed) at which a run is reminded (default: 300)
 #   minutes   minutes since the later of the run's last commit and its start at which a run is reminded (default: 30)
+# A run that ignores the reminder - no commit, in `cut_after` minutes - is stopped, unless a gate (`agent gate`) or a test
+# run of its worktree is going. Its session is then resumed at once, in the same session, with the order to commit first;
+# nothing counts against the task: no retry, no turn, no rejection and no replacement. 0 turns the cut off.
+#   cut_after   minutes after the reminder at which a run that has not committed is cut (default: 20)
 # A session whose context reaches a share of its bound (`[session] max_context`, or the agent's own) is told once, on the
 # bus, to commit and to write down where it is, before the next run may start a new session. Codex tells no context, and
 # a session with no bound is never reminded.
@@ -305,6 +309,7 @@ max_context = 150000
 [commit_reminder]
 lines = 300
 minutes = 30
+cut_after = 20
 context_percent = 80
 
 # --- Merges --------------------------------------------------------------------------------------------------------

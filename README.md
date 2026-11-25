@@ -336,6 +336,17 @@ only after the run has committed. It never commits, deletes or resets anything i
 event `commit_reminded`, and `commit_followed` tells when the run committed after it; the reminder is kept in memory, so a
 restart of the daemon arms it again. See [`[commit_reminder]`](docs/configuration.md).
 
+**Cut of a run that ignores the reminder.** A run that was reminded and has not committed `[commit_reminder] cut_after`
+minutes later (20 by default; `0` turns the cut off) is stopped, once for the reminder, unless a gate of `agent gate`
+runs for its task or a test run started in its worktree holds the machine's test lock (`TEST_LOCK_FILE`, by default
+`/tmp/.make.command.lck`): it is then waited for. What the run left in its worktree is snapshotted, and the task is
+queued at once to resume the same session, whose prompt is the order to commit what is finished first and then go on.
+The cut counts as a stop of the harness, not of the human: no retry of the session, turn count, rejection or
+replacement of the task is raised and the task never becomes `failed`, `stopped` or `paused` by it. A stop or a pause by
+the human between the cut and the resume drops the order. The order is kept in memory: after a restart of the daemon
+between the cut and the resume the task is resumed as after any stop, with the whole prompt of its task and without the
+order. Each cut is the log event `commit_cut`.
+
 **Reminder of a full context.** A session whose context reaches `[commit_reminder] context_percent` of its bound (80 by
 default; the bound is `[session] max_context` or the agent's own) is told once, on the bus, to commit what is finished and
 to write in its report where it is and what is next: the next run may start a new session that sees only the commits, the
