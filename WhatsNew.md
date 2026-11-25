@@ -5,6 +5,15 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.100.0 — 25.11.2026 — PR pending
+
+### Enhancements
+- [agent-core] [agent-runtime] [agent] The notice of a refusal shows the provider's status, message and error
+  code taken from the CLI's structured output, instead of a raw JSON line: `429 · Model busy, retry later ·
+  engine_overloaded`, and whether the refusal is a rate limit, an overload, a quota or another provider error.
+  The raw data stays in the run's files; what is matched in the text is still matched. Every time in the notice
+  is shown in the system's local time zone.
+
 ## 0.99.0 — 25.11.2026 — PR pending
 
 ### Bug fixes
