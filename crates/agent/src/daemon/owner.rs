@@ -2185,14 +2185,45 @@ impl Owner {
         Ok(None)
     }
 
-    /// Builds the [`agent_core::decide::replacement::refused::Request`] for a refused task, calls
-    /// [`agent_core::decide::replacement::refused::pick`], and acts on the result: hands the task over to the chosen
-    /// agent, or keeps it paused until one is free.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "three Candidate lists are built from config; extracting a helper would \
-        need owned provider strings to outlive Candidate references, which makes the code no shorter"
-    )]
+    /// Candidates retain the configured tier, provider and remaining run capacity.
+    fn refusal_candidates<'a>(
+        &'a self,
+        names: &'a [AgentName],
+        going: &[Going],
+    ) -> Vec<agent_core::decide::replacement::refused::Candidate<'a>> {
+        use agent_core::decide::replacement::refused::Candidate;
+        names
+            .iter()
+            .filter_map(|name| {
+                let tier = self.tier_of(name)?;
+                Some(Candidate {
+                    name,
+                    provider: self.refusal_provider(name)?,
+                    tier,
+                    busy: busy_run(name, limit_for(self.parts.settings.config.limits(), tier), going).is_some(),
+                    refused_until: self.parts.state.refused_until(name),
+                })
+            })
+            .collect()
+    }
+
+    /// Both ordinary agents and investigators have provider identities.
+    fn refusal_provider(&self, name: &AgentName) -> Option<&str> {
+        use agent_core::decide::pool::provider_of;
+        let config = &self.parts.settings.config;
+        config
+            .agent(name)
+            .map(|agent| provider_of(agent.cli, agent.model.as_ref()))
+            .or_else(|| {
+                config
+                    .investigators()
+                    .iter()
+                    .find(|(key, _)| key.as_str() == name.as_str())
+                    .map(|(_, agent)| provider_of(agent.cli, agent.model.as_ref()))
+            })
+    }
+
+    /// Uses the refusal selection rules, then takes over or waits for capacity.
     fn handle_change_agent(
         &mut self,
         task: &TaskId,
@@ -2201,10 +2232,7 @@ impl Owner {
         until: Timestamp,
         now: Timestamp,
     ) -> Result<Option<RefusalHandled>, OwnerError> {
-        use agent_core::decide::pool::provider_of;
-        use agent_core::decide::replacement::refused::{Candidate, Pick, Request, pick};
-        use agent_core::kinds::Tier;
-
+        use agent_core::decide::replacement::refused::{Pick, Request, pick};
         let config = &self.parts.settings.config;
         let replacement = config.replacement();
         let found = self
@@ -2212,8 +2240,6 @@ impl Owner {
             .state
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-
-        // The agents in the task's team.
         let team_names: Vec<AgentName> = found
             .team
             .crew()
@@ -2223,97 +2249,15 @@ impl Owner {
             .chain(found.team.reviewers())
             .map(|member| member.agent().agent_name().clone())
             .collect();
-
-        // The refused agent's provider.
-        let refused_cli = config.agent(agent).map(|a| a.cli);
-        let refused_model = config.agent(agent).and_then(|a| a.model.as_ref());
-        // Provider as an owned String because it may borrow from config which is immutably borrowed from self.
-        let refused_provider: String = match refused_cli {
-            Some(cli) => provider_of(cli, refused_model).to_owned(),
-            None => located.agent.clone(),
-        };
-
-        // Whether [replacement] replacements is used up.
+        let refused_provider = self.refusal_provider(agent).unwrap_or(agent.as_str()).to_owned();
+        // A holder count larger than u32 already exhausts every permitted budget.
         let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
         let replacements_exhausted = taken_over >= replacement.replacements().get();
-
-        // Build Candidate lists.  Collect providers as owned Strings so they outlive Candidate references.
-        let busy = self.agents_in_runs();
-
-        // Replacement agents.
-        let replacement_providers: Vec<String> = replacement
-            .agents()
-            .iter()
-            .map(|name| {
-                let agent_cfg = config.agent(name);
-                let cli = agent_cfg.map(|a| a.cli);
-                let model = agent_cfg.and_then(|a| a.model.as_ref());
-                match cli {
-                    Some(c) => provider_of(c, model).to_owned(),
-                    None => name.as_str().to_owned(),
-                }
-            })
-            .collect();
-        let replacement_agents: Vec<Candidate<'_>> = replacement
-            .agents()
-            .iter()
-            .zip(replacement_providers.iter())
-            .map(|(name, provider)| Candidate {
-                name,
-                provider,
-                tier: Tier::Normal,
-                busy: busy.contains(&name.as_str()),
-                refused_until: self.parts.state.refused_until(name),
-            })
-            .collect();
-
-        // Normal agents.
-        let normal_providers: Vec<String> = config
-            .normal_agents()
-            .iter()
-            .map(|name| {
-                let agent_cfg = config.agent(name);
-                let cli = agent_cfg.map(|a| a.cli);
-                let model = agent_cfg.and_then(|a| a.model.as_ref());
-                match cli {
-                    Some(c) => provider_of(c, model).to_owned(),
-                    None => name.as_str().to_owned(),
-                }
-            })
-            .collect();
-        let normal_agents: Vec<Candidate<'_>> = config
-            .normal_agents()
-            .iter()
-            .zip(normal_providers.iter())
-            .map(|(name, provider)| Candidate {
-                name,
-                provider,
-                tier: Tier::Normal,
-                busy: busy.contains(&name.as_str()),
-                refused_until: self.parts.state.refused_until(name),
-            })
-            .collect();
-
-        // Investigator names as AgentNames, owned so Candidates can reference them.
+        let going = runs_going(self.parts.state.teams());
+        let replacement_agents = self.refusal_candidates(replacement.agents(), &going);
+        let normal_agents = self.refusal_candidates(config.normal_agents(), &going);
         let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
-        let inv_providers: Vec<String> = config
-            .investigators()
-            .values()
-            .zip(inv_names.iter())
-            .map(|(inv_cfg, _agent_name)| provider_of(inv_cfg.cli, inv_cfg.model.as_ref()).to_owned())
-            .collect();
-        let investigators: Vec<Candidate<'_>> = inv_names
-            .iter()
-            .zip(inv_providers.iter())
-            .map(|(agent_name, provider)| Candidate {
-                name: agent_name,
-                provider,
-                tier: Tier::Investigator,
-                busy: busy.contains(&agent_name.as_str()),
-                refused_until: self.parts.state.refused_until(agent_name),
-            })
-            .collect();
-
+        let investigators = self.refusal_candidates(&inv_names, &going);
         let request = Request {
             role: located.role,
             team: &team_names,
@@ -2325,33 +2269,21 @@ impl Owner {
             replacements_exhausted,
         };
 
-        // We need `agent` later; clone it now before the mutable borrow for hand_over_refused_task.
-        let agent_clone = agent.clone();
-        let refused_provider_str = refused_provider.clone();
         match pick(&request) {
             Pick::Agent(new_agent) => {
                 let new_agent = new_agent.clone();
-                self.hand_over_refused_task(task, &new_agent, located, &agent_clone, now)?;
+                self.hand_over_refused_task(task, &new_agent, located, agent, now)?;
                 Ok(Some(RefusalHandled {
                     status: TaskStatus::Queued,
                     notice: Notice::AgentChanged {
-                        refused_agent: agent_clone.clone(),
-                        refused_provider: refused_provider_str,
-                        return_at: self.parts.state.refused_until(&agent_clone).unwrap_or(until),
+                        refused_agent: agent.clone(),
+                        refused_provider: refused_provider,
+                        return_at: self.parts.state.refused_until(agent).unwrap_or(until),
                         new_agent,
                     },
                 }))
             }
             Pick::NoneFree { earliest_return } => {
-                // When no candidates of another provider exist at all
-                // (every candidate has the same provider as the refused one),
-                // don't handle ChangeAgent — let the caller's pause logic take over.
-                let has_other_provider = replacement_agents.iter().any(|c| c.provider != refused_provider_str)
-                    || normal_agents.iter().any(|c| c.provider != refused_provider_str)
-                    || investigators.iter().any(|c| c.provider != refused_provider_str);
-                if !has_other_provider {
-                    return Ok(None);
-                }
                 let until = earliest_return.map_or(until, |at| at.min(until));
                 let first_wait = !self.wakes.contains_key(task);
                 // Set the wake so the task is picked up when a candidate returns.
@@ -2362,7 +2294,7 @@ impl Owner {
                         team = %located.team,
                         task = %task,
                         agent = located.agent,
-                        refused_provider = %refused_provider_str,
+                        refused_provider = %refused_provider,
                         return_at = %until,
                         "no agent is free to take over a task whose agent was refused by its provider"
                     );
@@ -2370,8 +2302,8 @@ impl Owner {
                 Ok(Some(RefusalHandled {
                     status: TaskStatus::Paused,
                     notice: Notice::NoFreeAgent {
-                        refused_agent: agent_clone,
-                        refused_provider: refused_provider_str,
+                        refused_agent: agent.clone(),
+                        refused_provider: refused_provider,
                         return_at: until,
                     },
                 }))

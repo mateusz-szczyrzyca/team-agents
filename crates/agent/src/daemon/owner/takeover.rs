@@ -272,7 +272,7 @@ impl Owner {
     }
 
     /// The tier the configuration gives the agent `name`; `None` for a name it does not have.
-    fn tier_of(&self, name: &AgentName) -> Option<Tier> {
+    pub(super) fn tier_of(&self, name: &AgentName) -> Option<Tier> {
         let config = &self.parts.settings.config;
         if config
             .investigators()
