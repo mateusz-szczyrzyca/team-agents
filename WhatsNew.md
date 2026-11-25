@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.103.0 — 25.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] The description of a pull request lists the steps whose request came back to the requester, with the first line of the worker's summary: `- step 1.3 of claude-1's plan — returned to claude-1 (H5): Result: the file is not written.`
+
 ## 0.102.0 — 25.11.2026 — PR #263
 
 ### New features

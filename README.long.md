@@ -1262,8 +1262,10 @@ plan, as the bus has them (`agentbus helper-dump --task <task>`, JSON):
 
 When the bus cannot be read, a line says why (`requests unknown (…)`); a home without `agents.toml` shows none. The
 description of a pull request gets the harness's section `## Steps done by a worker`, with each request of the team's
-tasks that is done and names a step: `- step 1.2 of claude-1's plan — done by glm-1 (H3)`. A lead cannot write that
-section itself.
+tasks that is done and names a step: `- step 1.2 of claude-1's plan — done by glm-1 (H3)`. A request that came back to its
+requester (`failed`) and names a step gets a row of the section `## Steps returned to their requesters`, after the first
+one: `- step 1.3 of claude-1's plan — returned to claude-1 (H5): Result: the file is not written.`; the reason is the first
+line of the request's summary, cut to 120 characters, or `no reason given`. A lead cannot write either section itself.
 
 ### An agent in two teams
 
