@@ -876,6 +876,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::CommitReminded,
             LogEvent::CommitFollowed,
             LogEvent::ContextReminded,
+            LogEvent::CommitCut,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
