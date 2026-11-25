@@ -483,7 +483,10 @@ mod run_engine {
         assert_eq!(run.classified.end, RunEnd::RateLimited);
         let pause = run.classified.pause.unwrap();
         assert_eq!(pause.reason, PauseReason::RateLimit);
-        assert_eq!(pause.until, after(time::Duration::hours(2) + time::Duration::minutes(1)));
+        assert_eq!(
+            pause.until,
+            after(time::Duration::hours(2) + time::Duration::minutes(1))
+        );
         assert!(pause.evidence.starts_with("a rate limit: rejected"), "{pause:?}");
         assert!(pause.evidence.ends_with(" · resets 2026-11-12T12:00:00Z"), "{pause:?}");
     }
