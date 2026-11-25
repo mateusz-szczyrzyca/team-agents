@@ -105,7 +105,6 @@ fn every_log_level_parses_renders_and_keeps_events_at_or_above_its_severity() {
     }
 }
 
-
 fn expected_log_events() -> Vec<(LogEvent, &'static str, LogLevel)> {
     vec![
         (LogEvent::CliOutputUnreadable, "cli_output_unreadable", LogLevel::Warn),
