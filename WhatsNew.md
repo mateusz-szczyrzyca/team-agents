@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.101.0 — 25.11.2026 — PR pending
+## 0.101.0 — 25.11.2026 — PR #258
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A request that no worker of the pool takes for `[workers] wait_seconds` (default 10 minutes) is answered `failed` and returned to its requester with the words `Nobody took your request H3 (step 2) for 10 minutes: no worker of the pool was free. Do the step yourself now.` The log event is `worker_wait_returned`.
@@ -23,7 +23,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with the worker's task, its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
 - [agent] `agent status --running` no longer lists free workers: its `pool:` section shows only the busy workers of teams not listed above.
 
-## 0.99.0 — 25.11.2026 — PR pending
+## 0.99.0 — 25.11.2026 — PR #255
 
 ### Bug fixes
 - [agent] A restart after a worker result was recorded but before its pending result was saved now finishes the request and tells the requester once who served it.

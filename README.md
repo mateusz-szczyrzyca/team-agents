@@ -15,15 +15,22 @@ OpenRouter or DeepInfra) — and adds what they lack when several of them work u
 - **Human in the loop:** agents never guess; they write questions to a Markdown file, the task waits, you answer
   with `agent answer <task>` and the agent goes on in the same session.
 - **Teams and rounds:** a coordinator and its members deliver the items of a task list one pull request at a time;
-  the harness checks each round, runs the repository's gate, asks investigators for reviews and takes the pull
-  request through its fix passes.
+  the harness checks each round, runs the repository's gate, asks investigators for independent reviews, takes the
+  pull request through its fix passes and, in autopilot, merges it.
+- **Plans of steps:** every solo agent, coordinator and member keeps the plan of its task in `.agent/plan.md`; the
+  daemon checks the steps it can check and sends back a `DONE` whose plan is not finished.
+- **A pool of workers:** cheap agents of `[tiers] workers` take single steps that an agent delegates, in worktrees of
+  their own; the daemon checks each result before it brings the commit to the requester's branch.
+- **Recovery:** a run that hangs, fails, ends without a status or is cut by a restart goes on in a new session with a
+  briefing built from facts, or is handed to another agent; snapshots keep the work of a cut run.
 - **Load spread across providers:** agents of different CLIs and tiers work side by side, so the load and the
   token usage are distributed over several providers and accounts.
 - **Observability:** `agent status`, a history of every run and step (`agent log`), a diagnostic bundle
   (`agent debug`) and notifications.
 
 The harness is written in Rust (`crates/`). Its first implementation — a Bash script, a rewrite of it in Go, a
-terminal panel and a web interface in Go — was removed in 0.25.0; `agentbus` is the one Go program left.
+terminal panel and a web interface in Go — was removed in 0.25.0; `agentbus` is the one Go program left. There is no
+panel and no web interface now: `agent status`, `agent log -f` and the notifications are how you watch.
 
 > **Security warning.** Agents run with their CLIs' permission prompts and sandboxes **disabled**. They can run
 > any command as the user they run under, push to your repositories and use every credential that user can read.
@@ -38,7 +45,17 @@ terminal panel and a web interface in Go — was removed in 0.25.0; `agentbus` i
 - [Configuration](#configuration)
 - [Usage](#usage)
 - [What the daemon does](#what-the-daemon-does)
+  - [Runs and sessions](#runs-and-sessions) · [Agents, workers and busy hand-overs](#agents-workers-and-busy-hand-overs) ·
+    [Serena and the reminders](#serena-and-the-reminders) · [The plan of a task](#the-plan-of-a-task) ·
+    [When a run goes wrong](#when-a-run-goes-wrong) · [Snapshots, restarts and disk](#snapshots-restarts-and-disk) ·
+    [Investigators, tiers and splits](#investigators-tiers-and-splits) · [`agent debug`](#diagnostics-agent-debug) ·
+    [History and `agent log`](#history-and-agent-log) · [Answers and controls](#answers-and-controls) ·
+    [Removing a team](#removing-a-team) · [`agent status`](#agent-status) · [Questions](#questions) ·
+    [Pull requests, reviews and merges](#pull-requests-reviews-and-merges) ·
+    [Checks before the review](#checks-before-the-review) · [The gate](#the-gate) ·
+    [Compatibility and upgrades](#compatibility-and-upgrades)
 - [MCP tools available to agents](#mcp-tools-available-to-agents)
+  - [Requests to workers](#requests-to-workers) · [An agent in two teams](#an-agent-in-two-teams)
 - [Development and tests](#development-and-tests)
 - [License](#license)
 
@@ -159,7 +176,7 @@ never on the orchestrator's host or a network with anything you care about.
 Every run of an agent gets the harness's hooks directory **through its environment**: the `git` the CLI starts has
 `core.hooksPath` set in `GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n`, for that run only. **Nothing is written into the
 repository** — not its `.git/hooks`, not its configuration — and your own checkout is not touched. The directory holds a
-`commit-msg` hook that runs `agent guard-commit` (see "What the daemon does", the checks before a review) and then the
+`commit-msg` hook that runs `agent guard-commit` (see [Checks before the review](#checks-before-the-review)) and then the
 repository's own `commit-msg`, and links the repository's other hooks (its `hooks` directory, or the directory of its own
 `core.hooksPath`), so a hook of the repository still runs in an agent's run, and one that fails still fails the commit. An
 agent that wants to skip the hook can use `git commit --no-verify`; the checks before the review find the commit then.
@@ -171,32 +188,9 @@ hooks, and the hooks path of an outer run (a `cargo test` started by an agent) i
 ### Monitoring and response
 
 - Ship the daemon's log ([`docs/log.md`](docs/log.md)) somewhere you look at, and alert on warnings and errors.
-  `agent log` shows what a round, a team or a task did, with every prompt and step. Its text shows times in the zone of
-this machine with its offset, as `date` does; `agent log --utc` shows them in UTC, as the files hold them, and `--json` is
-always UTC. A `--since` or `--until` without a zone is read in the zone of this machine.
-  Once the history keeps usage, the story of a round or a team tells each run's usage at its own end, in one line that
-  names the run: `run <id> usage: context first N, last M; output K; cost C USD`. The context is what the CLI's stream
-  told: the input of the run's first and last model call with what came from its cache. A part the CLI did not tell
-  reads `not told`, and so does a whole run without a row. `agent log --task <task>` and `--run <run>` tell the same
-  line right after the `run_ended` row of each run (after the text, for a run whose end row is not in it), and `--show usage --json` gives a row of numbers (`null` for a part not told) for each run that
-  has usage. A history written before usage was kept prints no usage line, and `--json` stories carry none.
-- **Context of a session.** Each run records the context size, the output tokens and the cost its CLI reports
-  (Claude Code, opencode and Antigravity tell the context of each model call; Codex tells output tokens only, so its
-  context is `not told`). `agent status <task>` ends with the context of the task's last run, or `context: not told`.
-  `agent debug --team <team>` puts the context of each run into its summary and names every run whose last context is
-  above its agent's bound: `[session] max_context` (default 150000 tokens; `0` switches it off), or the agent's own
-  `max_context`. A session whose last run reached more tokens than the bound is not resumed: the task's next run starts
-  a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what
-  was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before, and so does
-  a bound of `0`. The new session is not counted against `[replacement] new_sessions`.
-  An opencode or Codex agent may also name its model's window in its own `context` (tokens): the CLI then compacts the
-  session at that window, before it grows past the bound, instead of the run failing when the provider refuses it.
-  A window below the bound is allowed — that is what makes the CLI compact early. opencode is told the window only for
-  a model registered under `openrouter` or `deepinfra`; Codex gets `-c model_context_window=N`. Claude Code and
-  Antigravity are left as they were, and so is an opencode model of any other provider: for them `context` changes
-  nothing. `output` (tokens, at most `context`) is the model's output limit, written next to the window in opencode's
-  configuration; without it opencode is told `0`, which makes it use its fallback of 32000 output tokens instead of
-  the model catalogue's, so set it for a model whose output limit is below that. Other CLIs ignore `output`.
+  `agent log` shows what a round, a team or a task did, with every prompt and step
+  ([History and `agent log`](#history-and-agent-log)); `agent debug` bundles what you need to diagnose a team.
+- Set spending limits at the providers and watch the usage `agent log` records for each run (context, output, cost).
 - Logs and the files of a task can contain secrets printed by commands: restrict who can read them.
 - `agent stop <team>` stops a team; stopping the daemon (`systemctl --user stop agent-daemon`) ends every run at
   once, and nothing starts until it runs again.
@@ -245,20 +239,31 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 ## Usage
 
 ```
-agent daemon                      runs the daemon: the owner of the state and of every model run
-agent run ...                     starts a task or a team on the repository the current directory is in
-agent status [--running] [--task] the teams the daemon knows, their rounds and a count of their tasks; --task adds the tasks; a task ends with its context
-agent answer <task> [-f <file>]   answers the questions of a task; it goes on with the answers
-agent say <task|team> <text>      says something to a task or a team, through the bus
+agent daemon                          runs the daemon: the owner of the state and of every model run
+agent run <agent> "task"              a solo task on the repository the current directory is in
+agent run <agents...> -f tasks.md     a team: one agent is a task of its own, more are a team
+          [--coordinator NAME] [--short-desc TEXT] [--no-merge] [--allow-unpushed-base]
+agent status [--running] [--task]     the teams, their rounds, their live tasks and a count of their tasks;
+                                      --running: only rounds that go on, with the workers that served them;
+                                      --task: every task with its plan and the parts of a split
+agent status <team|task|round>        one team, task or round; a task ends with the context of its last run
+agent status --investigators          what every investigator does now
+agent status --json                   the teams as one JSON array
+agent answer <task> [-f <file>]       answers the questions of a task; it goes on with the answers
+agent say <task|team> <words...>      a message to a task or a team, through the bus
 agent stop | pause | unpause | resume <task|team>
-agent remove <team> [--force]     takes a team out: its unmerged branches are bundled, its pull requests closed, its files deleted
-agent gate                        runs the repository's gate for a task and records its result
-agent log ...                     reads the history: rounds, teams, tasks, prompts, steps; --reminders: the reminders
-agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong and the context of each run, with the sessions above their bound
+agent remove <team> [--force]         takes a team out: unmerged branches bundled, pull requests closed, files deleted
+agent gate [task]                     runs the repository's gate for a task and records its result
+agent log [--round R | --team T]      the story of a round or a team from the history, or the daemon's log rows
+          [--task|--run|--agent|--level|--event|--since|--until|--grep|-n|-f] [--json] [--utc]
+agent log --reminders [--days N]      how often each agent was reminded and how it followed
+agent log --stats                     the size and the tables of the history
+agent debug --team T | --round R | --task K   a diagnostic bundle with a summary that names what is wrong
 ```
 
-`agent <command> --help` has the options of each. The next section describes what the daemon does with a team, in
-the order the features were built.
+`agent <command> --help` has the options of each. Two commands are hidden, for the harness itself:
+`agent guard-commit` (the `commit-msg` hook of the runs) and `agent _delegation-check` (called by `agentbus` when an
+agent delegates a step). The next section describes what the daemon does, by topic.
 
 `agent run` starts a team even when one of its agents works in another open team, and after the tasks it prints a line
 for each such agent: `  codex-1 is also in the open team team-20261119-165451-kfek (task task-20261119-165451-uv0g): its
@@ -277,13 +282,41 @@ Older clients and saved teams grant no such permission.
 
 ## What the daemon does
 
+The daemon starts every run, reads how it ended and decides what comes next. The subsections below go through what it
+does, topic by topic; [`docs/architecture.md`](docs/architecture.md) has the design behind it and
+[`docs/configuration.md`](docs/configuration.md) every key named here.
 
-A Claude Code run that exhausts its turn budget now resumes in the same session. Configure `[limits] max_turns`
-(default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task fails and
-notifies you with the count. Any other ending resets the count. `agent log` records `turn_limit` and the reason
-of its continuation. This build supports legacy socket protocol `3` and split-aware protocol `4`, reads existing
-state schema `2`, and migrates history to schema `8`. See [configuration](docs/configuration.md) and
-[state compatibility](docs/state.md#turn-limit-compatibility-item-88).
+### Runs and sessions
+
+A run is one start of an agent's CLI for a task; a session is the CLI's conversation, which later runs of the task
+resume. A run ends with a `STATUS:` line in the agent's final message — `DONE`, `QUESTIONS`, `FAILED` or `SLEEPING`
+(a coordinator or member waiting for the bus) — and the daemon acts on it.
+
+A Claude Code run that exhausts its turn budget resumes in the same session. Configure `[limits] max_turns`
+(default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task goes on in a new
+session (see [When a run goes wrong](#when-a-run-goes-wrong)), or fails and notifies you with the count when no new
+session is left. Any other ending resets the count. `agent log` records `turn_limit` and the reason of its continuation.
+
+**Context of a session.** Each run records the context size, the output tokens and the cost its CLI reports
+(Claude Code, opencode and Antigravity tell the context of each model call; Codex tells output tokens only, so its
+context is `not told`). `agent status <task>` ends with the context of the task's last run, or `context: not told`.
+`agent debug --team <team>` puts the context of each run into its summary and names every run whose last context is
+above its agent's bound: `[session] max_context` (default 150000 tokens; `0` switches it off), or the agent's own
+`max_context`. A session whose last run reached more tokens than the bound is not resumed: the task's next run starts
+a new session, whose prompt opens with the size that ended the old one and then the briefing of the checkpoint (what
+was to be done, what is done, what is left). A size the CLI did not tell resumes the session as before, and so does
+a bound of `0`. The new session is not counted against `[replacement] new_sessions`.
+
+An opencode or Codex agent may also name its model's window in its own `context` (tokens): the CLI then compacts the
+session at that window, before it grows past the bound, instead of the run failing when the provider refuses it.
+A window below the bound is allowed — that is what makes the CLI compact early. opencode is told the window only for
+a model registered under `openrouter` or `deepinfra`; Codex gets `-c model_context_window=N`. Claude Code and
+Antigravity are left as they were, and so is an opencode model of any other provider: for them `context` changes
+nothing. `output` (tokens, at most `context`) is the model's output limit, written next to the window in opencode's
+configuration; without it opencode is told `0`, which makes it use its fallback of 32000 output tokens instead of
+the model catalogue's, so set it for a model whose output limit is below that. Other CLIs ignore `output`.
+
+### Agents, workers and busy hand-overs
 
 An agent has one run at a time, over all its teams and solo tasks (`[limits] runs_per_agent`, default `1`; the agents
 of `[tiers] workers` use `runs_per_worker`). When an agent of a task that is queued already runs another task, the
@@ -308,6 +341,8 @@ when every notice has either been accepted or dropped. Only the agents listed in
 `busy_after = 0`) performs no busy hand-over and the task keeps waiting for its own agent. Tasks that are running, waiting
 for an answer of the human or for a review, a coordinator while one of its members runs, a reviewer, or a worker are never
 handed over. Pausing or stopping a queued task ends its busy wait; resuming starts a fresh `busy_after` interval.
+
+### Serena and the reminders
 
 **Serena: finding code.** With `[binaries] serena` set, every run is given Serena, the MCP server that finds code
 through language servers, and its first prompt says so in a short section (`prompts/harness/run/serena.md`) right after
@@ -357,7 +392,9 @@ their context; Codex tells none, so it has no file and is never reminded, and a 
 resumed session is told once, a new one anew; the reminder is kept in memory, so a restart of the daemon arms it again.
 `context_percent = 0` turns it off. Each reminder is the log event `context_reminded`.
 
-**The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
+### The plan of a task
+
+A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
 `[plan] roles` that ends `STATUS: DONE` while its plan is missing, does not parse, has a step still to do or in hand,
@@ -365,7 +402,7 @@ lost a step of its last version, or has a done step whose check failed (`mismatc
 the reason and up to 40 trailing lines of output) goes back to the same agent with the reason, at most `[plan] bounces`
 times per task (default 3; `0` only records); after that you are asked once, in the task's questions file, whether to go
 on as it is or send it back once more. A step whose check matches `[plan] check_refuse` stays `declared`, and the task's
-next run is told once in its prompt that the gate is never a step's check. Tasks created before this version are never
+next run is told once in its prompt that the gate is never a step's check. Tasks created before plans were checked are never
 sent back. The plan is kept out of git and out of the pull request: a plan an agent commits by mistake is taken out of
 its branch by a commit "Keep the plan out of the delivery". See [configuration](docs/configuration.md#plan).
 
@@ -381,9 +418,8 @@ judging and settling any run that was waiting for its check without re-running t
 recorded judgement. `agent status <task>` and `agent status <round>` show these states beside the steps.
 Recovery tolerates an unrelated process exiting while the daemon scans process groups, so that process cannot
 prevent the daemon from restarting a pending check. Malformed process records still fail recovery with context.
-Judgements are retained in history schema 17, which automatically upgrades older histories; keep a backup before
-upgrading if you need to return to an older daemon.
 
+### When a run goes wrong
 
 A run ending without a `STATUS:` line resumes automatically in the same session with a short prompt
 (`prompts/harness/run/resume-no-status.md`), up to twice in a row. After that the session itself is taken to have gone
@@ -403,11 +439,9 @@ more in a new session, briefed with the reason `failed` and the words its agent 
 `[replacement] agents` or to the team's lead (who may use the member's worktree and branch), and the human is asked only when
 no rung is left. The defaults of a configuration with no `[replacement]` section are `mode = "auto"`, `new_sessions = 1`,
 `replacements = 1` and `agents = []`: one new session, then the team's lead. A solo task or a coordinator that reports `STATUS: FAILED` after a tool call still
-ends failed, as before. `[replacement] mode = "off"` keeps a member's failure final, as before this version.
+ends failed. `[replacement] mode = "off"` keeps a member's failure final.
 The named log events `run_no_tool_retry` (`info`) and `run_no_tool_failed` (`warn`) record both transitions with the
-task, agent, CLI and model, so they can be monitored independently. History schema 21 admits these events through a
-forward migration that preserves old logs, round links, search text and the log cursor; back up the history before
-upgrading if you need to return to an older daemon.
+task, agent, CLI and model, so they can be monitored independently.
 Every failed team member also wakes its coordinator with the member, item and last words, whether or not it used tools.
 The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
@@ -425,7 +459,7 @@ message with a line `RETURNED: <item>` beside `STATUS:` (its role text says so).
 its own facts agree: the member's last run on the item ended `DONE` and the member is started again for it. The count is
 kept with the item, survives a restart, and `agent status` shows it on the member's line as `returned 3 of 5`
 (`[replacement] rejections = 5`; `0` has no limit) and on the round's line when one more return reaches the limit. A
-lead that writes no such line is never counted. In this version the count is shown; it does not yet replace the agent.
+lead that writes no such line is never counted. The count is shown only; reaching the limit does not yet replace the agent.
 `agent status` shows such a task as `in a new session`, and as `, for AGENT` when another agent took it over from AGENT. Automatic retries apply only to resumable tasks with a session (solo tasks,
 coordinators, and team members), excluding workers serving requests, reviewers, tasks without a session, or failures
 during startup or execution. Runs ending without a status line upon daemon shutdown or interruption (exit code `None`)
@@ -450,26 +484,28 @@ stopped: the lead is told once, in one message for all members, which commits an
 again), and when it ends `STATUS: DONE` again without the commits, the human is asked once with the list, also after a
 restart of the daemon (`prompts/harness/pr/notice-member-work-left.md`).
 
-Snapshots keep a worktree's work when its run was cut. When the daemon starts, it takes a snapshot of every task whose run did not end, if the round that run worked for is still open: everything in the worktree (uncommitted, staged, deleted, untracked and binary files; ignored files are left out) becomes a commit under `refs/agents/snapshots/<round>/<task>/<n>` in the repository, and the worktree, its index and its files do not change. `agent status <round>` shows the last snapshot of each task with its number, time and size. A snapshot above `[snapshot] warn_mb` (default `200`) is still taken and logged as `snapshot_large`; a snapshot that fails is logged as `snapshot_failed` and the daemon goes on. Snapshots are never pushed and never pruned yet: remove the references with `git update-ref -d` when you no longer need them. Two events and one history table (`snapshots`, migration `12`) describe them, see [`docs/history.md`](docs/history.md).
+### Snapshots, restarts and disk
+
+Snapshots keep a worktree's work when its run was cut. When the daemon starts, it takes a snapshot of every task whose run did not end, if the round that run worked for is still open: everything in the worktree (uncommitted, staged, deleted, untracked and binary files; ignored files are left out) becomes a commit under `refs/agents/snapshots/<round>/<task>/<n>` in the repository, and the worktree, its index and its files do not change. `agent status <round>` shows the last snapshot of each task with its number, time and size. A snapshot above `[snapshot] warn_mb` (default `200`) is still taken and logged as `snapshot_large`; a snapshot that fails is logged as `snapshot_failed` and the daemon goes on. Snapshots are never pushed and never pruned yet: remove the references with `git update-ref -d` when you no longer need them. Two events and one history table (`snapshots`) describe them, see [`docs/history.md`](docs/history.md).
 
 A run the daemon's stop or crash cut goes on, by default, in a **new session** of the same agent, in the same worktree and on the same branch: its first prompt is the briefing (`prompts/harness/run/briefing.md`) with the reason `daemon_down` — the run was cut from outside, not by the agent's fault. The briefing lists who worked on the task and how each run ended, the commits, the files left uncommitted (the snapshot above is taken first; they stay in the worktree byte for byte), the plan's steps as the harness judged them (confirmed, declared, mismatch, not done), your answers so far, and tells the agent to find the real state first, trust the confirmed steps, check the declared ones and repair the mismatch before anything else. The round keeps its pull request and its review passes, and the cut counts as no retry of the task. `[restart] session = "same"` in `agents.toml` resumes the session the run was cut in, as before. A stop of the daemon at the last retry of a session is no retry either. The briefing tells only the last run before a `daemon_down` session as cut by the daemon: the record of a run keeps no mark of an earlier cut, so an earlier stop is told as "no status". A reviewer, a worker and a task whose round is closed resume as before.
 
 Build directories (`target/`) are released when a round closes, and when a reviewer finishes while free disk space is below `disk.low_free_gb` (default `100`), logging `build_directory_removed`. Only `target/` within harness worktrees is ever removed. Free disk space is continuously tracked: below `disk.low_free_gb`, a notification lists the five largest worktrees and `agent status` reports the free space; below `disk.min_free_gb` (default `20`), `agent run` is refused with cleanup guidance, open rounds wait with a single notification, and waiting rounds resume automatically once free space is restored.
 `agent status` reads the last measured free space from `AGENTS_HOME/.free_space`, a plain number of bytes that the daemon writes at each measurement; the line is absent until the daemon has measured, and shows the reason when the file or `config.toml` cannot be read. When a state file cannot be saved, the daemon first runs the notification command once with the reason as its only argument and no file is written; a failure of that try is logged and the daemon stops as before.
 
-The Rust daemon keeps each team's investigator activities in `state.json`: investigator, task, rounds,
+### Investigators, tiers and splits
+
+The daemon keeps each team's investigator activities in `state.json`: investigator, task, rounds,
 assignment time and terminal outcome. Activities distinguish `team-member` (coordinator or member), `reviewer`
 (first review, verification or second opinion), `investigator` (questions and explanations) and `task-allocator`
 (task splitting and integration). Crew membership and review work are recorded today; the latter two kinds do
 not introduce new workflows. Reports remain recorded between reviews and after the item advances; stopped and
 failed assignments retain their ending time and the reason known by the daemon.
 
-State schema `11` automatically rebuilds this history when reading schemas `1`–`10`, using retained crew,
-reviews, fix passes and second-opinion attempts. Old records without exact opinion times use the earliest task
-run for assignment and its last run ending for completion, falling back to team creation or the latest retained
-run evidence. The activity record also supplies the investigator selection order below and the view
-`agent status --investigators`. See the
-[activity record](docs/state.md#investigator-activities).
+A state written before the activities were kept has them rebuilt from its crew, reviews, fix passes and second
+opinions. The activity record also supplies the investigator selection order (see
+[Pull requests, reviews and merges](#pull-requests-reviews-and-merges)) and the view `agent status --investigators`.
+See the [activity record](docs/state.md#investigator-activities).
 
 Task-list items can declare an optional column-zero [`Tier:` directive](docs/task-list.md#the-lines), defaulting
 to `normal`. Core decisions compare capabilities as investigator > normal > worker and prefer a fitting member
@@ -495,8 +531,7 @@ is answered, not dropped: it is recorded in the log and in the history as a corr
 sent a text of the catalog on the bus that says what was refused, why and what to do instead (deliver the part of its round;
 what does not fit is described for a task of its own), and it is woken for it, with no question to you. The status the run ended with is acted on as before, and a coordinator that repeats the
 line is told as many times as a proposal is corrected (`[split] corrections`, and at least once); after that only its own status counts. Every refusal is in the log (`request_refused`) and the history. Only `SPLIT:` and an
-item number is a submission. Existing configurations and split plans remain readable;
-history migration 15 preserves previous rows while admitting decision records. Requested tiers are retained;
+item number is a submission. Requested tiers are retained;
 items and parts are assigned only to agents meeting their minimum tier. When none fits, the harness writes one
 questions file for the lead and keeps the item waiting. An answer goes to the lead without permitting a lower-tier
 assignment; restarts do not repeat the question.
@@ -508,20 +543,14 @@ separate rounds, branches and pull requests after their dependencies merge; the 
 open until all parts merge. Each part's pull request and a line in `agent status` name its original item, letter,
 sibling pull requests so far, approval authority, requested tier and assigned agent. Historical executors remain
 visible after review and restart; facts missing from older states say `not recorded`. Definitions and progress
-survive restarts. All status views and show requests use socket protocol negotiation: the CLI probes `6`, then
-falls back to `5`, `4` and `3`
-when an older daemon refuses or closes a probe. Version `6` carries executor assignments and capability waits;
-versions `3`–`5` omit both so older strict clients remain compatible. Version `5` also carries plan summaries,
-which versions `3` and `4` omit. Split acknowledgements use protocol `4`, with a fallback to `3`; version `3`
-also omits split fields. Negotiation uses read-only status requests and caches its choice on the connection.
-The actual answer is sent once. Showing the full state of a split team requires protocol `4`.
-Schema `13` states from version 0.29.0 remain readable, with original round names and histories.
+survive restarts.
 
-The Rust CLI provides a read-only diagnostic bundle for one team:
+### Diagnostics: `agent debug`
+
+`agent debug` writes a read-only diagnostic bundle for one team, round or task — exactly one of them:
 
 ```sh
-agent debug --team TEAM_ID
-# Alternatively select --round ROUND_ID or --task TASK_ID; exactly one is required.
+agent debug --team TEAM_ID      # or --round ROUND_ID, or --task TASK_ID
 ```
 
 `--out DIR` selects the parent directory (the default is `<home>/debug/`), and `--stale-minutes N`
@@ -555,11 +584,12 @@ artifacts. Summary redaction precedes truncation and byte budgeting, including d
 Collection includes machine metrics (load average, memory and swap, filesystem space and inodes for home and temporary directories, daemon descendant processes with age and redacted command lines, and directory sizes for tasks and worktrees) and the fifty newest untracked files per worktree from a single git status listing. Filesystems at least 90% full by space or inodes trigger an anomaly. Complete untracked listings are saved as `untracked/<task>.txt`, separate from copied task files. See the
 [diagnostics design](docs/architecture.md#debug-diagnostics-commands-and-pure-decisions).
 
+### History and `agent log`
+
 The daemon records teams, rounds, runs and their steps and changes in `history.db`, together with gates, checks,
 pull requests, review and fix passes, questions, answers, controls and notifications. See
 [`docs/history.md`](docs/history.md) for `[history]` settings, read-only queries and lost-record reporting in
 `agent status`. Readers reject invalid variant fields even when SQLite constraints were bypassed.
-On its first start, version 0.74.0 migrates `history.db` to schema 20 to record team removals, preserving existing records. An older daemon refuses schema 20 as an unsupported newer database; keep a backup before upgrading if you need to return to an older daemon.
 Known values from `secrets.toml` are replaced with `[REDACTED]` before history persistence, including echoed CLI output;
 secret-bearing structured identities cause counted omissions. Raw CLI output files are separate from this protection; Rust tasks no longer write `activity.jsonl`.
 Git attribution may briefly hold a run at its boundaries: each snapshot has a `2`-second budget plus bounded process cleanup;
@@ -575,20 +605,17 @@ documents the setting.
 Two events tell a step of a round that GitHub or git failed: `github_step_waiting` (`warn`), logged once when the step
 starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_not_pass`), `next_try` and the line
 `agent status` shows; and `github_step_resumed` (`info`), logged once when it goes through, with `team` and
-`operation`. The tries in between log only the `github_call_failed` warnings of the calls themselves. A `history.db`
-made before this version is migrated at the start of the daemon (history version 11) so that it keeps these events;
-it also keeps `build_directory_removed` from then on, which such a file refused before.
+`operation`. The tries in between log only the `github_call_failed` warnings of the calls themselves.
 
-Read a round with `target/debug/agent log --round <round-id>`, or a team's rounds with
-`target/debug/agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
+Read a round with `agent log --round <round-id>`, or a team's rounds with `agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
 as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
 review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
 are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
-ordering and exit codes. Schema version `6` adds the search index and durable follow cursor after the daemon-log schema; older history files remain readable without migration
-by `agent log`, and the daemon migrates them when it opens them for writing.
+ordering and exit codes. `agent log` reads a history of an older schema without changing it; the daemon migrates it
+when it opens it for writing.
 
-Bare `target/debug/agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
+Bare `agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
 select rows instead of its story, or add a row filter: `--task`, `--run`, `--agent`, `--level`, `--event`,
 `--since`, `--until`, `--grep`, `-n` or `-f`. Filters intersect; `--json` emits one log row per line in this mode. Combining
 `--round` and `--team` also selects rows. A row query with no matches succeeds with empty output.
@@ -619,6 +646,20 @@ size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, 
 `changes`, `reviews`, `log` or `usage`. `[history] keep_days` removes expired closed rounds and their gate output;
 `[log] keep_days` removes old rows of no round. Both default to `0` (keep all), and open rounds always stay.
 
+The text of `agent log` shows times in the zone of this machine with its offset, as `date` does; `agent log --utc` shows
+them in UTC, as the files hold them, and `--json` is always UTC. A `--since` or `--until` without a zone is read in the
+zone of this machine.
+
+The story of a round or a team tells each run's usage at its own end, in one line that names the run:
+`run <id> usage: context first N, last M; output K; cost C USD`. The context is what the CLI's stream told: the input of
+the run's first and last model call with what came from its cache. A part the CLI did not tell reads `not told`, and so
+does a whole run without a row. `agent log --task <task>` and `--run <run>` tell the same line right after the
+`run_ended` row of each run (after the text, for a run whose end row is not in it), and `--show usage --json` gives a
+row of numbers (`null` for a part not told) for each run that has usage. A history written before usage was kept prints
+no usage line, and `--json` stories carry none.
+
+### Answers and controls
+
 How the human answers the agents and steers a task or a team, through the daemon (`agent daemon`) that owns the state:
 
 | Command | What it does |
@@ -636,6 +677,8 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
+
+### Removing a team
 
 `agent remove <team>` removes only that team's state, local branches, worktrees and task directories.
 It refuses an unknown team or a team with active runs, gates or worker checks. With `--force`, it ends and joins
@@ -659,35 +702,24 @@ the live team, although a pull request already closed stays closed.
 
 **Current limitations:** removal requires a surviving worktree to locate a Git repository. If none remains,
 it refuses without deleting state or files and names the known local branches: keep one worktree, or bundle and
-delete the branches by hand. The team record gains no repository-path field in this release.
+delete the branches by hand.
 The command marks the team done on the bus, but **the bus itself is neither read for wake-ups nor cleaned**.
 The output reports known reservations with their paths and each removed task's persisted wake-up budget
 (task, message number, count and state-file path). Bus unread messages and reservations remain; reservations
 last until expiry or manual release. Releasing these bus records is a separate follow-up.
-
-The `remove` request and `removed` reply add to the socket protocol; older commands keep their forms and an
-older daemon refuses the new command. History migration 20 admits the new event while preserving old logs,
-search entries and cursors; it does not change the live state's format.
 
 **Automatic idle removal:** by default, the daemon checks at startup and once per minute and removes a team
 after two hours without a run or new commit. It uses the same bundle, cleanup and notification safeguards as
 `agent remove`, including for document and artwork teams. Running work and checks, human pause/stop, quota or
 rate-limit reset waits, and accepted claims waiting for another team's pull request to merge protect the team.
 Work queued for an agent, including provider retries and rounds awaiting a free investigator, also protects the team.
-An unanswered question does not protect it. This release removes idle teams **without starting replacements**;
-`[limits] idle_team_restarts = 1` is reserved and has no effect yet. Version 0.76.0 supplies the internal
-recovery foundation: saved replacement identities, restart accounting and preserved merged progress. The daemon
-does not call it yet; automatic replacement will be activated by a separate task. See the
-[recovery state contract](docs/state.md#recovery-foundation).
+An unanswered question does not protect it. Idle teams are removed **without starting replacements**;
+`[limits] idle_team_restarts = 1` is reserved and has no effect yet: the state already keeps what a replacement will
+need ([recovery state contract](docs/state.md#recovery-foundation)), but the daemon does not start one.
 
-**Action:** set `[limits] idle_team_minutes = 0` before restarting the daemon if you want the old behavior.
-Old state loads using its recorded run and commit activity. Idle time counts from the later of that activity
-and the current daemon startup, so downtime never counts and an old team gets a full interval after restart. The optional
-`idle_watch` field preserves observations and a reported refusal across restarts. Older daemons cannot read that
-new field: keep a state backup before upgrading if you need to downgrade. State schema 15 migrates schema 14 while preserving its tasks, runs and renewals. It adds optional tool-use evidence
-and the durable no-tool retry reason. Older daemons cannot read the new fields: back up state before upgrading if you
-need to downgrade. History schema 21 preserves existing records while admitting the named no-tool retry and failure events. Socket protocol 8 adds the failure reason; older negotiated replies retain
-all runs but omit the new tool-use and no-tool renewal metadata.
+Set `[limits] idle_team_minutes = 0` to keep idle teams. Idle time counts from the later of the team's last run or
+commit and the current daemon startup, so downtime never counts and an old team gets a full interval after a restart.
+Observations and a reported refusal survive restarts.
 
 Before automatic deletion, enabled history must acknowledge a snapshot of the last activity, items, split parts,
 rounds and branches. If history or removal fails, the team stays and one notification names the refusal and its
@@ -695,7 +727,9 @@ branches. While the team remains idle, the daemon retries once a minute without 
 retry requires the history acknowledgement and removal safeguards again. Disabling history is an explicit
 opt-out from the history requirement; bundles and removal safeguards still apply.
 
-Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions in this version. Adding them needs a wrapper object, which would break scripts that read the array, so that is left to a later item.
+### `agent status`
+
+Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions, since adding them needs a wrapper object that would break scripts that read the array.
 
 The short view of a team, as `agent status` and `agent status --running` print it: the team, its rounds, its live tasks
 and the count. A task that runs says when it was last active; a reviewer says what it does or did (`working`, or when
@@ -772,7 +806,9 @@ is closed with how long it took (`took 3h 01m`). A round that goes on also says 
 The draft is told from the history (`history.db`), the rest from the daemon. When the history cannot be read — it is
 turned off, or its file is missing — such a round says `only local or PR draft`, and a last line says why.
 
-A run that ends with questions leaves `questions-<round>.md` in the task's directory and a notification file; with
+### Questions
+
+A run that ends with questions leaves `questions-<n>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the
 `**ANSWERED**` marker on its last line sends the answers as well (the daemon watches the file; a file saved while it was
 down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
@@ -780,6 +816,8 @@ control is written to the activity log of each task it reached, with who did it,
 
 VS Code server discovery skips plain files beside builds (such as `cli/servers/lru.json`) and in place of a build's
 `remote-cli` directory in either server layout. Directory symlinks are followed; other listing errors are reported.
+
+### Pull requests, reviews and merges
 
 With a `github_token` in `secrets.toml` the daemon runs the autopilot: when an item's branch has a green gate it opens the pull
 request, `[review] min_first_full_reviews` investigators from outside the team review it (default `2`). The harness publishes
@@ -838,7 +876,7 @@ requested" a question reaches you like any other. Answering grants another `[rev
 The notice names the allowance and open blocking findings. How it works, and its limits, are in
 [`docs/architecture.md`](docs/architecture.md) ("Pull requests, reviews and the merge").
 
-The Rust lead writes its contribution to `tasks/<lead>/description.md` under `AGENTS_HOME`, outside the repository.
+The lead writes its contribution to `tasks/<lead>/description.md` under `AGENTS_HOME`, outside the repository.
 Its prompt names the full path. Include what changed and why, tests and their results, deviations, out of scope,
 skipped tests and lint suppressions with their paths and reasons. The harness builds the PR description from its
 header, this file, measured **Size** and recorded **Gate**, and the tests changed after RED. It rebuilds the body
@@ -852,7 +890,7 @@ Review and verification requests carry the lead's gate record when it belongs to
 use that record and run single tests to investigate findings; they do not repeat the gate. Without a matching
 record, the request asks for `agent gate`. A reported red gate must identify the failed step and log line.
 
-Each posted Rust review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
+Each posted review starts with the investigator, CLI and configured model, a green **APPROVED** (`✅✅`) or
 red **REQUEST CHANGES** (`❌`) verdict, and the review pass and linked commit. The report follows a horizontal
 rule; its original `VERDICT:` line remains in local history. Commit IDs in pull request descriptions, branch
 update comments and reviews become GitHub links when git resolves them. Longer inline code spans, code fences,
@@ -947,12 +985,6 @@ stays closed. This return survives a daemon restart at either step.
 Reopening a PR before the daemon observes its closure preserves the claim; reopening it after observation never
 restores that claim. A stopped team resumes this recovery when its member is resumed.
 
-State schema 14 remains readable, including open claims written by 0.34.0. The optional
-`delivery_closed_at` field retains the observed closure on the abandoned round; no migration is needed for those
-states. Older binaries cannot read states containing the new field: keep a state backup before upgrading.
-History schema 14 adds the `delivery_closed` warning and migrates existing logs, search entries and cursors.
-Keep a backup of `history.db` before upgrading too: older agents cannot read history schema 14.
-
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
 description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00` and the step is tried again by itself, after 30
 seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
@@ -969,8 +1001,6 @@ explanation. The table retains the explanation and every verifier's evidence. A 
 `FINDING 3: RAISED [MAJOR] — why` (or `[BLOCKER]`), but cannot lower it independently. An accepted explanation
 can be raised again only after its affected file changes from the commit at which it was accepted.
 `agent log --round <round> --show reviews` includes explanations, acceptance, rejection and severity changes.
-State schema 6 migrates schema 5 without adding this protocol to active pull requests; history schema 8 adds
-these events while preserving existing records and search.
 
 With `[review] allow_second_opinion_on_blocker = true` (also the default when omitted), the lead may answer
 `FINDING 3: SECOND OPINION — why the blocker is false` once per open BLOCKER. Set the key to `false` to disable
@@ -1006,11 +1036,10 @@ recovery and replacements do not consume another fix pass. `agent status <round>
 its investigator and assignment time, or says it waits for a free independent investigator. `agent log <round>`
 tells the requests, unsuccessful assignments and decisions, including the first evidence line and the full evidence.
 
-State schema 9 migrates schema 8, including running fix passes, preserving FIXED answers and completed opinions.
-The optional attempt history defaults to empty; findings without opinion fields have had no second opinion.
-History schema 10 adds `second_opinion_ended` for replacement and exhaustion, alongside the existing
-`second_opinion_asked`, `finding_confirmed`, and `finding_not_confirmed` events and `second_opinion` run reason.
-Each request names its selected investigator. Existing records, links and search migrate automatically.
+The history records `second_opinion_asked`, `finding_confirmed`, `finding_not_confirmed` and `second_opinion_ended`
+(replacement and exhaustion), and each request names its selected investigator.
+
+### Checks before the review
 
 Before the review the daemon checks the round's own diff and commits through git, with no model, if the repository has a
 `[repos.NAME.checks]` table in `agents.toml` ([`docs/configuration.md`](docs/configuration.md)): the lists of path patterns that
@@ -1032,10 +1061,7 @@ line has a description derived from its brief: its first sentence cut to 70 char
 each team with its description in quotes, and `agent status --json` (alone, or with a team or a task) prints the teams as one
 JSON array in which each team has its `short_desc`. A notification about an item names the item the notification itself is
 about (a notice about a pull request or a failed member, for instance, names that item), and the notification that a whole
-team is done names none. `--short-desc` takes one line only. The summary of a team that the daemon sends gains the optional field
-`short_desc` in the current protocol (version 6); older negotiated protocols do not carry it, and a client from before
-this version must be replaced together with the daemon. The text of the notifications changed: a program that reads
-them must follow.
+team is done names none. `--short-desc` takes one line only.
 
 A task list can allow required path changes beforehand. Put `Allow: Cargo.toml` or, for example,
 `Allow: tests/**/*.golden` before its brief (after `Coordinator:` if present). The paths are relative to the repository
@@ -1083,6 +1109,8 @@ judged as a new commit. `git commit --no-verify` skips the hook; the checks
 before the review find the commit then, as before.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
+### The gate
+
 A gate is run with `agent gate`, by an agent in its worktree (the human can run it too):
 
 | Command | What it does |
@@ -1100,13 +1128,24 @@ or when the gate itself changed the tree or `HEAD`: such a gate may run, but its
 that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
 failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
 
-## The live panel
+### Compatibility and upgrades
+
+Each version reads what an older one wrote: the state (`state.json`, schema 15 now) is migrated when the daemon loads
+it, and the history (`history.db`, schema 28 now) when the daemon opens it for writing — `agent log` reads an older
+history as it is. A version that adds a field, a log event or a table migrates forward and keeps every record. The way
+back is closed: **an older daemon refuses a state or a history of a newer schema**, so keep a copy of `state.json` and
+`history.db` before an upgrade if you may need to return. The CLI and the daemon talk over `agent.sock` with protocol
+negotiation (versions 3 to 8 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
+older protocol lacks; an older daemon refuses a command it does not know, such as `remove`. Restart the daemon after
+installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
+changes and what you must do (**Action:**); [`docs/state.md`](docs/state.md) and [`docs/history.md`](docs/history.md)
+have the formats.
 
 ## MCP tools available to agents
 
 | Tool | Purpose |
 |---|---|
-| `list_agents`, `send_message`, `read_messages`, `wait_for_message`, `set_status` | communication |
+| `list_agents`, `send_message`, `read_messages`, `read_message`, `wait_for_message`, `set_status` | communication (`read_message` reads one long message whole by its number) |
 | `reserve`, `release`, `list_reservations` | shared resources |
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
 | `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
@@ -1114,8 +1153,10 @@ failure, a timeout and a refusal. The command says first where the result is rec
 | `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` matches against pool worker capabilities |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
-| `board_add`, `board_list`, `board_claim`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item) |
+| `board_add`, `board_list`, `board_claim`, `board_progress`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item; `board_progress` records how far the claimed item got) |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
+
+### Requests to workers
 
 **A request to a worker names its work.** A run whose role is in `[plan] roles` (a solo agent, a member or a
 coordinator, the investigator among them when it leads or works as one) sends the four new arguments beside `goal`,
@@ -1175,8 +1216,6 @@ notice names the serving worker and is published once, even when settlement is r
 Late results are dropped and logged. Failed preparation leaves a request dispatchable and never removes a
 running worker's workspace. Receipt recovery reads only newly appended messages after its first scan.
 Recovery log events `worker_request_requeued` and `worker_request_returned` are also stored in daemon history.
-Opening an older history upgrades its schema to 26 while preserving its records; older daemons refuse the upgraded
-history, so retain a backup if you need to downgrade.
 
 Before a wrong-result retry, the daemon retains a snapshot of the failed
 worker's work; a pool retry starts in a fresh workspace from the original requester's commit. The journal lives
@@ -1192,8 +1231,7 @@ The original workspace branch stays fixed even when the serving worker changes. 
 **A request nobody takes is returned.** A request that stays queued because no worker of the pool is free is noted at the
 daemon's first look at it (`tasks/<requester task>/worker-wait-<n>.json`; `agent status` shows `waiting since 21:10 (12 min)`).
 After `[workers] wait_seconds` (default `600`; `0` waits for ever) the daemon answers it `failed` and tells the requester, in the
-request's summary, to do the step itself; the log event is `worker_wait_returned`. Opening an older history upgrades its schema to 28
-while preserving its records; older daemons refuse the upgraded history.
+request's summary, to do the step itself; the log event is `worker_wait_returned`.
 See the [durable format](docs/state.md) and [protocol](docs/architecture.md#request-recovery-protocol).
 
 **When to give a step to a worker.** The texts of the member, the coordinator and the solo agent, and the bus's
@@ -1216,7 +1254,9 @@ description of a pull request gets the harness's section `## Steps done by a wor
 tasks that is done and names a step: `- step 1.2 of claude-1's plan — done by glm-1 (H3)`. A lead cannot write that
 section itself.
 
-**An agent in two teams.** An agent may be a member of several open teams at once, with a task, a worktree and a
+### An agent in two teams
+
+An agent may be a member of several open teams at once, with a task, a worktree and a
 session in each. A direct message (`send_message` to a name) sent from a session in a team is for the agent's session
 in that team only: it wakes only that task, and only that session reads it. Each session of an agent has its own read
 cursor, so reading in one team does not mark the other team's messages as read. A message to a name that is not a
