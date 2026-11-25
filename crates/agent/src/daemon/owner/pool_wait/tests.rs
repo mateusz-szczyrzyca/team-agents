@@ -184,6 +184,9 @@ async fn a_stale_note_that_could_not_be_removed_is_removed_at_a_later_pass() {
 
     rig.owner.serve_pool_requests().await.unwrap();
 
-    assert!(!rig.note(7).exists(), "the note of a request that is not queued is retried");
+    assert!(
+        !rig.note(7).exists(),
+        "the note of a request that is not queued is retried"
+    );
     assert!(rig.note(2).exists(), "the request that waits keeps its note");
 }
