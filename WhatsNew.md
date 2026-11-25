@@ -5,15 +5,6 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.97.0 — 25.11.2026 — PR pending
-
-### Bug fixes
-- [agent] A restart after a worker result was recorded but before its pending result was saved now finishes the request and tells the requester once who served it.
-- [agent] [agent-core] [agent-runtime] Recovery uses one retained-workspace context for startup and dispatch, preserving the failed provider preference across queued restarts.
-
-### Enhancements
-- [agent-core] [agent-runtime] Worker request returns and requeues are typed log events stored in history; existing history is upgraded automatically while preserving its records.
-
 ## 0.96.0 — 25.11.2026 — PR #252
 
 ### Bug fixes
