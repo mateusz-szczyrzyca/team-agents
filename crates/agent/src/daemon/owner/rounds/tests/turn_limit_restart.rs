@@ -1444,6 +1444,7 @@ async fn a_reviewer_refused_again_and_again_by_its_provider_is_replaced_after_th
         (26, RunEnd::RateLimited),
     ];
     runs_then_paused(&mut step, &task, asked, &refused);
+    counted_refusals(&mut step, &task, 4);
 
     assert_eq!(gone_after(&step, &team, asked, 27), vec![task]);
     crate::daemon::history::close(step.writer).await;
@@ -1470,5 +1471,75 @@ async fn a_reviewer_refused_after_it_worked_waits_the_patience_from_its_work() {
         Vec::<agent_core::ids::TaskId>::new()
     );
     assert_eq!(gone_after(&step, &team, asked, 35), vec![task]);
+    crate::daemon::history::close(step.writer).await;
+}
+
+/// Records that the reviewer `task` was refused `refusals` times in a row by its provider, as the daemon did when its
+/// last run ended.
+fn counted_refusals(step: &mut Stepped, task: &agent_core::ids::TaskId, refusals: u32) {
+    step.owner.parts.state.record_limit_refusals(task.clone(), refusals);
+}
+
+// Rule: a reviewer refused again after its retry is replaced as soon as the refusal rule says so, without waiting for
+// `replace_after_minutes` (issue #234).
+#[tokio::test]
+async fn a_reviewer_refused_after_its_retry_is_replaced_at_once() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    runs_then_paused(
+        &mut step,
+        &task,
+        asked,
+        &[(1, RunEnd::RateLimited), (9, RunEnd::RateLimited)],
+    );
+    counted_refusals(&mut step, &task, 2);
+
+    assert_eq!(gone_after(&step, &team, asked, 10), vec![task]);
+    crate::daemon::history::close(step.writer).await;
+}
+
+// Rule: a reviewer refused once keeps its review: it is tried again after its pause in the same session.
+#[tokio::test]
+async fn a_reviewer_refused_once_is_kept() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    runs_then_paused(&mut step, &task, asked, &[(1, RunEnd::RateLimited)]);
+    counted_refusals(&mut step, &task, 1);
+
+    assert_eq!(
+        gone_after(&step, &team, asked, 2),
+        Vec::<agent_core::ids::TaskId>::new()
+    );
+    crate::daemon::history::close(step.writer).await;
+}
+
+// Rule: a quota whose named reset is further away than `limit_wait_minutes` changes the agent at its first refusal.
+#[tokio::test]
+async fn a_reviewer_whose_quota_resets_after_the_wait_limit_is_replaced_at_its_first_refusal() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    let reset = agent_core::state::Timestamp::from_utc(asked.as_utc() + time::Duration::hours(5)).unwrap();
+    let quota = RunEnd::QuotaExhausted { resets_at: Some(reset) };
+    runs_then_paused(&mut step, &task, asked, &[(1, quota)]);
+    counted_refusals(&mut step, &task, 1);
+
+    assert_eq!(gone_after(&step, &team, asked, 2), vec![task]);
+    crate::daemon::history::close(step.writer).await;
+}
+
+// Rule: a reviewer that is quiet for another reason (here: its run was stopped, then the human paused it) is replaced
+// by `replace_after_minutes` as before, whatever the refusals it had earlier.
+#[tokio::test]
+async fn a_reviewer_quiet_for_another_reason_is_replaced_after_the_patience() {
+    let (_rig, mut step, team, task, asked) = a_review_to_come().await;
+    runs_then_paused(
+        &mut step,
+        &task,
+        asked,
+        &[(1, RunEnd::RateLimited), (5, RunEnd::Stopped)],
+    );
+
+    assert_eq!(
+        gone_after(&step, &team, asked, 14),
+        Vec::<agent_core::ids::TaskId>::new()
+    );
+    assert_eq!(gone_after(&step, &team, asked, 21), vec![task]);
     crate::daemon::history::close(step.writer).await;
 }

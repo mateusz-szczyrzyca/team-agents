@@ -4,6 +4,7 @@
 # action, and the last one stays for the runs after it. The slow actions let the other agents of a test finish first.
 #
 #   done            ends with STATUS: DONE
+#   opencode-verdict:V  as an OpenCode reviewer (its JSON records): ends with the line VERDICT: V, SUMMARY and STATUS: DONE
 #   done:TEXT       ends with TEXT, a line break and STATUS: DONE
 #   sleep           ends with STATUS: SLEEPING
 #   bus-sleep       reads its messages as the `--agent` its MCP configuration names, then ends with STATUS: SLEEPING
@@ -326,6 +327,10 @@ case $action in
     ;;
   opencode-done)
     printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"STATUS: DONE"}}\n' "$n"
+    ;;
+  opencode-verdict:*)
+    # As an OpenCode reviewer: its report is the verdict the action names, then STATUS: DONE (the `\\n` is a JSON line break).
+    printf '{"type":"text","sessionID":"ses_fixture_%s","part":{"type":"text","text":"VERDICT: %s\\nSUMMARY: fine\\nSTATUS: DONE"}}\n' "$n" "${action#opencode-verdict:}"
     ;;
   proposal:*)
     task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)

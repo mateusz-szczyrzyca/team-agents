@@ -173,3 +173,118 @@ fn a_reviewer_refused_again_and_again_is_replaced_after_the_patience() {
     assert!(replace_now(&awaited(TaskStatus::Paused, quiet_for(at(15)))));
     assert!(replace_now(&awaited(TaskStatus::Paused, quiet_for(at(27)))));
 }
+
+// Rule: a paused reviewer whose agent the refusal rule changes is replaced at once, whatever the patience.
+#[test]
+fn a_paused_reviewer_whose_agent_the_rule_changes_is_replaced_at_once() {
+    assert!(replace_after_refusal(
+        &awaited(TaskStatus::Paused, Duration::ZERO),
+        Some(Decision::ChangeAgent)
+    ));
+}
+
+// Rule: a reviewer that was not refused is replaced by the patience alone, as before.
+#[test]
+fn a_reviewer_the_rule_keeps_or_that_was_not_refused_waits_the_patience() {
+    let almost = PATIENCE.saturating_sub(Duration::from_secs(1));
+    let refusal = None;
+    assert!(!replace_after_refusal(
+        &awaited(TaskStatus::Paused, Duration::ZERO),
+        refusal
+    ));
+    assert!(!replace_after_refusal(&awaited(TaskStatus::Paused, almost), refusal));
+    assert!(replace_after_refusal(&awaited(TaskStatus::Paused, PATIENCE), refusal));
+}
+
+// Rule: a reviewer the rule pauses (refused once, its retry still to come) is kept until the retry, however long its
+// pause lasts: the silence of a refused run is not the patience's to count (review of #273).
+#[test]
+fn a_reviewer_the_rule_pauses_is_kept_whatever_the_silence() {
+    for quiet_for in [Duration::ZERO, PATIENCE, Duration::from_hours(8)] {
+        assert!(
+            !replace_after_refusal(&awaited(TaskStatus::Paused, quiet_for), Some(Decision::Pause)),
+            "{quiet_for:?}"
+        );
+    }
+}
+
+// Rule: the answer of the rule moves only a paused reviewer: one that works, waits, asks or reported is never replaced
+// by it, and one that failed or was stopped is replaced at once whatever the answer.
+#[test]
+fn the_rule_changes_nothing_for_a_reviewer_that_is_not_paused() {
+    for refusal in [Some(Decision::ChangeAgent), Some(Decision::Pause), None] {
+        for status in [
+            TaskStatus::Queued,
+            TaskStatus::Running,
+            TaskStatus::Questions,
+            TaskStatus::Waiting,
+            TaskStatus::Done,
+        ] {
+            assert!(
+                !replace_after_refusal(&awaited(status, Duration::from_hours(8)), refusal),
+                "{status:?} {refusal:?}"
+            );
+        }
+        for status in [TaskStatus::Failed, TaskStatus::Stopped] {
+            assert!(
+                replace_after_refusal(&awaited(status, Duration::ZERO), refusal),
+                "{status:?} {refusal:?}"
+            );
+        }
+    }
+}
+
+// Rule: a team whose lead is over does not go on: a refused reviewer is not replaced either.
+#[test]
+fn the_rule_does_not_replace_the_reviewer_of_a_team_whose_lead_is_over() {
+    for lead in [TaskStatus::Stopped, TaskStatus::Failed] {
+        let review = Awaited {
+            lead,
+            ..awaited(TaskStatus::Paused, Duration::from_hours(8))
+        };
+        assert!(!replace_after_refusal(&review, Some(Decision::ChangeAgent)), "{lead:?}");
+    }
+}
+
+/// An investigator name that is valid.
+fn investigator(name: &str) -> InvestigatorName {
+    name.parse().unwrap()
+}
+
+// Rule: the investigators of the refused provider are the ones a replacement skips; a provider that is only a prefix of
+// another one, or another CLI, is not the same provider.
+#[test]
+fn the_investigators_of_the_refused_provider_are_picked_out() {
+    let (kimi, qwen, router, claude) = (
+        investigator("inv-kimi"),
+        investigator("inv-qwen"),
+        investigator("inv-router"),
+        investigator("inv-claude"),
+    );
+    let all = [
+        Provided {
+            name: &kimi,
+            provider: "deepinfra",
+        },
+        Provided {
+            name: &qwen,
+            provider: "deepinfra",
+        },
+        Provided {
+            name: &router,
+            provider: "openrouter",
+        },
+        Provided {
+            name: &claude,
+            provider: "claude",
+        },
+    ];
+
+    assert_eq!(
+        on_provider("deepinfra", &all),
+        BTreeSet::from([kimi.clone(), qwen.clone()])
+    );
+    assert_eq!(on_provider("deep", &all), BTreeSet::new());
+    assert_eq!(on_provider("codex", &all), BTreeSet::new());
+    assert_eq!(on_provider("claude", &[]), BTreeSet::new());
+}
