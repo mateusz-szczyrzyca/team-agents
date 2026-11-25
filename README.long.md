@@ -989,7 +989,8 @@ question or a notification, and the harness's own work (a gate, a merge, a queue
 A test lists every state a round can wait in with its owner and fails when one is added without.
 
 When a task of the round (a reviewer, a member, a lead or a solo task) is paused because its provider refused its run,
-the line names the agent and the time it returns, in the local time zone, for example `waits for the provider of inv-gemini-argon until 10:07`;
+the line names the agent and the time it returns, in the local time zone, for example `waits for the provider of inv-gemini-argon until 10:07`
+(with the date and the offset when the return is more than a day away);
 it never says the round waits for an answer of the human unless a question is open; a pause the human asked for with `agent pause`
 still says the human.
 
