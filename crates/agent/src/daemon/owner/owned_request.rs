@@ -494,9 +494,9 @@ impl Owner {
         self.serving.remove(task);
         self.look_at(&team);
         if updated.phase() == &Phase::Exhausted {
-            tracing::info!(event = "worker_request_returned", request = %served.request, %run, "worker request exhausted its interruption bound");
+            tracing::info!(event = LogEvent::WorkerRequestReturned.as_str(), request = %served.request, %run, "worker request exhausted its interruption bound");
         } else {
-            tracing::info!(event = "worker_request_requeued", request = %served.request, %run, "worker request retained for another execution");
+            tracing::info!(event = LogEvent::WorkerRequestRequeued.as_str(), request = %served.request, %run, "worker request retained for another execution");
         }
         Ok(())
     }

@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `23` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `26` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -873,3 +873,9 @@ itself ends in ` (path)` gets ` (pattern)` after it. The summary of a `Glob` is 
 (`src/**/*.rs`). The harness reads the mark to tell a path from a pattern when it counts searches of code, and a history
 written before it has none: such a summary is read as a pattern, which searches the whole repository. The format of the
 table is unchanged.
+
+History version 26 admits the `worker_request_returned` and `worker_request_requeued` information events.
+Its migration (`026-worker-request-recovery.sql`) preserves existing daemon logs, round links, search entries and
+cursors. The populated version-25 fixture `crates/agent-runtime/tests/fixtures/history-before-worker-recovery.sql`
+verifies that earlier log records remain readable with the recovery events. Older daemons refuse the upgraded
+history; keep a backup before upgrading if you need to return to an older daemon.

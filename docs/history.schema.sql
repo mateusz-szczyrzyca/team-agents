@@ -1,4 +1,4 @@
-PRAGMA user_version = 25;
+PRAGMA user_version = 26;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -356,7 +356,7 @@ CREATE TABLE daemon_logs (
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
         'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry',
-        'commit_reminded', 'commit_followed', 'context_reminded'
+        'commit_reminded', 'commit_followed', 'context_reminded', 'worker_request_returned', 'worker_request_requeued'
     )),
     team TEXT,
     task TEXT,
@@ -384,7 +384,7 @@ CREATE TABLE daemon_logs (
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'serena_reminded', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
-            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded'
+            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded', 'worker_request_returned', 'worker_request_requeued'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )

@@ -375,7 +375,7 @@ stderr/journal (replay at `info`). These diagnostics are not daemon history data
 The daemon also emits tracing diagnostics `worker_request_requeued` and `worker_request_returned` at `info`,
 with `request` and `run`, after replaying the bus update for an interruption. The first keeps the workspace
 for another execution; the second reports exhaustion of the three-return budget. Replaying startup repair may
-repeat these diagnostics, but never the final requester notice. They are not history database events.
+repeat these diagnostics, but never the final requester notice. They are stored in daemon history from schema 26.
 
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers
