@@ -428,55 +428,18 @@ impl Owner {
             .id()
             .clone();
         let step = self.step_of_request(served.request).await;
-        let causes;
-        let notice;
-        let change = if updated.phase() == &Phase::Exhausted {
-            causes = updated
-                .events()
-                .iter()
-                .filter_map(|event| match event {
-                    Transition::Interrupted { cause, .. } => Some(cause.as_str()),
-                    Transition::RestartedQueued { .. } => {
-                        Some(agent_core::decide::worker_recovery::Cause::RestartQueued.as_str())
-                    }
-                    Transition::Started { .. }
-                    | Transition::Assigned { .. }
-                    | Transition::Rejected { .. }
-                    | Transition::Observed { .. }
-                    | Transition::Settled { .. } => None,
-                })
-                .collect::<Vec<_>>()
-                .join(", ");
-            let entries = self.parts.bus.helper_list(false).await?;
-            let entry = entries
-                .iter()
-                .find(|entry| entry.id == served.request)
-                .ok_or(OwnerError::RequestOwnership)?;
-            let step = match &entry.step {
-                Some(step) => step.as_str(),
-                None => "unlabelled",
-            };
-            let values = agent_core::prompt::Variables::new()
-                .with("request_id", served.request.number().to_string())
-                .map_err(super::NoticeRenderError::from)?
-                .with("worker", served.worker.to_string())
-                .map_err(super::NoticeRenderError::from)?
-                .with("step", step)
-                .map_err(super::NoticeRenderError::from)?
-                .with("causes", &causes)
-                .map_err(super::NoticeRenderError::from)?;
-            notice = self
-                .parts
-                .team_texts
-                .render(agent_core::prompt::TeamPrompt::WorkerInterruptedReturned, &values)
-                .map_err(super::NoticeRenderError::from)?;
-            OwnedChange::Settle {
-                result: RequestResult::Failed,
-                summary: &causes,
-                notice: &notice,
-            }
+        let returned = if updated.phase() == &Phase::Exhausted {
+            Some(self.returned_interruption_texts(updated, served).await?)
         } else {
-            OwnedChange::Retry
+            None
+        };
+        let change = match &returned {
+            Some((causes, notice)) => OwnedChange::Settle {
+                result: RequestResult::Failed,
+                summary: causes,
+                notice,
+            },
+            None => OwnedChange::Retry,
         };
         let outcome = self
             .parts
@@ -519,6 +482,54 @@ impl Owner {
         )
         .await;
         Ok(())
+    }
+
+    /// The causes of the interruptions of `served`'s request and the notice that returns it to its requester.
+    async fn returned_interruption_texts(
+        &mut self,
+        updated: &Journal,
+        served: &super::teams::Served,
+    ) -> Result<(String, String), OwnerError> {
+        let causes = updated
+            .events()
+            .iter()
+            .filter_map(|event| match event {
+                Transition::Interrupted { cause, .. } => Some(cause.as_str()),
+                Transition::RestartedQueued { .. } => {
+                    Some(agent_core::decide::worker_recovery::Cause::RestartQueued.as_str())
+                }
+                Transition::Started { .. }
+                | Transition::Assigned { .. }
+                | Transition::Rejected { .. }
+                | Transition::Observed { .. }
+                | Transition::Settled { .. } => None,
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        let entries = self.parts.bus.helper_list(false).await?;
+        let entry = entries
+            .iter()
+            .find(|entry| entry.id == served.request)
+            .ok_or(OwnerError::RequestOwnership)?;
+        let step = match &entry.step {
+            Some(step) => step.as_str(),
+            None => "unlabelled",
+        };
+        let values = agent_core::prompt::Variables::new()
+            .with("request_id", served.request.number().to_string())
+            .map_err(super::NoticeRenderError::from)?
+            .with("worker", served.worker.to_string())
+            .map_err(super::NoticeRenderError::from)?
+            .with("step", step)
+            .map_err(super::NoticeRenderError::from)?
+            .with("causes", &causes)
+            .map_err(super::NoticeRenderError::from)?;
+        let notice = self
+            .parts
+            .team_texts
+            .render(agent_core::prompt::TeamPrompt::WorkerInterruptedReturned, &values)
+            .map_err(super::NoticeRenderError::from)?;
+        Ok((causes, notice))
     }
 
     /// The step of the plan that the open request `request` is for, as text; none when the bus does not list it or cannot
