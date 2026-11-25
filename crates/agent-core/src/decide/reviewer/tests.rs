@@ -183,19 +183,17 @@ fn a_paused_reviewer_whose_agent_the_rule_changes_is_replaced_at_once() {
     ));
 }
 
-// Rule: a reviewer refused once is kept (the rule says pause), and one that was not refused is replaced by the patience
-// alone, as before.
+// Rule: a reviewer that was not refused is replaced by the patience alone, as before.
 #[test]
 fn a_reviewer_the_rule_keeps_or_that_was_not_refused_waits_the_patience() {
     let almost = PATIENCE.saturating_sub(Duration::from_secs(1));
-    for refusal in [Some(Decision::Pause), None] {
-        assert!(!replace_after_refusal(
-            &awaited(TaskStatus::Paused, Duration::ZERO),
-            refusal
-        ));
-        assert!(!replace_after_refusal(&awaited(TaskStatus::Paused, almost), refusal));
-        assert!(replace_after_refusal(&awaited(TaskStatus::Paused, PATIENCE), refusal));
-    }
+    let refusal = None;
+    assert!(!replace_after_refusal(
+        &awaited(TaskStatus::Paused, Duration::ZERO),
+        refusal
+    ));
+    assert!(!replace_after_refusal(&awaited(TaskStatus::Paused, almost), refusal));
+    assert!(replace_after_refusal(&awaited(TaskStatus::Paused, PATIENCE), refusal));
 }
 
 // Rule: a reviewer the rule pauses (refused once, its retry still to come) is kept until the retry, however long its
