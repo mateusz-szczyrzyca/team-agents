@@ -305,8 +305,9 @@ impl CodexParser {
     }
 
     /// An error that ends or may end the run: its message is a step and a line of the error tail.
-    fn failure(&mut self, message: String) -> Vec<ActivityEvent> {
+    fn failure(&mut self, message: String, line: &str) -> Vec<ActivityEvent> {
         self.progress.note_error_line(&message);
+        self.progress.note_refusal(line);
         vec![ActivityEvent::Error(message)]
     }
 }
@@ -344,9 +345,9 @@ impl OutputParser for CodexParser {
             }
             Event::TurnFailed { error } => {
                 self.progress.stream = StreamOutcome::Failed;
-                self.failure(error.message)
+                self.failure(error.message, line)
             }
-            Event::Error { message } => self.failure(message),
+            Event::Error { message } => self.failure(message, line),
             Event::Other => Vec::new(),
         })
     }

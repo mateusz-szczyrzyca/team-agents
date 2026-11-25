@@ -15,6 +15,7 @@ fn pause(until: u32) -> Pause {
     Pause {
         until: at(until),
         reason: PauseReason::Quota,
+        kind: agent_core::decide::refusal::Kind::Quota,
         evidence: "usage limit".to_owned(),
     }
 }

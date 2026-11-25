@@ -27,14 +27,18 @@
 //! `[limits]` `quota_pause_minutes` or `rate_limit_pause_minutes` have passed, plus the margin. It is never longer than
 //! [`MAX_PAUSE`]. Hangs and everything else pause nothing; [`after_hang`] decides whether a hung run is resumed.
 
+use serde_json::Value;
 use time::error::ConversionRange;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDateTime, UtcOffset};
 
 use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
 use crate::kinds::Role;
+use crate::local_time::Zone;
 use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
+
+use super::refusal;
 
 /// Seconds added to every pause, so that a run does not start a moment before the limit really ends.
 pub const RESET_MARGIN: Duration = Duration::minutes(1);
@@ -118,8 +122,10 @@ pub struct Pause {
     pub until: Timestamp,
     /// Why it waits.
     pub reason: PauseReason,
-    /// The line of the CLI's output that showed the limit, trimmed and cut after [`MAX_EVIDENCE_CHARS`] characters,
-    /// for the notification.
+    /// The kind read from the provider's fields, or from the classified reason for plain text.
+    pub kind: refusal::Kind,
+    /// The provider's status, bounded message and code, with a local structured reset when present.
+    /// Plain text without structured fields is trimmed and bounded by [`MAX_EVIDENCE_CHARS`].
     pub evidence: String,
 }
 
@@ -220,6 +226,12 @@ const UNIX_TIME_DIGITS: usize = 10;
 /// What `limit reached|` is followed by in the final message of an old Claude Code: the Unix time of the reset.
 const UNIX_RESET_MARKER: &str = "limit reached|";
 
+/// The `type` of a Claude Code record about a rate-limit window.
+const RATE_LIMIT_EVENT: &str = "rate_limit_event";
+
+/// The `status` of a rate-limit window that refused the request.
+const REJECTED: &str = "rejected";
+
 /// Digits of a year in a date such as `Nov 12th, 2026`.
 const YEAR_DIGITS: usize = 4;
 
@@ -307,7 +319,10 @@ pub fn classify_outcome(
             (StatusLine::Absent, Some(message)) => ErrorTail::from_text(message, context.limits.tail_lines),
             (StatusLine::Absent, None) | (StatusLine::Reported(_) | StatusLine::Unknown(_), _) => ErrorTail::default(),
         };
-        if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
+        if let Some(limit) = find_limit(
+            output.error_tail.lines().iter().chain(message.lines()),
+            output.error_tail.refusal(),
+        ) {
             return limit.classify(context);
         }
     }
@@ -334,16 +349,27 @@ pub fn classify_outcome(
 struct Limit {
     /// Which limit it is.
     reason: PauseReason,
-    /// The first line that showed it, trimmed and cut.
+    /// The typed refusal kind.
+    kind: refusal::Kind,
+    /// The provider summary, or the first bounded plain-text line.
     evidence: String,
     /// The lines of that kind, in lower case: where the reset time is looked for.
     lines: Vec<String>,
+    /// The moment a rejected Claude rate-limit window opens again, from its own field, whatever the reason; it is exact,
+    /// so it is preferred to any time the text says.
+    window: Option<UtcDateTime>,
 }
 
 /// The provider limit that `lines` — the error tail and the tail of the final message of a failed run — show, if any: an
 /// exhausted quota wins over a rate limit, as in the old harness.
-fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
+fn find_limit<'a>(
+    lines: impl Iterator<Item = &'a String>,
+    description: Option<&refusal::Description>,
+) -> Option<Limit> {
+    let lines: Vec<&String> = lines.collect();
+    let window = lines.iter().find_map(|line| rejected_window(line));
     let shown: Vec<(&str, String, PauseReason)> = lines
+        .iter()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
@@ -359,10 +385,24 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
     } else {
         PauseReason::RateLimit
     };
-    let evidence = shown
-        .iter()
-        .find(|(_, _, shown)| *shown == reason)
-        .map(|(line, _, _)| line.chars().take(MAX_EVIDENCE_CHARS).collect::<String>())?;
+    let first = shown.iter().find(|(_, _, shown)| *shown == reason)?;
+    let structured = description.cloned().or_else(|| {
+        lines
+            .iter()
+            .filter_map(|line| refusal::read(line))
+            .reduce(refusal::Description::followed_by)
+    });
+    let kind = structured
+        .as_ref()
+        .and_then(|description| description.kind)
+        .unwrap_or(match reason {
+            PauseReason::Quota => refusal::Kind::Quota,
+            PauseReason::RateLimit => refusal::Kind::RateLimit,
+        });
+    let evidence = structured.map_or_else(
+        || first.0.chars().take(MAX_EVIDENCE_CHARS).collect(),
+        |description| description.evidence(),
+    );
     let lines = shown
         .into_iter()
         .filter(|(_, _, shown)| *shown == reason)
@@ -370,9 +410,27 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
         .collect();
     Some(Limit {
         reason,
+        kind,
         evidence,
         lines,
+        window,
     })
+}
+
+/// The moment the rejected Claude rate-limit window that `line` records opens again: the `resetsAt` of its
+/// `rate_limit_event`. A line that is not JSON, or another record, or a window that did not refuse, gives none.
+fn rejected_window(line: &str) -> Option<UtcDateTime> {
+    // A line that is not JSON is no record: the text forms of the reset are read from it instead.
+    let record: Value = serde_json::from_str(line).ok()?;
+    if record.get("type")?.as_str()? != RATE_LIMIT_EVENT {
+        return None;
+    }
+    let info = record.get("rate_limit_info")?;
+    if info.get("status")?.as_str()? != REJECTED {
+        return None;
+    }
+    let opens = info.get("resetsAt")?.as_i64()?;
+    UtcDateTime::from_unix_timestamp(opens).ok()
 }
 
 /// What a line, in lower case, says about the provider's limits: a quota first, then a rate limit or an overload.
@@ -442,7 +500,8 @@ impl Limit {
     /// The end and the pause of a run that stopped on this limit.
     fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
-        let reset = reset_time(&self.lines, now, context.local_offset);
+        let structured = self.window.filter(|reset| *reset > now);
+        let reset = structured.or_else(|| reset_time(&self.lines, now, context.local_offset));
         let wait = match reset {
             Some(reset) => (reset - now).min(MAX_PAUSE),
             None => self.default_pause(context.limits)?,
@@ -458,12 +517,17 @@ impl Limit {
             },
             PauseReason::RateLimit => RunEnd::RateLimited,
         };
+        let evidence = match structured {
+            Some(reset) => with_local_reset(&self.evidence, recorded(reset, context.now)?, context),
+            None => self.evidence,
+        };
         Ok(Classified {
             end,
             pause: Some(Pause {
                 until,
                 reason: self.reason,
-                evidence: self.evidence,
+                kind: self.kind,
+                evidence,
             }),
         })
     }
@@ -476,6 +540,13 @@ impl Limit {
         };
         Duration::try_from(minutes.as_duration()).map_err(|source| ClassifyError::DefaultPauseTooLong { source })
     }
+}
+
+/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets <RFC 3339>`. The evidence
+/// already bounds message fields, so status and provider code survive the reset suffix.
+fn with_local_reset(evidence: &str, reset: Timestamp, context: &LimitContext<'_>) -> String {
+    let suffix = format!(" · resets {}", Zone::Fixed(context.local_offset).rfc3339(reset));
+    format!("{evidence}{suffix}")
 }
 
 /// `time` as a [`Timestamp`], for the run that ended at `now`.
@@ -508,7 +579,12 @@ fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<U
 /// `limit reached|1794478200`.
 fn read_unix_time(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
     let (_, after) = line.split_once(UNIX_RESET_MARKER)?;
-    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    unix_time_digits(after)
+}
+
+/// The Unix time of the ten digits that start `text`, when it starts with ten digits.
+fn unix_time_digits(text: &str) -> Option<UtcDateTime> {
+    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
     if digits.len() != UNIX_TIME_DIGITS {
         return None;
     }
@@ -1750,6 +1826,67 @@ mod tests {
         let evidence = failed(None, &long).pause.unwrap().evidence;
         assert_eq!(evidence.chars().count(), MAX_EVIDENCE_CHARS);
         assert!(long.starts_with(&evidence));
+    }
+
+    // Rule: a provider's record that names its status, message and code is the evidence as it is described, not the
+    // raw line; a line of another shape stays the evidence as it is.
+    #[test]
+    fn a_refusal_record_is_the_evidence_in_its_words() {
+        let record = r#"{"type":"error","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"code\":\"engine_overloaded\"}}"}}}"#;
+        let class = failed(None, record);
+        assert_eq!(
+            class.pause.map(|p| p.evidence),
+            Some("an overload: 429 · Model busy, retry later · engine_overloaded".to_owned())
+        );
+    }
+
+    /// Claude's rejected rate-limit window, which resets at 12:00 UTC, and the text of its result, which says 3pm local.
+    const REJECTED_WINDOW: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794484800,"rateLimitType":"five_hour"}}"#;
+    const RESULT_TEXT: &str = "API Error: 429 rate limit exceeded · resets 3pm";
+
+    // Rule: the reset of a rejected Claude window is its resetsAt, the moment the window opens again; the text's time
+    // of day is only read when the window names none.
+    #[test]
+    fn a_rejected_window_resets_at_its_field_before_the_text() {
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
+        assert_eq!(class.end, RunEnd::RateLimited);
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T12:01:00Z"));
+    }
+
+    // Rule: a structured reset is told in the machine's local time in the evidence, as the notices tell times.
+    #[test]
+    fn a_structured_reset_is_told_in_local_time_in_the_evidence() {
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
+        let evidence = class.pause.unwrap().evidence;
+        assert!(evidence.starts_with("a quota: rejected"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+    }
+
+    // Rule: a rejected window's resetsAt is the JSON field of the window, whatever the spacing of its line.
+    #[test]
+    fn a_rejected_window_reads_its_field_as_json_with_any_spacing() {
+        let spaced = r#"{"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1794484800, "rateLimitType": "five_hour"}}"#;
+        let class = failed(None, &format!("{spaced}\n{RESULT_TEXT}"));
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T12:01:00Z"));
+    }
+
+    // Rule: only a rejected window's own field gives the reset: a record with a resetsAt of another kind does not.
+    #[test]
+    fn a_resets_at_field_outside_a_rejected_window_gives_no_structured_reset() {
+        let other = r#"{"type":"assistant","resetsAt":1794484800,"text":"API Error: 429 rate limit exceeded"}"#;
+        let class = failed(None, &format!("{other}\n{RESULT_TEXT}"));
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T14:01:00Z"));
+    }
+
+    // Rule: a rejected window keeps its exact reset when the text that wins is a quota: the reason is the text's, the
+    // reset is the window's.
+    #[test]
+    fn a_rejected_window_keeps_its_reset_when_a_quota_text_wins() {
+        let quota_text = "You've hit your limit · resets 3pm";
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{quota_text}"));
+        assert_eq!(class.end, quota(Some("2026-11-12T12:00:00Z")));
+        let evidence = class.pause.unwrap().evidence;
+        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
     }
 
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.

@@ -358,6 +358,15 @@ times (default `1`); when the retries are used up, or a quota's reset is later t
 Acting on that answer (handing the task to another provider's agent) is not in this version: the task keeps its pause.
 `agent status` shows a refused agent with its return time.
 
+**What the notice of a refusal says.** The notice of a pause names what the provider said, from the fields of the CLI's
+record when it writes them: the kind of refusal (an overload, a rate limit or a quota), then the status, the message and
+the provider's code, for example `an overload: 429 · Model busy, retry later · engine_overloaded`. The raw line stays in
+the run's files. The resume time in the notice is in the zone of the host, with that moment's offset, as the notice's
+header is. Claude five-hour and seven-day usage windows are shown as quotas, with the final result's HTTP status and
+message. A rejected window uses its future reset time (`resetsAt` of the `rate_limit_event`), shown in the host's zone;
+a missing, expired or invalid structured reset falls back to the reset in the text. Long messages are shortened while
+the status and provider code remain visible.
+
 ### Serena and the reminders
 
 **Serena: finding code.** With `[binaries] serena` set, every run is given Serena, the MCP server that finds code

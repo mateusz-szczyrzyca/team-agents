@@ -2079,6 +2079,7 @@ impl Owner {
                 let notice = Notice::Paused {
                     until: pause.until,
                     reason: pause.reason,
+                    kind: pause.kind,
                     evidence: pause.evidence,
                 };
                 (TaskStatus::Paused, Some(notice))
