@@ -944,10 +944,7 @@ impl Owner {
 
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
-        // An agent its provider refused starts no queued task before its return, as it takes no new one.
-        let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
-        let queued: Vec<Queued> = self
+        let waiting: Vec<Queued> = self
             .parts
             .state
             .queued_tasks()
@@ -956,13 +953,27 @@ impl Owner {
                 !(self.in_flight.contains(&item.task)
                     || self.pending_removals.contains(&item.task)
                     || self.request_recovery == owned_request::RequestRecovery::Pending
-                        && item.tier == agent_core::kinds::Tier::Worker
-                    || refused.contains(&item.agent))
+                        && item.tier == agent_core::kinds::Tier::Worker)
             })
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits
-            .retain(|task| queued.iter().any(|item| item.task == *task));
+            .retain(|task| waiting.iter().any(|item| item.task == *task));
+        // An agent its provider refused gets no new task before its return. A task that has run before is a retry,
+        // which its pause and a resume of the human govern, so only a task with no run yet waits here.
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
+        let queued: Vec<Queued> = waiting
+            .into_iter()
+            .filter(|item| {
+                !(refused.contains(&item.agent)
+                    && self
+                        .parts
+                        .state
+                        .find_task(&item.task)
+                        .is_some_and(|task| task.member.runs().is_empty()))
+            })
+            .collect();
         if queued.is_empty() {
             return Ok(());
         }
