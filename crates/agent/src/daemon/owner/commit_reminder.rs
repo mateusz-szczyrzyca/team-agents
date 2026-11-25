@@ -140,11 +140,28 @@ impl Owner {
         let Some((repo, watched)) = self.watched_in(team) else {
             return;
         };
-        for target in watched {
-            if section.lines == 0 || section.minutes == 0 {
-                continue;
+        if section.lines == 0 || section.minutes == 0 || watched.is_empty() {
+            return;
+        }
+        // One reading of the clock for the whole look: a task's look is throttled by it, and every reading counts for a
+        // clock that ticks.
+        let now = match Timestamp::now(&self.parts.clock) {
+            Ok(now) => now,
+            Err(source) => {
+                tracing::warn!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    operation = "commit_reminder",
+                    error = %error_chain(&LookError::Clock { source }),
+                    "the worktrees were not looked at for the reminder to commit"
+                );
+                return;
             }
-            if let Err(error) = self.remind_one(&repo, &target, section.lines, section.minutes).await {
+        };
+        for target in watched {
+            if let Err(error) = self
+                .remind_one(&repo, &target, now, section.lines, section.minutes)
+                .await
+            {
                 tracing::warn!(
                     event = error.event().as_str(),
                     task = %target.task,
@@ -205,10 +222,15 @@ impl Owner {
         &mut self,
         repo: &RepoName,
         target: &Watched,
+        now: Timestamp,
         lines: u32,
         minutes: u32,
     ) -> Result<(), LookError> {
-        let now = Timestamp::now(&self.parts.clock).map_err(|source| LookError::Clock { source })?;
+        // The idle time is counted from the later of the last commit and the start of the run, so it cannot reach `minutes`
+        // before the run is that old: a young run needs no look at its worktree.
+        if minutes_between(target.run_started, now) < u64::from(minutes) {
+            return Ok(());
+        }
         if self
             .commit_looked_at
             .get(&target.task)
