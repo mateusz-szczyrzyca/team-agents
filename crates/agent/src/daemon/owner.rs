@@ -25,6 +25,7 @@ mod owned_request;
 mod plan;
 mod pool_wait;
 #[cfg(test)]
+#[path = "owner/refusal_fix/tests.rs"]
 mod refusal_fix_tests;
 mod reminder;
 mod removal;
