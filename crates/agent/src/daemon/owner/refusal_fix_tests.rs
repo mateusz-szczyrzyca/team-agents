@@ -1031,3 +1031,12 @@ async fn refusal_wait_notice_names_the_full_quota_reset_instead_of_the_earlier_w
     }
     assert_eq!(owner.wakes.get(&task(1)), Some(&at(3600)));
 }
+
+#[tokio::test]
+async fn refusal_wake_recheck_discards_a_removed_tasks_deadline() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.wakes.insert(task(59), at(0));
+    owner.wake_due().await.unwrap();
+    assert_eq!(owner.wakes.get(&task(59)), None);
+}
