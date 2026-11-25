@@ -1,7 +1,8 @@
 # AGENTS.md — team-agents
 
 Instructions for AI agents (and humans) working on this repository. They are binding. Read the whole file
-before you start; the [README](README.md) explains how the system is used.
+before you start; the [README](README.md) introduces the system and [`README.long.md`](README.long.md) explains
+how it is used.
 
 ## What this repository is
 
@@ -76,7 +77,7 @@ file and why; a skipped test belongs in the PR's `## Skipped tests` section, wit
    that the daemon parses, the `agent` CLI and the protocol of its socket, the keys of `agents.toml` and
    `secrets.toml`, the MCP tool names and arguments, the log event names. A change
    to any of them needs backward compatibility (old data still readable) or a migration, tests for both, and a
-   README update. Say it in the PR description. `agentbus/testdata/state-legacy.json` is a bus state written
+   `README.long.md` update. Say it in the PR description. `agentbus/testdata/state-legacy.json` is a bus state written
    by an earlier version: it must keep loading (`TestLegacyStateLoads`). When you change a persisted type, add a
    fixture of the format before your change and a test that loads it. Remember that stricter validation of an
    old value is a breaking change too: one rejected value makes the whole bus state unreadable.
@@ -209,7 +210,7 @@ func (s *Server) quizStart(question string) (string, *QuizStartError)
    returning `(string, *<Op>Error)`; dispatch it in `callTool` with `toolResult(...)`.
 3. Bus events for it in `events.go`; log events in `logging.go` if needed.
 4. Tests: every cause (`failsWith(t, <Op><Cause>)(...)`), the success path, and the dispatcher.
-5. Document it in the README ("MCP tools available to agents") and, if agents should use it, in the prompts.
+5. Document it in `README.long.md` ("MCP tools available to agents") and, if agents should use it, in the prompts.
 
 ## Shell scripts (`tools/`, `examples/`)
 
@@ -276,8 +277,12 @@ under `crates/`: its layout, its process model and the rules every item of the p
 
 ## Documentation
 
-- Every user-visible change updates the README in the same PR: commands, configuration, files, MCP tools, log
-  events, exit codes, security implications.
+- Every user-visible change updates `README.long.md`, the full guide, in the same PR: commands, configuration,
+  files, MCP tools, log events, exit codes, security implications.
+- `README.md` is a short introduction for a first-time reader (about 100 lines): what the system does, the supported
+  CLIs, the security warning, a quick start, the roadmap. Change it only when one of those changes — a new major
+  feature, a new CLI or vendor, a changed install step, a roadmap item done; never add details of commands or
+  options there.
 - `config/agents.example.toml` is the template of the configuration and [`docs/configuration.md`](docs/configuration.md)
   its reference: keep them in sync with the code (a test reads the template).
 - Write for someone who installs team-agents for the first time.
@@ -336,7 +341,7 @@ code, listed in the PR's `## Skipped tests` section (`docs/tdd.md`, "Skipped tes
       `## Skipped tests` section.
 - [ ] Errors are typed per operation; nothing is ignored; enums instead of string literals; every declaration
       has a comment.
-- [ ] README, `config/agents.example.toml`, `docs/` and prompts updated where the change is visible to users or agents.
+- [ ] `README.long.md` (and `README.md` for a major feature), `config/agents.example.toml`, `docs/` and prompts updated where the change is visible to users or agents.
 - [ ] `WhatsNew.md` says, simply and briefly, what the new version brings, and names every configuration key added,
       changed or removed under `### Configuration` ("Commits and pull requests").
 - [ ] Compatibility of on-disk formats, subcommand output and exit codes kept (or migrated, tested and
