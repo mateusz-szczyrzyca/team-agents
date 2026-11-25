@@ -9,6 +9,7 @@ use agent_core::log::{LogEntry, LogEvent, LogLevel};
 use agent_core::state::{ItemPhase, MergeMode};
 use agent_runtime::history::Reader;
 
+use super::rig::PARALLEL;
 use super::rig::{ONE, Rig, git, investigator, normal};
 
 /// What the first run of the lead does: commits the item, then leaves the worktree on a branch of another name that has the
@@ -22,6 +23,10 @@ const LEAVE_THE_BRANCH: &str = "set -eu\n\
 
 /// A report that asks for changes, held until the test releases the reviewer (`.fake-release-1`).
 const HELD_REQUEST_FOR_CHANGES: &str = "clean-held-done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → document units\\n   CHECK: read work-1.txt";
+
+/// Like [`HELD_REQUEST_FOR_CHANGES`], on a file that every branch has: with two items, the checks of the harness read the
+/// worktree's `HEAD`, which is the other item's tip, and a file of the item's own would not be there.
+const HELD_REQUEST_FOR_README: &str = "clean-held-done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 README.md:1 — units → document units\\n   CHECK: read README.md";
 
 /// The text the lead is given when its worktree cannot be switched, for the branch `checked_out` and the item's `branch`.
 fn other_branch_text(checked_out: &str, branch: &str) -> String {
@@ -214,6 +219,147 @@ async fn run_on_its_own_branch_does_not_switch() {
     assert_eq!(rows(&rig, LogEvent::WorktreeSwitched), []);
     assert_eq!(rows(&rig, LogEvent::WorktreeSwitchRefused), []);
     assert!(!prompt.contains("so the harness did not switch it to"), "{prompt}");
+}
+
+/// What the run on item 2.1 does: commits its file, then holds until the test releases it, so that the reviewers' verdict
+/// on 1.1 comes while the run is going (a run that started before the verdict is not judged as a response to it), and then
+/// ends having left `leftover` in the worktree.
+fn second_item_script(leftover: &str) -> String {
+    format!(
+        "set -eu\n\
+         commit() {{ git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q \"$@\"; }}\n\
+         echo two > work-2.txt\n\
+         git add work-2.txt\n\
+         commit -m 'Work of the second item'\n\
+         : > .second-started\n\
+         while [ ! -e .second-release ]; do sleep 0.05; done\n\
+         {leftover}\n"
+    )
+}
+
+/// A rig whose solo agent works two items that do not wait for each other: run 1 commits item 1.1, run 2 is the script
+/// `second` on item 2.1 (the worktree has 2.1's branch out, at its own tip, while 1.1 is in review), and run 3 holds the
+/// fix pass of 1.1. Both reviewers ask for changes on the pull request of 1.1 once the test releases them. `leftover` is what
+/// the script leaves in the worktree.
+async fn two_items_rig(leftover: &str) -> Rig {
+    let rig = Rig::new(
+        &[
+            normal("claude-1", "work,script:second,fix-held:1"),
+            investigator("inv-r1", HELD_REQUEST_FOR_README),
+            investigator("inv-r2", HELD_REQUEST_FOR_README),
+        ],
+        1,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("second.sh"), second_item_script(leftover)).unwrap();
+    rig
+}
+
+/// What a test of two items holds once the fix pass of 1.1 has started.
+struct TwoItems {
+    /// The task of the solo agent.
+    task: TaskId,
+    /// Its worktree.
+    lead: std::path::PathBuf,
+    /// The branch of item 2.1, which the worktree had out when the fix pass was due.
+    other: String,
+    /// The branch of item 1.1.
+    item: BranchName,
+}
+
+/// Starts the task of [`two_items_rig`] and goes on until the fix pass of 1.1 has started: the run on 2.1 is held while the
+/// reviewers report, then released.
+async fn fix_pass_started(rig: &mut Rig) -> TwoItems {
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], PARALLEL, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    let lead = rig.worktree(&task);
+    let released = reviewers_running(rig, &team).await;
+    rig.wait_for("the run on the second item to be held", || {
+        lead.join(".second-started").exists()
+    })
+    .await;
+    release(&released);
+    let item = fixing_branch(rig).await;
+    let other = git(&lead, &["symbolic-ref", "--short", "HEAD"]);
+    std::fs::write(lead.join(".second-release"), "").unwrap();
+    rig.wait_for("the fix pass run to start", || lead.join(".fake-started-3").exists())
+        .await;
+    TwoItems {
+        task,
+        lead,
+        other,
+        item,
+    }
+}
+
+// Rule: the case of the issue: item 1.1 is fixed while the worktree has the branch of item 2.1 out, at that branch's own tip.
+// The fix pass starts on the branch of 1.1, and the switch is logged once with both branches.
+#[tokio::test]
+async fn fix_pass_of_one_item_leaves_the_branch_of_another_item() {
+    let mut rig = two_items_rig("true").await;
+    let two = fix_pass_started(&mut rig).await;
+
+    let seen = branches_at_the_start(&two.lead);
+    std::fs::write(two.lead.join(".fake-release-3"), "").unwrap();
+    rig.stop().await.unwrap();
+
+    assert_ne!(two.other, two.item.as_str());
+    assert_eq!(seen.last().map(String::as_str), Some(two.item.as_str()), "{seen:?}");
+    let switched = rows(&rig, LogEvent::WorktreeSwitched);
+    assert_eq!(switched.len(), 1, "{switched:#?}");
+    assert_eq!(switched[0].task(), Some(&two.task));
+    assert_eq!(field(&switched[0], "from"), two.other);
+    assert_eq!(field(&switched[0], "to"), two.item.as_str());
+    assert_eq!(rows(&rig, LogEvent::WorktreeSwitchRefused), []);
+}
+
+// Rule: a changed tracked file stops the switch off the branch of another item: the worktree keeps its branch and the
+// change, and the refusal is logged. (The text that tells the lead to commit and switch is checked with one item above: with
+// two, the response judging of the harness, which reads `HEAD`, turns this run into a request to correct a response.)
+#[tokio::test]
+async fn dirty_branch_of_another_item_is_not_switched_and_told() {
+    let mut rig = two_items_rig("echo changed >> README.md").await;
+    let two = fix_pass_started(&mut rig).await;
+
+    let on_branch = git(&two.lead, &["symbolic-ref", "--short", "HEAD"]);
+    let kept = std::fs::read_to_string(two.lead.join("README.md")).unwrap();
+    std::fs::write(two.lead.join(".fake-release-3"), "").unwrap();
+    rig.stop().await.unwrap();
+
+    assert_eq!(on_branch, two.other);
+    assert_eq!(kept, "Hello\nchanged\n");
+    let refused = rows(&rig, LogEvent::WorktreeSwitchRefused);
+    assert_eq!(refused.len(), 1, "{refused:#?}");
+    assert_eq!(field(&refused[0], "from"), two.other);
+    assert_eq!(field(&refused[0], "to"), two.item.as_str());
+    assert_eq!(refused[0].fields().get("error"), None);
+    assert_eq!(rows(&rig, LogEvent::WorktreeSwitched), []);
+}
+
+// Rule: a switch that git itself refuses on a tree the harness took for clean (an untracked file that the item's branch
+// tracks would be overwritten) is logged as a refusal with git's answer; the worktree stays where it was and the run starts.
+#[tokio::test]
+async fn switch_that_git_refuses_is_logged_with_its_error_and_the_run_starts() {
+    let mut rig = two_items_rig("echo in the way > work-1.txt").await;
+    let two = fix_pass_started(&mut rig).await;
+
+    let on_branch = git(&two.lead, &["symbolic-ref", "--short", "HEAD"]);
+    std::fs::write(two.lead.join(".fake-release-3"), "").unwrap();
+    rig.stop().await.unwrap();
+
+    assert_eq!(on_branch, two.other);
+    let refused = rows(&rig, LogEvent::WorktreeSwitchRefused);
+    assert_eq!(refused.len(), 1, "{refused:#?}");
+    assert_eq!(refused[0].level(), LogLevel::Warn);
+    assert_eq!(refused[0].task(), Some(&two.task));
+    assert_eq!(field(&refused[0], "from"), two.other);
+    assert_eq!(field(&refused[0], "to"), two.item.as_str());
+    assert!(!field(&refused[0], "error").is_empty(), "{refused:#?}");
+    assert_eq!(rows(&rig, LogEvent::WorktreeSwitched), []);
 }
 
 /// Produces both events of a worktree switch by their real cause, and records them into `observed`: the daemon switches a
