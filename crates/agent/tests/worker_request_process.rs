@@ -4186,4 +4186,45 @@ git commit -qm 'Complete retained work'
             }
         }
     }
+    #[test]
+    fn startup_reconciles_a_bus_claim_before_its_journal_assignment() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "ask-worker:member,sleep"),
+            ("w-one", "worker", "script:claim-gap"),
+            ("inv-opus", "investigator", "sleep"),
+        ]);
+        world.script(
+            "claim-gap",
+            &format!(
+                "touch .fake-started\nwhile test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done\n{}",
+                commit_script("the walkthrough", &[]),
+            ),
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        eventually("claimed worker before crash", || {
+            world
+                .requests()
+                .get("1")
+                .and_then(|r| r["helper_task"].as_str())
+                .is_some_and(|t| world.worktree(t).join(".fake-started").exists())
+        });
+        let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+        let bus = std::fs::read(world.home.join("bus/state.json")).unwrap();
+        world.stop();
+        let path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+        let mut journal: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        journal["events"] = serde_json::json!([]);
+        std::fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
+        std::fs::write(world.home.join("bus/state.json"), bus).unwrap();
+        std::fs::write(world.home.join("release-worker"), "").unwrap();
+        world.start();
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["helper_task"], worker);
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
 }
