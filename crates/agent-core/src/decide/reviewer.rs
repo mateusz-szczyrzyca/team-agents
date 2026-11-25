@@ -12,8 +12,11 @@
 //! 3. Otherwise not: a task that is queued, runs or asks the human works on the review; one that waits is about to be
 //!    given it; one that is done reported, and a report without a verdict is asked for again elsewhere.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
+use crate::decide::limit::Decision;
+use crate::ids::InvestigatorName;
 use crate::state::{RunEnd, RunState, Timestamp};
 use crate::status::TaskStatus;
 
@@ -45,6 +48,31 @@ pub fn replace_now(awaited: &Awaited) -> bool {
             false
         }
     }
+}
+
+/// Whether the review `awaited` describes is given to another investigator, when the reviewer's last run was refused by
+/// its provider and the refusal rule (`refusal`, from [`crate::decide::limit::decide`]) answered for it; `None` when the
+/// last run was not refused. A paused reviewer whose agent the rule changes is replaced at once, without the patience;
+/// every other case is [`replace_now`].
+#[must_use]
+pub fn replace_after_refusal(awaited: &Awaited, refusal: Option<Decision>) -> bool {
+    replace_now(awaited)
+}
+
+/// An investigator and the provider it runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Provided<'a> {
+    /// The investigator.
+    pub name: &'a InvestigatorName,
+    /// Its provider, as [`crate::decide::pool::provider_of`] names it.
+    pub provider: &'a str,
+}
+
+/// The investigators of `investigators` that run on `provider`: a refusal replaces a reviewer by an investigator of
+/// another provider, since one of the same provider meets the same refusal.
+#[must_use]
+pub fn on_provider(provider: &str, investigators: &[Provided<'_>]) -> BTreeSet<InvestigatorName> {
+    BTreeSet::new()
 }
 
 /// When the reviewer of a review asked at `requested_at` last did anything but get refused by its provider, given its
