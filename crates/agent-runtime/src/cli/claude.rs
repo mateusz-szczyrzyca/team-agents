@@ -468,20 +468,23 @@ impl OutputParser for ClaudeParser {
                     events.push(ActivityEvent::Error(message.clone()));
                 }
                 events.push(ActivityEvent::Info(finish.summary()));
-                self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
                 // Build a structured refusal from the error result, when the API gave a status.
-                if finish.failed() {
-                    if let Some(status) = finish.api_error_status {
+                // Read the fields before `finish.result` is moved into `final_message`.
+                let refusal = if finish.failed() {
+                    finish.api_error_status.map(|status| {
                         let message = finish.result.as_deref().unwrap_or("");
-                        // The refusal kind is inferred by RefusalSummary::from_fields.
-                        self.progress.refusal = Some(agent_core::decide::refusal::RefusalSummary::from_fields(
+                        agent_core::decide::refusal::RefusalSummary::from_fields(
                             &status.to_string(),
                             message,
                             "",
                             agent_core::decide::outcome::PauseReason::RateLimit,
-                        ));
-                    }
-                }
+                        )
+                    })
+                } else {
+                    None
+                };
+                self.progress.final_message = finish.result.filter(|text| !text.trim().is_empty());
+                self.progress.refusal = refusal;
                 // The result's usage is the total of the run, never a context: only its output tokens and its cost are
                 // taken from it.
                 self.usage.report_written(finish.usage.and_then(|usage| usage.output));
