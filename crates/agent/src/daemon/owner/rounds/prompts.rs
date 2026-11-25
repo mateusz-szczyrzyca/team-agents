@@ -5,13 +5,13 @@
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::ids::InvalidName;
+use agent_core::ids::{BranchName, InvalidName};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
 use agent_core::state::{
-    CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, QuestionState, Review, ReviewOutcome,
-    TaskRef, Timestamp,
+    CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, PullRequest, QuestionState, Review,
+    ReviewOutcome, TaskRef, Timestamp,
 };
 use agent_runtime::autopilot_prompts::{AutopilotPrompts, RenderAutopilotTextError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
@@ -215,7 +215,7 @@ async fn round_sections_for(
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
             let text = match checks_notice(ctx, found).await? {
                 Some(text) => Some(text),
-                None => match fix_pass(ctx, texts, found, matches!(why, Some(Why::Woken))).await? {
+                None => match fix_pass(ctx, texts, found, working, matches!(why, Some(Why::Woken))).await? {
                     Some(text) => Some(text),
                     None => ask_human(ctx, texts, found).await?,
                 },
@@ -223,7 +223,7 @@ async fn round_sections_for(
             Ok(text.map(Addition::Append))
         }
         (Role::Member | Role::Worker, Some(Why::Gate(text))) => Ok(Some(Addition::Append(text.clone()))),
-        (Role::Member | Role::Worker, _) => Ok(fix_pass(ctx, texts, found, matches!(why, Some(Why::Woken)))
+        (Role::Member | Role::Worker, _) => Ok(fix_pass(ctx, texts, found, working, matches!(why, Some(Why::Woken)))
             .await?
             .map(Addition::Append)),
     }
@@ -323,17 +323,10 @@ async fn checks_notice(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<
     }
 }
 
-/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass, or, for a
-/// lead that was `woken` and was given the pass already, one line that says the pass is still open.
-pub(super) async fn fix_pass(
-    ctx: &Context<'_>,
-    texts: &AutopilotPrompts,
-    found: &TaskRef<'_>,
-    woken: bool,
-) -> Result<Option<String>, SectionError> {
-    let team = found.team;
+/// The item that the lead `found` is fixing, with the branch and the pull request of the pass.
+fn fixing_item<'a>(found: &TaskRef<'a>) -> Option<(&'a ItemProgress, &'a BranchName, &'a PullRequest)> {
     let name = found.member.agent().name();
-    let fixing = team.items().iter().find_map(|progress| match progress.phase() {
+    found.team.items().iter().find_map(|progress| match progress.phase() {
         ItemPhase::Fixing { assignee, branch, pr } if assignee.as_str() == name => Some((progress, branch, pr)),
         ItemPhase::Fixing { .. }
         | ItemPhase::Pending
@@ -341,8 +334,48 @@ pub(super) async fn fix_pass(
         | ItemPhase::InReview { .. }
         | ItemPhase::Approved { .. }
         | ItemPhase::Done { .. } => None,
-    });
-    let Some((progress, branch, pr)) = fixing else {
+    })
+}
+
+/// The fix pass of the lead `found`, if an item is being fixed by it: the reports of the reviewers of the pass, or, for a
+/// lead that was `woken` and was given the pass already, one line that says the pass is still open. When the worktree
+/// `working` of the lead has another branch than the item's out, which the harness could not switch because the tree has
+/// changes, the text that tells the lead to commit them and switch comes first.
+///
+/// # Errors
+/// [`SectionError`].
+pub(super) async fn fix_pass(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+    working: &std::path::Path,
+    woken: bool,
+) -> Result<Option<String>, SectionError> {
+    let Some(text) = fix_pass_text(ctx, texts, found, woken).await? else {
+        return Ok(None);
+    };
+    let Some((_, branch, _)) = fixing_item(found) else {
+        return Ok(Some(text));
+    };
+    let checked_out = git_of(ctx, found, working)?.current_branch().await?;
+    if checked_out.as_ref() == Some(branch) {
+        return Ok(Some(text));
+    }
+    let values = Variables::new()
+        .with("checked_out", super::super::item_branch::named(checked_out.as_ref()))?
+        .with("branch", branch.as_str())?;
+    let other = texts.render(AutopilotPrompt::ReviewFixPassOtherBranch, &values)?;
+    Ok(Some(format!("{}\n\n{text}", other.trim_end())))
+}
+
+/// The text of the fix pass of the lead `found`, without what tells it of the branch its worktree has out.
+async fn fix_pass_text(
+    ctx: &Context<'_>,
+    texts: &AutopilotPrompts,
+    found: &TaskRef<'_>,
+    woken: bool,
+) -> Result<Option<String>, SectionError> {
+    let Some((progress, branch, pr)) = fixing_item(found) else {
         return Ok(None);
     };
     let passes = progress.fix_passes().len();
