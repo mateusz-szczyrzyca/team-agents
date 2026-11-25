@@ -126,11 +126,14 @@ async fn live_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_ca
         .keep_refusal(
             &task(1),
             &located,
-            &Settled::Paused(Pause {
-                until: capped,
-                reason: PauseReason::Quota,
-                evidence: String::new(),
-            }),
+            &Settled::Paused(
+                Pause {
+                    until: capped,
+                    reason: PauseReason::Quota,
+                    evidence: String::new(),
+                },
+                None,
+            ),
             &RunEnd::QuotaExhausted { resets_at: Some(reset) },
             at(0),
         )
@@ -186,11 +189,14 @@ async fn refusal_decisions_emit_pause_and_change_agent_log_records() {
                 .keep_refusal(
                     &task(1),
                     &located,
-                    &Settled::Paused(Pause {
-                        until: at(10),
-                        reason: PauseReason::RateLimit,
-                        evidence: String::new(),
-                    }),
+                    &Settled::Paused(
+                        Pause {
+                            until: at(10),
+                            reason: PauseReason::RateLimit,
+                            evidence: String::new(),
+                        },
+                        None,
+                    ),
                     &RunEnd::RateLimited,
                     at(0),
                 )
@@ -263,11 +269,14 @@ async fn failure_interruption_and_commit_cut_each_restart_the_refusal_sequence()
             .keep_refusal(
                 &task(1),
                 &located,
-                &Settled::Paused(Pause {
-                    until: at(10),
-                    reason: PauseReason::RateLimit,
-                    evidence: String::new(),
-                }),
+                &Settled::Paused(
+                    Pause {
+                        until: at(10),
+                        reason: PauseReason::RateLimit,
+                        evidence: String::new(),
+                    },
+                    None,
+                ),
                 &RunEnd::RateLimited,
                 at(1),
             )
