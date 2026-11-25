@@ -7,6 +7,8 @@
 
 mod idle;
 pub use idle::IdleMinutes;
+mod commit_reminder;
+pub use commit_reminder::{CommitReminder, DEFAULT_LINES, DEFAULT_MINUTES};
 mod replacement;
 #[cfg(test)]
 mod replacement_tests;
@@ -997,6 +999,8 @@ pub struct Config {
     repos: BTreeMap<RepoName, RepoConfig>,
     /// The reminder for a run with Serena.
     serena: SerenaSettings,
+    /// The reminder to commit uncommitted work.
+    commit_reminder: CommitReminder,
 }
 
 /// The fewest searches of code without Serena that bring a reminder, by default.
@@ -1137,6 +1141,9 @@ struct RawConfig {
     /// See [`Config::serena`].
     #[serde(default)]
     serena: SerenaSettings,
+    /// See [`Config::commit_reminder`].
+    #[serde(default)]
+    commit_reminder: CommitReminder,
 }
 
 impl RawConfig {
@@ -1174,6 +1181,7 @@ impl RawConfig {
             history,
             log,
             serena,
+            commit_reminder,
             web,
             repos,
         } = self;
@@ -1237,6 +1245,7 @@ impl RawConfig {
             history,
             log,
             serena,
+            commit_reminder,
             web,
             repos,
         })
@@ -1542,6 +1551,12 @@ impl Config {
     #[must_use]
     pub const fn serena(&self) -> &SerenaSettings {
         &self.serena
+    }
+
+    /// When a run that holds uncommitted work is reminded to commit it: `[commit_reminder]`.
+    #[must_use]
+    pub const fn commit_reminder(&self) -> &CommitReminder {
+        &self.commit_reminder
     }
 
     /// What the harness does with the result of a worker.
