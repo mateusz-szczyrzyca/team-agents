@@ -186,6 +186,12 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::CommitCut, "commit_cut", LogLevel::Info),
         (LogEvent::WorkerWaitReturned, "worker_wait_returned", LogLevel::Info),
         (LogEvent::WorkerRequestEnded, "worker_request_ended", LogLevel::Info),
+        (LogEvent::WorktreeSwitched, "worktree_switched", LogLevel::Info),
+        (
+            LogEvent::WorktreeSwitchRefused,
+            "worktree_switch_refused",
+            LogLevel::Warn,
+        ),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
