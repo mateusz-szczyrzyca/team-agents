@@ -1933,7 +1933,7 @@ mod tests {
         let output = r#"[{"id":4,"from":"claude-1","from_task":"task-20261125-073049-g85c","repo":"example",
             "branch":"agents/claude-1/test","status":"done","verdict":"liked"}]"#;
 
-        assert!(decode_json::<Vec<HelperRecord>>(BusCommand::HelperList, output).is_err());
+        decode_json::<Vec<HelperRecord>>(BusCommand::HelperList, output).unwrap_err();
     }
 
     #[test]

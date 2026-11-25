@@ -290,7 +290,13 @@ fn the_busy_pool_leaves_out_free_workers_and_those_of_listed_teams() {
         running_request(2, "task-20261124-114140-else", "glm-3", "2.1"),
     ];
 
-    let rendered = render_busy(&workers, &[team.clone()], Some(&helpers), None, &[team]);
+    let rendered = render_busy(
+        &workers,
+        std::slice::from_ref(&team),
+        Some(&helpers),
+        None,
+        std::slice::from_ref(&team),
+    );
 
     assert_eq!(
         rendered.as_deref(),
