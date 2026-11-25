@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.106.0 — 25.11.2026 — PR #268
+
+### Enhancements
+- [agent-runtime] A Claude Code run no longer reads your own auto memory (`~/.claude/projects/<repo>/memory/`) or your claude.ai connectors: its settings carry `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so the run starts with less context.
+
 ## 0.105.0 — 25.11.2026 — PR #265
 
 ### Enhancements
