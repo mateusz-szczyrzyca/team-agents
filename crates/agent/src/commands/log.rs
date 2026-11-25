@@ -84,6 +84,9 @@ pub(crate) enum LogError {
     /// The story cannot be written.
     #[error("cannot write the story")]
     Output(#[source] std::io::Error),
+    /// `--reminders` is given with a scope, a row filter or a format that it does not take.
+    #[error("--reminders takes no round, team, row filter or format: it counts the reminders of the last --days days")]
+    RemindersAlone,
     /// The clock of this machine shows a year that a time cannot have.
     #[error("the clock of this machine is outside the years 0000 to 9999")]
     Clock(#[from] InvalidTimestamp),
@@ -99,6 +102,7 @@ impl LogError {
             | Self::Read(_)
             | Self::Output(_)
             | Self::FollowRuntime(_)
+            | Self::RemindersAlone
             | Self::Clock(_)
             | Self::Time { .. } => 1,
         }

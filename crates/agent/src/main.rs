@@ -929,6 +929,15 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
 
     let home = environment.home()?;
     if args.reminders {
+        if args.rows.requested()
+            || args.round.is_some()
+            || args.team.is_some()
+            || args.json
+            || args.prompts
+            || args.no_steps
+        {
+            return Err(LogError::RemindersAlone.into());
+        }
         let now = agent_core::state::Timestamp::now(&agent_runtime::clock::SystemClock).map_err(LogError::from)?;
         crate::commands::log::reminders::print_reminders(&home.history_file(), args.days, now, out)?;
         return Ok(());
