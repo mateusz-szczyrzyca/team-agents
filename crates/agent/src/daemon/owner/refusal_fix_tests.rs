@@ -350,7 +350,11 @@ async fn refused_solo_task_is_handed_over_to_a_free_agent_of_another_provider() 
 
     assert_eq!(result.status, TaskStatus::Queued);
     match &result.notice {
-        Notice::AgentChanged { refused_agent, new_agent, .. } => {
+        Notice::AgentChanged {
+            refused_agent,
+            new_agent,
+            ..
+        } => {
             assert_eq!(refused_agent.as_str(), "claude-1");
             assert_eq!(new_agent.as_str(), "codex-1");
         }
@@ -406,7 +410,11 @@ async fn refused_coordinator_is_taken_over_by_a_free_investigator() {
 
     assert_eq!(result.status, TaskStatus::Queued);
     match &result.notice {
-        Notice::AgentChanged { refused_agent, new_agent, .. } => {
+        Notice::AgentChanged {
+            refused_agent,
+            new_agent,
+            ..
+        } => {
             assert_eq!(refused_agent.as_str(), "claude-1");
             assert_eq!(new_agent.as_str(), "inv-2");
         }
@@ -505,7 +513,11 @@ async fn quota_of_many_hours_changes_agent_at_once() {
 
     assert_eq!(result.status, TaskStatus::Queued);
     match &result.notice {
-        Notice::AgentChanged { refused_agent, new_agent, .. } => {
+        Notice::AgentChanged {
+            refused_agent,
+            new_agent,
+            ..
+        } => {
             assert_eq!(refused_agent.as_str(), "claude-1");
             assert_eq!(new_agent.as_str(), "codex-1");
         }
@@ -638,7 +650,11 @@ async fn old_state_with_a_refused_task_follows_the_change_agent_rule() {
 
     assert_eq!(result.status, TaskStatus::Queued);
     match &result.notice {
-        Notice::AgentChanged { refused_agent, new_agent, .. } => {
+        Notice::AgentChanged {
+            refused_agent,
+            new_agent,
+            ..
+        } => {
             assert_eq!(refused_agent.as_str(), "claude-1");
             assert_eq!(new_agent.as_str(), "codex-1");
         }

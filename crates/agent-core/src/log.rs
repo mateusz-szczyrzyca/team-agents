@@ -323,7 +323,9 @@ impl LogEvent {
             | Self::WorkerRequestEnded
             | Self::ContextReminded
             | Self::CommitCut
-            | Self::TaskHandedOver | Self::TaskAgentChanged | Self::TaskWaitForFreeAgent => LogLevel::Info,
+            | Self::TaskHandedOver
+            | Self::TaskAgentChanged
+            | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }

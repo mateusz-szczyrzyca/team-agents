@@ -399,7 +399,14 @@ impl HarnessPrompt {
             Self::NoticeAgentChanged => PromptSpec::new(
                 "harness/run/notice-agent-changed.md",
                 Audience::Human,
-                &["agent", "task", "refused_agent", "refused_provider", "return_at", "new_agent"],
+                &[
+                    "agent",
+                    "task",
+                    "refused_agent",
+                    "refused_provider",
+                    "return_at",
+                    "new_agent",
+                ],
             ),
             Self::NoticeNoFreeAgent => PromptSpec::new(
                 "harness/run/notice-no-free-agent.md",
