@@ -4403,4 +4403,83 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
             0
         );
     }
+    #[test]
+    fn missing_results_follow_first_free_or_other_provider_policy_without_wrong_tries() {
+        for (scenario, body, cause, serving) in [
+            ("script:cut,script:finish", "exit 42", "no_status", "w-cl"),
+            (
+                "script:cut",
+                "printf '429 Too Many Requests\\n' >&2\nexit 1",
+                "refused",
+                "w-or",
+            ),
+            ("nostatus-stream:empty,script:finish", "exit 0", "no_status", "w-cl"),
+        ] {
+            let mut world = World::new_custom(
+                &[
+                    AgentDef {
+                        name: "claude-1",
+                        kind: "agent",
+                        scenario: "ask-worker:member,sleep",
+                        cli: "claude",
+                        model: None,
+                        capabilities: &[],
+                    },
+                    AgentDef {
+                        name: "w-cl",
+                        kind: "worker",
+                        scenario,
+                        cli: "claude",
+                        model: None,
+                        capabilities: &[],
+                    },
+                    AgentDef {
+                        name: "w-or",
+                        kind: "worker",
+                        scenario: "opencode-script:finish",
+                        cli: "opencode",
+                        model: Some("openrouter/glm"),
+                        capabilities: &[],
+                    },
+                ],
+                None,
+            );
+            world.script("cut", body);
+            std::fs::write(world.home.join("fake-scripts/empty.jsonl"), "").unwrap();
+            world.script("finish", &commit_script("the walkthrough", &[]));
+            world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+            world.start();
+            let tasks = world.run(&["claude-1", "inv-opus"]);
+            let member = task(&tasks, "claude-1");
+            world.ended(member, 1);
+            world.request_is("1", "done");
+            assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+            assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+            assert_eq!(world.count_told("claude-1", serving), 1);
+            let journal: serde_json::Value = serde_json::from_slice(
+                &std::fs::read(world.home.join("tasks").join(member).join("worker-recovery-1.json")).unwrap(),
+            )
+            .unwrap();
+            let events = journal["events"].as_array().unwrap();
+            assert_eq!(events.iter().filter(|e| e["event"] == "rejected").count(), 0);
+            assert_eq!(events.iter().filter(|e| e["event"] == "assigned").count(), 1);
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| e["event"] == "started")
+                    .map(|e| e["worker"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![serving],
+            );
+            assert_eq!(
+                events
+                    .iter()
+                    .filter(|e| e["event"] == "interrupted")
+                    .map(|e| e["cause"].as_str().unwrap())
+                    .collect::<Vec<_>>(),
+                vec![cause],
+            );
+            assert_eq!(journal["workspace"]["worker"], "w-cl");
+        }
+    }
 }
