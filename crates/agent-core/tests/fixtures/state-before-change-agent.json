@@ -1,0 +1,38 @@
+{
+  "schema_version": 15,
+  "limit_refusals": {
+    "task-20261111-153001-k3x9": 1
+  },
+  "teams": [
+    {
+      "id": "team-20261111-153000-a1b2",
+      "repo": "team-agents",
+      "created_at": "2026-11-11T15:30:00Z",
+      "merge": "autopilot",
+      "task_list": "Build it.\n\n1. Feature\n[ ] 1.1 Item\n    Do it.\n",
+      "items": [
+        {
+          "id": "1.1",
+          "phase": {
+            "phase": "pending"
+          }
+        }
+      ],
+      "rounds": [],
+      "crew": {
+        "kind": "solo",
+        "member": {
+          "task": "task-20261111-153001-k3x9",
+          "agent": {
+            "tier": "normal",
+            "name": "claude-1"
+          },
+          "status": "queued",
+          "runs": [],
+          "questions": []
+        }
+      },
+      "reviewers": []
+    }
+  ]
+}

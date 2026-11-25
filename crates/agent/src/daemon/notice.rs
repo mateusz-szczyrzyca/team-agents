@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use agent_core::decide::outcome::PauseReason;
 use agent_core::decide::refusal;
-use agent_core::ids::{TaskId, TeamId};
+use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
 use agent_core::notice_status::NoticeStatus;
@@ -75,6 +75,10 @@ pub(super) enum NoticeKind {
     TeamAsleep,
     /// Team done (`team/notice-team-done`).
     TeamDone,
+    /// Task handed to another agent after its provider's refusal (`run/notice-agent-changed`).
+    AgentChanged,
+    /// No agent free to take the task over after its provider's refusal (`run/notice-no-free-agent`).
+    NoFreeAgent,
 }
 
 impl NoticeKind {
@@ -94,7 +98,7 @@ impl NoticeKind {
             | Self::TurnLimitExhausted
             | Self::TurnLimitNoSession => NoticeStatus::Failed,
             Self::Hung => NoticeStatus::Hung,
-            Self::Paused => NoticeStatus::Paused,
+            Self::Paused | Self::AgentChanged | Self::NoFreeAgent => NoticeStatus::Paused,
             Self::Approved => NoticeStatus::Approved,
             Self::MergeFailed => NoticeStatus::NotMerged,
             Self::Closed => NoticeStatus::Closed,
@@ -278,6 +282,26 @@ pub(super) enum Notice {
         /// Why, as the chain of its errors.
         reason: String,
     },
+    /// The task was handed to another agent after the refused agent's retries were spent.
+    AgentChanged {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+        /// The agent the task was handed to.
+        new_agent: AgentName,
+    },
+    /// No agent was free to take over the task; it stays paused until one is free.
+    NoFreeAgent {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+    },
 }
 
 /// Why a notice cannot be made into a notification.
@@ -307,6 +331,16 @@ impl Notice {
         let common = Variables::new()
             .with("agent", context.agent)?
             .with("task", context.task.as_str())?;
+        let (text, values, kind) = self.parts(common, context)?;
+        let rendered = texts.render(text, &values)?;
+        Ok(layout_notification(kind, context, &rendered)?)
+    }
+
+    fn parts(
+        &self,
+        common: Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
         let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
@@ -348,16 +382,7 @@ impl Notice {
                 evidence,
             } => (
                 HarnessPrompt::NoticePaused,
-                common
-                    .with("until", context.offset.stamp_minute(*until))?
-                    .with("reason", reason.to_string())?
-                    .with("kind", kind.words())?
-                    .with(
-                        "evidence",
-                        evidence
-                            .strip_prefix(&format!("{}: ", kind.words()))
-                            .unwrap_or(evidence),
-                    )?,
+                paused_vars(common, evidence, *kind, *reason, context.offset.stamp_minute(*until))?,
                 NoticeKind::Paused,
             ),
             Self::Failed { message } => (
@@ -365,20 +390,11 @@ impl Notice {
                 common.with("message", message)?,
                 NoticeKind::Failed,
             ),
-            Self::FailedNoTool { message } => {
-                let cli = context
-                    .cli
-                    .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
-                let model = context.model.unwrap_or("configured");
-                (
-                    HarnessPrompt::NoticeFailedNoTool,
-                    common
-                        .with("message", message)?
-                        .with("cli", cli)?
-                        .with("model", model)?,
-                    NoticeKind::FailedNoTool,
-                )
-            }
+            Self::FailedNoTool { message } => (
+                HarnessPrompt::NoticeFailedNoTool,
+                failed_no_tool_vars(common, message, context)?,
+                NoticeKind::FailedNoTool,
+            ),
             Self::NoStatus { exit: Some(code) } => (
                 HarnessPrompt::NoticeNoStatus,
                 common.with("exit", code.to_string())?,
@@ -395,11 +411,86 @@ impl Notice {
                 common.with("reason", reason)?,
                 NoticeKind::RunFailed,
             ),
+            Self::AgentChanged {
+                refused_agent,
+                refused_provider,
+                return_at,
+                new_agent,
+            } => {
+                let values = refusal_vars(
+                    common,
+                    refused_agent,
+                    refused_provider,
+                    context.offset.stamp_minute(*return_at),
+                )?
+                .with("new_agent", new_agent.as_str())?;
+                (HarnessPrompt::NoticeAgentChanged, values, NoticeKind::AgentChanged)
+            }
+            Self::NoFreeAgent {
+                refused_agent,
+                refused_provider,
+                return_at,
+            } => {
+                let values = refusal_vars(
+                    common,
+                    refused_agent,
+                    refused_provider,
+                    context.offset.stamp_minute(*return_at),
+                )?;
+                (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
+            }
         };
-        let rendered = texts.render(text, &values)?;
-        Ok(layout_notification(kind, context, &rendered)?)
+        Ok((text, values, kind))
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+/// Common facts of the provider refusal, with a return time already in the notice zone.
+fn refusal_vars(
+    common: Variables,
+    refused_agent: &AgentName,
+    refused_provider: &str,
+    return_at: String,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("refused_agent", refused_agent.as_str())?
+        .with("refused_provider", refused_provider)?
+        .with("return_at", return_at)?)
+}
+
+/// Supplies the configured CLI and model alongside a no-tool failure.
+fn failed_no_tool_vars(
+    common: Variables,
+    message: &str,
+    context: &NoticeContext<'_>,
+) -> Result<Variables, NoticeError> {
+    let cli = context
+        .cli
+        .map_or_else(|| "configured".to_owned(), |cli| cli.to_string());
+    Ok(common
+        .with("message", message)?
+        .with("cli", cli)?
+        .with("model", context.model.unwrap_or("configured"))?)
+}
+
+/// Renders the provider's evidence once alongside the local return time.
+fn paused_vars(
+    common: Variables,
+    evidence: &str,
+    kind: refusal::Kind,
+    reason: PauseReason,
+    until: String,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("until", until)?
+        .with("reason", reason.to_string())?
+        .with("kind", kind.words())?
+        .with(
+            "evidence",
+            evidence
+                .strip_prefix(&format!("{}: ", kind.words()))
+                .unwrap_or(evidence),
+        )?)
+}

@@ -355,7 +355,13 @@ its task until the time the provider names or the configured pause (`[limits] ra
 then, and comes back to the pool by itself. The task is tried again in the same session `[replacement] limit_retries`
 times (default `1`); when the retries are used up, or a quota's reset is later than `[replacement] limit_wait_minutes`
 (default `60`), the rule answers "change the agent", which is logged as a `decision_taken` with `decision` `limit`.
-Acting on that answer (handing the task to another provider's agent) is not in this version: the task keeps its pause.
+The daemon hands a solo task or team member's task to the first free agent of another provider from `[replacement]
+agents`, then `[tiers] normal`. A lead goes to a free investigator. Candidates already in the team, at their run
+limit, or refused by their provider are skipped. The task keeps its worktree, branch, bus name and history, and the
+new agent receives a briefing. Each takeover counts against `[replacement] replacements`. One notification and a
+`task_agent_changed` history log record name the old agent, its provider and return time, and the new agent.
+When none is free, the task stays paused and records `task_wait_for_free_agent` once. It starts when a suitable agent
+becomes free or its original provider returns, whichever happens first, including after a daemon restart.
 `agent status` shows a refused agent with its return time.
 
 **What the notice of a refusal says.** The notice of a pause names what the provider said, from the fields of the CLI's

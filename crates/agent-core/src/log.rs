@@ -211,9 +211,15 @@ pub enum LogEvent {
     GithubStepWaiting,
     /// A step of the owner that waited for GitHub or git goes through.
     GithubStepResumed,
+    /// A task whose agent was refused by its provider (rate limit, overload, quota) after its retries is handed over to a
+    /// free agent the configuration's refusal replacement chose.
+    TaskAgentChanged,
     /// A task whose runs went bad after the last new session is handed over: to another agent, which holds it from now
     /// on, or, for a member's work, to its team's lead.
     TaskHandedOver,
+    /// No agent is free to take over a task whose agent was refused by its provider; the task stays paused until the
+    /// earliest return of a refused candidate.
+    TaskWaitForFreeAgent,
     /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
     TaskWaitsForAgent,
     /// What the harness keeps for a worker's request cannot be used: its file is damaged, unreadable or holds another
@@ -325,7 +331,9 @@ impl LogEvent {
             | Self::WorktreeSwitched
             | Self::ContextReminded
             | Self::CommitCut
-            | Self::TaskHandedOver => LogLevel::Info,
+            | Self::TaskHandedOver
+            | Self::TaskAgentChanged
+            | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }

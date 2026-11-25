@@ -196,7 +196,7 @@ impl Owner {
 
     /// Gives `task`, held by `held`, to the agent `name` at `at`, with the items it works on, and starts it anew after
     /// `trouble`: the next run is briefed, in a session of the new agent, and its retries are its own.
-    fn hand_task_over(
+    pub(super) fn hand_task_over(
         &mut self,
         task: &TaskId,
         name: &AgentName,
@@ -272,7 +272,7 @@ impl Owner {
     }
 
     /// The tier the configuration gives the agent `name`; `None` for a name it does not have.
-    fn tier_of(&self, name: &AgentName) -> Option<Tier> {
+    pub(super) fn tier_of(&self, name: &AgentName) -> Option<Tier> {
         let config = &self.parts.settings.config;
         if config
             .investigators()

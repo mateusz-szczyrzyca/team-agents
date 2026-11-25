@@ -1573,4 +1573,134 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&second), 1);
         release(&world, &first);
     }
+    /// A member refused by `DeepInfra` and a replacement that requires takeover context.
+    fn refused_member_world() -> World {
+        let world = World::new(&agents_with(&[
+            ("deep-1", "agent", "deepinfra-overload"),
+            ("claude-2", "agent", "sleep"),
+            (
+                "claude-3",
+                "agent",
+                "work-if-briefed:A NEW SESSION ON A TASK THAT WAS ALREADY STARTED|Who worked on this task|The branch",
+            ),
+        ]));
+        let path = world.home.join("agents.toml");
+        let config = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace(
+                "[agents.deep-1]\ncli = \"claude\"",
+                "[agents.deep-1]\ncli = \"opencode\"\nmodel = \"deepinfra/example\"",
+            )
+            .replace(
+                "[binaries]",
+                &format!("[binaries]\nopencode = \"{}\"", script("team-cli.sh").display()),
+            );
+        std::fs::write(path, config).unwrap();
+        configure(
+            &world,
+            "\n[log]\nlevel = \"debug\"\n[replacement]\nagents = [\"claude-3\"]\n",
+        );
+        world
+    }
+
+    #[test]
+    fn refusal_member_retry_changes_provider_in_place_with_briefing_and_audit() {
+        use agent_core::state::{RunEnd, RunState, State};
+        use agent_core::status::RunOutcome;
+
+        let mut world = refused_member_world();
+        world.start();
+        let list = world.repo.join("list.md");
+        std::fs::write(&list, LIST).unwrap();
+        let started = world.agent(&["run", "deep-1", "inv-opus", "claude-2", "-f", list.to_str().unwrap()]);
+        assert!(started.status.success(), "{}", stderr(&started));
+        let task = stdout(&started)
+            .lines()
+            .find(|line| line.contains("member") && line.contains("deep-1"))
+            .unwrap()
+            .split_whitespace()
+            .next()
+            .unwrap()
+            .to_owned();
+        world.status_where("the first member refusal to pause for its retry", |status| {
+            line_of(status, &task).contains("paused")
+        });
+        assert_eq!(world.runs(&task), 1);
+        assert_eq!(log_rows(&world, "task_agent_changed", &task), 0);
+        let task_id = task.parse().unwrap();
+        let before = State::from_json(&std::fs::read_to_string(world.home.join("state.json")).unwrap()).unwrap();
+        let old = before.find_task(&task_id).unwrap().member;
+        let worktree = world.home.join("worktrees/example").join(&task);
+        let branch = Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(branch.status.success());
+        std::fs::write(worktree.join("kept-from-refused-run.txt"), "keep me\n").unwrap();
+
+        move_the_refusal_and_the_pause_back(&mut world, "deep-1");
+        world.status_where("the replacement to finish the member item", |status| {
+            let line = line_of(status, &task);
+            line.contains("claude-3") && (line.contains("waiting") || line.contains("done"))
+        });
+
+        let after = State::from_json(&std::fs::read_to_string(world.home.join("state.json")).unwrap()).unwrap();
+        let member = after.find_task(&task_id).unwrap().member;
+        assert_eq!(member.task(), old.task());
+        assert_eq!(member.bus_agent(), old.bus_agent());
+        assert_eq!(member.past_holders().len(), 1);
+        assert_eq!(member.runs().len(), 3);
+        assert!(matches!(
+            member.runs()[0].state(),
+            RunState::Ended {
+                end: RunEnd::RateLimited,
+                ..
+            }
+        ));
+        assert!(matches!(
+            member.runs()[1].state(),
+            RunState::Ended {
+                end: RunEnd::RateLimited,
+                ..
+            }
+        ));
+        assert!(matches!(
+            member.runs()[2].state(),
+            RunState::Ended {
+                end: RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                },
+                ..
+            }
+        ));
+        let current = Command::new("git")
+            .args(["branch", "--show-current"])
+            .current_dir(&worktree)
+            .output()
+            .unwrap();
+        assert!(current.status.success());
+        assert_eq!(current.stdout, branch.stdout);
+        assert_eq!(
+            std::fs::read_to_string(worktree.join("kept-from-refused-run.txt")).unwrap(),
+            "keep me\n"
+        );
+        let briefing = std::fs::read_to_string(worktree.join(".fake-prompt-3")).unwrap();
+        assert!(briefing.contains("A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"));
+        assert!(briefing.contains("deep-1"));
+        assert_eq!(log_rows(&world, "task_agent_changed", &task), 1);
+        let log = world.agent(&["log", "--event", "decision_taken", "--task", &task, "--json"]);
+        assert!(log.status.success(), "{}", stderr(&log));
+        let decisions: Vec<serde_json::Value> = stdout(&log)
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(
+            decisions
+                .iter()
+                .filter(|row| row.to_string().contains("takeover"))
+                .count(),
+            1
+        );
+    }
 }

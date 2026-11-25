@@ -62,7 +62,7 @@ use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
 use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds::{CliKind, Role};
+use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
 
@@ -696,6 +696,15 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
         Some(saves) => saves.recv().await,
         None => std::future::pending().await,
     }
+}
+
+/// The new status and notice when a refusal was handled by a change of agent or a wait for a free one.
+#[derive(Debug)]
+pub(super) struct RefusalHandled {
+    /// The new status of the task.
+    pub(super) status: TaskStatus,
+    /// The notice to send to the human.
+    pub(super) notice: Notice,
 }
 
 impl Owner {
@@ -2071,7 +2080,7 @@ impl Owner {
             Settled::TurnLimit => Some(Trouble::TurnLimit),
             Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
         };
-        self.keep_refusal(task, located, &settled, &end, now)?;
+        let refusal_handled = self.keep_refusal(task, located, &settled, &end, now)?;
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -2094,14 +2103,19 @@ impl Owner {
             }
             Settled::Paused(pause) => {
                 self.hangs.remove(task);
-                self.wakes.insert(task.clone(), pause.until);
-                let notice = Notice::Paused {
-                    until: pause.until,
-                    reason: pause.reason,
-                    kind: pause.kind,
-                    evidence: pause.evidence,
-                };
-                (TaskStatus::Paused, Some(notice))
+                if let Some(handled) = refusal_handled {
+                    // The refusal was handled by a change of agent or a wait for a free one.
+                    (handled.status, Some(handled.notice))
+                } else {
+                    self.wakes.insert(task.clone(), pause.until);
+                    let notice = Notice::Paused {
+                        until: pause.until,
+                        reason: pause.reason,
+                        kind: pause.kind,
+                        evidence: pause.evidence,
+                    };
+                    (TaskStatus::Paused, Some(notice))
+                }
             }
             Settled::Hung => self.hung(task, located.role, progress)?,
             Settled::TurnLimit => {
@@ -2119,9 +2133,12 @@ impl Owner {
     }
 
     /// Keeps what a run's end says about the provider's refusals. A refused run counts one more refusal in a row for its
-    /// task and keeps its agent out of new work until the pause ends; any other end clears the count. The answer of
-    /// [`agent_core::decide::limit::decide`] is logged: features 3 and 4 act on a change of agent, until then the pause
-    /// stays and the task is tried again like any other.
+    /// task and keeps its agent out of new work until the pause ends; any other end clears the count. When the rule says
+    /// to change the agent, the task is taken over by the agent [`agent_core::decide::replacement::refused::pick`] chooses, or kept paused until
+    /// one is free; the caller replaces the normal pause notice with the returned one.
+    ///
+    /// Returns `Some` with the new status and notice when the refusal was handled by a change of agent or a wait for a
+    /// free one; `None` when the normal pause is what follows.
     fn keep_refusal(
         &mut self,
         task: &TaskId,
@@ -2129,14 +2146,14 @@ impl Owner {
         settled: &Settled,
         end: &RunEnd,
         now: Timestamp,
-    ) -> Result<(), OwnerError> {
+    ) -> Result<Option<RefusalHandled>, OwnerError> {
         let refused = match (settled, limit_of(end, now)) {
             (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
             _ => None,
         };
         let Some((pause, limit)) = refused else {
             self.parts.state.record_limit_refusals(task.clone(), 0);
-            return Ok(());
+            return Ok(None);
         };
         let refusals = next_refusals(self.parts.state.limit_refusals(task), end);
         let answer = decide(&self.refusal_facts(limit, refusals));
@@ -2152,7 +2169,7 @@ impl Owner {
             | RunEnd::TurnLimit
             | RunEnd::Stopped => pause.until,
         };
-        self.parts.state.keep_refused_until(agent, return_at);
+        self.parts.state.keep_refused_until(agent.clone(), return_at);
         let decision = match answer {
             Decision::Pause => "pause",
             Decision::ChangeAgent => "change_agent",
@@ -2167,6 +2184,172 @@ impl Owner {
             result = decision,
             return_at = %return_at,
             "a run refused by its provider is counted and the rule answers it"
+        );
+        if answer == Decision::ChangeAgent && located.role != Role::Reviewer {
+            return self.handle_change_agent(task, located, &agent, pause.until, now);
+        }
+        Ok(None)
+    }
+
+    /// Candidates retain the configured tier, provider and remaining run capacity.
+    fn refusal_candidates<'a>(
+        &'a self,
+        names: &'a [AgentName],
+        holder_tier: Tier,
+        going: &[Going],
+    ) -> Vec<agent_core::decide::replacement::refused::Candidate<'a>> {
+        use agent_core::decide::replacement::refused::Candidate;
+        names
+            .iter()
+            .filter_map(|name| {
+                let tier = self.tier_of(name)?;
+                if tier < holder_tier {
+                    return None;
+                }
+                Some(Candidate {
+                    name,
+                    provider: self.refusal_provider(name)?,
+                    tier,
+                    busy: busy_run(name, limit_for(self.parts.settings.config.limits(), tier), going).is_some(),
+                    refused_until: self.parts.state.refused_until(name),
+                })
+            })
+            .collect()
+    }
+
+    /// Both ordinary agents and investigators have provider identities.
+    fn refusal_provider(&self, name: &AgentName) -> Option<&str> {
+        use agent_core::decide::pool::provider_of;
+        let config = &self.parts.settings.config;
+        config
+            .agent(name)
+            .map(|agent| provider_of(agent.cli, agent.model.as_ref()))
+            .or_else(|| {
+                config
+                    .investigators()
+                    .iter()
+                    .find(|(key, _)| key.as_str() == name.as_str())
+                    .map(|(_, agent)| provider_of(agent.cli, agent.model.as_ref()))
+            })
+    }
+
+    /// Uses the refusal selection rules, then takes over or waits for capacity.
+    fn handle_change_agent(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        agent: &AgentName,
+        until: Timestamp,
+        now: Timestamp,
+    ) -> Result<Option<RefusalHandled>, OwnerError> {
+        use agent_core::decide::replacement::refused::{Pick, Request, pick};
+        let config = &self.parts.settings.config;
+        let replacement = config.replacement();
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let team_names: Vec<AgentName> = found
+            .team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(found.team.reviewers())
+            .map(|member| member.agent().agent_name().clone())
+            .collect();
+        let refused_provider = self.refusal_provider(agent).unwrap_or(agent.as_str()).to_owned();
+        // A holder count larger than u32 already exhausts every permitted budget.
+        let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
+        let replacements_exhausted = taken_over >= replacement.replacements().get();
+        let holder_tier = found.member.agent().tier();
+        let return_at = self.parts.state.refused_until(agent).unwrap_or(until);
+        let going = self.all_runs_going();
+        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going);
+        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going);
+        let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
+        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going);
+        let request = Request {
+            role: located.role,
+            team: &team_names,
+            refused_provider: &refused_provider,
+            replacement_agents: &replacement_agents,
+            normal_agents: &normal_agents,
+            investigators: &investigators,
+            now,
+            replacements_exhausted,
+        };
+
+        match pick(&request) {
+            Pick::Agent(new_agent) => {
+                let new_agent = new_agent.clone();
+                self.hand_over_refused_task(task, &new_agent, located, agent, now)?;
+                Ok(Some(RefusalHandled {
+                    status: TaskStatus::Queued,
+                    notice: Notice::AgentChanged {
+                        refused_agent: agent.clone(),
+                        refused_provider,
+                        return_at,
+                        new_agent,
+                    },
+                }))
+            }
+            Pick::NoneFree { earliest_return } => {
+                let until = earliest_return.map_or(until, |at| at.min(until));
+                let first_wait = !self.wakes.contains_key(task);
+                // Set the wake so the task is picked up when a candidate returns.
+                self.wakes.insert(task.clone(), until);
+                if first_wait {
+                    tracing::info!(
+                        event = LogEvent::TaskWaitForFreeAgent.as_str(),
+                        team = %located.team,
+                        task = %task,
+                        agent = located.agent,
+                        refused_provider = %refused_provider,
+                        return_at = %return_at,
+                        "no agent is free to take over a task whose agent was refused by its provider"
+                    );
+                }
+                Ok(Some(RefusalHandled {
+                    status: TaskStatus::Paused,
+                    notice: Notice::NoFreeAgent {
+                        refused_agent: agent.clone(),
+                        refused_provider,
+                        return_at,
+                    },
+                }))
+            }
+        }
+    }
+
+    /// Hands a refused task over to `new_agent`: the existing takeover mechanism, with the briefing of a takeover.
+    fn hand_over_refused_task(
+        &mut self,
+        task: &TaskId,
+        new_agent: &AgentName,
+        located: &Located,
+        refused_agent: &AgentName,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let held = self
+            .participant_of(refused_agent)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        self.hand_task_over(task, new_agent, &held, Trouble::NoStatus, now)?;
+        log_decision(
+            "takeover",
+            &format!("task={task}, from={}", held.name()),
+            &format!("agent={new_agent}"),
+        );
+        tracing::info!(
+            event = LogEvent::TaskAgentChanged.as_str(),
+            team = %located.team,
+            task = %task,
+            refused_agent = refused_agent.as_str(),
+            new_agent = new_agent.as_str(),
+            refused_provider = self.refusal_provider(refused_agent).unwrap_or(refused_agent.as_str()),
+            return_at = %self.parts.state.refused_until(refused_agent).ok_or_else(|| OwnerError::LostTask { task: task.clone() })?,
+            "a task whose agent was refused by its provider was handed over to a free agent"
         );
         Ok(())
     }
@@ -2581,26 +2764,40 @@ impl Owner {
     /// Queues the paused tasks whose time has come.
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
-        let due: Vec<TaskId> = self
-            .wakes
-            .iter()
-            .filter(|(_, at)| **at <= now)
-            .map(|(task, _)| task.clone())
-            .collect();
-        for task in due {
-            self.wakes.remove(&task);
-            let still_paused = self
-                .parts
-                .state
-                .find_task(&task)
-                .is_some_and(|found| found.member.status() == TaskStatus::Paused);
-            if !still_paused {
+        let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
+        for task in waiting {
+            let Some(found) = self.parts.state.find_task(&task) else {
+                self.wakes.remove(&task);
+                continue;
+            };
+            if found.member.status() != TaskStatus::Paused {
+                self.wakes.remove(&task);
                 continue;
             }
             let located = self.locate(&task)?;
+            let agent: AgentName = located.agent.parse()?;
+            let mut notice = None;
+            if let Some(until) = self.parts.state.refused_until(&agent).filter(|at| *at > now)
+                && let Some(agent_core::state::RunState::Ended { at, end }) =
+                    found.member.runs().last().map(agent_core::state::Run::state)
+                && let Some(limit) = limit_of(end, *at)
+                && located.role != Role::Reviewer
+                && decide(&self.refusal_facts(limit, self.parts.state.limit_refusals(&task).max(1)))
+                    == Decision::ChangeAgent
+                && let Some(handled) = self.handle_change_agent(&task, &located, &agent, until, now)?
+            {
+                if handled.status == TaskStatus::Paused {
+                    continue;
+                }
+                notice = Some(handled.notice);
+            }
+            if notice.is_none() && self.wakes.get(&task).is_some_and(|at| *at > now) {
+                continue;
+            }
+            self.wakes.remove(&task);
             let mut events = Vec::new();
             self.move_to(&task, &located.team, TaskStatus::Queued, &mut events)?;
-            self.commit(&task, &located, now, events, None).await?;
+            self.commit(&task, &located, now, events, notice).await?;
         }
         Ok(())
     }
