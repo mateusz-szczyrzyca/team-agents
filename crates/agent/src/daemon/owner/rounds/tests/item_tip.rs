@@ -259,7 +259,7 @@ async fn off_branch_lead_is_sent_back() {
     assert!(prompt.contains(&text), "{prompt}");
     let started: Vec<_> = rows(&rig, LogEvent::ChecksDecided)
         .into_iter()
-        .filter(|row| field(row, "outcome") == "gate_started")
+        .filter(|row| row.fields().get("outcome").and_then(serde_json::Value::as_str) == Some("gate_started"))
         .collect();
     assert_eq!(started, []);
     let off = rows(&rig, LogEvent::PublishOffBranch);
