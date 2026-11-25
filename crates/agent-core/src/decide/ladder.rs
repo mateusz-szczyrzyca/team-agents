@@ -41,6 +41,9 @@ pub enum Trouble {
     /// The run reported `STATUS: FAILED` after it used the bus's tools: the agent itself gave up on the work. It is never
     /// resumed in its session; it goes to a new session once, then up the rest of the ladder.
     Failed,
+    /// The round of the task's item went on longer than `[limits] round_minutes` without its pull request in review: the
+    /// daemon cut the run and another agent took the task over. No run went bad.
+    RoundOverdue,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -87,7 +90,12 @@ pub fn next_step(
         // NoToolCall uses its own retry decision; waiting for an agent and daemon cuts are not bad runs.
         // A declared failure is the agent's own verdict on its work: its session is not resumed, the new session comes
         // from the rung below.
-        Trouble::NoToolCall | Trouble::Busy | Trouble::DaemonDown | Trouble::ContextBound | Trouble::Failed => false,
+        Trouble::NoToolCall
+        | Trouble::Busy
+        | Trouble::DaemonDown
+        | Trouble::ContextBound
+        | Trouble::Failed
+        | Trouble::RoundOverdue => false,
     };
     if retried {
         return LadderStep::SameSession;

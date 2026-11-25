@@ -92,6 +92,10 @@ const DEFAULT_RUNS_PER_AGENT: u32 = 1;
 /// Runs an agent of `[tiers] workers` may have going at once, by default.
 const DEFAULT_RUNS_PER_WORKER: u32 = 1;
 
+/// Minutes a round may go on without its pull request in review before its task is handed over, by default: two hours.
+/// The RED stub gives the wrong value.
+const DEFAULT_ROUND_MINUTES: u32 = 0;
+
 /// Lines of a run's error output read to recognise limits, by default.
 const DEFAULT_TAIL_LINES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 
@@ -514,6 +518,9 @@ pub struct Limits {
     pub runs_per_agent: u32,
     /// How many runs an agent of `[tiers] workers` may have going at once; 0 is no limit.
     pub runs_per_worker: u32,
+    /// How many minutes a round may go on without its pull request in review: then the run of the task that works on it
+    /// is cut and another agent of `[replacement] agents` takes the task over; 0 turns the rule off.
+    pub round_minutes: u32,
 }
 
 impl Default for Limits {
@@ -529,6 +536,7 @@ impl Default for Limits {
             wake_ups_per_message: DEFAULT_WAKE_UPS_PER_MESSAGE,
             runs_per_agent: DEFAULT_RUNS_PER_AGENT,
             runs_per_worker: DEFAULT_RUNS_PER_WORKER,
+            round_minutes: DEFAULT_ROUND_MINUTES,
         }
     }
 }
@@ -2315,6 +2323,20 @@ workers = ["qwen", "qwen"]"#,
         assert_eq!(config("[limits]\nruns_per_agent = 0\n").limits().runs_per_agent, 0);
         assert_eq!(config("[limits]\nruns_per_agent = 2\n").limits().runs_per_agent, 2);
         assert_eq!(config("[limits]\nruns_per_worker = 3\n").limits().runs_per_worker, 3);
+    }
+
+    #[test]
+    fn a_round_may_go_on_two_hours_unless_the_limits_say_otherwise() {
+        assert_eq!(config("").limits().round_minutes, 120);
+        assert_eq!(config("[limits]\ntail_lines = 5\n").limits().round_minutes, 120);
+        assert_eq!(config("[limits]\nround_minutes = 45\n").limits().round_minutes, 45);
+        assert_eq!(config("[limits]\nround_minutes = 0\n").limits().round_minutes, 0);
+    }
+
+    #[test]
+    fn a_negative_round_limit_is_refused_with_the_line_of_the_value() {
+        let text = "[limits]\nround_minutes = -5\n";
+        assert_eq!(error_line(text, &failure(text)), Some(2));
     }
 
     #[test]
