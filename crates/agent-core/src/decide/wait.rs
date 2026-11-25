@@ -116,8 +116,11 @@ pub fn behind_run(agent: &AgentName, team: &TeamId) -> String {
 
 /// The wait line of a round whose task of `agent` is paused by its provider until `until`, the time as the reader is shown it.
 #[must_use]
-pub fn provider_line(_agent: &AgentName, _until: &str) -> String {
-    String::new()
+pub fn provider_line(agent: &AgentName, until: &str) -> String {
+    Waiting::Provider
+        .text()
+        .replace("{{agent}}", agent.as_str())
+        .replace("{{until}}", until)
 }
 
 impl Waiting {
