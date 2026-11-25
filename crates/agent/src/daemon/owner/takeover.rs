@@ -196,7 +196,7 @@ impl Owner {
 
     /// Gives `task`, held by `held`, to the agent `name` at `at`, with the items it works on, and starts it anew after
     /// `trouble`: the next run is briefed, in a session of the new agent, and its retries are its own.
-    fn hand_task_over(
+    pub(super) fn hand_task_over(
         &mut self,
         task: &TaskId,
         name: &AgentName,

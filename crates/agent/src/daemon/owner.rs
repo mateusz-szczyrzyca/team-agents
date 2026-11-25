@@ -2152,7 +2152,7 @@ impl Owner {
             | RunEnd::TurnLimit
             | RunEnd::Stopped => pause.until,
         };
-        self.parts.state.keep_refused_until(agent, return_at);
+        self.parts.state.keep_refused_until(agent.clone(), return_at);
         let decision = match answer {
             Decision::Pause => "pause",
             Decision::ChangeAgent => "change_agent",
@@ -2168,13 +2168,203 @@ impl Owner {
             return_at = %return_at,
             "a run refused by its provider is counted and the rule answers it"
         );
-        // --- RED: ChangeAgent currently returns None (the real handling comes in GREEN). ---
-        // The test `keep_refusal_returns_some_when_the_rule_decides_to_change_agent` expects Some.
-        // TODO: replace with the real pick + takeover / none-free paths in the GREEN commit.
         if answer == Decision::ChangeAgent {
-            return Ok(None); // RED: should be Some(RefusalHandled { ... })
+            return self.handle_change_agent(task, located, &agent, pause, end, now);
         }
         Ok(None)
+    }
+
+    /// Builds the [`agent_core::decide::replacement::refused::Request`] for a refused task, calls
+    /// [`agent_core::decide::replacement::refused::pick`], and acts on the result: hands the task over to the chosen
+    /// agent, or keeps it paused until one is free.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "three Candidate lists are built from config; extracting a helper would \
+        need owned provider strings to outlive Candidate references, which makes the code no shorter"
+    )]
+    fn handle_change_agent(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        agent: &AgentName,
+        pause: &agent_core::decide::outcome::Pause,
+        _end: &RunEnd,
+        now: Timestamp,
+    ) -> Result<Option<RefusalHandled>, OwnerError> {
+        use agent_core::decide::pool::provider_of;
+        use agent_core::decide::replacement::refused::{Candidate, Pick, Request, pick};
+        use agent_core::kinds::Tier;
+
+        let config = &self.parts.settings.config;
+        let replacement = config.replacement();
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+
+        // The agents in the task's team.
+        let team_names: Vec<AgentName> = found
+            .team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(found.team.reviewers())
+            .map(|member| member.agent().agent_name().clone())
+            .collect();
+
+        // The refused agent's provider.
+        let refused_cli = config.agent(agent).map(|a| a.cli);
+        let refused_model = config.agent(agent).and_then(|a| a.model.as_ref());
+        // Provider as an owned String because it may borrow from config which is immutably borrowed from self.
+        let refused_provider: String = match refused_cli {
+            Some(cli) => provider_of(cli, refused_model).to_owned(),
+            None => located.agent.clone(),
+        };
+
+        // Whether [replacement] replacements is used up.
+        let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
+        let replacements_exhausted = taken_over >= replacement.replacements().get();
+
+        // Build Candidate lists.  Collect providers as owned Strings so they outlive Candidate references.
+        let busy = self.agents_in_runs();
+
+        // Replacement agents.
+        let replacement_providers: Vec<String> = replacement
+            .agents()
+            .iter()
+            .map(|name| {
+                let agent_cfg = config.agent(name);
+                let cli = agent_cfg.map(|a| a.cli);
+                let model = agent_cfg.and_then(|a| a.model.as_ref());
+                match cli {
+                    Some(c) => provider_of(c, model).to_owned(),
+                    None => name.as_str().to_owned(),
+                }
+            })
+            .collect();
+        let replacement_agents: Vec<Candidate<'_>> = replacement
+            .agents()
+            .iter()
+            .zip(replacement_providers.iter())
+            .map(|(name, provider)| Candidate {
+                name,
+                provider,
+                tier: Tier::Normal,
+                busy: busy.contains(&name.as_str()),
+                refused_until: self.parts.state.refused_until(name),
+            })
+            .collect();
+
+        // Normal agents.
+        let normal_providers: Vec<String> = config
+            .normal_agents()
+            .iter()
+            .map(|name| {
+                let agent_cfg = config.agent(name);
+                let cli = agent_cfg.map(|a| a.cli);
+                let model = agent_cfg.and_then(|a| a.model.as_ref());
+                match cli {
+                    Some(c) => provider_of(c, model).to_owned(),
+                    None => name.as_str().to_owned(),
+                }
+            })
+            .collect();
+        let normal_agents: Vec<Candidate<'_>> = config
+            .normal_agents()
+            .iter()
+            .zip(normal_providers.iter())
+            .map(|(name, provider)| Candidate {
+                name,
+                provider,
+                tier: Tier::Normal,
+                busy: busy.contains(&name.as_str()),
+                refused_until: self.parts.state.refused_until(name),
+            })
+            .collect();
+
+        // Investigator names as AgentNames, owned so Candidates can reference them.
+        let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
+        let inv_providers: Vec<String> = config
+            .investigators()
+            .values()
+            .zip(inv_names.iter())
+            .map(|(inv_cfg, _agent_name)| provider_of(inv_cfg.cli, inv_cfg.model.as_ref()).to_owned())
+            .collect();
+        let investigators: Vec<Candidate<'_>> = inv_names
+            .iter()
+            .zip(inv_providers.iter())
+            .map(|(agent_name, provider)| Candidate {
+                name: agent_name,
+                provider,
+                tier: Tier::Investigator,
+                busy: busy.contains(&agent_name.as_str()),
+                refused_until: self.parts.state.refused_until(agent_name),
+            })
+            .collect();
+
+        let request = Request {
+            role: located.role,
+            team: &team_names,
+            refused_provider: &refused_provider,
+            replacement_agents: &replacement_agents,
+            normal_agents: &normal_agents,
+            investigators: &investigators,
+            now,
+            replacements_exhausted,
+        };
+
+        // We need `agent` later; clone it now before the mutable borrow for hand_over_refused_task.
+        let agent_clone = agent.clone();
+        match pick(&request) {
+            Pick::Agent(new_agent) => {
+                let new_agent = new_agent.clone();
+                self.hand_over_refused_task(task, &new_agent, located, &agent_clone, now)?;
+                Ok(Some(RefusalHandled {
+                    status: TaskStatus::Queued,
+                    notice: Notice::Paused {
+                        until: pause.until,
+                        reason: pause.reason,
+                        evidence: String::new(),
+                    },
+                }))
+            }
+            Pick::NoneFree { earliest_return } => Ok(Some(RefusalHandled {
+                status: TaskStatus::Paused,
+                notice: Notice::Paused {
+                    until: earliest_return.unwrap_or(pause.until),
+                    reason: pause.reason,
+                    evidence: String::new(),
+                },
+            })),
+        }
+    }
+
+    /// Hands a refused task over to `new_agent`: the existing takeover mechanism, with the briefing of a takeover.
+    fn hand_over_refused_task(
+        &mut self,
+        task: &TaskId,
+        new_agent: &AgentName,
+        located: &Located,
+        refused_agent: &AgentName,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let held = self
+            .participant_of(refused_agent)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        self.hand_task_over(task, new_agent, &held, Trouble::NoStatus, now)?;
+        let team = located.team.clone();
+        tracing::info!(
+            event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
+            team = %team,
+            task = %task,
+            from = refused_agent.as_str(),
+            to = new_agent.as_str(),
+            reason = "provider_refusal",
+            "a task whose agent was refused by its provider is handed over"
+        );
+        Ok(())
     }
 
     /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no
