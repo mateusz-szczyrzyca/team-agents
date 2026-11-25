@@ -169,3 +169,21 @@ async fn the_first_pass_removes_the_notes_of_requests_that_are_not_in_the_queue(
     assert!(!rig.note(7).exists(), "the request of that note is not in the queue");
     assert!(rig.note(2).exists(), "the request that waits keeps its note");
 }
+
+#[tokio::test]
+async fn a_stale_note_that_could_not_be_removed_is_removed_at_a_later_pass() {
+    let mut rig = Rig::new(&[2]).await;
+    rig.note_since_start(2);
+    // A directory under the name of a note: the first removal fails, and the cause is gone when the name is a file again.
+    std::fs::create_dir(rig.note(7)).unwrap();
+
+    rig.owner.serve_pool_requests().await.unwrap();
+    assert!(rig.note(7).exists(), "the removal fails while the name is a directory");
+    std::fs::remove_dir(rig.note(7)).unwrap();
+    rig.note_since_start(7);
+
+    rig.owner.serve_pool_requests().await.unwrap();
+
+    assert!(!rig.note(7).exists(), "the note of a request that is not queued is retried");
+    assert!(rig.note(2).exists(), "the request that waits keeps its note");
+}
