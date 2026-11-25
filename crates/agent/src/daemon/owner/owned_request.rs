@@ -4,7 +4,9 @@ use crate::daemon::team::{BusNotice, render_notice};
 use agent_core::decide::worker_result::WorkerEnding;
 use agent_core::ids::{RoundId, RunId, TaskId};
 use agent_core::log::LogEvent;
-use agent_runtime::agentbus::{DelegationStatus, Outgoing, OwnedChange, OwnedOutcome, RequestOwner, RequestResult};
+use agent_runtime::agentbus::{
+    AgentBusError, DelegationStatus, HelperEntry, Outgoing, OwnedChange, OwnedOutcome, RequestOwner, RequestResult,
+};
 use agent_runtime::request_workspace::RequestWorkspace;
 use agent_runtime::worker_request::Pending;
 use agent_runtime::worker_request::recovery::{self, Journal, Phase, Transition};
@@ -427,9 +429,10 @@ impl Owner {
             .team
             .id()
             .clone();
-        let step = self.step_of_request(served.request).await;
+        let listed = self.parts.bus.helper_list(false).await;
+        let step = step_of_request(&listed, served.request);
         let returned = if updated.phase() == &Phase::Exhausted {
-            Some(self.returned_interruption_texts(updated, served).await?)
+            Some(self.returned_interruption_texts(updated, served, listed)?)
         } else {
             None
         };
@@ -485,10 +488,11 @@ impl Owner {
     }
 
     /// The causes of the interruptions of `served`'s request and the notice that returns it to its requester.
-    async fn returned_interruption_texts(
-        &mut self,
+    fn returned_interruption_texts(
+        &self,
         updated: &Journal,
         served: &super::teams::Served,
+        listed: Result<Vec<HelperEntry>, AgentBusError>,
     ) -> Result<(String, String), OwnerError> {
         let causes = updated
             .events()
@@ -506,7 +510,7 @@ impl Owner {
             })
             .collect::<Vec<_>>()
             .join(", ");
-        let entries = self.parts.bus.helper_list(false).await?;
+        let entries = listed?;
         let entry = entries
             .iter()
             .find(|entry| entry.id == served.request)
@@ -530,26 +534,6 @@ impl Owner {
             .render(agent_core::prompt::TeamPrompt::WorkerInterruptedReturned, &values)
             .map_err(super::NoticeRenderError::from)?;
         Ok((causes, notice))
-    }
-
-    /// The step of the plan that the open request `request` is for, as text; none when the bus does not list it or cannot
-    /// be asked, which is told.
-    async fn step_of_request(&self, request: agent_runtime::agentbus::RequestId) -> Option<String> {
-        match self.parts.bus.helper_list(false).await {
-            Ok(entries) => entries
-                .into_iter()
-                .find(|entry| entry.id == request)
-                .and_then(|entry| entry.step),
-            Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::BusDown.as_str(),
-                    request = %request,
-                    error = %agent_runtime::process::error_chain(&error),
-                    "the step of an interrupted request cannot be read: the record of its end has none"
-                );
-                None
-            }
-        }
     }
 
     /// The whole seconds from `since` to now by the clock of the owner; none counted for a clock that gives no time or one
@@ -799,6 +783,29 @@ impl Owner {
             )
             .await?;
         Ok(Some(outcome == OwnedOutcome::Stale))
+    }
+}
+
+/// The step of the plan that the open request `request` is for, as text, from the bus's answer `listed`; none when the bus
+/// does not list it or could not be asked, which is told.
+fn step_of_request(
+    listed: &Result<Vec<HelperEntry>, AgentBusError>,
+    request: agent_runtime::agentbus::RequestId,
+) -> Option<String> {
+    match listed {
+        Ok(entries) => entries
+            .iter()
+            .find(|entry| entry.id == request)
+            .and_then(|entry| entry.step.clone()),
+        Err(error) => {
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                request = %request,
+                error = %agent_runtime::process::error_chain(error),
+                "the step of an interrupted request cannot be read: the record of its end has none"
+            );
+            None
+        }
     }
 }
 

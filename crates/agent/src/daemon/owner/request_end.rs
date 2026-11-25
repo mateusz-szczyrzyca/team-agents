@@ -110,20 +110,31 @@ impl RequestEnd<'_> {
     }
 }
 
+/// Why the cost of a worker's run cannot be read from the history.
+#[derive(Debug, thiserror::Error)]
+enum CostError {
+    /// The task that reads the history did not finish.
+    #[error("the task that reads the history did not finish")]
+    Join(#[source] tokio::task::JoinError),
+    /// The history cannot be read.
+    #[error("the history cannot be read")]
+    Read(#[source] ReadError),
+}
+
 /// The cost in US dollars the history keeps for `run`: none when the run has no usage row, the CLI told no cost or there
 /// is no history.
 ///
 /// # Errors
-/// The cause, as text, when the history cannot be read.
-async fn cost_of_run(history: &Path, run: &RunId) -> Result<Option<f64>, String> {
+/// [`CostError::Join`] when the reading task failed, [`CostError::Read`] when the history cannot be read.
+async fn cost_of_run(history: &Path, run: &RunId) -> Result<Option<f64>, CostError> {
     if !history.exists() {
         return Ok(None);
     }
     let (path, wanted) = (history.to_path_buf(), run.clone());
     match tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))).await {
-        Err(join) => Err(error_chain(&join)),
+        Err(join) => Err(CostError::Join(join)),
         Ok(Err(ReadError::Empty { .. })) => Ok(None),
-        Ok(Err(source)) => Err(error_chain(&source)),
+        Ok(Err(source)) => Err(CostError::Read(source)),
         Ok(Ok(usage)) => Ok(usage.and_then(|usage| usage.cost_usd)),
     }
 }
@@ -185,7 +196,7 @@ impl Owner {
                     tracing::warn!(
                         event = LogEvent::HistoryRecordIncomplete.as_str(),
                         request = %ended.request,
-                        cause,
+                        cause = %error_chain(&cause),
                         "the cost of the worker's run cannot be read: the record of the end of its request has none"
                     );
                     None
