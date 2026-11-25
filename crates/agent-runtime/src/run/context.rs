@@ -96,3 +96,6 @@ pub async fn read_context(dir: &Path) -> Result<Option<ContextRecord>, ContextEr
         .map(Some)
         .map_err(|source| ContextError::Parse { path, source })
 }
+
+#[cfg(test)]
+mod tests;
