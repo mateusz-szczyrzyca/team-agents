@@ -468,7 +468,7 @@ fn refusal_from_error(error: &Value) -> agent_core::decide::outcome::RefusalSumm
         .and_then(|body| serde_json::from_str::<Value>(body).ok())
         .and_then(|body| body.pointer("/error/code").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
-    agent_core::decide::outcome::RefusalSummary::from_fields(&status, &message, &code, reason)
+    agent_core::decide::outcome::RefusalSummary::from_fields(&status, &message, &code, None, reason)
 }
 
 /// The parser of one opencode run.

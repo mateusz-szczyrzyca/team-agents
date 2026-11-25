@@ -371,7 +371,7 @@ impl Notice {
                 (
                     HarnessPrompt::NoticePaused,
                     common
-                        .with("until", context.offset.into().stamp_minute(*until))?
+                        .with("until", context.offset.stamp_minute(*until))?
                         .with("reason", reason.to_string())?
                         .with("evidence", &evidence_text)?,
                     NoticeKind::Paused,

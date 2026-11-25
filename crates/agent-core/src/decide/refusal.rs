@@ -20,6 +20,9 @@ pub struct RefusalSummary {
     pub code: String,
     /// Which limit the refusal is: an overload for 429/503/529, else a rate limit or a quota.
     pub kind: RefusalKind,
+    /// The Unix epoch second when the limit resets, from a structured event of the CLI; none when not told or when
+    /// the reset is parsed from text.
+    pub resets_at: Option<u64>,
 }
 
 /// The kind of refusal a provider gave.
@@ -43,16 +46,25 @@ impl RefusalSummary {
     /// Builds a refusal summary from the fields the CLI gave.
     ///
     /// `status` is the HTTP status code as a string (`"429"`, `"402"`, or empty),
-    /// `message` is the provider's message, `code` is the provider's error code.
+    /// `message` is the provider's message, `code` is the provider's error code,
+    /// `resets_at` is the Unix epoch second of the reset from a structured event, and
+    /// `reason` is how the run's limit was classified (`Quota` or `RateLimit`).
     /// The `kind` is inferred from the status, the code and the pause reason.
     #[must_use]
-    pub fn from_fields(status: &str, message: &str, code: &str, reason: PauseReason) -> Self {
+    pub fn from_fields(
+        status: &str,
+        message: &str,
+        code: &str,
+        resets_at: Option<u64>,
+        reason: PauseReason,
+    ) -> Self {
         let kind = refusal_kind(status, code, reason);
         Self {
             status: status.to_owned(),
             message: message.to_owned(),
             code: code.to_owned(),
             kind,
+            resets_at,
         }
     }
 }

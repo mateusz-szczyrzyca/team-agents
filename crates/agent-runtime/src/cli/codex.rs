@@ -348,6 +348,7 @@ impl OutputParser for CodexParser {
                     "",
                     &error.message,
                     "",
+                    None,
                     agent_core::decide::outcome::PauseReason::RateLimit,
                 ));
                 self.failure(error.message)

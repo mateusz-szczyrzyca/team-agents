@@ -470,6 +470,7 @@ impl OutputParser for ClaudeParser {
                 events.push(ActivityEvent::Info(finish.summary()));
                 // Build a structured refusal from the error result, when the API gave a status.
                 // Read the fields before `finish.result` is moved into `final_message`.
+                let rate_limit_reset = self.rate_limit_reset;
                 let refusal = if finish.failed() {
                     finish.api_error_status.map(|status| {
                         let message = finish.result.as_deref().unwrap_or("");
@@ -477,6 +478,7 @@ impl OutputParser for ClaudeParser {
                             &status.to_string(),
                             message,
                             "",
+                            rate_limit_reset,
                             agent_core::decide::outcome::PauseReason::RateLimit,
                         )
                     })

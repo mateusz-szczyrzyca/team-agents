@@ -2,11 +2,12 @@ use super::*;
 
 #[test]
 fn builds_from_fields_with_quota_kind_for_quota_reason() {
-    let summary = RefusalSummary::from_fields("402", "Insufficient credits", "", PauseReason::Quota);
+    let summary = RefusalSummary::from_fields("402", "Insufficient credits", "", None, PauseReason::Quota);
     assert_eq!(summary.status, "402");
     assert_eq!(summary.message, "Insufficient credits");
     assert_eq!(summary.code, "");
     assert_eq!(summary.kind, RefusalKind::Quota);
+    assert_eq!(summary.resets_at, None);
 }
 
 #[test]
@@ -15,6 +16,7 @@ fn builds_from_fields_with_overloaded_kind_for_429_with_engine_overloaded_code()
         "429",
         "Model busy, retry later",
         "engine_overloaded",
+        None,
         PauseReason::RateLimit,
     );
     assert_eq!(summary.status, "429");
@@ -25,25 +27,25 @@ fn builds_from_fields_with_overloaded_kind_for_429_with_engine_overloaded_code()
 
 #[test]
 fn builds_from_fields_with_overloaded_kind_for_503_status() {
-    let summary = RefusalSummary::from_fields("503", "Service Unavailable", "", PauseReason::RateLimit);
+    let summary = RefusalSummary::from_fields("503", "Service Unavailable", "", None, PauseReason::RateLimit);
     assert_eq!(summary.kind, RefusalKind::Overloaded);
 }
 
 #[test]
 fn builds_from_fields_with_overloaded_kind_for_529_status() {
-    let summary = RefusalSummary::from_fields("529", "Overloaded", "", PauseReason::RateLimit);
+    let summary = RefusalSummary::from_fields("529", "Overloaded", "", None, PauseReason::RateLimit);
     assert_eq!(summary.kind, RefusalKind::Overloaded);
 }
 
 #[test]
 fn builds_from_fields_with_provider_error_kind_for_non_limit_status() {
-    let summary = RefusalSummary::from_fields("500", "Internal Server Error", "", PauseReason::RateLimit);
+    let summary = RefusalSummary::from_fields("500", "Internal Server Error", "", None, PauseReason::RateLimit);
     assert_eq!(summary.kind, RefusalKind::ProviderError);
 }
 
 #[test]
 fn builds_from_fields_with_rate_limit_kind_when_status_is_empty() {
-    let summary = RefusalSummary::from_fields("", "at capacity", "", PauseReason::RateLimit);
+    let summary = RefusalSummary::from_fields("", "at capacity", "", None, PauseReason::RateLimit);
     assert_eq!(summary.status, "");
     assert_eq!(summary.kind, RefusalKind::RateLimit);
 }
@@ -54,6 +56,7 @@ fn builds_from_fields_with_rate_limit_kind_for_429_without_overload_code() {
         "429",
         "Too Many Requests",
         "",
+        None,
         PauseReason::RateLimit,
     );
     assert_eq!(summary.kind, RefusalKind::RateLimit);
@@ -61,7 +64,7 @@ fn builds_from_fields_with_rate_limit_kind_for_429_without_overload_code() {
 
 #[test]
 fn builds_from_fields_with_quota_kind_for_openrouter_402() {
-    let summary = RefusalSummary::from_fields("402", "Payment Required", "", PauseReason::Quota);
+    let summary = RefusalSummary::from_fields("402", "Payment Required", "", None, PauseReason::Quota);
     assert_eq!(summary.status, "402");
     assert_eq!(summary.kind, RefusalKind::Quota);
 }
@@ -72,6 +75,7 @@ fn builds_from_fields_with_provider_error_for_internal_error() {
         "500",
         "Internal error upstream",
         "",
+        None,
         PauseReason::RateLimit,
     );
     assert_eq!(summary.kind, RefusalKind::ProviderError);
@@ -83,6 +87,7 @@ fn builds_from_fields_with_empty_fields_for_codex_fallback() {
         "",
         "Selected model is at capacity. Please try a different model.",
         "",
+        None,
         PauseReason::RateLimit,
     );
     assert_eq!(summary.status, "");
@@ -96,9 +101,23 @@ fn builds_from_fields_with_overloaded_kind_for_at_capacity_code() {
         "503",
         "Service at capacity",
         "at_capacity",
+        None,
         PauseReason::RateLimit,
     );
     assert_eq!(summary.kind, RefusalKind::Overloaded);
+}
+
+#[test]
+fn builds_from_fields_with_resets_at_from_structured_event() {
+    let summary = RefusalSummary::from_fields(
+        "429",
+        "Rate limit exceeded",
+        "",
+        Some(1_794_471_800),
+        PauseReason::RateLimit,
+    );
+    assert_eq!(summary.resets_at, Some(1_794_471_800));
+    assert_eq!(summary.kind, RefusalKind::RateLimit);
 }
 
 #[test]
