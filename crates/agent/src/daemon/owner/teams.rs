@@ -1206,6 +1206,26 @@ impl Owner {
         }
     }
 
+    /// The team that has `task` among its tasks.
+    fn requester_team(&self, task: &TaskId) -> Option<TeamId> {
+        self.parts
+            .state
+            .teams()
+            .iter()
+            .find(|team| team.find(task).is_some())
+            .map(|team| team.id().clone())
+    }
+
+    /// Whether the team of `task` has workers of its own, which serve its requests instead of the pool.
+    pub(super) fn requester_has_workers(&self, task: &TaskId) -> bool {
+        self.requester_team(task).is_some_and(|team_id| {
+            self.parts
+                .state
+                .team(&team_id)
+                .is_some_and(|team| team.crew().roster().iter().any(|(role, _)| *role == Role::Worker))
+        })
+    }
+
     /// Serves queued requests for workers with free workers of the installation pool.
     #[expect(
         clippy::too_many_lines,
@@ -1281,31 +1301,15 @@ impl Owner {
             });
         }
 
+        let returned = self.return_requests_nobody_took(&open_requests).await;
         for req in open_requests {
-            if req.status != DelegationStatus::Queued {
-                self.forget_wait(&req).await;
+            if req.status != DelegationStatus::Queued || returned.contains(&req.id) {
                 continue;
             }
-            let requester_team_id = self
-                .parts
-                .state
-                .teams()
-                .iter()
-                .find(|t| t.find(&req.from_task).is_some())
-                .map(|t| t.id().clone());
-            let team_has_workers = requester_team_id.as_ref().is_some_and(|team_id| {
-                self.parts
-                    .state
-                    .team(team_id)
-                    .is_some_and(|t| t.crew().roster().iter().any(|(role, _)| *role == Role::Worker))
-            });
-            if team_has_workers {
-                if let Some(ref team_id) = requester_team_id {
-                    self.look_at(team_id);
+            if self.requester_has_workers(&req.from_task) {
+                if let Some(team_id) = self.requester_team(&req.from_task) {
+                    self.look_at(&team_id);
                 }
-                continue;
-            }
-            if self.wait_returns(&req).await {
                 continue;
             }
 

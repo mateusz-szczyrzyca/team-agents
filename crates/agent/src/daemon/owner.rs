@@ -525,6 +525,9 @@ struct PoolDispatch {
     /// The requests whose note of the wait the daemon holds, with the task whose directory has it: the notes to take away
     /// when the request is no longer queued, whether or not the bus still lists it. Empty after a restart of the daemon.
     waits_noted: HashMap<agent_runtime::agentbus::RequestId, TaskId>,
+    /// Whether the notes of waits on disk were looked through since the start of the daemon: the first pass takes away
+    /// the notes of requests that ended while it was down, which `waits_noted` knows nothing of.
+    waits_swept: bool,
 }
 
 /// The owner.

@@ -2,8 +2,10 @@
 //! waits and, when `[workers] wait_seconds` has passed, fails the request with the words that tell its requester to do
 //! the step itself.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use agent_core::decide::worker_wait::{WaitVerdict, wait_verdict};
-use agent_core::ids::TaskId;
 use agent_core::log::LogEvent;
 use agent_core::state::Timestamp;
 use agent_runtime::agentbus::{DelegationStatus, DelegationUpdate, HelperEntry, RequestId};
@@ -22,31 +24,56 @@ const NO_STEP: &str = "no step";
 impl Owner {
     /// Forgets the note of the wait of a request that is no longer queued.
     pub(super) async fn forget_wait(&mut self, request: &HelperEntry) {
-        self.clear_wait(request.id, &request.from_task).await;
+        let task_dir = self.parts.store.home().task_dir(&request.from_task);
+        self.clear_wait(request.id, task_dir).await;
     }
 
-    /// Takes away the notes the daemon holds of requests that `open` does not list as queued: the bus lists only open
-    /// requests, so a request that was failed or settled while it waited is gone from it.
+    /// Takes away the notes of requests that are not queued: those the daemon holds (the bus lists only open requests, so
+    /// a request that was failed or settled while it waited is gone from its list) and, at the first look after a start
+    /// of the daemon, every note on disk, which a request that ended while the daemon was down left behind.
     pub(super) async fn forget_left_waits(&mut self, open: &[HelperEntry]) {
-        let left: Vec<(RequestId, TaskId)> = self
+        let queued: HashSet<RequestId> = open
+            .iter()
+            .filter(|request| request.status == DelegationStatus::Queued)
+            .map(|request| request.id)
+            .collect();
+        let left: Vec<(RequestId, PathBuf)> = self
             .pool_dispatch
             .waits_noted
             .iter()
-            .filter(|(id, _)| {
-                !open
-                    .iter()
-                    .any(|request| request.id == **id && request.status == DelegationStatus::Queued)
-            })
-            .map(|(id, task)| (*id, task.clone()))
+            .filter(|(id, _)| !queued.contains(*id))
+            .map(|(id, task)| (*id, self.parts.store.home().task_dir(task)))
             .collect();
-        for (id, task) in left {
-            self.clear_wait(id, &task).await;
+        for (id, task_dir) in left {
+            self.clear_wait(id, task_dir).await;
+        }
+        if !self.pool_dispatch.waits_swept {
+            self.sweep_waits(&queued).await;
         }
     }
 
-    /// Removes the note of the wait of `request` from the directory of `task` and stops holding it.
-    async fn clear_wait(&mut self, request: RequestId, task: &TaskId) {
-        let task_dir = self.parts.store.home().task_dir(task);
+    /// Takes away every note on disk whose request is not in `queued`, and remembers that it has done so.
+    async fn sweep_waits(&mut self, queued: &HashSet<RequestId>) {
+        let tasks_dir = self.parts.store.home().tasks_dir();
+        match worker_wait::find_notes(&tasks_dir).await {
+            Ok(found) => {
+                for note in found.into_iter().filter(|note| !queued.contains(&note.request)) {
+                    self.clear_wait(note.request, note.task_dir).await;
+                }
+                self.pool_dispatch.waits_swept = true;
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::WorkerRequestDamaged.as_str(),
+                    error = %error_chain(&error),
+                    "the notes of waits left on disk cannot be looked for: they are looked for again at the next pass"
+                );
+            }
+        }
+    }
+
+    /// Removes the note of the wait of `request` from `task_dir` and stops holding it.
+    async fn clear_wait(&mut self, request: RequestId, task_dir: PathBuf) {
         match worker_wait::clear(&task_dir, request).await {
             Ok(()) => {
                 self.pool_dispatch.waits_noted.remove(&request);
@@ -62,27 +89,27 @@ impl Owner {
         }
     }
 
-    /// Notes since when the queued `request` waits, at the first look at it, and returns it to its requester when it has
-    /// waited `[workers] wait_seconds`; `true` when it was returned and is not to be served.
+    /// Notes since when each queued request of `open` that no worker of its team serves waits, at the first look at it, and
+    /// returns those that have waited `[workers] wait_seconds` to their requesters; the requests returned.
     ///
-    /// A request that is on its second try or whose workspace is kept for a recovery is not counted: it is served as before.
-    pub(super) async fn wait_returns(&mut self, request: &HelperEntry) -> bool {
-        if self.again.contains_key(&request.id) {
-            return false;
-        }
-        match self.owned_journal(&request.from_task, request.id).await {
-            Ok(None) => {}
-            Ok(Some(_)) => return false,
-            Err(error) => {
-                tracing::warn!(
-                    event = LogEvent::WorkerRequestDamaged.as_str(),
-                    request = %request.id,
-                    error = %error_chain(&error),
-                    "the journal of a queued request cannot be read: its wait is not counted"
-                );
-                return false;
+    /// This is a pass of its own, before a request is dispatched: what keeps a run from starting (the disk, the slots)
+    /// does not stop the clock of any request.
+    pub(super) async fn return_requests_nobody_took(&mut self, open: &[HelperEntry]) -> HashSet<RequestId> {
+        let mut returned = HashSet::new();
+        for request in open {
+            if request.status == DelegationStatus::Queued
+                && !self.requester_has_workers(&request.from_task)
+                && self.wait_returns(request).await
+            {
+                returned.insert(request.id);
             }
         }
+        returned
+    }
+
+    /// Notes since when the queued `request` waits, at the first look at it, and returns it to its requester when it has
+    /// waited `[workers] wait_seconds`; `true` when it was returned and is not to be served.
+    async fn wait_returns(&mut self, request: &HelperEntry) -> bool {
         let now = match Timestamp::now(&self.parts.clock) {
             Ok(now) => now,
             Err(error) => {

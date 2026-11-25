@@ -2,7 +2,9 @@
 //! task directory, written by the daemon at its first look at the queued request and removed when the request leaves the
 //! queue. `agent status` reads it to show how long the request has waited.
 
+use std::ffi::OsStr;
 use std::io;
+use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 
 use agent_core::state::Timestamp;
@@ -67,8 +69,14 @@ pub enum WaitFileError {
 /// The file of the note of `request` in the task directory `task_dir`.
 #[must_use]
 pub fn wait_path(task_dir: &Path, request: RequestId) -> PathBuf {
-    task_dir.join(format!("worker-wait-{}.json", request.number()))
+    task_dir.join(format!("{NOTE_PREFIX}{}{NOTE_SUFFIX}", request.number()))
 }
+
+/// The start of the name of a note's file.
+const NOTE_PREFIX: &str = "worker-wait-";
+
+/// The end of the name of a note's file.
+const NOTE_SUFFIX: &str = ".json";
 
 /// The most a note may hold, in bytes: far above what the harness writes, a bound on what a damaged file can make it read.
 const NOTE_LIMIT: usize = 4096;
@@ -152,8 +160,50 @@ pub struct FoundNote {
 ///
 /// # Errors
 /// [`WaitFileError::List`].
-pub async fn find_notes(_tasks_dir: &Path) -> Result<Vec<FoundNote>, WaitFileError> {
-    Ok(Vec::new())
+pub async fn find_notes(tasks_dir: &Path) -> Result<Vec<FoundNote>, WaitFileError> {
+    let list_error = |path: &Path, source: io::Error| WaitFileError::List {
+        path: path.to_path_buf(),
+        source,
+    };
+    let mut entries = match tokio::fs::read_dir(tasks_dir).await {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(source) => return Err(list_error(tasks_dir, source)),
+    };
+    let mut found = Vec::new();
+    while let Some(task) = entries
+        .next_entry()
+        .await
+        .map_err(|source| list_error(tasks_dir, source))?
+    {
+        let dir = task.path();
+        let mut files = match tokio::fs::read_dir(&dir).await {
+            Ok(files) => files,
+            // Not a directory, or gone since the listing: it holds no notes.
+            Err(source) if matches!(source.kind(), io::ErrorKind::NotFound | io::ErrorKind::NotADirectory) => continue,
+            Err(source) => return Err(list_error(&dir, source)),
+        };
+        while let Some(file) = files.next_entry().await.map_err(|source| list_error(&dir, source))? {
+            if let Some(request) = request_of_note(&file.file_name()) {
+                found.push(FoundNote {
+                    task_dir: dir.clone(),
+                    request,
+                });
+            }
+        }
+    }
+    Ok(found)
+}
+
+/// The request a file name tells, when it is the name of a note: `worker-wait-<number>.json` with a number above zero.
+fn request_of_note(name: &OsStr) -> Option<RequestId> {
+    let number = name
+        .to_str()?
+        .strip_prefix(NOTE_PREFIX)?
+        .strip_suffix(NOTE_SUFFIX)?
+        .parse::<NonZeroU64>()
+        .ok()?;
+    Some(RequestId::new(number))
 }
 
 #[cfg(test)]
