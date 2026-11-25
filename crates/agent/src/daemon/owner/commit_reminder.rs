@@ -364,7 +364,7 @@ impl Owner {
         Ok(())
     }
 
-    /// Cuts the run of `target` when it was reminded during this run, ignored the reminder for `cut_after` minutes and no
+    /// Cuts the run of `target` when it was reminded, ignored the reminder for `cut_after` minutes and no
     /// gate or test run of its worktree is going.
     ///
     /// # Errors
@@ -376,8 +376,7 @@ impl Owner {
         cut_after: u32,
         ignored: Ignored,
     ) -> Result<(), LookError> {
-        // A reminder from before this run started was given to a run that has ended: this one has not had its chance.
-        let Some((_, reminded)) = ignored.reminder.filter(|(_, at)| *at >= target.run_started) else {
+        let Some((_, reminded)) = ignored.reminder else {
             return Ok(());
         };
         let busy = cut_after != 0 && self.worktree_busy(target)?;
