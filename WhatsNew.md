@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.95.0 — 25.11.2026 — PR #251
+
+### New features
+- [agent] [agent-core] [agent-runtime] A session whose context reaches 80% of its bound is told once, on the bus, to commit what is finished and to write in its report where it is and what is next, before the next run may start a new session. A resumed session is told once, a new one anew; a session with no bound is never told, and neither is a Codex session, which tells no context. Each reminder is the log event `context_reminded`.
+
+### Enhancements
+- [agent-runtime] While a run goes on, its context is kept in `tasks/<task>/context.json`, written whole and only when it changes.
+- [agent-runtime] A history of version 24 is read and upgraded to version 25, which admits the new log event.
+
+### Configuration
+- [agent-core] new: `[commit_reminder] context_percent` (default `80`) — the percent of its bound (`[session] max_context`, or the agent's own) at which a session is reminded once to commit and to write down where it is; `0` turns the reminder off, and a value above `100` is refused when the file is loaded.
+
 ## 0.94.0 — 25.11.2026 — PR #250
 
 ### New features
