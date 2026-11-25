@@ -1,1 +1,1 @@
-Your session holds {{context}} tokens of context.
+Your session holds {{context}} tokens of context, {{percent}}% of its bound of {{bound}}. Commit what is finished now: a failing new test as its `RED:` commit, no debug output. Then write in your report to the bus where you are and what is next: the next run may start a new session that sees only your commits, the list of uncommitted files and what you wrote.
