@@ -523,7 +523,7 @@ mod run_engine {
             pause.until,
             after(time::Duration::hours(2) + time::Duration::minutes(1))
         );
-        assert!(pause.evidence.starts_with("a rate limit: rejected"), "{pause:?}");
+        assert!(pause.evidence.starts_with("a quota: 429"), "{pause:?}");
         assert!(pause.evidence.ends_with(" · resets 2026-11-12T12:00:00Z"), "{pause:?}");
     }
 
