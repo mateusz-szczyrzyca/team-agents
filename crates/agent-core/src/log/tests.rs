@@ -158,6 +158,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::RequestDelegated, "request_delegated", LogLevel::Info),
         (LogEvent::QuestionsAnswered, "questions_answered", LogLevel::Info),
         (LogEvent::ControlUsed, "control_used", LogLevel::Info),
+        (LogEvent::SerenaReminded, "serena_reminded", LogLevel::Info),
         (LogEvent::ChecksDecided, "checks_decided", LogLevel::Info),
         (LogEvent::ReviewsRequested, "reviews_requested", LogLevel::Info),
         (LogEvent::ReviewReportLate, "review_report_late", LogLevel::Info),

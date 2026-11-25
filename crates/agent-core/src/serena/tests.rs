@@ -1,0 +1,340 @@
+//! The table of the rule: which step is a search of code without Serena, and which is not.
+
+use crate::cli::ActivityEvent;
+
+use super::{CodeSearch, code_search};
+
+/// The cases of one class of steps: the step and the paths the rule tells, or `None` for no search of code.
+fn table(cases: Vec<(ActivityEvent, Option<Vec<&str>>)>) {
+    for (event, expected) in cases {
+        let found = code_search(&event);
+        let told: Option<Vec<&str>> = found
+            .as_ref()
+            .map(|found| found.paths.iter().map(String::as_str).collect());
+        assert_eq!(told, expected, "{event:?}");
+    }
+}
+
+/// A command of the shell, as a CLI's stream names it.
+fn command(text: &str) -> ActivityEvent {
+    ActivityEvent::Command(text.to_owned())
+}
+
+/// A call of the tool `name` of a CLI, with the summary its stream gives.
+fn call(name: &str, summary: &str) -> ActivityEvent {
+    ActivityEvent::ToolCall {
+        name: name.to_owned(),
+        summary: summary.to_owned(),
+    }
+}
+
+#[test]
+fn a_shell_command_over_a_file_of_code_is_a_search_of_code() {
+    table(vec![
+        (command("grep -n foo src/main.rs"), Some(vec!["src/main.rs"])),
+        (
+            command("rg find_symbol crates/agent-core/src/lib.rs"),
+            Some(vec!["crates/agent-core/src/lib.rs"]),
+        ),
+        (command("sed -n 10,20p src/run.ts"), Some(vec!["src/run.ts"])),
+        (command("cat include/app.h"), Some(vec!["include/app.h"])),
+        (command("head -40 web/index.jsx"), Some(vec!["web/index.jsx"])),
+        (command("tail -n 5 tools/gen.py"), Some(vec!["tools/gen.py"])),
+        (command("find crates -name main.go"), Some(vec!["main.go"])),
+        (command("grep -rn TODO ./lib/parse.cpp"), Some(vec!["./lib/parse.cpp"])),
+    ]);
+}
+
+#[test]
+fn a_shell_command_over_text_is_no_search_of_code() {
+    table(vec![
+        (command("grep -n serena README.md"), None),
+        (command("rg remind_after config/agents.toml"), None),
+        (command("sed -n 1,40p daemon.log"), None),
+        (command("cat ChangeLog.diff"), None),
+        (command("head -20 notes.txt"), None),
+        (command("tail -f run.out"), None),
+        (command("find . -name '*.md'"), None),
+        (command("grep -rn serena ."), Some(vec!["."])),
+    ]);
+}
+
+#[test]
+fn a_shell_command_with_a_pipe_reads_the_text_the_pipe_gives_not_a_file() {
+    table(vec![
+        (command("git log --oneline | head -5"), None),
+        (command("rg TODO src | sort"), Some(vec!["src"])),
+        (command("ps aux | grep serena"), None),
+    ]);
+}
+
+#[test]
+fn a_cli_tool_that_reads_a_file_of_code_is_a_search_of_code() {
+    table(vec![
+        (
+            call("Read", "/work/tree/src/main.rs"),
+            Some(vec!["/work/tree/src/main.rs"]),
+        ),
+        (call("Grep", "src/lib.rs (path)"), Some(vec!["src/lib.rs"])),
+        (call("glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
+        (call("read", "lib/handler.py"), Some(vec!["lib/handler.py"])),
+        (call("grep", "src (path)"), Some(vec!["src"])),
+    ]);
+}
+
+#[test]
+fn a_cli_tool_that_finds_files_of_code_by_a_pattern_is_a_search_of_code() {
+    table(vec![
+        (call("Glob", "src/**/*.rs"), Some(vec!["src/**/*.rs"])),
+        (call("glob", "**/*.tsx"), Some(vec!["**/*.tsx"])),
+        (
+            call("Glob", "/work/tree/crates/**/lib.go"),
+            Some(vec!["/work/tree/crates/**/lib.go"]),
+        ),
+    ]);
+}
+
+#[test]
+fn a_search_over_a_directory_of_code_is_a_search_of_code() {
+    table(vec![
+        (command("grep -rn serena crates/"), Some(vec!["crates/"])),
+        (command("rg find_symbol src"), Some(vec!["src"])),
+        (command("grep -n foo ."), Some(vec!["."])),
+        (command("cat ."), Some(vec!["."])),
+        (command("grep -rn foo ."), Some(vec!["."])),
+    ]);
+}
+
+#[test]
+fn a_search_over_a_directory_of_text_is_no_search_of_code() {
+    table(vec![
+        (command("grep -rn serena docs/"), None),
+        (command("rg remind_after config"), None),
+        (command("grep -r TODO build/"), None),
+        (command("grep -rn serena .."), None),
+    ]);
+}
+
+#[test]
+fn a_search_of_another_program_than_the_shells_own_is_no_search_of_code() {
+    table(vec![
+        (command("python3 x.py"), None),
+        (command("python3 src/main.rs"), None),
+        (command("awk '{print $1}' crates/agent-core/src/lib.rs"), None),
+    ]);
+}
+
+#[test]
+fn a_cli_tool_that_reads_text_is_no_search_of_code() {
+    table(vec![
+        (call("Read", "/work/tree/docs/configuration.md"), None),
+        (call("Grep", "config/agents.toml (path)"), None),
+        (call("read", "daemon.log"), None),
+        (call("Read", "/work/tree/README.md"), None),
+    ]);
+}
+
+#[test]
+fn a_call_of_serena_and_every_other_step_is_no_search_of_code() {
+    table(vec![
+        (call("mcp__serena__find_symbol", "{\"name_path\":\"Foo\"}"), None),
+        (call("serena.find_referencing_symbols", "Foo in src/main.rs"), None),
+        (
+            call(
+                "mcp__agentbus__read_messages",
+                "{\"to\":\"all\",\"path\":\"src/main.rs\"}",
+            ),
+            None,
+        ),
+        (
+            ActivityEvent::FileEdit {
+                path: "src/main.rs".to_owned(),
+            },
+            None,
+        ),
+        (ActivityEvent::Text("grep -n foo src/main.rs".to_owned()), None),
+        (ActivityEvent::Error("cannot open src/main.rs".to_owned()), None),
+        (ActivityEvent::Info("the run started".to_owned()), None),
+    ]);
+}
+
+#[test]
+fn a_command_that_reads_nothing_and_names_a_file_of_code_is_no_search_of_code() {
+    table(vec![
+        (command("cargo test -p agent-core serena"), None),
+        (command("git add src/main.rs"), None),
+        (command("echo src/main.rs"), None),
+    ]);
+}
+
+#[test]
+fn one_step_that_reads_two_files_of_code_tells_both_once() {
+    table(vec![
+        (
+            command("cat src/main.rs src/lib.rs"),
+            Some(vec!["src/lib.rs", "src/main.rs"]),
+        ),
+        (
+            command("grep -n foo src/main.rs src/main.rs"),
+            Some(vec!["src/main.rs"]),
+        ),
+        (
+            command("grep -n foo src/main.rs; head -3 build.py"),
+            Some(vec!["build.py", "src/main.rs"]),
+        ),
+        (
+            command("grep -n foo src/main.rs && cat README.md"),
+            Some(vec!["src/main.rs"]),
+        ),
+    ]);
+}
+
+#[test]
+fn a_file_of_code_is_told_by_its_extension_in_any_case() {
+    table(vec![
+        (command("cat SRC/MAIN.RS"), Some(vec!["SRC/MAIN.RS"])),
+        (command("cat Program.CS"), Some(vec!["Program.CS"])),
+    ]);
+}
+
+#[test]
+fn an_empty_path_is_no_search() {
+    let found = code_search(&command("cat"));
+    assert_eq!(found, None);
+    assert_eq!(CodeSearch { paths: Vec::new() }.paths, Vec::<String>::new());
+}
+
+#[test]
+fn the_pattern_of_a_search_and_the_words_of_other_commands_are_no_directory_of_code() {
+    table(vec![
+        (command("grep -rn test docs/"), None),
+        (command("grep -rn app config/agents.example.toml"), None),
+        (command("rg lib README.md"), None),
+        (command("cat Cargo.toml && cargo test -p agent-core"), None),
+        (command("head -5 notes.md && ls src"), None),
+        (command("grep -rn src docs/"), None),
+        (command("grep -e src -e lib docs"), None),
+        (command("grep -rn 'use src' docs/"), None),
+    ]);
+}
+
+#[test]
+fn a_search_that_writes_into_a_pipe_counts_what_it_searched() {
+    table(vec![
+        (command("grep -rn foo crates/ | head -30"), Some(vec!["crates/"])),
+        (command("rg TODO src | sort | uniq -c"), Some(vec!["src"])),
+        (command("cat src/main.rs | wc -l"), Some(vec!["src/main.rs"])),
+        (command("echo x | grep foo src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("git log | grep -rn foo"), None),
+    ]);
+}
+
+#[test]
+fn only_sed_with_n_reads_a_file() {
+    table(vec![
+        (command("sed -i 's/a/b/' src/main.rs"), None),
+        (command("sed -n '1,5p' src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("sed -ne 5p src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("sed 's/a/b/' src/main.rs"), None),
+        (command("sed -n -i 5p src/main.rs"), None),
+    ]);
+}
+
+#[test]
+fn a_search_filtered_to_text_is_no_search_of_code() {
+    table(vec![
+        (command("rg --glob '*.md' Serena src"), None),
+        (command("rg -g '*.toml' Serena ."), None),
+        (command("grep -rn --include=*.md foo src"), None),
+        (command("rg -t md foo src"), None),
+        (command("rg --type=yaml foo ."), None),
+        (command("rg -g '*.rs' foo src"), Some(vec!["*.rs", "src"])),
+        (command("rg -g '!*.md' foo src"), Some(vec!["src"])),
+    ]);
+}
+
+#[test]
+fn the_options_of_a_search_are_no_files_and_their_values_neither() {
+    table(vec![
+        (command("grep -A 3 foo src/main.rs"), Some(vec!["src/main.rs"])),
+        (command("grep -e foo -e bar src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("grep -n -- -x src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("tail -n 5 src/lib.rs"), Some(vec!["src/lib.rs"])),
+        (command("rg -m 5 foo src/lib.rs 2>&1"), Some(vec!["src/lib.rs"])),
+        (command("cat src/lib.rs > out.rs"), Some(vec!["src/lib.rs"])),
+        (command("find src -name '*.md'"), None),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_a_directory_or_the_whole_repository_is_a_search_of_code() {
+    table(vec![
+        (call("Grep", "src (path)"), Some(vec!["src"])),
+        (call("grep", "src (path)"), Some(vec!["src"])),
+        (call("Grep", ". (path)"), Some(vec!["."])),
+        (call("Grep", "fn main"), Some(vec!["."])),
+        (call("grep", "TODO"), Some(vec!["."])),
+        (
+            call("Grep", "crates/agent-core (path)"),
+            Some(vec!["crates/agent-core"]),
+        ),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_text_is_no_search_of_code() {
+    table(vec![
+        (call("Grep", "docs/ (path)"), None),
+        (call("Grep", "README.md (path)"), None),
+        (call("Read", "src"), None),
+        (call("Glob", "docs/**/*.md"), None),
+    ]);
+}
+
+#[test]
+fn a_search_filtered_to_text_and_code_together_is_a_search_of_code() {
+    table(vec![
+        (command("rg -g '*.md' -g '*.rs' fn src"), Some(vec!["*.rs", "src"])),
+        (
+            command("grep -rn --include=*.md --include=*.rs fn src"),
+            Some(vec!["*.rs", "src"]),
+        ),
+        (command("rg -t md -t rust fn src"), Some(vec!["src"])),
+        (command("rg -g '*.rs' -g '*.md' fn docs"), Some(vec!["*.rs"])),
+        (command("rg -g '*.md' -g '*.toml' fn src"), None),
+    ]);
+}
+
+#[test]
+fn a_listing_of_files_by_rg_names_its_directory_and_no_pattern() {
+    table(vec![
+        (command("rg --files src"), Some(vec!["src"])),
+        (
+            command("rg --files crates/agent-core/src/lib.rs"),
+            Some(vec!["crates/agent-core/src/lib.rs"]),
+        ),
+        (command("rg --files docs"), None),
+        (command("rg --files -g '*.md' src"), None),
+    ]);
+}
+
+#[test]
+fn a_cli_search_with_no_mark_is_a_pattern_over_the_whole_repository() {
+    table(vec![
+        (call("Grep", "docs"), Some(vec!["."])),
+        (call("grep", "config"), Some(vec!["."])),
+        (call("Grep", "foo/bar"), Some(vec!["."])),
+        (call("Grep", "TODO README.md"), Some(vec!["."])),
+        (call("grep", "fn main src/lib.rs"), Some(vec!["."])),
+    ]);
+}
+
+#[test]
+fn a_cli_search_over_a_path_of_text_is_no_search_of_code_whatever_the_name() {
+    table(vec![
+        (call("Grep", "docs (path)"), None),
+        (call("grep", "config (path)"), None),
+        (call("Grep", "/work/tree/docs (path)"), None),
+        (call("Grep", "src (path)"), Some(vec!["src"])),
+    ]);
+}

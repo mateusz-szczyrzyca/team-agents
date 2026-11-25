@@ -187,6 +187,8 @@ pub enum LogEvent {
     QuestionsAnswered,
     /// The human used a control (stop, pause, unpause, resume) and it reached its tasks.
     ControlUsed,
+    /// A run with Serena that searched code without it was told once to find code with Serena.
+    SerenaReminded,
     /// The checks before a review send a round back to its team, ask the human, or take the human's answer.
     ChecksDecided,
     /// The reviews of a pull request are asked for.
@@ -280,6 +282,7 @@ impl LogEvent {
             | Self::RequestDelegated
             | Self::QuestionsAnswered
             | Self::ControlUsed
+            | Self::SerenaReminded
             | Self::ChecksDecided
             | Self::GithubStepResumed
             | Self::ReviewsRequested

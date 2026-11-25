@@ -20,6 +20,7 @@ mod last_step;
 mod launch_tests;
 mod owned_request;
 mod plan;
+mod reminder;
 mod removal;
 mod returned;
 mod round_state;
@@ -48,10 +49,11 @@ use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
 use agent_core::history::{HistoryEvent, RunWhy};
-use agent_core::ids::{GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
+use agent_core::kinds::{CliKind, Role};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
+
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
     TeamSummary, mark_runs_elsewhere,
@@ -61,14 +63,15 @@ use agent_core::state::{
     SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
-use agent_runtime::agentbus::AgentBus;
+use agent_runtime::agentbus::{AgentBus, AgentBusError, Outgoing, Recipient};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{History, Scoped, log_decision};
+use agent_runtime::history::{History, Reader, Scoped, log_decision};
 use agent_runtime::notify::Notification;
 use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
+use agent_runtime::run::serena::DueReminder;
 use agent_runtime::run::{FinishedRun, Progress, RunEngine, RunError as EngineError, RunJob, RunVerdict, WatchdogHold};
 use agent_runtime::settings::Settings;
 use agent_runtime::store::{StateStore, StoreError};
@@ -82,7 +85,7 @@ use tracing::Instrument;
 
 pub(crate) use self::rounds::{Pulls, PullsError};
 use self::start::{Context, Plan, StartProblem, next_number, plan, run_why};
-use self::teams::{Outbound, Served};
+use self::teams::{BUS_SENDER, Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
@@ -397,6 +400,12 @@ pub(crate) enum OwnerError {
     /// Existing step judgements in `history.db` could not be read.
     #[error(transparent)]
     PlanJudgementsRead(#[from] plan::PlanJudgementsError),
+    /// The bus refused a message of the harness.
+    #[error("the bus refused a message of the harness")]
+    Bus {
+        /// What the bus said.
+        source: AgentBusError,
+    },
 }
 
 /// What the owner is made of.
@@ -559,6 +568,9 @@ pub(super) struct Owner {
     pool_dispatch: Box<PoolDispatch>,
     /// The teams that are finished and closed: the human was told.
     closed: HashSet<TeamId>,
+    /// The reminders of Serena still to be put on the bus, and the runs whose reminder the bus took, so that each reminder
+    /// goes out once and one the bus refused is tried again.
+    reminders: reminder::Backlog,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
     /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
@@ -683,6 +695,7 @@ impl Owner {
             serving: HashMap::new(),
             pool_dispatch: Box::default(),
             closed: HashSet::new(),
+            reminders: reminder::Backlog::default(),
             looks: BTreeSet::new(),
             watcher,
             saved,
@@ -877,6 +890,7 @@ impl Owner {
         self.hold_restarted_opinions().await?;
         self.remember_closed_teams();
         self.look_at_every_team();
+        self.offer_reminders_left_by_a_restart().await;
         if !recovery.interrupted.is_empty() {
             tracing::warn!(
                 event = LogEvent::RestartCorrected.as_str(),
@@ -1608,8 +1622,229 @@ impl Owner {
             self.read_returns(task, &located, *outcome, message).await?;
         }
         self.commit(task, &located, now, events, notice).await?;
+        self.report_reminder(task, &located).await;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
             .await
+    }
+
+    /// Puts `message` on the bus for `recipient` under the harness's own name.
+    ///
+    /// # Errors
+    /// [`OwnerError::Name`] when the name of the harness is not an agent name, and the bus's own error when the bus
+    /// refuses the message.
+    async fn send_from_harness(&self, recipient: &Recipient, message: &Outgoing) -> Result<(), OwnerError> {
+        let from = AgentName::from_str(BUS_SENDER)?;
+        match self.parts.bus.send(&from, recipient, message).await {
+            Ok(_sent) => Ok(()),
+            Err(source) => Err(OwnerError::Bus { source }),
+        }
+    }
+
+    /// Puts the reminders of Serena that came due while runs went on on the bus, as soon as the engine has recorded them:
+    /// the agent reads one at its next call of the bus, in the run that made the searches. The run is neither stopped nor
+    /// restarted. A reminder that cannot be put on the bus is tried again at the next turn, a bounded number of times; the
+    /// bus takes each run's reminder once.
+    pub(super) async fn deliver_due_reminders(&mut self) {
+        for due in self.parts.engine.take_due_reminders() {
+            self.reminders.offer(due);
+        }
+        self.deliver_waiting_reminders().await;
+    }
+
+    /// Puts the reminder of Serena that the history holds for the run of `task` that ended on the bus, unless it went out
+    /// while the run went on ([`Owner::deliver_due_reminders`]): what the engine recorded after its last hand-over to the
+    /// daemon, or before a restart of the daemon, still goes out at the end of the run.
+    ///
+    /// The reminder goes out after the records of the run are saved. A history that cannot be read or a bus that refuses
+    /// the message leaves the reminder out and changes nothing else about the end of the run.
+    async fn report_reminder(&mut self, task: &TaskId, located: &Located) {
+        let Some(run) = self.last_run_of(task) else {
+            return;
+        };
+        self.offer_recorded_reminder(task, &located.team, &run).await;
+        self.deliver_waiting_reminders().await;
+    }
+
+    /// The latest run of `task` in the state, if it has had one.
+    fn last_run_of(&self, task: &TaskId) -> Option<RunId> {
+        self.parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.runs().last().map(|last| last.id().clone()))
+    }
+
+    /// Puts the reminders of Serena the history holds for the last runs of the tasks that are not done on the bus, when
+    /// the daemon starts: a daemon that went down between the engine's record of a reminder and its hand-over to the bus
+    /// forgot it, and the engine of the new daemon counts the session as reminded. The mark a run's directory keeps for a
+    /// reminder the bus took ([`reminder::is_told`]) keeps one the old daemon put there from going out again.
+    async fn offer_reminders_left_by_a_restart(&mut self) {
+        let runs: Vec<(TaskId, TeamId, RunId)> = self
+            .parts
+            .state
+            .teams()
+            .iter()
+            .flat_map(|team| {
+                team.crew()
+                    .roster()
+                    .into_iter()
+                    .filter(|(_, member)| member.status() != TaskStatus::Done)
+                    .filter_map(|(_, member)| {
+                        let run = member.runs().last()?.id().clone();
+                        Some((member.task().clone(), team.id().clone(), run))
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        for (task, team, run) in runs {
+            self.offer_recorded_reminder(&task, &team, &run).await;
+        }
+        self.deliver_waiting_reminders().await;
+    }
+
+    /// Offers the reminder the history holds for `run` of `task`, which has not been told yet, to the backlog.
+    async fn offer_recorded_reminder(&mut self, task: &TaskId, team: &TeamId, run: &RunId) {
+        match reminder::is_told(self.parts.store.home(), task, run).await {
+            Ok(true) => return,
+            Ok(false) => {}
+            Err(error) => {
+                // The look only spares a reminder that was told the work of being rendered: the claim made before the
+                // bus is asked is the guard, so a look that fails goes on to it, and a mark in doubt sends nothing there.
+                tracing::warn!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    task = %task,
+                    run = %run,
+                    operation = "serena_reminder",
+                    error = %error_chain(&error),
+                    "the mark of the reminder of Serena cannot be looked for: the claim of the reminder decides"
+                );
+            }
+        }
+        let Some((searches, cli)) = self.reminder_of_run(task, team, run).await else {
+            return;
+        };
+        self.reminders.offer(DueReminder {
+            task: task.clone(),
+            run: run.clone(),
+            cli,
+            searches,
+        });
+    }
+
+    /// Tries every reminder of Serena that waits. A reminder is claimed before the bus is asked ([`reminder::claim`]), so
+    /// that a restart between the two never sends it twice; the bus's taking it is what makes it delivered. One the bus
+    /// refuses gives its claim back and stays for the next turn, and one that failed too often is left to the end of its
+    /// run, which reads it from the history again. One that cannot be claimed is not put on the bus.
+    async fn deliver_waiting_reminders(&mut self) {
+        for attempt in self.reminders.take() {
+            match reminder::claim(self.parts.store.home(), &attempt.due.task, &attempt.due.run).await {
+                Ok(reminder::Claim::Taken) => {}
+                Ok(reminder::Claim::AlreadyTold) => {
+                    // The run's reminder was claimed before: by an earlier daemon, which may have put it on the bus.
+                    self.reminders.delivered(&attempt);
+                    continue;
+                }
+                Err(error) => {
+                    self.reminder_failed(
+                        attempt,
+                        &error_chain(&error),
+                        "the mark of the reminder of Serena cannot be made: it is not put on the bus",
+                    );
+                    continue;
+                }
+            }
+            let Err(error) = self.put_reminder_on_bus(&attempt.due).await else {
+                self.reminders.delivered(&attempt);
+                continue;
+            };
+            error.log(&attempt.due);
+            self.give_the_claim_back(&attempt.due).await;
+            self.reminder_failed(
+                attempt,
+                "",
+                "the reminder of Serena was not delivered: the end of its run tries once more",
+            );
+        }
+    }
+
+    /// Records that the reminder `attempt` failed, and logs `reason` with the cause `error` (empty when the bus call logged
+    /// it) when it was the last try.
+    fn reminder_failed(&mut self, attempt: reminder::Attempt, error: &str, reason: &str) {
+        let (task, run, failures) = (attempt.due.task.clone(), attempt.due.run.clone(), attempt.failures);
+        if self.reminders.failed(attempt) == reminder::Failed::GaveUp {
+            tracing::warn!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                task = %task,
+                run = %run,
+                operation = "serena_reminder",
+                attempts = failures.saturating_add(1),
+                error,
+                "{reason}"
+            );
+        }
+    }
+
+    /// Takes the claim of the reminder `due` away after the bus refused it, so that the next try can claim it again.
+    async fn give_the_claim_back(&self, due: &DueReminder) {
+        if let Err(error) = reminder::release(self.parts.store.home(), &due.task, &due.run).await {
+            // Without its claim given back the run's reminder is not tried again: it is lost, never sent twice.
+            tracing::warn!(
+                event = LogEvent::DaemonTaskFailed.as_str(),
+                task = %due.task,
+                run = %due.run,
+                operation = "serena_reminder",
+                error = %error_chain(&error),
+                "the claim of the reminder of Serena cannot be given back: the reminder is not tried again"
+            );
+        }
+    }
+
+    /// Puts the text of the reminder for `due.searches` searches of code on the bus for `due.task`. It is the engine's log
+    /// event `serena_reminded` that tells the human a reminder was due; the caller tells what went wrong on the way.
+    ///
+    /// # Errors
+    /// [`reminder::PutError`] when the reminder cannot be rendered, has no recipient or is refused by the bus.
+    async fn put_reminder_on_bus(&self, due: &DueReminder) -> Result<(), reminder::PutError> {
+        let text =
+            reminder::text(due.searches, &self.parts.texts).map_err(|source| reminder::PutError::Text { source })?;
+        let recipient = self
+            .recipient_of(&due.task)
+            .map_err(|source| reminder::PutError::Recipient { source })?;
+        self.send_from_harness(&recipient, &Outgoing::Chat { text })
+            .await
+            .map_err(|source| reminder::PutError::Bus { source })
+    }
+
+    /// The count of searches and the model CLI of the reminder the history holds for the run of `task` that ended; `None`
+    /// when the run was not reminded, and when the history cannot be read then, which is logged.
+    async fn reminder_of_run(&self, task: &TaskId, team: &TeamId, run: &RunId) -> Option<(u64, CliKind)> {
+        let run = run.clone();
+        let path = self.parts.store.home().history_file();
+        let team = team.clone();
+        // The reminder of a session goes out after its run ended: the reminder of the run is the one recorded by then.
+        let asked = move || -> Result<Option<(u64, CliKind)>, reminder::ReadError> {
+            reminder::reminder_of(&Reader::open(&path)?, &run, &team)
+        };
+        match tokio::task::spawn_blocking(asked).await {
+            Ok(Ok(found)) => found,
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the history of the team cannot be read: the reminder of Serena of its run is not delivered"
+                );
+                None
+            }
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    task = %task,
+                    error = %error_chain(&error),
+                    "the read of the history of the team failed: the reminder of Serena of its run is not delivered"
+                );
+                None
+            }
+        }
     }
 
     /// What the end `end` of a run of `task`, whose agent said `message` last, means beyond its task's status: a

@@ -834,6 +834,14 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
             by,
             tasks,
         } => controlled(page, at, *action, target, by, tasks),
+        HistoryEvent::SerenaReminded { run, searches, cli, .. } => {
+            let name = cli.as_str();
+            entry(
+                page,
+                at,
+                &format!("run {run} was told to find code with Serena after {searches} searches without it ({name})"),
+            );
+        }
         HistoryEvent::SplitDecision {
             task,
             item,
@@ -1021,6 +1029,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::QuestionAsked { .. }
         | HistoryEvent::QuestionAnswered { .. }
         | HistoryEvent::Controlled { .. }
+        | HistoryEvent::SerenaReminded { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::Lost { .. }
@@ -1102,6 +1111,7 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::QuestionAsked { .. }
         | HistoryEvent::QuestionAnswered { .. }
         | HistoryEvent::Controlled { .. }
+        | HistoryEvent::SerenaReminded { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::Lost { .. }

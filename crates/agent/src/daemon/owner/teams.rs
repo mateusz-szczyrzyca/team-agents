@@ -52,7 +52,7 @@ use crate::daemon::team::{
 };
 
 /// The name the harness puts on the messages it writes to the bus, as the bus itself does.
-const BUS_SENDER: &str = "agentbus";
+pub(super) const BUS_SENDER: &str = "agentbus";
 
 /// Something that is to be done on the bus, with the team it is about.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -506,6 +506,7 @@ impl Owner {
         self.brief_leads().await;
         self.queue_busy_handover_notices().await?;
         self.flush_outbox().await?;
+        self.deliver_due_reminders().await;
         self.drop_closed_waits();
         let looks = std::mem::take(&mut self.looks);
         for team in looks {

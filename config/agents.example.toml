@@ -78,6 +78,14 @@ agentbus = "/home/you/.local/bin/agentbus"
 # serena = "serena"
 agent_path = ["/home/you/.local/bin", "/home/you/.cargo/bin", "/home/you/go/bin", "/usr/local/bin", "/usr/bin", "/bin"]
 
+# --- The reminder of Serena ----------------------------------------------------------------------------------------
+# A run that has Serena and made `remind_after` searches of code without it — the shell running grep, rg, sed -n, cat,
+# head, tail or find over a file or a directory of code, or the CLI's own Grep, Glob or Read over one — is told once in
+# its session to find code with Serena; the message names the count. 0 turns the reminder off. A file without `[serena]`
+# keeps the default.
+[serena]
+# remind_after = 40
+
 # --- Hang watchdog and limits ---------------------------------------------------------------------------------------
 # A run with no activity for `hang_minutes` is killed and resumed from its session; after `hang_strikes` hangs in a
 # row without progress the task is marked hung. A team whose every task sleeps for `asleep_minutes` while an item of it
