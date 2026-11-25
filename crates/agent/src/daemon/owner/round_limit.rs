@@ -62,8 +62,45 @@ impl Timed {
 /// The round whose time limit applies to the run going of `task`: an open round the run works for whose item is in
 /// progress with the task's agent as its assignee. None for a worker and a reviewer, a task with no run going, a round in
 /// review, approved, fixed or closed, and an item another agent works on.
-pub(super) fn timed_round(_state: &State, _task: &TaskId) -> Option<Timed> {
-    None
+pub(super) fn timed_round(state: &State, task: &TaskId) -> Option<Timed> {
+    let found = state.find_task(task)?;
+    if !is_reminded(found.role) {
+        return None;
+    }
+    let run = found.member.current_run()?;
+    let holder = found.member.agent().agent_name();
+    let round = run
+        .rounds()
+        .iter()
+        .filter_map(|id| found.team.round(id))
+        .filter(|round| Round::is_open(round))
+        .find(|round| {
+            round.item().and_then(|item| found.team.item(item)).is_some_and(
+                |item| matches!(item.phase(), ItemPhase::InProgress { assignee, .. } if *assignee == holder),
+            )
+        })?;
+    let runs = found
+        .member
+        .runs()
+        .iter()
+        .map(|run| RunMark {
+            started_at: run.started_at(),
+            stopped: matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::Stopped,
+                    ..
+                }
+            ),
+        })
+        .collect();
+    Some(Timed {
+        round: round.id().clone(),
+        item: round.item()?,
+        opened_at: round.opened_at(),
+        held_since: found.member.past_holders().last().map(|holding| holding.until),
+        runs,
+    })
 }
 
 impl Owner {
