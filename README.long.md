@@ -347,6 +347,21 @@ handed over. Pausing or stopping a queued task ends its busy wait; resuming star
 
 ### Serena and the reminders
 
+**A refused agent is kept out.** A run that its provider refuses (a rate limit, an overload or an exhausted quota) pauses
+its task until the time the provider names or the configured pause (`[limits] rate_limit_pause_minutes` or
+`quota_pause_minutes`), and the agent is refused until that same time: it gets no new task, review or takeover before
+then, and comes back to the pool by itself. The task is tried again in the same session `[replacement] limit_retries`
+times (default `1`); when the retries are used up, or a quota's reset is later than `[replacement] limit_wait_minutes`
+(default `60`), the rule answers "change the agent", which is logged as a `decision_taken` with `decision` `limit`.
+Acting on that answer (handing the task to another provider's agent) is not in this version: the task keeps its pause.
+`agent status` shows a refused agent with its return time.
+
+The notice of a refusal (`run/notice-paused`) quotes what the provider said from its own fields: the HTTP status, the
+provider's message and its code, then the kind (`Quota`, `RateLimit` or `Overloaded`), for example
+`429 · Model busy, retry later · engine_overloaded · Overloaded`. The raw line of the CLI stays in the run's files.
+A Claude run that is refused with a rate limit and names its reset ends its pause at that reset; the text of the run
+is used when no reset is named. Every time in the notice is in the daemon's local time zone.
+
 **Serena: finding code.** With `[binaries] serena` set, every run is given Serena, the MCP server that finds code
 through language servers, and its first prompt says so in a short section (`prompts/harness/run/serena.md`) right after
 the working context: find a symbol with `find_symbol`, its callers with `find_referencing_symbols`, what a file declares
