@@ -43,6 +43,8 @@ mod team;
 mod values;
 #[cfg(test)]
 mod waiting_tests;
+#[cfg(test)]
+mod limit_tests;
 mod wake_delivery;
 
 pub use base::UnpushedBase;
@@ -330,6 +332,30 @@ pub struct TaskRef<'a> {
 }
 
 impl State {
+    /// STUB (RED): how many refusals in a row the task had.
+    #[must_use]
+    pub fn limit_refusals(&self, task: &TaskId) -> u32 {
+        let _ = task;
+        0
+    }
+
+    /// STUB (RED): records the refusals in a row of a task; nothing yet.
+    pub fn record_limit_refusals(&mut self, task: TaskId, refusals: u32) {
+        let _ = (task, refusals);
+    }
+
+    /// STUB (RED): until when the agent is refused by its provider.
+    #[must_use]
+    pub fn refused_until(&self, agent: &crate::ids::AgentName) -> Option<Timestamp> {
+        let _ = agent;
+        None
+    }
+
+    /// STUB (RED): records until when an agent is refused; nothing yet.
+    pub fn record_refused_until(&mut self, agent: crate::ids::AgentName, until: Option<Timestamp>) {
+        let _ = (agent, until);
+    }
+
     /// The wake delivery budget of a task, including historical tasks no longer in the crew.
     #[must_use]
     pub fn wake_delivery(&self, task: &TaskId) -> Option<WakeDelivery> {
