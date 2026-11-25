@@ -974,3 +974,69 @@ async fn refusal_with_only_the_same_provider_returns_the_wait_notice() {
         })
     ));
 }
+
+#[tokio::test]
+async fn refusal_reviewer_settlement_leaves_replacement_to_the_review_round() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use agent_core::kinds::Role;
+    let mut state = solo_state();
+    state.record_limit_refusals(task(1), 1);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let mut located = owner.locate(&task(1)).unwrap();
+    located.role = Role::Reviewer;
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(100),
+                reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap();
+    assert!(
+        handled.is_none(),
+        "review rounds own their wait and replacement notices"
+    );
+    assert_eq!(owner.parts.state.limit_refusals(&task(1)), 2);
+    assert_eq!(
+        owner.parts.state.refused_until(&"claude-1".parse().unwrap()),
+        Some(at(100))
+    );
+}
+
+#[tokio::test]
+async fn refusal_wait_notice_names_the_full_quota_reset_instead_of_the_earlier_wake() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(1)).unwrap();
+    let reset = at(134 * 3600);
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(3600),
+                reason: PauseReason::Quota,
+                kind: agent_core::decide::refusal::Kind::Quota,
+                evidence: String::new(),
+            }),
+            &RunEnd::QuotaExhausted { resets_at: Some(reset) },
+            at(0),
+        )
+        .unwrap()
+        .unwrap();
+    match handled.notice {
+        Notice::NoFreeAgent { return_at, .. } => assert_eq!(return_at, reset),
+        other => panic!("expected no-free-agent notice, got {other:?}"),
+    }
+    assert_eq!(owner.wakes.get(&task(1)), Some(&at(3600)));
+}
