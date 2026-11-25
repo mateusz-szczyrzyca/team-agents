@@ -814,8 +814,7 @@ case $action in
     bash "$home/fake-scripts/${action#fix-script-then:}.sh"
     record_gate
     bash "$home/fake-scripts/${action#fix-script-then:}-then.sh"
-    answers=$(awk '/^### Review by / {exit} /^[0-9]+\. \[(BLOCKER|MAJOR)\]/ {sub(/\./, "", $1); printf "FINDING %s: FIXED\\n", $1}' <<< "$prompt")
-    result 'Finished the item.\n'"$answers"'STATUS: DONE'
+    result 'Finished the item.\nFINDING 1: FIXED\nFINDING 2: FIXED\nSTATUS: DONE'
     ;;
   held-write)
     # Exercise the same writer as every prompt and marker: hold it after opening its output, before printing.
