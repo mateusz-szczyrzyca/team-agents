@@ -430,3 +430,33 @@ async fn detached_at_another_items_tip_is_sent_back() {
     assert_eq!(off.len(), 1, "{off:#?}");
     assert_eq!(field(&off[0], "branch"), fixed.as_str());
 }
+
+// Rule: the branch of an item that is no local branch is judged by its last known tip on origin when the worktree has the work
+// of another item out, which does not contain it: the lead is sent back, and nothing of the other item is pushed.
+#[tokio::test]
+async fn an_item_without_a_local_branch_is_not_made_of_another_items_work() {
+    let mut rig = rig_of("fix-script-answers:bfix", "done").await;
+    let scripts = rig.home.root().join("fake-scripts");
+    let drop_branch =
+        "git branch -q -D \"$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-1.1')\"\n";
+    std::fs::write(
+        scripts.join("bfix.sh"),
+        format!("{PRELUDE}{FIX_WITHOUT_ISSUE}{BACK_TO_THE_OTHER_ITEM}{drop_branch}"),
+    )
+    .unwrap();
+    let items = items_ready(&mut rig).await;
+    rig.prompt(&items.task, 4).await;
+
+    let prompt = rig.prompt(&items.task, 4).await;
+    let remote = rig.remote_tip(&items.fixed);
+    rig.stop().await.unwrap();
+
+    let fixed = &items.fixed;
+    assert!(
+        prompt.contains(&format!("The harness publishes `{fixed}`, but your worktree has")),
+        "{prompt}"
+    );
+    assert_eq!(remote, items.fixed_tip_before);
+    assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
+    assert_eq!(rows(&rig, LogEvent::PublishOffBranch).len(), 1);
+}
