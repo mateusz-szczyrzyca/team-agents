@@ -732,3 +732,97 @@ async fn refusal_waits_for_capacity_then_finishes_with_one_notice_and_complete_a
         ])
     );
 }
+#[tokio::test]
+async fn refusal_solo_member_and_lead_retry_then_finish_the_item_on_another_provider() {
+    use agent_core::kinds::Role;
+    use agent_core::state::{RunEnd, RunState};
+    for role in [Role::Solo, Role::Member, Role::Coordinator] {
+        let lead = role == Role::Coordinator;
+        let mut agents_config = vec![
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ];
+        if lead {
+            agents_config.extend([
+                investigator("deep-lead", "deepinfra-overload"),
+                investigator("inv-next", "integrate"),
+            ]);
+        } else {
+            agents_config.push(normal("deep-1", "deepinfra-overload"));
+            if role == Role::Member {
+                agents_config.push(investigator("inv-lead", "sleep,integrate"));
+            }
+        }
+        let mut rig = Rig::new(&agents_config, 5, role != Role::Solo).await;
+        let (refused, replacement, table, agents, coordinator, index) = if lead {
+            (
+                "deep-lead",
+                "inv-next",
+                "investigators",
+                vec!["deep-lead", "claude-2"],
+                Some("deep-lead"),
+                0,
+            )
+        } else if role == Role::Solo {
+            ("deep-1", "claude-2", "agents", vec!["deep-1"], None, 0)
+        } else {
+            (
+                "deep-1",
+                "claude-2",
+                "agents",
+                vec!["inv-lead", "deep-1"],
+                Some("inv-lead"),
+                1,
+            )
+        };
+        configure_refused_cli(&rig, table, refused);
+        configure(&rig, &format!("[replacement]\nagents = [\"{replacement}\"]\n"));
+        rig.wake_sleeping_teams();
+        start_logging(&mut rig).await;
+        let (_, tasks) = rig.run(&agents, ONE, MergeMode::Autopilot, coordinator).await;
+        let task = &tasks[index];
+        let paused = rig.status_is(task, TaskStatus::Paused).await;
+        let before = paused.find_task(task).unwrap().member;
+        assert_eq!(before.runs().len(), 1);
+        let bus_name = before.bus_agent().clone();
+        let branch = super::rig::git(&rig.worktree(task), &["branch", "--show-current"]);
+        rig.advance_history_days(1);
+        let completed = rig
+            .item_where(
+                "1.1",
+                "refused team item merged after its retry and takeover",
+                |phase| matches!(phase, ItemPhase::Done { .. }),
+            )
+            .await;
+        rig.stop().await.unwrap();
+        let after = completed.find_task(task).unwrap().member;
+        assert_eq!(after.agent().name(), replacement);
+        assert_eq!(after.bus_agent(), &bus_name);
+        assert_eq!(after.past_holders().len(), 1);
+        assert!(after.runs().len() >= 3);
+        for run in &after.runs()[..2] {
+            assert!(matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::RateLimited,
+                    ..
+                }
+            ));
+        }
+        let briefing = rig.kept_prompt(task, 3);
+        assert!(
+            briefing.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+            "{briefing}"
+        );
+        assert!(briefing.contains(&branch), "{briefing}");
+        assert!(briefing.contains(refused), "{briefing}");
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|text| text.contains(&format!("was handed to {replacement} because")))
+                .count(),
+            1
+        );
+    }
+}
