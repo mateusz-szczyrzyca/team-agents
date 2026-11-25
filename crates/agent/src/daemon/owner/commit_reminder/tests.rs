@@ -14,6 +14,7 @@ use agent_runtime::history::Reader;
 
 use super::super::fixture::{Daemon, PATIENCE, agentbus_binary};
 use super::watched_run;
+use super::{Ignored, Watched};
 use crate::fixtures::{solo_state, task};
 
 /// The text of the reminder for 400 lines and 2 minutes, as the catalog has it.
@@ -338,4 +339,347 @@ async fn the_look_at_a_worktree_waits_a_minute_for_the_next_one() {
     daemon.stop().await.unwrap();
 
     assert_eq!(chats(&daemon).len(), 1);
+}
+
+/// The order to commit for 400 lines and 2 minutes, as the catalog has it.
+const ORDER: &str = "The harness stopped your run because 400 changed lines stayed uncommitted for 2 minutes after the reminder. Your files are as you left them. First commit what is finished: a failing new test as its `RED:` commit with its failing output, no debug output. Then go on with your work.";
+
+/// The session the CLI of a run was started with, from the arguments it recorded.
+fn session_of(args: &str) -> String {
+    let lines: Vec<&str> = args.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| *line == "--session-id" || *line == "--resume")
+        .expect("the run names its session");
+    lines[at + 1].to_owned()
+}
+
+#[tokio::test]
+async fn a_reminder_ignored_for_cut_after_minutes_cuts_the_run_and_resumes_its_session_with_the_order() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    let first_session = session_of(&std::fs::read_to_string(worktree.join(".fake-args")).unwrap());
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(chats(&daemon), vec![REMINDER.to_owned()]);
+    let args = std::fs::read_to_string(worktree.join(".fake-args")).unwrap();
+    assert_eq!(session_of(&args), first_session);
+    assert!(args.lines().any(|line| line == "--resume"), "{args}");
+    assert!(args.contains(ORDER), "{args}");
+    let cut = logged(&daemon, LogEvent::CommitCut);
+    assert_eq!(cut.len(), 1);
+    assert_eq!(cut[0].fields()["lines"], 400);
+    assert_eq!(cut[0].fields()["minutes"], 2);
+    assert_eq!(cut[0].fields()["agent"], "claude-1");
+    assert_eq!(cut[0].task(), Some(&task(1)));
+    assert!(cut[0].run().is_some());
+    assert_eq!(git(&worktree, &["rev-list", "--count", "HEAD"]), "2");
+}
+
+#[tokio::test]
+async fn a_later_reminder_ignored_again_cuts_the_run_a_second_time() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit-twice",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the first reminder", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the resumed run to leave new work", || {
+        worktree.join("second.txt").exists()
+    })
+    .await;
+
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the second reminder", || chats(&daemon).len() == 2).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(logged(&daemon, LogEvent::CommitCut).len(), 2);
+    assert_eq!(logged(&daemon, LogEvent::CommitReminded).len(), 2);
+    assert_eq!(git(&worktree, &["rev-list", "--count", "HEAD"]), "3");
+}
+
+#[tokio::test]
+async fn the_cut_run_is_snapshotted_and_nothing_is_counted_against_the_task() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+
+    let state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    let found = state.find_task(&task(1)).unwrap();
+    let ends: Vec<_> = found
+        .member
+        .runs()
+        .iter()
+        .map(|run| match run.state() {
+            agent_core::state::RunState::Ended { end, .. } => end.clone(),
+            agent_core::state::RunState::Running => panic!("a run is still going"),
+        })
+        .collect();
+    assert_eq!(
+        ends,
+        vec![
+            agent_core::state::RunEnd::Stopped,
+            agent_core::state::RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Done
+            },
+        ]
+    );
+    assert_eq!(found.member.bad_runs_since_renewal(), 0);
+    assert!(found.member.renewals().is_none());
+    let reader = Reader::open(&daemon.home.history_file()).unwrap();
+    let round = reader.rounds_of_team(found.team.id()).unwrap()[0].value.round.clone();
+    let snapshots = reader.snapshots_of_round(&round).unwrap();
+    let ours: Vec<_> = snapshots.iter().filter(|snapshot| snapshot.task == task(1)).collect();
+    assert_eq!(ours.len(), 1, "{snapshots:?}");
+}
+
+#[tokio::test]
+async fn cut_after_zero_turns_the_cut_off() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 0\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    for _ in 0..3 {
+        daemon.clock.advance(time::Duration::minutes(5));
+        looked(&daemon).await;
+    }
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    let state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(state.find_task(&task(1)).unwrap().member.runs().len(), 1);
+    assert_eq!(logged(&daemon, LogEvent::CommitCut).len(), 0);
+}
+
+/// An owner of the team of [`team_with_runs`] and its daemon home, with the run of task 1 watched.
+async fn owner_watching() -> (Daemon, super::Owner, Watched) {
+    let round: agent_core::ids::RoundId = "round-20261111-193001-q1w2".parse().unwrap();
+    let daemon = Daemon::new(&team_with_runs(std::slice::from_ref(&round)), None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let watched = watched_run(&owner.parts.state, &task(1))
+        .unwrap()
+        .expect("task 1 is watched");
+    (daemon, owner, watched)
+}
+
+/// What the look saw of a run reminded at the head `1111…` that stays uncommitted at 400 lines.
+fn ignored_since(reminded: agent_core::state::Timestamp) -> Ignored {
+    Ignored {
+        reminder: Some(("1111111111111111111111111111111111111111".parse().unwrap(), reminded)),
+        head_moved: false,
+        lines: 400,
+    }
+}
+
+#[tokio::test]
+async fn a_gate_that_runs_for_the_task_holds_the_cut_back() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    owner
+        .gate_stops
+        .insert(task(1), tokio_util::sync::CancellationToken::new());
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty());
+    owner.gate_stops.remove(&task(1));
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert_eq!(
+        owner.commit_cuts.get(&task(1)),
+        Some(&super::CommitOrder {
+            lines: 400,
+            minutes: 25
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_test_run_started_in_the_worktree_holds_the_cut_back_and_another_does_not() {
+    let (daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    let dir = tempfile::tempdir().unwrap();
+    let worktree = daemon.home.worktree_dir(&crate::fixtures::repo(), &task(1));
+    owner.test_lock_file = dir.path().join(".make.command.lck");
+    std::fs::write(
+        &owner.test_lock_file,
+        format!("label=gate\ndir={}\npid=1\n", worktree.display()),
+    )
+    .unwrap();
+    let holder = std::fs::File::open(&owner.test_lock_file).unwrap();
+    holder.lock().unwrap();
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert!(
+        owner.commit_cuts.is_empty(),
+        "a test run of the worktree holds the lock"
+    );
+
+    holder.unlock().unwrap();
+    std::fs::write(
+        &owner.test_lock_file,
+        "label=gate\ndir=/home/example/agents/worktrees/team-agents/task-other\npid=1\n",
+    )
+    .unwrap();
+    holder.lock().unwrap();
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    assert_eq!(owner.commit_cuts.len(), 1, "a test run of another worktree does not");
+}
+
+#[tokio::test]
+async fn a_reminder_given_before_the_run_started_still_cuts_when_overdue() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let before_the_run = crate::fixtures::at(5);
+
+    owner
+        .cut_if_ignored(
+            &watched,
+            crate::fixtures::at(5 + 25 * 60),
+            20,
+            ignored_since(before_the_run),
+        )
+        .unwrap();
+
+    assert_eq!(
+        owner.commit_cuts.get(&task(1)),
+        Some(&super::CommitOrder {
+            lines: 400,
+            minutes: 25
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_run_is_cut_once_for_one_reminder() {
+    let (_daemon, mut owner, watched) = owner_watching().await;
+    let reminded = crate::fixtures::at(20);
+    let now = crate::fixtures::at(20 + 25 * 60);
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+    owner.commit_cuts.clear();
+
+    owner
+        .cut_if_ignored(&watched, now, 20, ignored_since(reminded))
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty());
+}
+
+/// A stop or a pause of the human that reaches a task cut and not yet resumed leaves it no order to commit.
+async fn a_control_drops_the_order_of_a_cut_task(steer: crate::daemon::control::Steer) {
+    use agent_core::protocol::{Client, Target};
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .commit_cuts
+        .insert(task(1), super::CommitOrder { lines: 400, minutes: 2 });
+    owner.reasons.insert(
+        task(1),
+        crate::daemon::team::Why::CommitOrder { lines: 400, minutes: 2 },
+    );
+
+    owner
+        .control_request(&Client::Cli, steer, &Target::Task(task(1)))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty(), "{:?}", owner.commit_cuts);
+    assert!(
+        !matches!(
+            owner.reasons.get(&task(1)),
+            Some(crate::daemon::team::Why::CommitOrder { .. })
+        ),
+        "{:?}",
+        owner.reasons
+    );
+}
+
+#[tokio::test]
+async fn a_stop_of_the_human_drops_the_order_of_a_cut_task() {
+    a_control_drops_the_order_of_a_cut_task(crate::daemon::control::Steer::Stop).await;
+}
+
+#[tokio::test]
+async fn a_pause_of_the_human_drops_the_order_of_a_cut_task() {
+    a_control_drops_the_order_of_a_cut_task(crate::daemon::control::Steer::Pause).await;
+}
+
+#[tokio::test]
+async fn the_order_of_a_task_that_is_stopped_or_paused_is_dropped() {
+    use agent_core::ids::TaskId;
+
+    let (_daemon, mut owner, _watched) = owner_watching().await;
+    let one: TaskId = task(1);
+    owner
+        .commit_cuts
+        .insert(one.clone(), super::CommitOrder { lines: 400, minutes: 2 });
+    owner.reasons.insert(
+        one.clone(),
+        crate::daemon::team::Why::CommitOrder { lines: 400, minutes: 2 },
+    );
+
+    owner.drop_commit_order(&one);
+
+    assert!(owner.commit_cuts.is_empty());
+    assert!(owner.reasons.is_empty());
+}
+
+/// Runs a daemon whose run ignores the reminder to commit and is cut, and records the event the daemon logged for it,
+/// for the test that every log event has a production cause.
+pub(in crate::daemon::owner) async fn record_commit_cut(observed: &mut BTreeSet<LogEvent>) {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert!(
+        !logged(&daemon, LogEvent::CommitCut).is_empty(),
+        "commit_cut was not logged"
+    );
+    observed.insert(LogEvent::CommitCut);
 }

@@ -196,6 +196,8 @@ impl Owner {
         // A gate that waits or runs for the task is the work the human stopped or paused.
         if matches!(steer, Steer::Stop | Steer::Pause) {
             self.stop_gates(task);
+            // A stopped or paused task is not resumed with the order of a cut.
+            self.drop_commit_order(task);
         }
         // What waited for a time or for a hang count that no longer applies: the human decided.
         self.wakes.remove(task);

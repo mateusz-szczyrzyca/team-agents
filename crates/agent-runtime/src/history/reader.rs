@@ -29,6 +29,7 @@ use agent_core::status::RunOutcome;
 use rusqlite::{Connection, OpenFlags, OptionalExtension, Row, Transaction, params};
 
 pub(super) mod query;
+mod reminders;
 mod sequenced;
 mod stats;
 

@@ -1,6 +1,7 @@
 //! `[commit_reminder]`: the defaults of a file without it, the values, and what is refused.
 
 use super::super::{Config, ConfigError};
+use super::DEFAULT_CUT_AFTER;
 use super::{DEFAULT_CONTEXT_PERCENT, DEFAULT_LINES, DEFAULT_MINUTES};
 
 /// The smallest configuration: one normal agent, which is all a task needs.
@@ -112,4 +113,29 @@ fn a_context_percent_that_is_no_byte_or_is_negative_is_refused() {
 
         assert!(matches!(&err, ConfigError::Parse(_)), "{value}: {err:?}");
     }
+}
+
+#[test]
+fn a_file_without_the_section_cuts_a_run_that_ignores_the_reminder_after_20_minutes() {
+    let config = Config::from_toml_str(one_agent()).expect("a file without [commit_reminder] loads");
+
+    assert_eq!(config.commit_reminder().cut_after, 20);
+    assert_eq!(DEFAULT_CUT_AFTER, 20);
+}
+
+#[test]
+fn the_section_sets_cut_after_and_zero_turns_the_cut_off() {
+    let set = Config::from_toml_str(&with("[commit_reminder]\ncut_after = 5\n")).expect("it loads");
+    let off = Config::from_toml_str(&with("[commit_reminder]\ncut_after = 0\n")).expect("zero loads");
+
+    assert_eq!(set.commit_reminder().cut_after, 5);
+    assert_eq!(off.commit_reminder().cut_after, 0);
+    assert_eq!(off.commit_reminder().lines, 300);
+}
+
+#[test]
+fn a_negative_cut_after_is_refused() {
+    let err = Config::from_toml_str(&with("[commit_reminder]\ncut_after = -1\n")).expect_err("never negative");
+
+    assert!(matches!(&err, ConfigError::Parse(_)), "{err:?}");
 }

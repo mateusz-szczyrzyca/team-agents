@@ -122,3 +122,78 @@ fn only_a_solo_agent_a_coordinator_and_a_member_are_reminded() {
         assert_eq!(is_reminded(role), expected, "{role:?}");
     }
 }
+
+/// The time of the reminder in the tests of the cut: 12:00.
+fn reminded_at_noon() -> Timestamp {
+    at("2026-11-25T12:00:00Z")
+}
+
+/// The time `minutes` minutes after the reminder.
+fn after_reminder(minutes: i64) -> Timestamp {
+    Timestamp::from_utc(reminded_at_noon().as_utc() + time::Duration::minutes(minutes)).expect("a time in range")
+}
+
+#[test]
+fn a_reminder_ignored_for_cut_after_minutes_cuts_the_run() {
+    // (minutes since the reminder, what follows) under cut_after = 20.
+    let table = [
+        (0, CutDue::No),
+        (19, CutDue::No),
+        (20, CutDue::Cut { minutes: 20 }),
+        (35, CutDue::Cut { minutes: 35 }),
+    ];
+    for (minutes, expected) in table {
+        assert_eq!(
+            cut_due(reminded_at_noon(), after_reminder(minutes), 20, false, false, false),
+            expected,
+            "{minutes} minutes"
+        );
+    }
+}
+
+#[test]
+fn a_part_of_a_minute_does_not_count_toward_the_cut() {
+    let now = Timestamp::from_utc(after_reminder(19).as_utc() + time::Duration::seconds(59)).expect("a time in range");
+
+    assert_eq!(cut_due(reminded_at_noon(), now, 20, false, false, false), CutDue::No);
+}
+
+#[test]
+fn cut_after_zero_turns_the_cut_off() {
+    assert_eq!(
+        cut_due(reminded_at_noon(), after_reminder(600), 0, false, false, false),
+        CutDue::No
+    );
+}
+
+#[test]
+fn a_moved_head_means_the_reminder_worked() {
+    assert_eq!(
+        cut_due(reminded_at_noon(), after_reminder(25), 20, true, false, false),
+        CutDue::No
+    );
+}
+
+#[test]
+fn a_busy_worktree_is_waited_for_instead_of_cut() {
+    assert_eq!(
+        cut_due(reminded_at_noon(), after_reminder(25), 20, false, true, false),
+        CutDue::Wait
+    );
+}
+
+#[test]
+fn one_reminder_is_cut_once() {
+    assert_eq!(
+        cut_due(reminded_at_noon(), after_reminder(25), 20, false, false, true),
+        CutDue::No
+    );
+}
+
+#[test]
+fn a_clock_before_the_reminder_does_not_cut() {
+    let before =
+        Timestamp::from_utc(reminded_at_noon().as_utc() - time::Duration::minutes(5)).expect("a time in range");
+
+    assert_eq!(cut_due(reminded_at_noon(), before, 1, false, false, false), CutDue::No);
+}

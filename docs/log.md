@@ -19,6 +19,7 @@ agent log --round <id> --json                       # the records as JSON lines
 agent log --json                                   # the newest daemon log rows as JSON lines
 agent log --round <id> --show log                   # only this round's daemon log rows
 agent log --team <id> --level warn -n 20            # this team's newest 20 warning rows
+agent log --reminders --days 7                      # the reminders of the harness, agent by agent
 ```
 
 A lone `--round` or `--team`, with only `--prompts`, `--no-steps` or `--json`, prints the existing story.
@@ -26,6 +27,19 @@ A lone `--round` or `--team`, with only `--prompts`, `--no-steps` or `--json`, p
 selects daemon log rows instead. Row filters are `--task`, `--run`, `--agent`, `--level`, `--event`, `--since`,
 `--until`, `--grep`, `-n` and `-f`. Tests of the round and team
 filters use explicit `--show log` so they compare the same kind of rows.
+
+`--reminders [--days N]` (`7` days by default) prints a table instead: one line for each agent and model with the
+count of `commit_reminded` (`commit`), `context_reminded` (`context`), `commit_followed` (`followed`) and `commit_cut`
+(`cuts`) rows of the last `N` days, and the median of the `minutes` of the followed rows (`median`; of an even count the
+lower of the two middle values, `-` for none). The agent is the `agent` field of the row, the model that of the run's
+record (`-` when it has none). The columns are separated by two spaces and padded; with no rows the command prints
+`no reminders in the last 7 days`, also for a history written before these events. It takes no round, team, row
+filter or `--json`, and exits with `1` when given one.
+
+```text
+agent     model       commit  context  followed  median  cuts
+claude-1  sonnet-5-5  3       1        2         9 min   1
+```
 
 Filters intersect. `--level` matches exactly one severity; `--agent` matches the agent of the associated run.
 `--since` and `--until` are inclusive timestamps: one with its zone (`Z` or an offset) is read as written, one without
@@ -368,6 +382,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `commit_reminded` | `info` | A run with `[commit_reminder] lines` uncommitted lines and no commit for `[commit_reminder] minutes` minutes was told once on the bus to commit; with `task`, `run`, `agent`, `lines` and `minutes`. |
 | `commit_followed` | `info` | A run that was reminded to commit has a new commit at the first look after the reminder; with `task`, `run`, `agent` and the `minutes` since the reminder. The run is armed again. |
 | `context_reminded` | `info` | A session whose context reached `[commit_reminder] context_percent` of its bound was told once on the bus to commit and to write down where it is; with `task`, `run`, `agent`, `context` (tokens) and `bound` (tokens). |
+| `commit_cut` | `info` | A run that ignored the reminder to commit for `[commit_reminder] cut_after` minutes was stopped and queued to resume in its session with the order to commit; with `task`, `run`, `agent`, `lines` (the lines uncommitted) and `minutes` since the reminder. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and

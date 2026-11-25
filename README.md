@@ -253,7 +253,7 @@ agent say <task|team> <text>      says something to a task or a team, through th
 agent stop | pause | unpause | resume <task|team>
 agent remove <team> [--force]     takes a team out: its unmerged branches are bundled, its pull requests closed, its files deleted
 agent gate                        runs the repository's gate for a task and records its result
-agent log ...                     reads the history: rounds, teams, tasks, prompts, steps
+agent log ...                     reads the history: rounds, teams, tasks, prompts, steps; --reminders: the reminders
 agent debug --team <team>         a diagnostic bundle with a summary that names what is wrong and the context of each run, with the sessions above their bound
 ```
 
@@ -335,6 +335,18 @@ reminder off. The daemon looks at most once a minute per task, never reminds a r
 only after the run has committed. It never commits, deletes or resets anything in the worktree. Each reminder is the log
 event `commit_reminded`, and `commit_followed` tells when the run committed after it; the reminder is kept in memory, so a
 restart of the daemon arms it again. See [`[commit_reminder]`](docs/configuration.md).
+
+**Cut of a run that ignores the reminder.** A run that was reminded and has not committed `[commit_reminder] cut_after`
+minutes later (20 by default; `0` turns the cut off) is stopped, once for the reminder, unless a gate of `agent gate`
+runs for its task or a test run started in its worktree holds the machine's test lock (`TEST_LOCK_FILE`, by default
+`/tmp/.make.command.lck`): it is then waited for. What the run left in its worktree is snapshotted, and the task is
+queued at once to resume the same session, whose prompt is the order to commit what is finished first and then go on.
+The cut counts as a stop of the harness, not of the human: no retry of the session, turn count, rejection or
+replacement of the task is raised and the task never becomes `failed`, `stopped` or `paused` by it. A stop or a pause by
+the human between the cut and the resume drops the order. The order is kept in memory: after a restart of the daemon
+between the cut and the resume the task is resumed as after any interrupted run, without the order: with `[restart]
+session = "new"` (the default) in a new session with the briefing of the task, with `"same"` in the old session with the
+note that the harness restarted. Each cut is the log event `commit_cut`.
 
 **Reminder of a full context.** A session whose context reaches `[commit_reminder] context_percent` of its bound (80 by
 default; the bound is `[session] max_context` or the agent's own) is told once, on the bus, to commit what is finished and
@@ -587,6 +599,20 @@ prints the steps of the runs it covers — the agent's messages, commands and to
 rows, as one text of the newest `-n` lines (default `100`); `-f` goes on with the new rows and steps as they are recorded,
 across runs and daemon restarts, and says what the round waits for when a run ends. `--no-steps` leaves the steps out;
 `--json` is unchanged. See [`docs/log.md`](docs/log.md).
+
+`agent log --reminders [--days N]` tells, agent by agent, whether the reminders of the harness work: from the rows
+of `commit_reminded`, `context_reminded`, `commit_followed` and `commit_cut` of the last `N` days (`7` by default) it
+prints one line for each agent and model — how many times a run was reminded to commit (`commit`), how many times a
+session was told its context is large (`context`), how many commit reminders were followed by a commit (`followed`),
+the median minutes from the reminder to that commit (`median`, the lower middle value for an even count; `-` when
+none was followed) and how many runs were cut (`cuts`); the model is the one of the run's record, `-` when it has
+none. It reads the history without the daemon and takes no round, team, row filter or `--json`. With no rows it
+prints `no reminders in the last 7 days`, also for a history written before these events.
+
+```text
+agent     model       commit  context  followed  median  cuts
+claude-1  sonnet-5-5  3       1        2         9 min   1
+```
 
 Use `--grep TEXT` for literal FTS5 search, `-f` to follow new rows across daemon restarts, and `--stats` for database
 size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, `agents`, `worktrees`, `runs`, `prompts`,

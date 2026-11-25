@@ -31,6 +31,7 @@ pub mod plan;
 pub mod pool;
 pub mod publish;
 pub mod rejection;
+pub mod reminders;
 pub mod replacement;
 pub mod restart;
 pub mod retry;

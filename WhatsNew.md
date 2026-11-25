@@ -5,14 +5,30 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.97.0 — 25.11.2026 — PR pending
+## 0.99.0 — 25.11.2026 — PR pending
 
 ### Bug fixes
 - [agent] A restart after a worker result was recorded but before its pending result was saved now finishes the request and tells the requester once who served it.
 - [agent] [agent-core] [agent-runtime] Recovery uses one retained-workspace context for startup and dispatch, preserving the failed provider preference across queued restarts.
 
 ### Enhancements
-- [agent-core] [agent-runtime] Worker request returns and requeues are typed log events stored in history; existing history is upgraded automatically while preserving its records.
+- [agent-core] [agent-runtime] Worker request returns and requeues are typed log events stored in history; a history of version 26 is upgraded to version 27 automatically while preserving its records.
+
+## 0.98.0 — 25.11.2026 — PR #254
+
+### New features
+- [agent] [agent-core] [agent-runtime] `agent log --reminders [--days N]` shows, agent by agent and model by model, how the reminders work over the last `N` days (default `7`): how many reminders to commit and context reminders were given, how many commit reminders were followed and the median minutes until the commit, and how many runs were cut. With nothing to show it says `no reminders in the last 7 days`. It reads the history without the daemon.
+
+## 0.97.0 — 25.11.2026 — PR #253
+
+### New features
+- [agent] [agent-core] [agent-runtime] A run that was reminded to commit and has not committed 20 minutes later is stopped, and its session is resumed at once with the order to commit what is finished first. It is never cut while a gate (`agent gate`) or a test run of its worktree holds the test lock. The cut counts as no retry, turn, rejection or replacement of the task, and what the run left in its worktree is snapshotted first. Each cut is the log event `commit_cut`.
+
+### Enhancements
+- [agent-runtime] A history of version 25 is read and upgraded to version 26, which admits the new log event.
+
+### Configuration
+- [agent-core] new: `[commit_reminder] cut_after` (default `20`) — the minutes after the reminder to commit at which a run that has not committed is cut and resumed with the order to commit; `0` turns the cut off.
 
 ## 0.96.0 — 25.11.2026 — PR #252
 
