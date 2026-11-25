@@ -144,6 +144,42 @@ pub enum RefusalKind {
     ProviderError,
 }
 
+impl RefusalSummary {
+    /// Builds a refusal summary from the fields the CLI gave.
+    ///
+    /// `status` is the HTTP status code as a string (`"429"`, `"402"`, or empty),
+    /// `message` is the provider's message, `code` is the provider's error code.
+    /// The `kind` is inferred from the status and the pause reason.
+    #[must_use]
+    pub fn from_fields(status: &str, message: &str, code: &str, reason: PauseReason) -> Self {
+        let kind = refusal_kind(status, reason);
+        Self {
+            status: status.to_owned(),
+            message: message.to_owned(),
+            code: code.to_owned(),
+            kind,
+        }
+    }
+}
+
+/// Infers the [`RefusalKind`] from the HTTP status and the pause reason.
+#[must_use]
+fn refusal_kind(status: &str, reason: PauseReason) -> RefusalKind {
+    if reason == PauseReason::Quota {
+        return RefusalKind::Quota;
+    }
+    // Overloaded: 503, 529
+    if matches!(status, "503" | "529") {
+        return RefusalKind::Overloaded;
+    }
+    // Rate limit: 429, or rate-limited reason with no specific overload/error status
+    if matches!(status, "429" | "") {
+        RefusalKind::RateLimit
+    } else {
+        RefusalKind::ProviderError
+    }
+}
+
 /// A pause a run's end implies.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -2021,6 +2057,77 @@ mod tests {
                 consecutive_no_status(&[no_status_1.clone(), break_run, no_status_3.clone()]),
                 1
             );
+        }
+    }
+
+    mod refusal_summary {
+        use super::*;
+
+        #[test]
+        fn builds_from_fields_with_quota_kind_for_quota_reason() {
+            let summary =
+                RefusalSummary::from_fields("402", "Insufficient credits", "", PauseReason::Quota);
+            assert_eq!(summary.status, "402");
+            assert_eq!(summary.message, "Insufficient credits");
+            assert_eq!(summary.code, "");
+            assert_eq!(summary.kind, RefusalKind::Quota);
+        }
+
+        #[test]
+        fn builds_from_fields_with_rate_limit_kind_for_429_status() {
+            let summary = RefusalSummary::from_fields(
+                "429",
+                "Model busy, retry later",
+                "engine_overloaded",
+                PauseReason::RateLimit,
+            );
+            assert_eq!(summary.status, "429");
+            assert_eq!(summary.message, "Model busy, retry later");
+            assert_eq!(summary.code, "engine_overloaded");
+            assert_eq!(summary.kind, RefusalKind::RateLimit);
+        }
+
+        #[test]
+        fn builds_from_fields_with_overloaded_kind_for_503_status() {
+            let summary = RefusalSummary::from_fields(
+                "503",
+                "Service Unavailable",
+                "",
+                PauseReason::RateLimit,
+            );
+            assert_eq!(summary.kind, RefusalKind::Overloaded);
+        }
+
+        #[test]
+        fn builds_from_fields_with_overloaded_kind_for_529_status() {
+            let summary = RefusalSummary::from_fields("529", "Overloaded", "", PauseReason::RateLimit);
+            assert_eq!(summary.kind, RefusalKind::Overloaded);
+        }
+
+        #[test]
+        fn builds_from_fields_with_provider_error_kind_for_non_limit_status() {
+            let summary =
+                RefusalSummary::from_fields("500", "Internal Server Error", "", PauseReason::RateLimit);
+            assert_eq!(summary.kind, RefusalKind::ProviderError);
+        }
+
+        #[test]
+        fn builds_from_fields_with_rate_limit_kind_when_status_is_empty() {
+            let summary = RefusalSummary::from_fields("", "at capacity", "", PauseReason::RateLimit);
+            assert_eq!(summary.status, "");
+            assert_eq!(summary.kind, RefusalKind::RateLimit);
+        }
+
+        #[test]
+        fn every_refusal_kind_has_its_name() {
+            for (kind, name) in [
+                (RefusalKind::Quota, "quota"),
+                (RefusalKind::RateLimit, "rate_limit"),
+                (RefusalKind::Overloaded, "overloaded"),
+                (RefusalKind::ProviderError, "provider_error"),
+            ] {
+                assert_eq!(kind.to_string(), name);
+            }
         }
     }
 }

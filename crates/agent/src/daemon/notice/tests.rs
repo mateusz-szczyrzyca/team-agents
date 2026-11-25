@@ -55,6 +55,7 @@ async fn every_notice_has_a_title_that_names_the_agent_and_the_task() {
             until: at(3600),
             reason: PauseReason::Quota,
             evidence: "usage limit".to_owned(),
+            refusal: None,
         },
         Notice::Failed {
             message: "It broke.".to_owned(),
@@ -91,6 +92,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         until: at(3600),
         reason: PauseReason::RateLimit,
         evidence: "HTTP 429".to_owned(),
+        refusal: None,
     })
     .await;
     let (_, none) = rendered(&Notice::NoStatus { exit: None }).await;
@@ -376,6 +378,7 @@ async fn actual_notice_templates_render_expected_notes_and_statuses() {
         until: at(3600),
         reason: PauseReason::Quota,
         evidence: "quota exceeded".to_owned(),
+        refusal: None,
     };
     let rendered = notice.render(&texts, &context).unwrap();
     assert_eq!(rendered.title(), "⏸ team-agents");
@@ -456,6 +459,7 @@ async fn actual_task_state_notices_render_expected_notes_and_statuses() {
                 until: at(3600),
                 reason: PauseReason::Quota,
                 evidence: "quota exceeded".to_owned(),
+                refusal: None,
             },
             "⏸ team-agents",
             "Status: ⏸ paused",
