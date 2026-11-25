@@ -1,6 +1,7 @@
 //! `agent log`: tell the story of a round or a team from the history database, which is read directly: no daemon is asked.
 
 mod follow;
+pub(crate) mod reminders;
 pub(crate) mod rows;
 pub(crate) mod steps;
 
@@ -18,6 +19,7 @@ use agent_core::cli::RunUsage;
 use agent_core::history::{Record, SequencedRecord};
 use agent_core::ids::{RoundId, RunId, TeamId};
 use agent_core::local_time::{TypedTimeError, Zone};
+use agent_core::state::InvalidTimestamp;
 use agent_core::story::{Selection, StoryOptions, json_lines, render_with_usage};
 use agent_runtime::history::{ReadError, Reader};
 
@@ -82,6 +84,9 @@ pub(crate) enum LogError {
     /// The story cannot be written.
     #[error("cannot write the story")]
     Output(#[source] std::io::Error),
+    /// The clock of this machine shows a year that a time cannot have.
+    #[error("the clock of this machine is outside the years 0000 to 9999")]
+    Clock(#[from] InvalidTimestamp),
 }
 
 impl LogError {
@@ -94,6 +99,7 @@ impl LogError {
             | Self::Read(_)
             | Self::Output(_)
             | Self::FollowRuntime(_)
+            | Self::Clock(_)
             | Self::Time { .. } => 1,
         }
     }

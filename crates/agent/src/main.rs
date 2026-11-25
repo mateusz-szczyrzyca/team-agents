@@ -135,7 +135,7 @@ const DELEGATION_CHECK_ABOUT: &str =
     "Asked by agentbus delegate: judges a request to a worker against the requester's plan";
 
 /// What `agent log` is for, as the help says.
-const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
+const LOG_ABOUT: &str = "Reads history directly, with no daemon needed. With --reminders [--days N]: a table of the reminders of the last N days (7 by default), agent by agent. With only --round or --team and optional --prompts, --no-steps, --json: tells the story. With no scope, both scopes, --show log, or any row filter: prints daemon log rows. Row filters are --task, --run, --agent, --level, --event, --since, --until, --grep, -n and -f.";
 
 /// The name of the command that diagnoses a team, round or task into a directory.
 const DEBUG: &str = "debug";
@@ -297,7 +297,7 @@ struct GuardCommitArgs {
 // Each bool is one switch of the command line; the switches are not one state that an enum could carry.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "each bool is one switch of `agent log`: --prompts, --no-steps, --json, --utc"
+    reason = "each bool is one switch of `agent log`: --prompts, --no-steps, --json, --utc, --reminders"
 )]
 struct LogArgs {
     /// Predicates that select daemon log rows instead of a story.
@@ -321,6 +321,14 @@ struct LogArgs {
     /// Print the times in UTC as the files hold them (RFC 3339, `Z`), not in the zone of this machine.
     #[arg(long)]
     utc: bool,
+    /// Count the reminders of the harness agent by agent instead of telling a story: the reminders to commit, the
+    /// context reminders, how many of the commit reminders were followed and after how many minutes (the median), and
+    /// how many runs were cut. Takes no scope, row filter or format; `--days` says how far back.
+    #[arg(long)]
+    reminders: bool,
+    /// With `--reminders`: how many days back the reminders are counted.
+    #[arg(long, requires = "reminders", default_value_t = 7, value_name = "DAYS")]
+    days: u32,
 }
 
 /// Why a text is not a round.
@@ -920,6 +928,11 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
     use agent_core::story::{PromptView, StepView, StoryOptions};
 
     let home = environment.home()?;
+    if args.reminders {
+        let now = agent_core::state::Timestamp::now(&agent_runtime::clock::SystemClock).map_err(LogError::from)?;
+        crate::commands::log::reminders::print_reminders(&home.history_file(), args.days, now, out)?;
+        return Ok(());
+    }
     let local_zone = environment.zone();
     let zone = if args.utc { Zone::Utc } else { local_zone };
     let format = if args.json {
