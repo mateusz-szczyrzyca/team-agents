@@ -807,6 +807,9 @@ mod history_stories_tests;
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
 #[cfg(test)]
+#[path = "rounds/tests/provider_wait.rs"]
+mod provider_wait_tests;
+#[cfg(test)]
 #[path = "rounds/tests/publish_failures.rs"]
 mod publish_failures_tests;
 #[cfg(test)]
