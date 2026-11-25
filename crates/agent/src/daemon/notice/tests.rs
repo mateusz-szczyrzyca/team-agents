@@ -869,3 +869,44 @@ async fn the_failed_no_tool_notice_matches_its_complete_golden() {
     assert_eq!(rendered.title(), "❌ team-agents");
     assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
 }
+
+#[tokio::test]
+async fn a_refusal_notice_names_status_message_code_and_kind_and_gives_the_return_in_local_time() {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(2, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let refusal = agent_core::decide::outcome::RefusalSummary::from_fields(
+        "429",
+        "Model busy, retry later",
+        "engine_overloaded",
+        None,
+        PauseReason::RateLimit,
+    );
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason: PauseReason::RateLimit,
+        evidence: "{\"type\":\"error\",\"error\":{\"status\":429}}".to_owned(),
+        refusal: Some(refusal),
+    };
+
+    let notification = notice.render(&texts().await, &context).unwrap();
+    let body = notification.body();
+
+    assert!(
+        body.contains("429 · Model busy, retry later · engine_overloaded · overloaded"),
+        "{body}"
+    );
+    assert!(body.contains("22:15 +02:00"), "{body}");
+    assert!(!body.contains("+00:00"), "{body}");
+    assert!(!body.contains("{\"type\""), "{body}");
+}
