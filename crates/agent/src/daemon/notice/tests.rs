@@ -985,3 +985,17 @@ async fn a_deepinfra_refusal_notice_tells_the_provider_words_the_kind_and_the_re
     assert!(body.contains("paused until 2026-11-11T20:21:00+01:00"), "{body}");
     assert!(!body.contains("19:21:00Z"), "{body}");
 }
+
+#[tokio::test]
+async fn a_refusal_notice_names_its_kind_once_and_uses_one_local_time_format() {
+    let body = paused_body_with(
+        PauseReason::RateLimit,
+        refusal::Kind::Overload,
+        "an overload: 429 · Model busy, retry later · engine_overloaded",
+        at(0),
+    )
+    .await;
+    assert_eq!(body.matches("an overload").count(), 1, "{body}");
+    assert!(body.contains("Time: 2026-11-11T20:15:00+01:00"), "{body}");
+    assert!(body.contains("paused until 2026-11-11T20:15:00+01:00"), "{body}");
+}
