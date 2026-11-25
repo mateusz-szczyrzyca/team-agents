@@ -4,6 +4,8 @@
 //! The table is read from the rows of the log events `commit_reminded`, `context_reminded`, `commit_followed` and
 //! `commit_cut` (`agent log --reminders`).
 
+use std::collections::BTreeMap;
+
 use crate::ids::AgentName;
 use crate::state::Timestamp;
 
@@ -54,11 +56,60 @@ pub struct ReminderLine {
     pub cuts: u32,
 }
 
-/// The table of `rows` seen at `now`: one line for each agent and model, sorted by agent and then model, from the
-/// rows not older than `days` days.
+/// What is counted for one agent and model while the rows are read.
+#[derive(Default)]
+struct Counts {
+    /// Commit reminders.
+    commit: u32,
+    /// Context reminders.
+    context: u32,
+    /// The minutes of the followed reminders.
+    followed: Vec<u64>,
+    /// Cuts.
+    cuts: u32,
+}
+
+/// The table of `rows` seen at `now`: one line for each agent and model, sorted by agent and then model (a run without
+/// a model first), from the rows not older than `days` days. A number of days that reaches before the first year
+/// the times can have takes every row.
 #[must_use]
-pub fn reminder_table(_rows: &[ReminderRow], _now: Timestamp, _days: u32) -> Vec<ReminderLine> {
-    Vec::new()
+pub fn reminder_table(rows: &[ReminderRow], now: Timestamp, days: u32) -> Vec<ReminderLine> {
+    let cutoff = now.as_utc().checked_sub(time::Duration::days(i64::from(days)));
+    let mut counts: BTreeMap<(AgentName, Option<String>), Counts> = BTreeMap::new();
+    for row in rows
+        .iter()
+        .filter(|row| cutoff.is_none_or(|cutoff| row.at.as_utc() >= cutoff))
+    {
+        let line = counts.entry((row.agent.clone(), row.model.clone())).or_default();
+        match row.kind {
+            ReminderKind::Commit => line.commit = line.commit.saturating_add(1),
+            ReminderKind::Context => line.context = line.context.saturating_add(1),
+            ReminderKind::Followed => line.followed.extend(row.minutes),
+            ReminderKind::Cut => line.cuts = line.cuts.saturating_add(1),
+        }
+    }
+    counts
+        .into_iter()
+        .map(|((agent, model), mut counted)| {
+            counted.followed.sort_unstable();
+            ReminderLine {
+                agent,
+                model,
+                commit: counted.commit,
+                context: counted.context,
+                // A count above u32::MAX saturates, as the other counts do.
+                followed: u32::try_from(counted.followed.len()).unwrap_or(u32::MAX),
+                median_minutes: lower_median(&counted.followed),
+                cuts: counted.cuts,
+            }
+        })
+        .collect()
+}
+
+/// The median of `sorted`; of an even count, the lower of the two middle values; none for no values.
+fn lower_median(sorted: &[u64]) -> Option<u64> {
+    let last = sorted.len().checked_sub(1)?;
+    sorted.get(last / 2).copied()
 }
 
 #[cfg(test)]
