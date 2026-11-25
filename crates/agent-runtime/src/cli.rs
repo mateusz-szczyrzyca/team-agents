@@ -482,6 +482,11 @@ impl UsageTally {
         self.reported_written = total;
     }
 
+    /// The context of the latest call that tells one, in the order the stream first named the calls.
+    pub(crate) fn latest_context(&self) -> Option<u64> {
+        None
+    }
+
     /// What the calls tell of the run. The context is that of the first and of the last call; the output and the cost
     /// are summed over the calls, and a sum is told only when every call tells its part and the sum does not overflow.
     /// The output total the result reports, when there is one, is told instead of the sum.
@@ -943,5 +948,28 @@ mod tests {
         assert!(matches!(cause(r#"{"type":"ping"}"#).cause(), OutputCause::Unrecognized));
         assert!(matches!(cause(r#"{"n":1}"#).cause(), OutputCause::Unrecognized));
         assert!(matches!(cause("[1]").cause(), OutputCause::Unrecognized));
+    }
+
+    // Rule: the latest context is that of the latest call that tells one: a call that tells none does not take it away.
+    #[test]
+    fn the_latest_context_is_that_of_the_latest_call_that_tells_one() {
+        let call = |context| CallUsage {
+            context,
+            ..CallUsage::default()
+        };
+        let mut tally = UsageTally::default();
+        assert_eq!(tally.latest_context(), None);
+
+        tally.record("a".to_owned(), call(Some(100)));
+        tally.record("b".to_owned(), call(None));
+        assert_eq!(tally.latest_context(), Some(100));
+
+        tally.record("c".to_owned(), call(Some(70)));
+        tally.record("d".to_owned(), call(None));
+        assert_eq!(tally.latest_context(), Some(70));
+
+        // A later line of a call replaces the figures of that call, as it does for the usage of the run.
+        tally.record("c".to_owned(), call(None));
+        assert_eq!(tally.latest_context(), Some(100));
     }
 }

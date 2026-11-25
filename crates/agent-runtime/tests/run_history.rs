@@ -878,4 +878,23 @@ mod run_history {
             Some(serde_json::json!({"run": second.as_str(), "session": SESSION, "context": 200}))
         );
     }
+
+    // Rule: a model call that tells no usage after the one that told the context does not take the context away from the
+    // file: the session holds what the call before it told.
+    #[tokio::test]
+    async fn a_message_without_usage_after_the_context_leaves_the_context_in_the_file() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        let run = RunId::from_str("run-20261112-100010-c5c5").unwrap();
+        let mode = RunMode::New {
+            session_id: SessionId::from_str(SESSION).unwrap(),
+        };
+
+        let end = run_of_session(&rig, &run, mode, RunWhy::FirstRun, "context-then-chatter").await;
+
+        assert_eq!(end, done());
+        assert_eq!(
+            context_file(&rig),
+            Some(serde_json::json!({"run": run.as_str(), "session": SESSION, "context": 130_000}))
+        );
+    }
 }
