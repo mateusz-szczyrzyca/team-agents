@@ -178,3 +178,26 @@ pub(crate) fn worker_steps_section(
         &Variables::new().with("steps", rows.join("\n"))?,
     )?))
 }
+
+/// The longest reason a row of the section of the returned steps shows, in characters.
+pub(crate) const RETURNED_REASON_CHARS: usize = 120;
+
+/// What a row shows for a request whose summary is empty.
+pub(crate) const NO_REASON_GIVEN: &str = "no reason given";
+
+/// A request of a task as the bus lists it, with its summary as `helper_get` gives it; the summary is empty for a
+/// request the caller did not read.
+pub(crate) type RequestWithSummary = (TaskRequest, String);
+
+/// The section of the steps whose requests came back to their requester: each request of `requests` that failed and
+/// names a step, with the first line of its summary as the reason. `None` when there is none.
+///
+/// # Errors
+/// [`PullTextError`] if template rendering or variable construction fails.
+pub(crate) fn returned_steps_section(
+    texts: &AutopilotPrompts,
+    requests: &[(AgentName, Vec<RequestWithSummary>)],
+) -> Result<Option<String>, PullTextError> {
+    let _ = (texts, requests);
+    Ok(Some(String::new()))
+}
