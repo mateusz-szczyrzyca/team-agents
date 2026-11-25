@@ -45,36 +45,12 @@ pub enum Decision {
     ChangeAgent,
 }
 
-/// A run ending accepted during the migration from flags to typed outcomes.
-pub trait RefusalOutcome {
-    /// Whether the run ended with a provider refusal.
-    fn is_refusal(self) -> bool;
-}
-
-impl RefusalOutcome for bool {
-    fn is_refusal(self) -> bool {
-        self
-    }
-}
-
-impl RefusalOutcome for &RunEnd {
-    fn is_refusal(self) -> bool {
-        match self {
-            RunEnd::RateLimited | RunEnd::QuotaExhausted { .. } => true,
-            RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit | RunEnd::Stopped => {
-                false
-            }
-        }
-    }
-}
-
 /// The count of consecutive provider refusals after this run; other endings clear it.
 #[must_use]
-pub fn next_refusals(previous: u32, end: impl RefusalOutcome) -> u32 {
-    if end.is_refusal() {
-        previous.saturating_add(1)
-    } else {
-        0
+pub const fn next_refusals(previous: u32, end: &RunEnd) -> u32 {
+    match end {
+        RunEnd::RateLimited | RunEnd::QuotaExhausted { .. } => previous.saturating_add(1),
+        RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit | RunEnd::Stopped => 0,
     }
 }
 

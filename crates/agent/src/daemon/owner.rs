@@ -2109,7 +2109,7 @@ impl Owner {
             return Ok(());
         };
         let replacement = self.parts.settings.config.replacement();
-        let refusals = next_refusals(self.parts.state.limit_refusals(task), true);
+        let refusals = next_refusals(self.parts.state.limit_refusals(task), end);
         let answer = decide(&Refusal {
             limit,
             refusals,
