@@ -698,6 +698,7 @@ async fn next_report(saves: &mut Option<Saves>) -> Option<Report> {
 }
 
 /// The new status and notice when a refusal was handled by a change of agent or a wait for a free one.
+#[derive(Debug)]
 pub(super) struct RefusalHandled {
     /// The new status of the task.
     pub(super) status: TaskStatus,
