@@ -865,3 +865,116 @@ async fn the_failed_no_tool_notice_matches_its_complete_golden() {
     assert_eq!(rendered.title(), "❌ team-agents");
     assert_eq!(rendered.body(), include_str!("failed-no-tool.golden").trim_end());
 }
+
+#[tokio::test]
+async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
+    // Rule: every time a notice shows is in the zone of the host, as its header is, not in UTC.
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let notice = Notice::Paused {
+        until: at(3600),
+        reason: PauseReason::RateLimit,
+        evidence: "an overload: 429 · Model busy, retry later · engine_overloaded".to_owned(),
+    };
+    let notification = notice.render(&texts().await, &context).unwrap();
+    let body = notification.body();
+    assert!(body.contains("paused until 2026-11-11T21:15:00+01:00"), "{body}");
+    assert!(!body.contains("2026-11-11T20:15:00Z"), "{body}");
+    assert!(
+        body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
+        "{body}"
+    );
+}
+
+/// The body of the paused notice of a run that `reason` paused, with `evidence` as what the provider said.
+async fn paused_body(reason: PauseReason, evidence: &str) -> String {
+    paused_body_with(reason, evidence, at(3600)).await
+}
+
+/// The body of the paused notice of a run that `reason` paused until `until`, with `evidence` as what the provider said.
+async fn paused_body_with(reason: PauseReason, evidence: &str, until: Timestamp) -> String {
+    let task_id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &task_id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    let notice = Notice::Paused {
+        until,
+        reason,
+        evidence: evidence.to_owned(),
+    };
+    notice.render(&texts().await, &context).unwrap().body().to_owned()
+}
+
+#[tokio::test]
+async fn a_paused_notice_names_the_kind_of_the_refusal_and_its_reason() {
+    // Rule: the notice says which kind of refusal it is: from the provider's words when the evidence has them, else
+    // from the reason of the pause.
+    let overload = paused_body(
+        PauseReason::RateLimit,
+        "an overload: 429 · Model busy, retry later · engine_overloaded",
+    )
+    .await;
+    assert!(
+        overload.contains("refused its run: an overload (rate_limit)"),
+        "{overload}"
+    );
+
+    let quota = paused_body(PauseReason::Quota, "You've hit your limit").await;
+    assert!(quota.contains("refused its run: a quota (quota)"), "{quota}");
+}
+
+#[tokio::test]
+async fn a_deepinfra_refusal_notice_tells_the_provider_words_the_kind_and_the_resume_time_in_local_time() {
+    // Rule: the notice says what the provider said, of which kind, and gives the resume time in the host's zone. The
+    // pause is the classifier's, from the record the run wrote.
+    let record = r#"{"type":"error","error":{"type":"provider.rate-limit","message":"Model busy, retry later","status":429,"response":{"body":"{\"error\":{\"code\":\"engine_overloaded\",\"message\":\"Model busy, retry later\"}}"}}}"#;
+    let config = agent_core::config::Config::from_toml_str("").unwrap();
+    let output = agent_core::cli::RunOutput {
+        final_message: None,
+        session_id: None,
+        stream: agent_core::cli::StreamOutcome::Failed,
+        error_tail: agent_core::cli::ErrorTail::from_text(record, std::num::NonZeroU32::MIN),
+    };
+    let context = agent_core::decide::outcome::LimitContext {
+        limits: config.limits(),
+        now: at(0),
+        local_offset: time::UtcOffset::from_hms(1, 0, 0).unwrap(),
+    };
+    let finish = agent_core::decide::outcome::RunFinish {
+        exit: agent_core::decide::outcome::ExitStatus::Code(1),
+        stopped_by: agent_core::decide::outcome::StoppedBy::Nobody,
+    };
+    let pause = agent_core::decide::outcome::classify_outcome(&output, finish, &context)
+        .unwrap()
+        .pause
+        .unwrap();
+    let body = paused_body_with(pause.reason, &pause.evidence, pause.until).await;
+
+    assert!(body.contains("refused its run: an overload (rate_limit)"), "{body}");
+    assert!(
+        body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
+        "{body}"
+    );
+    assert!(body.contains("paused until 2026-11-11T20:21:00+01:00"), "{body}");
+    assert!(!body.contains("19:21:00Z"), "{body}");
+}

@@ -12,6 +12,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::decide::outcome::PauseReason;
+use agent_core::decide::refusal;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
@@ -345,8 +346,9 @@ impl Notice {
             } => (
                 HarnessPrompt::NoticePaused,
                 common
-                    .with("until", until.to_string())?
+                    .with("until", context.offset.rfc3339(*until))?
                     .with("reason", reason.to_string())?
+                    .with("kind", refusal::pause_kind(*reason, evidence).words())?
                     .with("evidence", evidence)?,
                 NoticeKind::Paused,
             ),
