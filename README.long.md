@@ -1267,7 +1267,9 @@ request's check in the worker's worktree (a command, with `[plan] check_seconds`
 repository's gate), decides what the result is worth, and only when it is good brings the worker's commit to the requester's
 branch: it takes a snapshot of the requester's worktree first, and the requester's uncommitted and untracked files are left
 as they were. The commit that is brought over is what the worker committed since its request was given to it, not
-everything its branch holds. A commit that conflicts, or one that would write over a file the requester changed or has, is
+everything its branch holds. The worker's prompt (`prompts/harness/team/delegation.md`) therefore tells it to commit the files a request names
+in its own worktree before it ends, and to do the job there even when the requester's worktree seems to have it already;
+work it leaves uncommitted is not brought over and the request fails. A commit that conflicts, or one that would write over a file the requester changed or has, is
 not applied: the requester is told, with the files. A result that is wrong — the check failed or ran past its limit, the worker changed a
 file the request did not name, it left a file the request names uncommitted, it committed nothing, its run lasted past
 `[workers] seconds`, or the daemon cannot read what it left (the commit the worker started from, its commits) — is returned

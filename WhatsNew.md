@@ -18,6 +18,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Configuration
 - [agent] changed: `[replacement] agents` (default `[]`) — now drives refusal takeovers, trying the list then the tier `normal`; a lead goes to an investigator.
 
+## agent 0.116.0 — 25.11.2026 — pushed to main
+
+### Bug fixes
+- [agent] A worker's result is accepted again: workers were told to commit only when the request said so, so they left their work uncommitted and every result was refused ("the worker committed nothing"). A worker is now told to commit the files a request names in its own worktree, and to do the job there even when the requester's worktree seems to have it already.
+
 ## agent 0.115.0 · agent-core 0.115.0 · agent-runtime 0.110.0 — 25.11.2026 — PR #281
 
 ### Bug fixes
