@@ -110,6 +110,10 @@ fn settings() -> Settings {
             ("BASH_DEFAULT_TIMEOUT_MS", bash_timeout_ms.clone()),
             ("BASH_MAX_TIMEOUT_MS", bash_timeout_ms),
             ("ENABLE_TOOL_SEARCH", "false".to_owned()),
+            // The first keeps the human's own memory (`~/.claude/projects/<repo>/memory/`) out of every run; the
+            // second keeps the human's claude.ai connectors out even if a run is not strict.
+            ("CLAUDE_CODE_DISABLE_AUTO_MEMORY", "1".to_owned()),
+            ("ENABLE_CLAUDEAI_MCP_SERVERS", "false".to_owned()),
         ]),
     }
 }
