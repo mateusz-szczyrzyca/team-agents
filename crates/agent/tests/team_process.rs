@@ -1573,7 +1573,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         assert_eq!(world.runs(&second), 1);
         release(&world, &first);
     }
-    /// A member refused by DeepInfra and a replacement that requires takeover context.
+    /// A member refused by `DeepInfra` and a replacement that requires takeover context.
     fn refused_member_world() -> World {
         let world = World::new(&agents_with(&[
             ("deep-1", "agent", "deepinfra-overload"),

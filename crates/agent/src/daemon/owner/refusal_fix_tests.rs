@@ -891,17 +891,8 @@ gate = ["true"]
         .unwrap()
         .unwrap();
     assert_eq!(handled.status, TaskStatus::Queued);
-    assert_eq!(
-        owner
-            .parts
-            .state
-            .find_task(&task(number))
-            .unwrap()
-            .member
-            .agent()
-            .name(),
-        expected
-    );
+    let member = owner.parts.state.find_task(&task(number)).unwrap().member;
+    assert_eq!(member.agent().name(), expected);
 }
 
 #[tokio::test]

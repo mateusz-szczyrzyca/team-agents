@@ -609,7 +609,7 @@ async fn a_members_work_owed_to_its_lead_is_told_after_a_restart_when_the_bus_fa
     assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
 }
 
-/// Configures a fake CLI as an opencode agent on DeepInfra.
+/// Configures a fake CLI as an opencode agent on `DeepInfra`.
 fn configure_refused_cli(rig: &Rig, table: &str, name: &str) {
     let config = std::fs::read_to_string(rig.home.config_file())
         .unwrap()
