@@ -165,7 +165,7 @@ fn fallback_candidates<'a>(
 ) -> &'a [Candidate<'a>] {
     match role {
         Role::Coordinator => investigators,
-        _ => normal_agents,
+        Role::Solo | Role::Member | Role::Worker | Role::Reviewer => normal_agents,
     }
 }
 
