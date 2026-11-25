@@ -5,6 +5,11 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.105.0 — 25.11.2026 — PR #265
+
+### Enhancements
+- [agent-runtime] Every Claude Code run is started with only agentbus and Serena: none of your own MCP servers or claude.ai connectors, no skills and none of 18 built-in tools it cannot use (`Workflow`, `CronCreate`, `RemoteTrigger`, ...) — the run starts with far less context.
+
 ## 0.104.0 — 25.11.2026 — PR #264
 
 ### New features
