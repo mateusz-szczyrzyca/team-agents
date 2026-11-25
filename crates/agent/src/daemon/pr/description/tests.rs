@@ -181,3 +181,147 @@ fn the_lead_cannot_supply_the_steps_done_by_a_worker() {
 
     assert_eq!(lead_sections(input), "## What and why\n\nWhy.");
 }
+
+/// The prompts of the repository, as the daemon loads them.
+async fn repository_texts() -> AutopilotPrompts {
+    AutopilotPrompts::load(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts"),
+        &Language::default(),
+    )
+    .await
+    .unwrap()
+}
+
+/// A request that came back to its requester, with the summary the bus holds for it.
+fn returned(id: u64, step: Option<&str>, summary: &str) -> (TaskRequest, String) {
+    (
+        request(id, step, Some("glm-1"), DelegationStatus::Failed),
+        summary.to_owned(),
+    )
+}
+
+#[tokio::test]
+async fn a_returned_step_is_listed_with_the_first_line_of_its_summary() {
+    let texts = repository_texts().await;
+    let requests = [(
+        "claude-1".parse().unwrap(),
+        vec![returned(
+            5,
+            Some("1.3"),
+            "Result: the file is not written.\nThe worker ran out of turns.",
+        )],
+    )];
+
+    let section = returned_steps_section(&texts, &requests).unwrap();
+
+    assert_eq!(
+        section.as_deref(),
+        Some(
+            "## Steps returned to their requesters\n\n- step 1.3 of claude-1's plan — returned to claude-1 (H5): Result: the file is not written.\n"
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_returned_step_with_an_empty_summary_says_no_reason_was_given() {
+    let texts = repository_texts().await;
+    let requests = [("claude-1".parse().unwrap(), vec![returned(5, Some("1.3"), "")])];
+
+    let section = returned_steps_section(&texts, &requests).unwrap();
+
+    assert_eq!(
+        section.as_deref(),
+        Some(
+            "## Steps returned to their requesters\n\n- step 1.3 of claude-1's plan — returned to claude-1 (H5): no reason given\n"
+        )
+    );
+}
+
+#[tokio::test]
+async fn a_reason_of_two_hundred_characters_is_cut_to_a_hundred_and_twenty() {
+    let texts = repository_texts().await;
+    let long = "ż".repeat(200);
+    let requests = [("claude-1".parse().unwrap(), vec![returned(5, Some("1.3"), &long)])];
+
+    let section = returned_steps_section(&texts, &requests).unwrap();
+
+    let expected = format!(
+        "## Steps returned to their requesters\n\n- step 1.3 of claude-1's plan — returned to claude-1 (H5): {}\n",
+        "ż".repeat(120)
+    );
+    assert_eq!(section, Some(expected));
+}
+
+#[tokio::test]
+async fn only_the_failed_requests_that_name_a_step_are_returned_steps() {
+    let texts = repository_texts().await;
+    let requests = [
+        (
+            "claude-1".parse().unwrap(),
+            vec![
+                returned(3, Some("1.2"), "Result: failed."),
+                returned(4, None, "Result: failed, and no step."),
+                (
+                    request(5, Some("1.3"), Some("glm-2"), DelegationStatus::Done),
+                    "Result: done.".to_owned(),
+                ),
+                (
+                    request(6, Some("1.4"), Some("glm-2"), DelegationStatus::Queued),
+                    String::new(),
+                ),
+            ],
+        ),
+        (
+            "inv-opus".parse().unwrap(),
+            vec![returned(7, Some("2.1"), "Result: failed too.")],
+        ),
+    ];
+
+    let section = returned_steps_section(&texts, &requests).unwrap();
+    let done = worker_steps_section(
+        &texts,
+        &requests
+            .iter()
+            .map(|(requester, of_task)| {
+                (
+                    requester.clone(),
+                    of_task.iter().map(|(request, _)| request.clone()).collect(),
+                )
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        section.as_deref(),
+        Some(
+            "## Steps returned to their requesters\n\n- step 1.2 of claude-1's plan — returned to claude-1 (H3): Result: failed.\n- step 2.1 of inv-opus's plan — returned to inv-opus (H7): Result: failed too.\n"
+        )
+    );
+    assert_eq!(
+        done.as_deref(),
+        Some("## Steps done by a worker\n\n- step 1.3 of claude-1's plan — done by glm-2 (H5)\n")
+    );
+}
+
+#[tokio::test]
+async fn without_a_returned_step_there_is_no_section() {
+    let texts = repository_texts().await;
+    let requests = [(
+        "claude-1".parse().unwrap(),
+        vec![(
+            request(3, Some("1.2"), Some("glm-1"), DelegationStatus::Done),
+            "Result: done.".to_owned(),
+        )],
+    )];
+
+    assert_eq!(returned_steps_section(&texts, &requests).unwrap(), None);
+    assert_eq!(returned_steps_section(&texts, &[]).unwrap(), None);
+}
+
+#[test]
+fn the_lead_cannot_supply_the_steps_returned_to_their_requesters() {
+    let input = "## What and why\n\nWhy.\n\n## Steps returned to their requesters\n\n- step 9.9 — returned to nobody\n";
+
+    assert_eq!(lead_sections(input), "## What and why\n\nWhy.");
+}

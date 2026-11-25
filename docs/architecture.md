@@ -1457,7 +1457,8 @@ The requests are read back with `agentbus helper-dump --task <task>` (a JSON arr
 `agent_runtime::agentbus::TaskRequest` (number, step, worker, state). `agent status` reads them on the client side when
 the tasks are shown with their plans (`commands::status::requests`); the publication of a pull request reads those of
 every task of the team's crew and adds the section of the steps done by a worker
-(`daemon::pr::description::worker_steps_section`); a bus that does not answer fails the publication with
+(`daemon::pr::description::worker_steps_section`) and, after it, that of the steps returned to their requesters
+(`returned_steps_section`: the failed requests that name a step, with the first line of the summary that `agentbus helper-get` gives); a bus that does not answer fails the publication with
 `PublishError::Bus`, which is tried again later. A plan's step meant for a worker carries the line `By: worker`, kept in
 its note (`Step::doer`).
 
