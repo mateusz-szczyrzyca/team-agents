@@ -49,6 +49,8 @@ struct Items {
     other: String,
     /// The tip of the branch of 1.1 when its pull request was opened.
     fixed_tip_before: String,
+    /// The tip of the branch of 2.1 on origin; empty while nothing of it was pushed.
+    other_remote_before: String,
     /// The tip of the branch of 2.1.
     other_tip: String,
 }
@@ -129,6 +131,7 @@ async fn items_ready(rig: &mut Rig) -> Items {
     let other = format!("agents/claude-1/{task}-2.1");
     let fixed_tip_before = rig.remote_tip(&fixed);
     let other_tip = git(&lead, &["rev-parse", &other]);
+    let other_remote_before = remote_tip_of(rig, &other);
     for file in &released {
         std::fs::write(file, "").unwrap();
     }
@@ -139,8 +142,21 @@ async fn items_ready(rig: &mut Rig) -> Items {
         fixed,
         other,
         fixed_tip_before,
+        other_remote_before,
         other_tip,
     }
+}
+
+/// The tip of `branch` on origin, empty when origin has no such branch.
+fn remote_tip_of(rig: &Rig, branch: &str) -> String {
+    git(
+        &rig.origin,
+        &[
+            "for-each-ref",
+            "--format=%(objectname)",
+            &format!("refs/heads/{branch}"),
+        ],
+    )
 }
 
 /// The rows of `event` in the daemon's log of `rig`, once the daemon has stopped.
@@ -203,11 +219,11 @@ async fn gated_item_tip_publishes_while_off_branch() {
         &rig.origin,
         &["log", "-1", "--format=%s", &format!("refs/heads/{}", items.fixed)],
     );
-    let other_remote = rig.remote_tip(&items.other);
+    let other_remote = remote_tip_of(&rig, &items.other);
     rig.stop().await.unwrap();
 
     assert_eq!(pushed, "Fix the item");
-    assert_eq!(other_remote, items.other_tip);
+    assert_eq!(other_remote, items.other_remote_before);
 }
 
 /// The scenario of the two tests that follow: the fix of 1.1 is committed on its branch, the worktree ends on the branch of
