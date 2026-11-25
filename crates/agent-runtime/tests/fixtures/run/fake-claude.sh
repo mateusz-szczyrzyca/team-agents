@@ -43,6 +43,8 @@
 #   dirty-commit-hold     writes dirty.txt of 400 lines and commits it, then holds and ends as `dirty-hold` does
 #   dirty-twice           writes dirty.txt of 400 lines, holds until .fake-commit exists, commits dirty.txt, writes
 #                         second.txt of 400 lines, then holds and ends as `dirty-hold` does
+#   dirty-late            holds until .fake-more exists, then writes dirty.txt of 400 lines, holds until .fake-continue
+#                         exists and ends like `done`
 #
 # Every run records its arguments, one a line, in `.fake-args`.
 set -eu
@@ -381,6 +383,13 @@ case $scenario in
     git add dirty.txt
     commit_long_ago
     write_400_lines second.txt
+    hold_until .fake-continue
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  dirty-late)
+    init
+    hold_until .fake-more
+    write_400_lines dirty.txt
     hold_until .fake-continue
     result false 'Finished the item.\nSTATUS: DONE'
     ;;

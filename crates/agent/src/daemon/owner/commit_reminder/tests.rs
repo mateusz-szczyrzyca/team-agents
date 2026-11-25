@@ -281,3 +281,58 @@ fn a_run_that_names_no_round_is_not_watched() {
 
     assert_eq!(watched_tasks(&state), Vec::<agent_core::ids::TaskId>::new());
 }
+
+#[tokio::test]
+async fn a_second_run_at_the_head_that_was_reminded_is_not_reminded_again() {
+    use agent_core::protocol::{ControlRequest, Target};
+
+    let (mut daemon, worktree) = daemon_for("dirty-hold", "[commit_reminder]\nlines = 300\nminutes = 1\n");
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    std::fs::remove_file(worktree.join(".fake-continue")).unwrap();
+    std::fs::remove_file(worktree.join("dirty.txt")).unwrap();
+
+    daemon
+        .ask(Command::Resume(ControlRequest {
+            target: Target::Task(task(1)),
+        }))
+        .await
+        .unwrap();
+    until("the second run to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    looked(&daemon).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    looked(&daemon).await;
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(chats(&daemon), vec![REMINDER.to_owned()]);
+    assert_eq!(logged(&daemon, LogEvent::CommitReminded).len(), 1);
+}
+
+#[tokio::test]
+async fn the_look_at_a_worktree_waits_a_minute_for_the_next_one() {
+    let (mut daemon, worktree) = daemon_for("dirty-late", "[commit_reminder]\nlines = 300\nminutes = 1\n");
+    daemon.start().await;
+    until("the run to start", || worktree.join(".fake-args").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    looked(&daemon).await;
+    std::fs::write(worktree.join(".fake-more"), "").unwrap();
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+
+    daemon.clock.advance(time::Duration::seconds(59));
+    looked(&daemon).await;
+    assert_eq!(chats(&daemon), Vec::<String>::new());
+    daemon.clock.advance(time::Duration::seconds(1));
+    until("the reminder at the next look", || !chats(&daemon).is_empty()).await;
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(chats(&daemon).len(), 1);
+}
