@@ -39,6 +39,10 @@ fn a_new_run_has_these_exact_arguments() -> TestResult {
             "/work/run/mcp.json",
             "--max-turns",
             "300",
+            "--strict-mcp-config",
+            "--disallowedTools",
+            DISALLOWED,
+            "--disable-slash-commands",
             "--settings",
             "/work/run/claude-settings.json",
             "--model",
@@ -72,6 +76,10 @@ fn a_resumed_run_has_these_exact_arguments() -> TestResult {
             "/work/run/mcp.json",
             "--max-turns",
             "300",
+            "--strict-mcp-config",
+            "--disallowedTools",
+            DISALLOWED,
+            "--disable-slash-commands",
             "--settings",
             "/work/run/claude-settings.json",
             "--model",
@@ -147,14 +155,20 @@ fn a_run_without_mcp_servers_gets_an_empty_configuration_and_only_that() -> Test
 }
 
 #[test]
-fn a_run_with_agentbus_is_not_strict() -> TestResult {
+fn a_run_with_agentbus_is_strict() -> TestResult {
     let spec = ClaudeAdapter.build_run(&request(new_run()?, Servers::Bus)?)?;
 
-    assert!(
-        !spec.args.contains(&"--strict-mcp-config".to_owned()),
-        "{:?}",
-        spec.args
+    let max_turns = spec
+        .args
+        .iter()
+        .position(|arg| arg == "--max-turns")
+        .ok_or("no --max-turns")?;
+    assert_eq!(
+        spec.args.get(max_turns + 2).map(String::as_str),
+        Some("--strict-mcp-config")
     );
+    let strict = spec.args.iter().filter(|arg| *arg == "--strict-mcp-config").count();
+    assert_eq!(strict, 1);
     Ok(())
 }
 
