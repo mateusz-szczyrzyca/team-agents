@@ -435,30 +435,30 @@ impl Notice {
 #[cfg(test)]
 mod tests;
 
-    fn agent_changed_vars(
-        &self,
-        common: Variables,
-        refused_agent: &AgentName,
-        refused_provider: &str,
-        return_at: &Timestamp,
-        new_agent: &AgentName,
-    ) -> Result<Variables, NoticeError> {
-        Ok(common
-            .with("refused_agent", refused_agent.as_str())?
-            .with("refused_provider", refused_provider)?
-            .with("return_at", return_at.to_string())?
-            .with("new_agent", new_agent.as_str())?)
-    }
+fn agent_changed_vars(
+    &self,
+    common: Variables,
+    refused_agent: &AgentName,
+    refused_provider: &str,
+    return_at: &Timestamp,
+    new_agent: &AgentName,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("refused_agent", refused_agent.as_str())?
+        .with("refused_provider", refused_provider)?
+        .with("return_at", return_at.to_string())?
+        .with("new_agent", new_agent.as_str())?)
+}
 
-    fn no_free_agent_vars(
-        &self,
-        common: Variables,
-        refused_agent: &AgentName,
-        refused_provider: &str,
-        return_at: &Timestamp,
-    ) -> Result<Variables, NoticeError> {
-        Ok(common
-            .with("refused_agent", refused_agent.as_str())?
-            .with("refused_provider", refused_provider)?
-            .with("return_at", return_at.to_string())?)
-    }
+fn no_free_agent_vars(
+    &self,
+    common: Variables,
+    refused_agent: &AgentName,
+    refused_provider: &str,
+    return_at: &Timestamp,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("refused_agent", refused_agent.as_str())?
+        .with("refused_provider", refused_provider)?
+        .with("return_at", return_at.to_string())?)
+}
