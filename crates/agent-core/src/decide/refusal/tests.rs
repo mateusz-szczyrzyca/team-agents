@@ -72,3 +72,43 @@ fn a_line_that_is_not_json_is_not_described() {
 fn a_record_of_another_shape_is_not_described() {
     assert_eq!(describe(r#"{"type":"text","text":"hello"}"#), None);
 }
+
+#[test]
+fn the_kind_of_evidence_is_the_kind_describe_wrote() {
+    let overload = describe(DEEPINFRA).unwrap();
+    assert_eq!(kind_of_evidence(&overload), Some(Kind::Overload));
+    assert_eq!(
+        kind_of_evidence("a quota: 402 · Insufficient credits · insufficient_quota"),
+        Some(Kind::Quota)
+    );
+    assert_eq!(
+        kind_of_evidence("a rate limit: rejected · five_hour"),
+        Some(Kind::RateLimit)
+    );
+}
+
+#[test]
+fn evidence_that_names_no_kind_in_its_first_words_has_none() {
+    for text in [
+        "You've hit your limit · resets 3pm",
+        "a rate limitation: x",
+        "an overload",
+    ] {
+        assert_eq!(kind_of_evidence(text), None, "{text}");
+    }
+}
+
+#[test]
+fn a_pause_without_a_kind_in_its_evidence_is_the_kind_of_its_reason() {
+    assert_eq!(pause_kind(PauseReason::Quota, "You've hit your limit"), Kind::Quota);
+    assert_eq!(
+        pause_kind(PauseReason::RateLimit, "API Error: 429 rate limit exceeded"),
+        Kind::RateLimit
+    );
+}
+
+#[test]
+fn the_kind_the_evidence_names_wins_over_the_reason_of_the_pause() {
+    let evidence = describe(DEEPINFRA).unwrap();
+    assert_eq!(pause_kind(PauseReason::RateLimit, &evidence), Kind::Overload);
+}
