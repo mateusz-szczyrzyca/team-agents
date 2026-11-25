@@ -374,6 +374,13 @@ impl State {
         self.refused_agents.get(agent).copied()
     }
 
+    /// Whether the agent is refused by its provider at `now`: refused before its return time, free from it on.
+    #[must_use]
+    pub fn refused_at(&self, agent: &crate::ids::AgentName, now: Timestamp) -> bool {
+        let _ = (agent, now);
+        false
+    }
+
     /// Records until when an agent is refused by its provider, or forgets the refusal with `None`.
     pub fn record_refused_until(&mut self, agent: crate::ids::AgentName, until: Option<Timestamp>) {
         match until {

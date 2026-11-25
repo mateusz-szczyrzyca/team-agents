@@ -78,3 +78,14 @@ fn a_state_without_refusals_writes_no_refusal_key() {
     assert!(!json.contains("limit_refusals"), "{json}");
     assert!(!json.contains("refused_agents"), "{json}");
 }
+
+#[test]
+fn an_agent_is_refused_only_before_its_return_time() {
+    let mut state = old_state();
+    let until = at("2026-11-25T10:07:00Z");
+    state.record_refused_until(agent("claude-1"), Some(until));
+
+    assert!(state.refused_at(&agent("claude-1"), at("2026-11-25T10:06:59Z")));
+    assert!(!state.refused_at(&agent("claude-1"), until));
+    assert!(!state.refused_at(&agent("claude-2"), at("2026-11-25T10:06:59Z")));
+}
