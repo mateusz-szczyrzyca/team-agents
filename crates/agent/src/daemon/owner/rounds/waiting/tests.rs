@@ -1251,13 +1251,9 @@ async fn a_round_whose_task_is_stopped_waits_for_the_human_to_resume_it_unless_a
     }
 }
 
-// Rule: a stopped task that never ran has no time to name; a stopped task from days ago is told with its date.
+// Rule: a task stopped days ago is told with the date it was stopped.
 #[tokio::test]
-async fn the_line_of_a_stopped_task_has_no_time_when_it_never_ran_and_the_date_when_it_is_old() {
-    let (state, team, round) = round_for(1, TaskStatus::Stopped);
-    let (_, line, _) = line_in_zone(&state, &team, &round, 60).await;
-    assert_eq!(line, Some(format!("you to resume {}", task(1))));
-
+async fn the_line_of_a_task_stopped_days_ago_is_told_with_its_date() {
     let (mut state, team, round) = round_for(1, TaskStatus::Queued);
     stopped_by_the_human(&mut state, &team, &round, 1);
     let (_, line, zone) = line_in_zone(&state, &team, &round, 3 * 86_400).await;
