@@ -601,6 +601,47 @@ async fn a_run_is_cut_once_for_one_reminder() {
     assert!(owner.commit_cuts.is_empty());
 }
 
+/// A stop or a pause of the human that reaches a task cut and not yet resumed leaves it no order to commit.
+async fn a_control_drops_the_order_of_a_cut_task(steer: crate::daemon::control::Steer) {
+    use agent_core::protocol::{Client, Target};
+
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .commit_cuts
+        .insert(task(1), super::CommitOrder { lines: 400, minutes: 2 });
+    owner.reasons.insert(
+        task(1),
+        crate::daemon::team::Why::CommitOrder { lines: 400, minutes: 2 },
+    );
+
+    owner
+        .control_request(&Client::Cli, steer, &Target::Task(task(1)))
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert!(owner.commit_cuts.is_empty(), "{:?}", owner.commit_cuts);
+    assert!(
+        !matches!(
+            owner.reasons.get(&task(1)),
+            Some(crate::daemon::team::Why::CommitOrder { .. })
+        ),
+        "{:?}",
+        owner.reasons
+    );
+}
+
+#[tokio::test]
+async fn a_stop_of_the_human_drops_the_order_of_a_cut_task() {
+    a_control_drops_the_order_of_a_cut_task(crate::daemon::control::Steer::Stop).await;
+}
+
+#[tokio::test]
+async fn a_pause_of_the_human_drops_the_order_of_a_cut_task() {
+    a_control_drops_the_order_of_a_cut_task(crate::daemon::control::Steer::Pause).await;
+}
+
 #[tokio::test]
 async fn the_order_of_a_task_that_is_stopped_or_paused_is_dropped() {
     use agent_core::ids::TaskId;
