@@ -60,19 +60,107 @@ pub enum Pick<'a> {
 /// Never.
 #[must_use]
 pub fn pick<'a>(
-    _role: Role,
-    _team: &[AgentName],
-    _refused_provider: &str,
-    _replacement_agents: &'a [Candidate<'a>],
-    _normal_agents: &'a [Candidate<'a>],
-    _investigators: &'a [Candidate<'a>],
-    _now: Timestamp,
-    _replacements_exhausted: bool,
+    role: Role,
+    team: &[AgentName],
+    refused_provider: &str,
+    replacement_agents: &'a [Candidate<'a>],
+    normal_agents: &'a [Candidate<'a>],
+    investigators: &'a [Candidate<'a>],
+    now: Timestamp,
+    replacements_exhausted: bool,
 ) -> Pick<'a> {
-    // Stub: always says none free with no return time.
-    Pick::NoneFree {
-        earliest_return: None,
+    let all_candidates: &[&[Candidate<'_>]] =
+        &[replacement_agents, normal_agents, investigators];
+
+    if replacements_exhausted {
+        return Pick::NoneFree {
+            earliest_return: earliest_refused_return(all_candidates, now),
+        };
     }
+
+    // First group: [replacement] agents.
+    if let Some(found) = find_fitting(role, team, refused_provider, replacement_agents, now) {
+        return Pick::Agent(found);
+    }
+
+    // Second group: the fallback.
+    let fallback = fallback_candidates(role, normal_agents, investigators);
+    if let Some(found) = find_fitting(role, team, refused_provider, fallback, now) {
+        return Pick::Agent(found);
+    }
+
+    Pick::NoneFree {
+        earliest_return: earliest_refused_return(all_candidates, now),
+    }
+}
+
+/// The first candidate of `candidates` that fits `role` and is not skipped; `None` when none fits.
+fn find_fitting<'a>(
+    role: Role,
+    team: &[AgentName],
+    refused_provider: &str,
+    candidates: &'a [Candidate<'a>],
+    now: Timestamp,
+) -> Option<&'a AgentName> {
+    candidates.iter().find_map(|candidate| {
+        if fits(role, team, refused_provider, candidate, now) {
+            Some(candidate.name)
+        } else {
+            None
+        }
+    })
+}
+
+/// Whether `candidate` may take the task over: not in the team, not refused, not of the same provider, not busy,
+/// and the right tier for `role`.
+fn fits(
+    role: Role,
+    team: &[AgentName],
+    refused_provider: &str,
+    candidate: &Candidate<'_>,
+    now: Timestamp,
+) -> bool {
+    if team.contains(candidate.name) {
+        return false;
+    }
+    if candidate
+        .refused_until
+        .is_some_and(|until| now < until)
+    {
+        return false;
+    }
+    if candidate.provider == refused_provider {
+        return false;
+    }
+    if candidate.busy {
+        return false;
+    }
+    match role {
+        Role::Coordinator => candidate.tier == Tier::Investigator,
+        Role::Member => candidate.tier != Tier::Worker,
+        Role::Solo | Role::Worker | Role::Reviewer => true,
+    }
+}
+
+/// The fallback candidates for `role`: `investigators` for a coordinator, `normal_agents` for the others.
+fn fallback_candidates<'a>(
+    role: Role,
+    normal_agents: &'a [Candidate<'a>],
+    investigators: &'a [Candidate<'a>],
+) -> &'a [Candidate<'a>] {
+    match role {
+        Role::Coordinator => investigators,
+        _ => normal_agents,
+    }
+}
+
+/// The earliest return time of every refused candidate across all groups; `None` when none is refused.
+fn earliest_refused_return(all: &[&[Candidate<'_>]], now: Timestamp) -> Option<Timestamp> {
+    all.iter()
+        .flat_map(|group| group.iter())
+        .filter_map(|candidate| candidate.refused_until)
+        .filter(|until| now < *until)
+        .min()
 }
 
 #[cfg(test)]
