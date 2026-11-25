@@ -241,6 +241,8 @@ fn every_kind() -> Vec<NoticeKind> {
         NoticeKind::Merged,
         NoticeKind::TeamAsleep,
         NoticeKind::TeamDone,
+        NoticeKind::AgentChanged,
+        NoticeKind::NoFreeAgent,
     ];
     for kind in kinds {
         match kind {
@@ -267,7 +269,9 @@ fn every_kind() -> Vec<NoticeKind> {
             | NoticeKind::Opinion
             | NoticeKind::Merged
             | NoticeKind::TeamAsleep
-            | NoticeKind::TeamDone => {}
+            | NoticeKind::TeamDone
+            | NoticeKind::AgentChanged
+            | NoticeKind::NoFreeAgent => {}
         }
     }
     kinds.to_vec()

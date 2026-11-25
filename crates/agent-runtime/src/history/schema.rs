@@ -329,7 +329,7 @@ CREATE TABLE daemon_logs (
         'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
-        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone'
+        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone', 'task_agent_changed', 'task_wait_for_free_agent'
     )),
     team TEXT,
     task TEXT,
@@ -355,7 +355,7 @@ CREATE TABLE daemon_logs (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
-            'questions_file_opened', 'build_directory_removed'
+            'questions_file_opened', 'build_directory_removed', 'task_agent_changed', 'task_wait_for_free_agent'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
@@ -469,5 +469,9 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     Migration {
         version: 29,
         sql: include_str!("029-worker-request-ended.sql"),
+    },
+    Migration {
+        version: 30,
+        sql: include_str!("030-task-agent-changed.sql"),
     },
 ];

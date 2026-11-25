@@ -355,8 +355,12 @@ its task until the time the provider names or the configured pause (`[limits] ra
 then, and comes back to the pool by itself. The task is tried again in the same session `[replacement] limit_retries`
 times (default `1`); when the retries are used up, or a quota's reset is later than `[replacement] limit_wait_minutes`
 (default `60`), the rule answers "change the agent", which is logged as a `decision_taken` with `decision` `limit`.
-Acting on that answer (handing the task to another provider's agent) is not in this version: the task keeps its pause.
-`agent status` shows a refused agent with its return time.
+The daemon picks a free agent of another provider through `decide::replacement::refused::pick` and hands the task
+over through the existing takeover path (`hand_task_over`): the new agent gets the task, its worktree and branch,
+and the old agent is recorded in `past_holders`. The human is notified (`Notice::AgentChanged`), and the change is
+logged as `task_agent_changed`. When no agent of another provider is free, the task stays paused until one is free,
+with the earliest return time of a refused agent as a wake (logged as `task_wait_for_free_agent`, notified as
+`Notice::NoFreeAgent`). `agent status` shows a refused agent with its return time.
 
 **What the notice of a refusal says.** The notice of a pause names what the provider said, from the fields of the CLI's
 record when it writes them: the kind of refusal (an overload, a rate limit or a quota), then the status, the message and

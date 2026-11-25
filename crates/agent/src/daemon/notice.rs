@@ -13,7 +13,7 @@ use std::path::PathBuf;
 
 use agent_core::decide::outcome::PauseReason;
 use agent_core::decide::refusal;
-use agent_core::ids::{TaskId, TeamId};
+use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::local_time::Zone;
 use agent_core::notice_status::NoticeStatus;
@@ -75,6 +75,10 @@ pub(super) enum NoticeKind {
     TeamAsleep,
     /// Team done (`team/notice-team-done`).
     TeamDone,
+    /// Task handed to another agent after its provider's refusal (`run/notice-agent-changed`).
+    AgentChanged,
+    /// No agent free to take the task over after its provider's refusal (`run/notice-no-free-agent`).
+    NoFreeAgent,
 }
 
 impl NoticeKind {
@@ -94,7 +98,7 @@ impl NoticeKind {
             | Self::TurnLimitExhausted
             | Self::TurnLimitNoSession => NoticeStatus::Failed,
             Self::Hung => NoticeStatus::Hung,
-            Self::Paused => NoticeStatus::Paused,
+            Self::Paused | Self::AgentChanged | Self::NoFreeAgent => NoticeStatus::Paused,
             Self::Approved => NoticeStatus::Approved,
             Self::MergeFailed => NoticeStatus::NotMerged,
             Self::Closed => NoticeStatus::Closed,
@@ -278,6 +282,26 @@ pub(super) enum Notice {
         /// Why, as the chain of its errors.
         reason: String,
     },
+    /// The task was handed to another agent after the refused agent's retries were spent.
+    AgentChanged {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+        /// The agent the task was handed to.
+        new_agent: AgentName,
+    },
+    /// No agent was free to take over the task; it stays paused until one is free.
+    NoFreeAgent {
+        /// The agent that was refused by its provider.
+        refused_agent: AgentName,
+        /// The provider that refused the agent.
+        refused_provider: String,
+        /// When the refused provider would take the agent again.
+        return_at: Timestamp,
+    },
 }
 
 /// Why a notice cannot be made into a notification.
@@ -307,6 +331,16 @@ impl Notice {
         let common = Variables::new()
             .with("agent", context.agent)?
             .with("task", context.task.as_str())?;
+        let (text, values, kind) = self.parts(common, context)?;
+        let rendered = texts.render(text, &values)?;
+        Ok(layout_notification(kind, context, &rendered)?)
+    }
+
+    fn parts(
+        &self,
+        common: Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
         let (text, values, kind) = match self {
             Self::Questions { number, file } => (
                 HarnessPrompt::NoticeQuestions,
@@ -395,11 +429,53 @@ impl Notice {
                 common.with("reason", reason)?,
                 NoticeKind::RunFailed,
             ),
+            Self::AgentChanged {
+                refused_agent,
+                refused_provider,
+                return_at,
+                new_agent,
+            } => {
+                let values = agent_changed_vars(common, refused_agent, refused_provider, return_at, new_agent)?;
+                (HarnessPrompt::NoticeAgentChanged, values, NoticeKind::AgentChanged)
+            }
+            Self::NoFreeAgent {
+                refused_agent,
+                refused_provider,
+                return_at,
+            } => {
+                let values = no_free_agent_vars(common, refused_agent, refused_provider, return_at)?;
+                (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
+            }
         };
-        let rendered = texts.render(text, &values)?;
-        Ok(layout_notification(kind, context, &rendered)?)
+        Ok((text, values, kind))
     }
 }
 
 #[cfg(test)]
 mod tests;
+
+fn agent_changed_vars(
+    common: Variables,
+    refused_agent: &AgentName,
+    refused_provider: &str,
+    return_at: &Timestamp,
+    new_agent: &AgentName,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("refused_agent", refused_agent.as_str())?
+        .with("refused_provider", refused_provider)?
+        .with("return_at", return_at.to_string())?
+        .with("new_agent", new_agent.as_str())?)
+}
+
+fn no_free_agent_vars(
+    common: Variables,
+    refused_agent: &AgentName,
+    refused_provider: &str,
+    return_at: &Timestamp,
+) -> Result<Variables, NoticeError> {
+    Ok(common
+        .with("refused_agent", refused_agent.as_str())?
+        .with("refused_provider", refused_provider)?
+        .with("return_at", return_at.to_string())?)
+}
