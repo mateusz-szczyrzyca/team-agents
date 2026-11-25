@@ -162,11 +162,20 @@ pub(super) fn recover_with(
             })?
         {
             // A state from before the refusals keeps no record of them: the runs of the paused task are the record.
+            let until = if let Some(RunState::Ended {
+                end: RunEnd::QuotaExhausted { resets_at: Some(reset) },
+                ..
+            }) = member.runs().last().map(Run::state)
+            {
+                (*reset).max(wake)
+            } else {
+                wake
+            };
             kept_out.push(Refusal {
                 task: task.clone(),
                 agent: member.agent().agent_name(),
                 refusals: trailing_refusals(member.runs()),
-                until: wake,
+                until,
             });
             recovery.wakes.push((wake, task));
         }

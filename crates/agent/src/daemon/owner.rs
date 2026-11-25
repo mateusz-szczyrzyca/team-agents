@@ -2118,7 +2118,17 @@ impl Owner {
         });
         self.parts.state.record_limit_refusals(task.clone(), refusals);
         let agent: AgentName = located.agent.parse()?;
-        self.parts.state.keep_refused_until(agent, pause.until);
+        let return_at = match end {
+            RunEnd::QuotaExhausted { resets_at: Some(reset) } => (*reset).max(pause.until),
+            RunEnd::QuotaExhausted { resets_at: None }
+            | RunEnd::RateLimited
+            | RunEnd::Reported { .. }
+            | RunEnd::NoStatus { .. }
+            | RunEnd::Hung
+            | RunEnd::TurnLimit
+            | RunEnd::Stopped => pause.until,
+        };
+        self.parts.state.keep_refused_until(agent, return_at);
         let decision = match answer {
             Decision::Pause => "pause",
             Decision::ChangeAgent => "change_agent",
@@ -2131,7 +2141,7 @@ impl Owner {
             agent = %located.agent,
             refusals = refusals,
             result = decision,
-            return_at = %pause.until,
+            return_at = %return_at,
             "a run refused by its provider is counted and the rule answers it"
         );
         Ok(())
