@@ -1826,6 +1826,33 @@ mod tests {
         assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
     }
 
+    // Rule: a rejected window's resetsAt is the JSON field of the window, whatever the spacing of its line.
+    #[test]
+    fn a_rejected_window_reads_its_field_as_json_with_any_spacing() {
+        let spaced = r#"{"type": "rate_limit_event", "rate_limit_info": {"status": "rejected", "resetsAt": 1794484800, "rateLimitType": "five_hour"}}"#;
+        let class = failed(None, &format!("{spaced}\n{RESULT_TEXT}"));
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T12:01:00Z"));
+    }
+
+    // Rule: only a rejected window's own field gives the reset: a record with a resetsAt of another kind does not.
+    #[test]
+    fn a_resets_at_field_outside_a_rejected_window_gives_no_structured_reset() {
+        let other = r#"{"type":"assistant","resetsAt":1794484800,"text":"API Error: 429 rate limit exceeded"}"#;
+        let class = failed(None, &format!("{other}\n{RESULT_TEXT}"));
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T14:01:00Z"));
+    }
+
+    // Rule: a rejected window keeps its exact reset when the text that wins is a quota: the reason is the text's, the
+    // reset is the window's.
+    #[test]
+    fn a_rejected_window_keeps_its_reset_when_a_quota_text_wins() {
+        let quota_text = "You've hit your limit · resets 3pm";
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{quota_text}"));
+        assert_eq!(class.end, quota(Some("2026-11-12T12:00:00Z")));
+        let evidence = class.pause.unwrap().evidence;
+        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+    }
+
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.
     #[test]
     fn the_pause_reasons_have_their_texts() {
