@@ -9,6 +9,7 @@
 //! 2. The task is paused (a quota or a rate limit, which end by themselves, or the human's pause): when it has been
 //!    paused for as long as a reviewer may be, counted from its last run that its provider did not refuse
 //!    ([`quiet_since`]).
+//!    A paused reviewer whose agent the refusal rule changes ([`replace_after_refusal`]) is replaced at once instead.
 //! 3. Otherwise not: a task that is queued, runs or asks the human works on the review; one that waits is about to be
 //!    given it; one that is done reported, and a report without a verdict is asked for again elsewhere.
 
@@ -56,7 +57,11 @@ pub fn replace_now(awaited: &Awaited) -> bool {
 /// every other case is [`replace_now`].
 #[must_use]
 pub fn replace_after_refusal(awaited: &Awaited, refusal: Option<Decision>) -> bool {
-    replace_now(awaited)
+    let lead_over = matches!(awaited.lead, TaskStatus::Stopped | TaskStatus::Failed);
+    match refusal {
+        Some(Decision::ChangeAgent) if awaited.reviewer == TaskStatus::Paused && !lead_over => true,
+        Some(Decision::ChangeAgent | Decision::Pause) | None => replace_now(awaited),
+    }
 }
 
 /// An investigator and the provider it runs on.
@@ -72,7 +77,11 @@ pub struct Provided<'a> {
 /// another provider, since one of the same provider meets the same refusal.
 #[must_use]
 pub fn on_provider(provider: &str, investigators: &[Provided<'_>]) -> BTreeSet<InvestigatorName> {
-    BTreeSet::new()
+    investigators
+        .iter()
+        .filter(|investigator| investigator.provider == provider)
+        .map(|investigator| investigator.name.clone())
+        .collect()
 }
 
 /// When the reviewer of a review asked at `requested_at` last did anything but get refused by its provider, given its
