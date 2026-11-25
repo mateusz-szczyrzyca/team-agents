@@ -59,16 +59,16 @@ fn team_on(phase: Option<ItemPhase>) -> State {
 }
 
 /// The item in progress with `assignee`.
-fn in_progress(assignee: &str) -> Option<ItemPhase> {
-    Some(ItemPhase::InProgress {
+fn in_progress(assignee: &str) -> ItemPhase {
+    ItemPhase::InProgress {
         assignee: assignee.parse().unwrap(),
         branch: format!("agents/{assignee}/task-1.1").parse().unwrap(),
-    })
+    }
 }
 
 #[test]
 fn the_round_of_an_item_its_member_works_on_is_timed_from_its_opening() {
-    let state = team_on(in_progress("claude-1"));
+    let state = team_on(Some(in_progress("claude-1")));
 
     let timed = timed_round(&state, &task(2)).expect("the member's round is timed");
     assert_eq!(timed.round, round());
@@ -86,7 +86,7 @@ fn the_round_of_an_item_its_member_works_on_is_timed_from_its_opening() {
 
 #[test]
 fn an_item_another_agent_works_on_does_not_time_the_task() {
-    let state = team_on(in_progress("claude-1"));
+    let state = team_on(Some(in_progress("claude-1")));
 
     assert_eq!(
         timed_round(&state, &task(1)),
@@ -97,7 +97,7 @@ fn an_item_another_agent_works_on_does_not_time_the_task() {
 
 #[test]
 fn a_worker_is_never_timed() {
-    let state = team_on(in_progress("glm-1"));
+    let state = team_on(Some(in_progress("glm-1")));
 
     assert_eq!(timed_round(&state, &task(3)), None);
 }
@@ -111,7 +111,7 @@ fn an_item_not_started_is_not_timed() {
 
 #[test]
 fn a_closed_round_is_not_timed() {
-    let mut state = team_on(in_progress("claude-1"));
+    let mut state = team_on(Some(in_progress("claude-1")));
     state
         .close_round(&round(), at(20), agent_core::state::RoundEnd::Abandoned)
         .unwrap();
@@ -121,7 +121,7 @@ fn a_closed_round_is_not_timed() {
 
 #[test]
 fn a_task_with_no_run_going_is_not_timed() {
-    let mut state = team_on(in_progress("claude-1"));
+    let mut state = team_on(Some(in_progress("claude-1")));
     let (_, mut found) = state.find_task_mut(&task(2)).unwrap();
     found.end_run(at(20), RunEnd::Stopped).unwrap();
 
@@ -130,7 +130,7 @@ fn a_task_with_no_run_going_is_not_timed() {
 
 #[test]
 fn a_stopped_run_is_read_for_the_clock() {
-    let mut state = team_on(in_progress("claude-1"));
+    let mut state = team_on(Some(in_progress("claude-1")));
     {
         let (_, mut found) = state.find_task_mut(&task(2)).unwrap();
         found.end_run(at(20), RunEnd::Stopped).unwrap();
@@ -166,7 +166,7 @@ fn a_stopped_run_is_read_for_the_clock() {
 /// Whether the daemon cuts the run of the member, task 2, after the clock went `minutes` past the start of the tests,
 /// under the configuration `table`; the cut it keeps, if any.
 async fn cut_after(minutes: i64, table: &str) -> Option<OverdueCut> {
-    let daemon = Daemon::new(&team_on(in_progress("claude-1")), None);
+    let daemon = Daemon::new(&team_on(Some(in_progress("claude-1"))), None);
     daemon.configure(table);
     daemon.clock.advance(time::Duration::minutes(minutes));
     let (mut owner, _sinks) = daemon.bare_owner().await;
@@ -214,7 +214,7 @@ async fn a_limit_of_zero_never_cuts_a_round() {
 
 #[tokio::test]
 async fn the_lead_of_a_round_its_member_works_on_is_not_cut() {
-    let daemon = Daemon::new(&team_on(in_progress("claude-1")), None);
+    let daemon = Daemon::new(&team_on(Some(in_progress("claude-1"))), None);
     daemon.clock.advance(time::Duration::days(1));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
