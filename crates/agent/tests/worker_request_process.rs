@@ -4227,4 +4227,67 @@ git commit -qm 'Complete retained work'
         assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
         assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
     }
+    #[test]
+    fn queued_provider_failure_keeps_other_provider_preference_across_restart() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:queued-provider",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-or",
+                    kind: "worker",
+                    scenario: "opencode-script:queued-provider",
+                    cli: "opencode",
+                    model: Some("openrouter/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "queued-provider",
+            &format!(
+                "touch .fake-started\nwhile test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done\n{}",
+                commit_script("the walkthrough", &[])
+            ),
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        let member = task(&tasks, "claude-1");
+        world.ended(member, 1);
+        eventually("first provider running", || {
+            world
+                .requests()
+                .get("1")
+                .and_then(|r| r["helper_task"].as_str())
+                .is_some_and(|t| world.worktree(t).join(".fake-started").exists())
+        });
+        world.stop();
+        let path = world.home.join("tasks").join(member).join("worker-recovery-1.json");
+        let mut journal: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        // Restore the durable queue left by a quota failure before the daemon stopped.
+        journal["events"].as_array_mut().unwrap().last_mut().unwrap()["cause"] = serde_json::json!("quota");
+        std::fs::write(&path, serde_json::to_vec(&journal).unwrap()).unwrap();
+        std::fs::write(world.home.join("release-worker"), "").unwrap();
+        world.start();
+        world.request_is("1", "done");
+        assert_eq!(world.requests()["1"]["worker"], "w-or");
+        assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
+        assert_eq!(world.count_told("claude-1", "did step 1.1 of your plan"), 1);
+    }
 }
