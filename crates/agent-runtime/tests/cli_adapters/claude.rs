@@ -259,6 +259,41 @@ fn the_settings_turn_attribution_off_and_give_a_long_bash_timeout() -> TestResul
     Ok(())
 }
 
+/// The settings of a new run with `servers`, their `env` as the JSON object Claude Code reads.
+fn settings_env(servers: Servers) -> Result<serde_json::Map<String, serde_json::Value>, Box<dyn std::error::Error>> {
+    let spec = ClaudeAdapter.build_run(&request(new_run()?, servers)?)?;
+    let file = spec
+        .files
+        .iter()
+        .find(|file| file.path.as_path().to_str() == Some("/work/run/claude-settings.json"))
+        .ok_or("no settings file")?;
+    json_of(file)?
+        .get("env")
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .ok_or_else(|| "no env in the settings".into())
+}
+
+#[test]
+fn the_settings_keep_the_auto_memory_and_the_claudeai_connectors_out_with_agentbus() -> TestResult {
+    let env = settings_env(Servers::Bus)?;
+
+    assert_eq!(env.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY"), Some(&json!("1")));
+    assert_eq!(env.get("ENABLE_CLAUDEAI_MCP_SERVERS"), Some(&json!("false")));
+    assert_eq!(env.len(), 6);
+    Ok(())
+}
+
+#[test]
+fn the_settings_keep_the_auto_memory_and_the_claudeai_connectors_out_without_servers() -> TestResult {
+    let env = settings_env(Servers::None)?;
+
+    assert_eq!(env.get("CLAUDE_CODE_DISABLE_AUTO_MEMORY"), Some(&json!("1")));
+    assert_eq!(env.get("ENABLE_CLAUDEAI_MCP_SERVERS"), Some(&json!("false")));
+    assert_eq!(env.len(), 6);
+    Ok(())
+}
+
 #[test]
 fn the_recorded_run_gives_its_activity_final_message_and_session() -> TestResult {
     let replay = replay(&ClaudeAdapter, &fixture("claude", "done.jsonl")?, "")?;
