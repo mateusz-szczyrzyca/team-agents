@@ -8,7 +8,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ## 0.101.0 — 25.11.2026 — PR pending
 
 ### Enhancements
-- [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
+- [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, solo tasks already queued for it, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
 - [agent] [agent-core] A task paused by a provider's refusal before this version keeps its agent out after a restart of the daemon, as a task paused now does.
 - [agent] [agent-core] A refusal is counted per task: a good run between refusals clears the count. The rule's answer for each refusal is written to the daemon's log at debug level as a `decision_taken` event with `decision` `limit`; the change of agent after the retries is not acted on yet, so a refused task still waits out its pause.
 
