@@ -374,6 +374,16 @@ not remind a session twice. It is logged as
 of Serena it made after. No tool is blocked. See
 [configuration](docs/configuration.md#binaries) and [`[serena]`](docs/configuration.md#serena).
 
+**What a Claude Code run is given.** A Claude Code run gets only agentbus and Serena (when `[binaries] serena` is set):
+none of your own MCP servers and none of your claude.ai connectors (Claude Docs, Gmail, Drive, Calendar, ...), because
+every run starts with `--strict-mcp-config`; no skills and no slash commands (`--disable-slash-commands`); and not the
+built-in tools it has no use for in a headless run (`--disallowedTools`): `CronCreate`, `CronDelete`, `CronList`,
+`DesignSync`, `EnterWorktree`, `ExitWorktree`, `ListAgents`, `ListMcpResourcesTool`, `Monitor`, `NotebookEdit`,
+`PushNotification`, `ReadMcpResourceDirTool`, `ReadMcpResourceTool`, `RemoteTrigger`, `ReportFindings`,
+`ScheduleWakeup`, `SendMessage` and `Workflow`. All of these only cost context at the start of every run. A session
+started by an earlier version resumes as before, with the same flags as a new run. Codex, opencode and Antigravity are
+not changed.
+
 **Reminder to commit.** A solo agent, a coordinator and a member whose round is open and who hold many uncommitted
 lines are told once, on the bus, to commit what is finished: when the worktree holds `[commit_reminder] lines` changed
 lines (300 by default; added plus removed) and the run has made no commit for `[commit_reminder] minutes` minutes (30 by
