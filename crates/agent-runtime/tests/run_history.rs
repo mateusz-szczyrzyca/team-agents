@@ -796,4 +796,105 @@ mod run_history {
             "{text}"
         );
     }
+
+    /// The context file of the task as JSON, or `None` when the run wrote none.
+    fn context_file(rig: &Rig) -> Option<serde_json::Value> {
+        let path = rig.home.task_dir(&rig.task).join("context.json");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return None,
+            Err(error) => panic!("{}: {error}", path.display()),
+        };
+        Some(serde_json::from_str(&text).expect("the context file is JSON"))
+    }
+
+    // Rule: a run whose stream tells the context of its model calls leaves the latest in `tasks/<task>/context.json`,
+    // with its run and its session, for the daemon to read while the run goes on.
+    #[tokio::test]
+    async fn a_run_leaves_the_latest_context_of_its_calls_in_the_context_file_of_its_task() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        let run = RunId::from_str("run-20261112-100006-c1c1").unwrap();
+        let mode = RunMode::New {
+            session_id: SessionId::from_str(SESSION).unwrap(),
+        };
+
+        let end = run_of_session(&rig, &run, mode, RunWhy::FirstRun, "two-contexts").await;
+
+        assert_eq!(end, done());
+        assert_eq!(
+            context_file(&rig),
+            Some(serde_json::json!({"run": run.as_str(), "session": SESSION, "context": 200}))
+        );
+    }
+
+    // Rule: a run whose stream tells no context (the codex CLI tells none) leaves no context file.
+    #[tokio::test]
+    async fn a_run_that_tells_no_context_leaves_no_context_file() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        let run = RunId::from_str("run-20261112-100007-c2c2").unwrap();
+        let mode = RunMode::New {
+            session_id: SessionId::from_str(SESSION).unwrap(),
+        };
+
+        let end = run_of_session(&rig, &run, mode, RunWhy::FirstRun, "done").await;
+
+        assert_eq!(end, done());
+        assert_eq!(context_file(&rig), None);
+    }
+
+    // Rule: the file names the run that wrote it, also when the next run of the task reaches the same size: the daemon
+    // ignores a file of another run.
+    #[tokio::test]
+    async fn the_next_run_of_a_task_puts_its_own_run_in_the_context_file_at_the_same_size() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        std::fs::write(rig.worktree.path().join(".fake-context"), "200").unwrap();
+        let first = RunId::from_str("run-20261112-100008-c3c3").unwrap();
+        let second = RunId::from_str("run-20261112-100009-c4c4").unwrap();
+        let session = SessionId::from_str(SESSION).unwrap();
+
+        let end = run_of_session(
+            &rig,
+            &first,
+            RunMode::New {
+                session_id: session.clone(),
+            },
+            RunWhy::FirstRun,
+            "context-from-file",
+        )
+        .await;
+        assert_eq!(end, done());
+        let end = run_of_session(
+            &rig,
+            &second,
+            RunMode::Resume { session_id: session },
+            RunWhy::WakeUp,
+            "context-from-file",
+        )
+        .await;
+
+        assert_eq!(end, done());
+        assert_eq!(
+            context_file(&rig),
+            Some(serde_json::json!({"run": second.as_str(), "session": SESSION, "context": 200}))
+        );
+    }
+
+    // Rule: a model call that tells no usage after the one that told the context does not take the context away from the
+    // file: the session holds what the call before it told.
+    #[tokio::test]
+    async fn a_message_without_usage_after_the_context_leaves_the_context_in_the_file() {
+        let rig = rig(Tree::Repository, Kind::Database).await;
+        let run = RunId::from_str("run-20261112-100010-c5c5").unwrap();
+        let mode = RunMode::New {
+            session_id: SessionId::from_str(SESSION).unwrap(),
+        };
+
+        let end = run_of_session(&rig, &run, mode, RunWhy::FirstRun, "context-then-chatter").await;
+
+        assert_eq!(end, done());
+        assert_eq!(
+            context_file(&rig),
+            Some(serde_json::json!({"run": run.as_str(), "session": SESSION, "context": 130_000}))
+        );
+    }
 }

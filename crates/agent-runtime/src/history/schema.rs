@@ -450,4 +450,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 24,
         sql: include_str!("024-commit-reminder.sql"),
     },
+    Migration {
+        version: 25,
+        sql: include_str!("025-context-reminder.sql"),
+    },
 ];

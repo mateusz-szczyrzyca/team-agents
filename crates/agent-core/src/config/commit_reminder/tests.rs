@@ -1,7 +1,7 @@
 //! `[commit_reminder]`: the defaults of a file without it, the values, and what is refused.
 
 use super::super::{Config, ConfigError};
-use super::{DEFAULT_LINES, DEFAULT_MINUTES};
+use super::{DEFAULT_CONTEXT_PERCENT, DEFAULT_LINES, DEFAULT_MINUTES};
 
 /// The smallest configuration: one normal agent, which is all a task needs.
 fn one_agent() -> &'static str {
@@ -68,4 +68,48 @@ fn the_template_names_the_section_with_the_defaults() {
     assert!(template.contains("[commit_reminder]"));
     assert_eq!(config.commit_reminder().lines, DEFAULT_LINES);
     assert_eq!(config.commit_reminder().minutes, DEFAULT_MINUTES);
+}
+
+#[test]
+fn a_file_without_the_section_reminds_a_session_at_80_percent_of_its_bound() {
+    let config = Config::from_toml_str(one_agent()).expect("a file without [commit_reminder] loads");
+
+    assert_eq!(config.commit_reminder().context_percent, 80);
+    assert_eq!(DEFAULT_CONTEXT_PERCENT, 80);
+}
+
+#[test]
+fn the_section_sets_the_context_percent_from_0_to_100() {
+    for percent in [0_u8, 1, 80, 100] {
+        let config = Config::from_toml_str(&with(&format!("[commit_reminder]\ncontext_percent = {percent}\n")))
+            .expect("a percent up to 100 loads");
+
+        assert_eq!(config.commit_reminder().context_percent, percent);
+        assert_eq!(
+            config.commit_reminder().lines,
+            300,
+            "the other keys keep their defaults"
+        );
+    }
+}
+
+#[test]
+fn a_context_percent_above_100_is_refused() {
+    let err = Config::from_toml_str(&with("[commit_reminder]\ncontext_percent = 101\n"))
+        .expect_err("a session cannot hold more than all of its bound");
+
+    assert!(
+        matches!(&err, ConfigError::ContextPercentAbove { percent: 101 }),
+        "{err:?}"
+    );
+}
+
+#[test]
+fn a_context_percent_that_is_no_byte_or_is_negative_is_refused() {
+    for value in ["256", "-1"] {
+        let err = Config::from_toml_str(&with(&format!("[commit_reminder]\ncontext_percent = {value}\n")))
+            .expect_err("a percent is a small number");
+
+        assert!(matches!(&err, ConfigError::Parse(_)), "{value}: {err:?}");
+    }
 }

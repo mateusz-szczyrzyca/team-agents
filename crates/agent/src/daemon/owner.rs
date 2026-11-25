@@ -9,6 +9,7 @@ mod answers;
 mod bound;
 mod briefing;
 mod commit_reminder;
+mod context_reminder;
 mod controls;
 mod disk;
 #[cfg(test)]
@@ -580,6 +581,9 @@ pub(super) struct Owner {
     /// The head and the time of the reminder to commit that went to each task, until a look sees a new head — the end of a
     /// run does not drop it. Held in memory only: a restart of the daemon re-arms the reminder.
     commit_reminded: HashMap<TaskId, (agent_core::state::CommitId, Timestamp)>,
+    /// What the session of each task that was reminded of its full context is told by, so that it is told once: a resumed
+    /// session keeps its ID, a new one is told anew. Held in memory only: a restart of the daemon re-arms the reminder.
+    context_told: HashMap<TaskId, context_reminder::Told>,
     /// The teams to look at at the next turn of the loop, in the order of their IDs.
     looks: BTreeSet<TeamId>,
     /// The watch on the questions files; `None` when the system would not make one: the answers then arrive only
@@ -708,6 +712,7 @@ impl Owner {
             reminders: reminder::Backlog::default(),
             commit_looked_at: HashMap::new(),
             commit_reminded: HashMap::new(),
+            context_told: HashMap::new(),
             looks: BTreeSet::new(),
             watcher,
             saved,

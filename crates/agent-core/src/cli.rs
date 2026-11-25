@@ -403,6 +403,12 @@ pub trait OutputParser: Send {
         RunUsage::default()
     }
 
+    /// The context in tokens of the latest model call that told one, available while the run goes on. Parsers that read
+    /// no usage, and CLIs that tell no context, return none.
+    fn latest_context(&self) -> Option<u64> {
+        None
+    }
+
     /// Ends the run: the final message, the session ID and the error tail, from what the stream showed and the
     /// CLI's stderr. `tail_lines` is how many lines of the error output the tail keeps.
     fn finish(self: Box<Self>, stderr: &str, tail_lines: NonZeroU32) -> RunOutput;

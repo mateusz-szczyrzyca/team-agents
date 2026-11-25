@@ -336,6 +336,15 @@ only after the run has committed. It never commits, deletes or resets anything i
 event `commit_reminded`, and `commit_followed` tells when the run committed after it; the reminder is kept in memory, so a
 restart of the daemon arms it again. See [`[commit_reminder]`](docs/configuration.md).
 
+**Reminder of a full context.** A session whose context reaches `[commit_reminder] context_percent` of its bound (80 by
+default; the bound is `[session] max_context` or the agent's own) is told once, on the bus, to commit what is finished and
+to write in its report where it is and what is next: the next run may start a new session that sees only the commits, the
+list of uncommitted files and that report. While a run goes on, the engine keeps the context of its latest model call in
+`tasks/<task>/context.json`, and the daemon reads it at each look at the team. Claude Code, opencode and Antigravity tell
+their context; Codex tells none, so it has no file and is never reminded, and a session with no bound is not either. A
+resumed session is told once, a new one anew; the reminder is kept in memory, so a restart of the daemon arms it again.
+`context_percent = 0` turns it off. Each reminder is the log event `context_reminded`.
+
 **The plan of a task.** A solo agent, a member and a coordinator keep the plan of their task in `.agent/plan.md` of
 their worktree: its stages and steps, each marked to do, in hand, done or given up ([`docs/plan.md`](docs/plan.md)).
 The daemon reads the file at the end of every run and keeps each new version in the history. A run of a role in
