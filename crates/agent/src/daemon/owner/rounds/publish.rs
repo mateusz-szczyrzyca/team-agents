@@ -8,12 +8,14 @@ use agent_core::decide::wait::Obligation;
 use agent_core::history::HistoryEvent;
 use std::num::NonZeroU32;
 
-use agent_core::ids::{BranchName, ItemId, TaskId, TeamId};
+use crate::daemon::pr::description::RequestWithSummary;
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
+use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
 use agent_runtime::history::log_decision;
@@ -999,26 +1001,55 @@ impl Owner {
             let files = git.range_changes(&merge_base, &record.result.head).await?;
             crate::daemon::pr::description::allowed_section(&pulls.texts, &files, team.allowances())?
         };
-        let mut requests = Vec::new();
+        let mut crew = Vec::new();
         for (_, member) in team.crew().roster() {
-            let of_task = self
-                .parts
-                .bus
-                .helper_dump(member.task())
-                .await
-                .map_err(|source| PublishError::Bus {
-                    task: member.task().clone(),
-                    source,
-                })?;
-            requests.push((member.agent().name().parse()?, of_task));
+            crew.push((member.task().clone(), member.agent().name().parse::<AgentName>()?));
         }
+        let (requests, with_summaries) = self.requests_of_crew(&crew).await?;
         let worker_steps = crate::daemon::pr::description::worker_steps_section(&pulls.texts, &requests)?;
+        let returned_steps = crate::daemon::pr::description::returned_steps_section(&pulls.texts, &with_summaries)?;
         text.body = [text.body.trim_end(), contribution.trim(), &measured].join("\n\n");
-        for section in [allowed, worker_steps].into_iter().flatten() {
+        for section in [allowed, worker_steps, returned_steps].into_iter().flatten() {
             text.body.push_str("\n\n");
             text.body.push_str(section.trim_end());
         }
         Ok(text)
+    }
+
+    /// The requests for workers of every task of a crew, as the bus lists them, and again with the summary of each
+    /// request that came back to its requester and names a step (empty for the others).
+    async fn requests_of_crew(
+        &self,
+        crew: &[(TaskId, AgentName)],
+    ) -> Result<
+        (
+            Vec<(AgentName, Vec<TaskRequest>)>,
+            Vec<(AgentName, Vec<RequestWithSummary>)>,
+        ),
+        PublishError,
+    > {
+        let mut requests = Vec::new();
+        let mut with_summaries = Vec::new();
+        for (task, requester) in crew {
+            let bus_error = |source| PublishError::Bus {
+                task: task.clone(),
+                source,
+            };
+            let of_task = self.parts.bus.helper_dump(task).await.map_err(bus_error)?;
+            let mut read = Vec::with_capacity(of_task.len());
+            for request in &of_task {
+                let summary = match (&request.status, request.step) {
+                    (DelegationStatus::Failed, Some(_)) => {
+                        self.parts.bus.helper_get(request.id).await.map_err(bus_error)?.summary
+                    }
+                    _ => String::new(),
+                };
+                read.push((request.clone(), summary));
+            }
+            with_summaries.push((requester.clone(), read));
+            requests.push((requester.clone(), of_task));
+        }
+        Ok((requests, with_summaries))
     }
 
     /// The branch the pull requests of `repo` are made against.
