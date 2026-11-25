@@ -9,10 +9,19 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.117.0 · agent-core 0.116.0 · agent-runtime 0.111.0 — 25.11.2026 — PR #284
+## agent 0.118.0 · agent-core 0.117.0 · agent-runtime 0.112.0 — 26.11.2026 — PR #284
 
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] An item's pull request is now judged and pushed from the tip of the item's own branch, whatever branch the lead's worktree has out: the checks, the gate match and the push no longer see another item's commits. When no gate passed at the item's tip and the worktree has another branch out, nothing is pushed and the lead is sent back to run `git switch <branch>` and `agent gate` (`publish_off_branch` in `agent log`).
+
+## agent 0.117.0 · agent-core 0.116.0 · agent-runtime 0.111.0 — 25.11.2026 — PR #283
+
+### Enhancements
+- [agent] Solo tasks, members and leads whose provider still refuses their retry move to a free agent of another provider, keeping their worktree, branch and briefing. With nobody free, they wait for capacity or their provider’s return.
+- [agent] [agent-core] [agent-runtime] You are notified once when a task waits for a replacement or changes agent; its history names the provider, full return time and replacement.
+
+### Configuration
+- [agent] changed: `[replacement] agents` (default `[]`) — now drives refusal takeovers, trying the list then the tier `normal`; a lead goes to an investigator.
 
 ## agent 0.116.0 — 25.11.2026 — pushed to main
 

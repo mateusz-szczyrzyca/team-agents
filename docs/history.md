@@ -892,5 +892,5 @@ History version 30 admits the `worktree_switched` information event and the `wor
 (`030-worktree-switch.sql`) preserves existing daemon logs. Older daemons refuse the upgraded history; keep a backup before
 upgrading if you need to return to an older daemon.
 
-History version 31 admits the `publish_off_branch` warning. Its migration (`031-publish-off-branch.sql`) preserves existing daemon
+History version 32 admits the `publish_off_branch` warning. Its migration (`032-publish-off-branch.sql`) preserves existing daemon
 logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older daemon.

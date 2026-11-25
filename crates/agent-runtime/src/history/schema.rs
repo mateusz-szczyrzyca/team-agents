@@ -476,6 +476,10 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     },
     Migration {
         version: 31,
-        sql: include_str!("031-publish-off-branch.sql"),
+        sql: include_str!("031-task-agent-changed.sql"),
+    },
+    Migration {
+        version: 32,
+        sql: include_str!("032-publish-off-branch.sql"),
     },
 ];

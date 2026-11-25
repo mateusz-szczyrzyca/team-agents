@@ -608,3 +608,221 @@ async fn a_members_work_owed_to_its_lead_is_told_after_a_restart_when_the_bus_fa
 
     assert_eq!(state.find_task(&tasks[1]).unwrap().member.status(), TaskStatus::Stopped);
 }
+
+/// Configures a fake CLI as an opencode agent on `DeepInfra`.
+fn configure_refused_cli(rig: &Rig, table: &str, name: &str) {
+    let config = std::fs::read_to_string(rig.home.config_file())
+        .unwrap()
+        .replace(
+            &format!("[{table}.{name}]\ncli = \"claude\""),
+            &format!("[{table}.{name}]\ncli = \"opencode\"\nmodel = \"deepinfra/example\""),
+        )
+        .replace(
+            "[binaries]\n",
+            &format!(
+                "[binaries]\nopencode = \"{}\"\n",
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("tests/fixtures/team-cli.sh")
+                    .display()
+            ),
+        );
+    std::fs::write(rig.home.config_file(), config).unwrap();
+}
+
+/// Exercises both refusal events through real runs, takeover, review and merge.
+pub(super) async fn record_refusal_events(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    use agent_core::log::LogEvent;
+    let mut rig = Rig::new(
+        &[
+            normal("deep-1", "deepinfra-overload"),
+            normal("claude-2", "hold,work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    configure_refused_cli(&rig, "agents", "deep-1");
+    configure(&rig, "[replacement]\nagents = [\"claude-2\"]\nlimit_retries = 0\n");
+    start_logging(&mut rig).await;
+    let (_, busy) = rig
+        .run(&["claude-2"], &ONE.replace("1.1", "1.2"), MergeMode::Autopilot, None)
+        .await;
+    rig.status_is(&busy[0], TaskStatus::Running).await;
+    let (team, tasks) = rig.run(&["deep-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = &tasks[0];
+    let paused = rig.status_is(task, TaskStatus::Paused).await;
+    let before = paused.find_task(task).unwrap().member;
+    let bus_name = before.bus_agent().clone();
+    let return_at = paused.refused_until(&"deep-1".parse().unwrap()).unwrap().to_string();
+    let branch = super::rig::git(&rig.worktree(task), &["branch", "--show-current"]);
+    rig.wait_for("wait notice", || {
+        rig.notifications().iter().any(|text| text.contains("stays paused:"))
+    })
+    .await;
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("stays paused:"))
+            .count(),
+        1
+    );
+    std::fs::write(rig.worktree(&busy[0]).join(".fake-continue"), "continue").unwrap();
+    let completed = rig
+        .item_where("1.1", "refused item merged after capacity became free", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let after = completed.find_task(task).unwrap().member;
+    assert_eq!(after.agent().name(), "claude-2");
+    assert_eq!(after.bus_agent(), &bus_name);
+    assert_eq!(after.past_holders().len(), 1);
+    assert_eq!(after.runs().len(), 2);
+    let briefing = rig.kept_prompt(task, 2);
+    assert!(
+        briefing.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+        "{briefing}"
+    );
+    assert!(briefing.contains(&branch), "{briefing}");
+    assert!(briefing.contains("deep-1"), "{briefing}");
+    let rows = agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap();
+    for event in [LogEvent::TaskAgentChanged, LogEvent::TaskWaitForFreeAgent] {
+        let matching: Vec<_> = rows.iter().filter(|row| row.event() == event).collect();
+        assert_eq!(matching.len(), 1, "{event}: {matching:?}");
+        let row = matching[0];
+        assert_eq!(row.task(), Some(task));
+        assert_eq!(row.team(), Some(&team));
+        assert_eq!(
+            row.fields().get("refused_provider"),
+            Some(&serde_json::json!("deepinfra"))
+        );
+        assert_eq!(row.fields().get("return_at"), Some(&serde_json::json!(return_at)));
+        observed.insert(event);
+    }
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("stays paused:"))
+            .count(),
+        1
+    );
+    assert_eq!(
+        rig.notifications()
+            .iter()
+            .filter(|text| text.contains("was handed to claude-2 because"))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn refusal_waits_for_capacity_then_finishes_with_one_notice_and_complete_audit() {
+    let mut observed = std::collections::BTreeSet::new();
+    record_refusal_events(&mut observed).await;
+    assert_eq!(
+        observed,
+        std::collections::BTreeSet::from([
+            agent_core::log::LogEvent::TaskAgentChanged,
+            agent_core::log::LogEvent::TaskWaitForFreeAgent,
+        ])
+    );
+}
+#[tokio::test]
+async fn refusal_solo_member_and_lead_retry_then_finish_the_item_on_another_provider() {
+    use agent_core::kinds::Role;
+    use agent_core::state::{RunEnd, RunState};
+    for role in [Role::Solo, Role::Member, Role::Coordinator] {
+        let lead = role == Role::Coordinator;
+        let mut agents_config = vec![
+            normal("claude-2", "work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ];
+        if lead {
+            agents_config.extend([
+                investigator("deep-lead", "deepinfra-overload"),
+                investigator("inv-next", "integrate"),
+            ]);
+        } else {
+            agents_config.push(normal("deep-1", "deepinfra-overload"));
+            if role == Role::Member {
+                agents_config.push(investigator("inv-lead", "sleep,integrate"));
+            }
+        }
+        let mut rig = Rig::new(&agents_config, 5, role != Role::Solo).await;
+        let (refused, replacement, table, agents, coordinator, index) = if lead {
+            (
+                "deep-lead",
+                "inv-next",
+                "investigators",
+                vec!["deep-lead", "claude-2"],
+                Some("deep-lead"),
+                0,
+            )
+        } else if role == Role::Solo {
+            ("deep-1", "claude-2", "agents", vec!["deep-1"], None, 0)
+        } else {
+            (
+                "deep-1",
+                "claude-2",
+                "agents",
+                vec!["inv-lead", "deep-1"],
+                Some("inv-lead"),
+                1,
+            )
+        };
+        configure_refused_cli(&rig, table, refused);
+        configure(&rig, &format!("[replacement]\nagents = [\"{replacement}\"]\n"));
+        rig.wake_sleeping_teams();
+        start_logging(&mut rig).await;
+        let (_, tasks) = rig.run(&agents, ONE, MergeMode::Autopilot, coordinator).await;
+        let task = &tasks[index];
+        let paused = rig.status_is(task, TaskStatus::Paused).await;
+        let before = paused.find_task(task).unwrap().member;
+        assert_eq!(before.runs().len(), 1);
+        let bus_name = before.bus_agent().clone();
+        let branch = super::rig::git(&rig.worktree(task), &["branch", "--show-current"]);
+        rig.advance_history_days(1);
+        let completed = rig
+            .item_where(
+                "1.1",
+                "refused team item merged after its retry and takeover",
+                |phase| matches!(phase, ItemPhase::Done { .. }),
+            )
+            .await;
+        rig.stop().await.unwrap();
+        let after = completed.find_task(task).unwrap().member;
+        assert_eq!(after.agent().name(), replacement);
+        assert_eq!(after.bus_agent(), &bus_name);
+        assert_eq!(after.past_holders().len(), 1);
+        assert!(after.runs().len() >= 3);
+        for run in &after.runs()[..2] {
+            assert!(matches!(
+                run.state(),
+                RunState::Ended {
+                    end: RunEnd::RateLimited,
+                    ..
+                }
+            ));
+        }
+        let briefing = rig.kept_prompt(task, 3);
+        assert!(
+            briefing.starts_with("# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED"),
+            "{briefing}"
+        );
+        assert!(briefing.contains(&branch), "{briefing}");
+        assert!(briefing.contains(refused), "{briefing}");
+        assert_eq!(
+            rig.notifications()
+                .iter()
+                .filter(|text| text.contains(&format!("was handed to {replacement} because")))
+                .count(),
+            1
+        );
+    }
+}

@@ -176,7 +176,13 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::PeerGone, "peer_gone", LogLevel::Debug),
         (LogEvent::GithubStepWaiting, "github_step_waiting", LogLevel::Warn),
         (LogEvent::GithubStepResumed, "github_step_resumed", LogLevel::Info),
+        (LogEvent::TaskAgentChanged, "task_agent_changed", LogLevel::Info),
         (LogEvent::TaskHandedOver, "task_handed_over", LogLevel::Info),
+        (
+            LogEvent::TaskWaitForFreeAgent,
+            "task_wait_for_free_agent",
+            LogLevel::Info,
+        ),
         (LogEvent::TaskWaitsForAgent, "task_waits_for_agent", LogLevel::Info),
         (LogEvent::WorkerRequestDamaged, "worker_request_damaged", LogLevel::Warn),
         (WorkerRequestReturned, "worker_request_returned", LogLevel::Info),

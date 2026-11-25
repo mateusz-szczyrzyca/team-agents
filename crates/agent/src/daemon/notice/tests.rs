@@ -326,6 +326,8 @@ fn notice_kind_maps_to_expected_status() {
         (NoticeKind::RunFailed, NoticeStatus::Failed),
         (NoticeKind::TurnLimitExhausted, NoticeStatus::Failed),
         (NoticeKind::TurnLimitNoSession, NoticeStatus::Failed),
+        (NoticeKind::AgentChanged, NoticeStatus::Paused),
+        (NoticeKind::NoFreeAgent, NoticeStatus::Paused),
     ];
     for (kind, expected_status) in expected {
         assert_eq!(kind.status(), expected_status, "{kind:?} status mismatch");
@@ -998,4 +1000,86 @@ async fn a_refusal_notice_names_its_kind_once_and_uses_one_local_time_format() {
     assert_eq!(body.matches("an overload").count(), 1, "{body}");
     assert!(body.contains("Time: 2026-11-11 20:15 +01:00"), "{body}");
     assert!(body.contains("paused until 2026-11-11 20:15 +01:00"), "{body}");
+}
+
+#[tokio::test]
+async fn refusal_change_and_wait_notices_use_the_headers_local_zone() {
+    let id = task(1);
+    let context = NoticeContext {
+        repo: "team-agents",
+        agent: "claude-1",
+        cli: Some(agent_core::kinds::CliKind::Claude),
+        model: None,
+        time: at(0),
+        offset: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).unwrap()),
+        task: &id,
+        team: None,
+        pr: None,
+        words: crate::daemon::notice::sample::words(),
+    };
+    for notice in [
+        Notice::AgentChanged {
+            refused_agent: "claude-1".parse().unwrap(),
+            refused_provider: "claude".to_owned(),
+            return_at: at(3600),
+            new_agent: "codex-1".parse().unwrap(),
+        },
+        Notice::NoFreeAgent {
+            refused_agent: "claude-1".parse().unwrap(),
+            refused_provider: "claude".to_owned(),
+            return_at: at(3600),
+        },
+    ] {
+        let notification = notice.render(&texts().await, &context).unwrap();
+        assert!(
+            notification.body().contains("Time: 2026-11-11 20:15 +01:00"),
+            "{}",
+            notification.body()
+        );
+        assert!(
+            notification.body().contains("until 2026-11-11 21:15 +01:00"),
+            "{}",
+            notification.body()
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_wait_for_another_agent_keeps_the_pause_until_wording() {
+    let (_, body) = rendered(&Notice::NoFreeAgent {
+        refused_agent: "claude-1".parse().unwrap(),
+        refused_provider: "claude".to_owned(),
+        return_at: at(3600),
+    })
+    .await;
+    assert!(body.contains("is paused until 2026-11-11 20:15 +00:00"), "{body}");
+    assert!(body.contains("stays paused:"), "{body}");
+}
+
+#[tokio::test]
+async fn refusal_notifications_begin_with_a_summary_in_the_note_header() {
+    for (notice, summary) in [
+        (
+            Notice::AgentChanged {
+                refused_agent: "claude-1".parse().unwrap(),
+                refused_provider: "claude".to_owned(),
+                return_at: at(3600),
+                new_agent: "codex-1".parse().unwrap(),
+            },
+            "changed agent",
+        ),
+        (
+            Notice::NoFreeAgent {
+                refused_agent: "claude-1".parse().unwrap(),
+                refused_provider: "claude".to_owned(),
+                return_at: at(3600),
+            },
+            "waits for a free agent",
+        ),
+    ] {
+        let (_, body) = rendered(&notice).await;
+        let expected = format!("Note: claude-1 {summary} ({})", task(1));
+        assert!(body.lines().any(|line| line == expected), "{body}");
+        assert!(!body.contains("agent: \""), "{body}");
+    }
 }
