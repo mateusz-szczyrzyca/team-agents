@@ -3035,7 +3035,7 @@ impl Owner {
         match &end {
             RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => {}
             RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit | RunEnd::Stopped => {
-                self.parts.state.record_limit_refusals(task.clone(), 0)
+                self.parts.state.record_limit_refusals(task.clone(), 0);
             }
         }
         let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
