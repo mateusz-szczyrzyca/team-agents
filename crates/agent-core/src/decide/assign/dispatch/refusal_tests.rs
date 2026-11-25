@@ -3,6 +3,7 @@
 
 use super::*;
 use crate::decide::replacement::ReplacementMode;
+use crate::kinds::Tier;
 use crate::state::fixtures::{at, inv, member, normal, team_id};
 use crate::state::{Crew, MergeMode, TaskListText, TeamMembers};
 
@@ -30,7 +31,7 @@ fn team() -> Team {
 }
 
 #[test]
-fn a_refused_member_gets_no_item_and_the_coordinator_takes_it() {
+fn a_refused_member_gets_no_item_and_the_item_waits_as_for_a_busy_one() {
     let item = "1.1".parse().unwrap();
     let refused = [agent("member")];
 
@@ -39,8 +40,12 @@ fn a_refused_member_gets_no_item_and_the_coordinator_takes_it() {
     assert_eq!(
         chosen,
         Dispatch {
-            assigned: vec![(item, inv("lead"))],
-            waiting: vec![],
+            assigned: vec![],
+            waiting: vec![Waiting {
+                item,
+                required: Tier::Normal,
+                reason: WaitReason::Busy,
+            }],
         }
     );
 }
