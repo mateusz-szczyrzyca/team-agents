@@ -2757,6 +2757,7 @@ impl Owner {
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {
             let Some(found) = self.parts.state.find_task(&task) else {
+                self.wakes.remove(&task);
                 continue;
             };
             if found.member.status() != TaskStatus::Paused {
