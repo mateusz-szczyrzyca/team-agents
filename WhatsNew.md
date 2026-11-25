@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.109.0 — 25.11.2026 — PR #???
+
+### New features
+- [agent-core] After a provider refuses a task (rate limit, overload or quota) and the retries are exhausted, the harness picks a replacement from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused itself — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, the pick returns the earliest time a refused agent returns, so the daemon knows when to try again.
+
+### Configuration
+- [agent-core] changed: `[replacement] agents` — now also serves a refusal of the provider: the replacement is picked from this list first, then from the tier `normal`; a coordinator's task goes to an investigator, a member's never to a worker.
+
 ## agent 0.109.0 — 25.11.2026 — PR #271
 
 ### Enhancements
