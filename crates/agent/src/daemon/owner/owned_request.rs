@@ -180,12 +180,7 @@ impl Owner {
                 Phase::Running(attempt) => {
                     self.restore_observed_result(&served, &task, &attempt.run).await?;
                 }
-                Phase::Queued
-                    if matches!(
-                        journal.events().last(),
-                        Some(Transition::Interrupted { .. } | Transition::RestartedQueued { .. })
-                    ) =>
-                {
+                Phase::Queued if journal.retained().is_some() => {
                     let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
                     if entry.status == DelegationStatus::Running {
                         // The journal write survived but its bus update did not. Replay without charging another return.
@@ -437,15 +432,10 @@ impl Owner {
                 .events()
                 .iter()
                 .filter_map(|event| match event {
-                    Transition::Interrupted { cause, .. } => Some(match cause {
-                        agent_core::decide::worker_recovery::Cause::Died => "died",
-                        agent_core::decide::worker_recovery::Cause::Refused => "refused",
-                        agent_core::decide::worker_recovery::Cause::Quota => "quota",
-                        agent_core::decide::worker_recovery::Cause::NoStatus => "no_status",
-                        agent_core::decide::worker_recovery::Cause::RestartQueued => "restart_queued",
-                        agent_core::decide::worker_recovery::Cause::RestartRunning => "restart_running",
-                    }),
-                    Transition::RestartedQueued { .. } => Some("restart_queued"),
+                    Transition::Interrupted { cause, .. } => Some(cause.as_str()),
+                    Transition::RestartedQueued { .. } => {
+                        Some(agent_core::decide::worker_recovery::Cause::RestartQueued.as_str())
+                    }
                     Transition::Started { .. }
                     | Transition::Assigned { .. }
                     | Transition::Rejected { .. }
@@ -553,6 +543,40 @@ impl Owner {
         self.serving.remove(task);
         Ok(true)
     }
+    /// Applies the recovery preference to the current installation-wide worker availability.
+    pub(super) fn recovery_worker(
+        &self,
+        journal: &Journal,
+        pool: &[agent_core::decide::pool::PoolWorker<'_>],
+        requires: &agent_core::decide::pool::Requires<'_>,
+        run_limit: agent_core::decide::slot::RunLimit,
+    ) -> Option<(agent_core::ids::AgentName, String)> {
+        use agent_core::decide::pool::{
+            LastServed, next_pool_worker, provider_of, second_try_pool_elsewhere, second_try_pool_worker,
+        };
+        use agent_core::decide::worker_recovery::{Decision, Event, Preference, decide};
+        let retained = journal.retained()?;
+        let provider = self
+            .parts
+            .settings
+            .config
+            .agent(retained.worker)
+            .map_or("", |config| provider_of(config.cli, config.model.as_ref()));
+        let elsewhere = second_try_pool_elsewhere(pool, requires, retained.worker, provider, run_limit);
+        let chosen = match decide(
+            Event::NoResult(retained.cause),
+            journal.returns().saturating_sub(1),
+            elsewhere,
+        ) {
+            Decision::Serve(Preference::OtherProvider) => {
+                second_try_pool_worker(pool, requires, retained.worker, provider, run_limit)
+            }
+            Decision::Serve(Preference::FirstFree) => next_pool_worker(pool, requires, LastServed(None), run_limit),
+            Decision::Wait(_) | Decision::Return | Decision::Settle | Decision::Drop => None,
+        };
+        chosen.map(|(worker, provider)| (worker.clone(), provider.to_owned()))
+    }
+
     /// Rebuilds a missing pending result from the outcome persisted before its observed ending.
     async fn restore_observed_result(
         &mut self,

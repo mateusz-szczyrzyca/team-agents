@@ -1308,16 +1308,7 @@ impl Owner {
                 break;
             }
             let journal = self.owned_journal(&req.from_task, req.id).await?;
-            let recovering = journal.as_ref().is_some_and(|journal| {
-                journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
-                    && matches!(
-                        journal.events().last(),
-                        Some(
-                            agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
-                                | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
-                        )
-                    )
-            });
+            let recovering = journal.as_ref().is_some_and(|journal| journal.retained().is_some());
             if recovering {
                 for worker in &mut pool_workers_data {
                     let availability = self.worker_availability_except(&worker.name, Some(req.id)).await;
@@ -1353,62 +1344,9 @@ impl Owner {
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 } else if let Some(journal) = journal.as_ref().filter(|_| recovering) {
-                    use agent_core::decide::worker_recovery::{Cause, Decision, Event, Preference, decide};
-                    use agent_runtime::worker_request::recovery::Transition;
-                    // A queued restart records another interruption without erasing the provider failure.
-                    let cause = journal
-                        .events()
-                        .iter()
-                        .rev()
-                        .find_map(|event| match event {
-                            Transition::Interrupted { cause, .. } => Some(*cause),
-                            _ => None,
-                        })
-                        .unwrap_or(Cause::RestartQueued);
-                    let worker = journal
-                        .events()
-                        .iter()
-                        .rev()
-                        .find_map(|event| match event {
-                            Transition::Started { worker, .. } => Some(worker),
-                            Transition::Assigned { workspace, .. } => Some(&workspace.record().worker),
-                            _ => None,
-                        })
-                        .unwrap_or(&journal.current_workspace().record().worker);
-                    let failed_provider = self
-                        .parts
-                        .settings
-                        .config
-                        .agent(worker)
-                        .map_or("", |config| provider_of(config.cli, config.model.as_ref()));
-                    let elsewhere = agent_core::decide::pool::second_try_pool_elsewhere(
-                        &pool_workers,
-                        &requires,
-                        worker,
-                        failed_provider,
-                        run_limit,
-                    );
-                    let selection = match decide(Event::NoResult(cause), journal.returns().saturating_sub(1), elsewhere)
-                    {
-                        Decision::Serve(Preference::OtherProvider) => agent_core::decide::pool::second_try_pool_worker(
-                            &pool_workers,
-                            &requires,
-                            worker,
-                            failed_provider,
-                            run_limit,
-                        ),
-                        Decision::Serve(Preference::FirstFree) => {
-                            next_pool_worker(&pool_workers, &requires, LastServed(None), run_limit)
-                        }
-                        Decision::Wait(_) | Decision::Return | Decision::Settle | Decision::Drop => None,
-                    };
-                    selection.map(|(name, provider)| (name.clone(), provider.to_owned()))
+                    self.recovery_worker(journal, &pool_workers, &requires, run_limit)
                 } else {
-                    let last_served = LastServed(if recovering {
-                        None
-                    } else {
-                        self.pool_dispatch.last_served_provider.as_deref()
-                    });
+                    let last_served = LastServed(self.pool_dispatch.last_served_provider.as_deref());
                     next_pool_worker(&pool_workers, &requires, last_served, run_limit)
                         .map(|(name, prov)| (name.clone(), prov.to_owned()))
                 }
@@ -1529,17 +1467,7 @@ impl Owner {
             .owned_journal(&request.from_task, request.id)
             .await
             .map_err(Box::new)?
-            .filter(|journal| {
-                journal.phase() == &agent_runtime::worker_request::recovery::Phase::Queued
-                    && matches!(
-                        journal.events().last(),
-                        Some(
-                            agent_runtime::worker_request::recovery::Transition::Interrupted { .. }
-                                | agent_runtime::worker_request::recovery::Transition::RestartedQueued { .. }
-                        )
-                    )
-            })
-            .map(|journal| journal.current_workspace().clone());
+            .and_then(|journal| journal.retained().map(|retained| retained.workspace.clone()));
         let worker_task = match &retained {
             Some(workspace) => workspace.record().worker_task.clone(),
             None => TaskId::generate(&self.parts.clock, &mut self.parts.rng)?,
