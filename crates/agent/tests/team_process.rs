@@ -1368,6 +1368,33 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         release(&world, &first);
     }
 
+    #[test]
+    fn a_fresh_task_of_a_refused_agent_is_not_started_before_its_return() {
+        let mut world = World::new(&agents_with(&[("claude-2", "agent", "turn-limit-quota,done")]));
+        world.start();
+        let quota_hit = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate to be refused for its quota", |status| {
+            line_of(status, &quota_hit).contains("paused")
+        });
+        let fresh = solo_task(&world.agent(&["run", "claude-2", "Fresh work."]));
+
+        never_started_within(&world, &fresh, Duration::from_secs(3));
+        let status = world.status();
+        assert!(line_of(&status, &quota_hit).contains("paused"), "{status}");
+
+        move_the_refusal_and_the_pause_back(&mut world, "claude-2");
+        eventually("the fresh task to run on claude-2 after its return", || world.runs(&fresh) == 1);
+    }
+
+    /// Checks for `window` that `task` has no run: the daemon is given the time to start it if it would.
+    fn never_started_within(world: &World, task: &str, window: Duration) {
+        let deadline = Instant::now() + window;
+        while Instant::now() < deadline {
+            assert_eq!(world.runs(task), 0, "{}", world.status());
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Moves every ended run and the return time of `agent` back to 2020, as if the time had passed: the daemon is
     /// stopped, the file is edited, and the daemon starts again. The paused task is woken at once and its next run is
     /// the good one.
