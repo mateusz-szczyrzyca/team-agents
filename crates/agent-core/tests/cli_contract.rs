@@ -112,6 +112,7 @@ impl OutputParser for TestParser {
             session_id: self.session,
             stream: self.result.unwrap_or(StreamOutcome::Incomplete),
             error_tail: ErrorTail::from_text(stderr, tail_lines),
+            refusal: None,
         }
     }
 }

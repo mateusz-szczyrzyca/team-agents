@@ -110,6 +110,40 @@ pub enum PauseReason {
     RateLimit,
 }
 
+/// What the provider said when it refused a run, taken from structured fields of the CLI's output.
+///
+/// When the CLI gives structured refusal data (opencode's error event, Claude's `rate_limit_event`, Codex's
+/// `turn.failed`), this holds it; when not, the text-based [`Pause::evidence`] is the only record.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RefusalSummary {
+    /// The HTTP status code as a string, e.g. `"429"`; empty when not told.
+    pub status: String,
+    /// The provider's message, e.g. `"Model busy, retry later"`; empty when not told.
+    pub message: String,
+    /// The provider's code, e.g. `"engine_overloaded"`; empty when not told.
+    pub code: String,
+    /// Which limit the refusal is: an overload for 429/503/529, else a rate limit or a quota.
+    pub kind: RefusalKind,
+}
+
+/// The kind of refusal a provider gave.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, strum::Display, strum::IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum RefusalKind {
+    /// An exhausted quota, usage limit or credits.
+    Quota,
+    /// The provider is rate-limiting requests.
+    RateLimit,
+    /// The model or provider is overloaded.
+    Overloaded,
+    /// A provider error that is neither a quota nor a rate limit nor an overload.
+    ProviderError,
+}
+
 /// A pause a run's end implies.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -130,6 +164,9 @@ pub struct Classified {
     pub end: RunEnd,
     /// The pause the task takes; only a limit has one.
     pub pause: Option<Pause>,
+    /// The refusal as structured fields the CLI gave; none when it gave none or when the limit was found only
+    /// by matching phrases in the text.
+    pub refusal: Option<RefusalSummary>,
 }
 
 /// Why a run cannot be classified.
@@ -284,7 +321,13 @@ pub fn classify_outcome(
     finish: RunFinish,
     context: &LimitContext<'_>,
 ) -> Result<Classified, ClassifyError> {
-    let done = |end| Ok(Classified { end, pause: None });
+    let done = |end| {
+        Ok(Classified {
+            end,
+            pause: None,
+            refusal: None,
+        })
+    };
     if finish.stopped_by == StoppedBy::Human {
         return done(RunEnd::Stopped);
     }
@@ -308,7 +351,7 @@ pub fn classify_outcome(
             (StatusLine::Absent, None) | (StatusLine::Reported(_) | StatusLine::Unknown(_), _) => ErrorTail::default(),
         };
         if let Some(limit) = find_limit(output.error_tail.lines().iter().chain(message.lines())) {
-            return limit.classify(context);
+            return limit.classify(context, output.refusal.clone());
         }
     }
     if output.stream == StreamOutcome::TurnLimit {
@@ -440,7 +483,7 @@ fn has_number(text: &str, number: &str) -> bool {
 
 impl Limit {
     /// The end and the pause of a run that stopped on this limit.
-    fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
+    fn classify(self, context: &LimitContext<'_>, refusal: Option<RefusalSummary>) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
         let reset = reset_time(&self.lines, now, context.local_offset);
         let wait = match reset {
@@ -465,6 +508,7 @@ impl Limit {
                 reason: self.reason,
                 evidence: self.evidence,
             }),
+            refusal,
         })
     }
 
@@ -917,6 +961,7 @@ mod tests {
             session_id: None,
             stream,
             error_tail: ErrorTail::from_text(stderr, config.limits().tail_lines),
+            refusal: None,
         };
         let context = LimitContext {
             limits: config.limits(),
@@ -1048,7 +1093,8 @@ mod tests {
                 class,
                 Classified {
                     end: RunEnd::Reported { outcome },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 }
             );
         }
@@ -1069,7 +1115,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Stopped,
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1089,7 +1136,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Hung,
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1134,7 +1182,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::Hung,
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1205,7 +1254,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1240,7 +1290,8 @@ mod tests {
                 end: RunEnd::Reported {
                     outcome: RunOutcome::Done
                 },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1356,7 +1407,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1369,7 +1421,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1393,7 +1446,8 @@ mod tests {
                 class,
                 Classified {
                     end: RunEnd::NoStatus { exit_code: Some(1) },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 },
                 "{line}"
             );
@@ -1417,7 +1471,8 @@ mod tests {
                 end: RunEnd::Reported {
                     outcome: RunOutcome::Done
                 },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
         let class = clean(Some("May I continue?"), "429 Too Many Requests (retrying in 2s)");
@@ -1425,7 +1480,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(0) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1455,7 +1511,8 @@ mod tests {
                 failed(None, line),
                 Classified {
                     end: RunEnd::NoStatus { exit_code: Some(1) },
-                    pause: None
+                    pause: None,
+                    refusal: None
                 },
                 "{line}"
             );
@@ -1736,7 +1793,8 @@ mod tests {
             class,
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
     }
@@ -1768,6 +1826,7 @@ mod tests {
             session_id: None,
             stream: StreamOutcome::Failed,
             error_tail: ErrorTail::from_text("usage limit reached", NonZeroU32::MIN),
+            refusal: None,
         };
         let now = at("9999-12-31T23:59:00Z");
         let context = LimitContext {
@@ -1849,7 +1908,8 @@ mod tests {
             failed(Some(&early), ""),
             Classified {
                 end: RunEnd::NoStatus { exit_code: Some(1) },
-                pause: None
+                pause: None,
+                    refusal: None
             }
         );
         let late = format!("{filler}usage limit reached");
