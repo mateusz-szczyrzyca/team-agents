@@ -88,8 +88,109 @@ pub fn free_for_request(
     config: &crate::config::Config,
     now: Timestamp,
 ) -> BTreeSet<InvestigatorName> {
-    let _ = (state, now);
-    config.investigators().keys().cloned().collect()
+    let occupied = occupied_investigators(state);
+    let refused = state.refused_agents_at(now);
+    config
+        .investigators()
+        .keys()
+        .filter(|name| {
+            !occupied.contains(*name)
+                && !refused.iter().any(|agent| agent.as_str() == name.as_str())
+                && !has_paused_task(state, name)
+        })
+        .cloned()
+        .collect()
+}
+
+/// Investigators with a running or queued run, including accepted review requests
+/// waiting for the scheduler to queue their reusable task.
+#[must_use]
+pub fn occupied_investigators(state: &crate::state::State) -> BTreeSet<InvestigatorName> {
+    state
+        .teams()
+        .iter()
+        .flat_map(|team| {
+            team.crew()
+                .roster()
+                .into_iter()
+                .map(|(_, member)| member)
+                .chain(team.reviewers().iter())
+                .filter(|member| {
+                    member.current_run().is_some()
+                        || matches!(
+                            member.status(),
+                            crate::status::TaskStatus::Queued | crate::status::TaskStatus::Running
+                        )
+                        || (member.status() == crate::status::TaskStatus::Waiting
+                            && has_pending_review(team, member))
+                })
+                .filter_map(investigator_of)
+                .cloned()
+        })
+        .collect()
+}
+
+/// The investigator that works in the task of `member`, if it is one.
+#[must_use]
+pub fn investigator_of(member: &crate::state::Member) -> Option<&InvestigatorName> {
+    match member.agent() {
+        crate::state::Participant::Investigator(name) => Some(name),
+        crate::state::Participant::Normal(_) | crate::state::Participant::Worker(_) => None,
+    }
+}
+
+/// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
+#[must_use]
+pub fn has_pending_review(team: &crate::state::Team, member: &crate::state::Member) -> bool {
+    if pending_opinion(team, member.task()).is_some() {
+        return true;
+    }
+    team.items().iter().any(|item| match item.phase() {
+        crate::state::ItemPhase::InReview { reviews, .. } => reviews.iter().any(|review| {
+            review.task == *member.task()
+                && matches!(review.outcome, crate::state::ReviewOutcome::Pending)
+        }),
+        crate::state::ItemPhase::Pending
+        | crate::state::ItemPhase::InProgress { .. }
+        | crate::state::ItemPhase::Fixing { .. }
+        | crate::state::ItemPhase::Approved { .. }
+        | crate::state::ItemPhase::Done { .. } => false,
+    })
+}
+
+/// The pending second opinion owned by a task, while its round is being fixed.
+#[must_use]
+pub fn pending_opinion<'a>(
+    team: &'a crate::state::Team,
+    task: &crate::ids::TaskId,
+) -> Option<(
+    crate::ids::ItemId,
+    std::num::NonZeroU32,
+    &'a crate::state::SecondOpinion,
+)> {
+    team.items()
+        .iter()
+        .filter(|item| matches!(item.phase(), crate::state::ItemPhase::Fixing { .. }))
+        .find_map(|item| {
+            item.findings()?.opinions().iter().find_map(|(number, opinion)| {
+                matches!(&opinion.stage, crate::state::OpinionStage::Assigned { task: owner, .. } if owner == task)
+                    .then_some((item.id(), *number, opinion))
+            })
+        })
+}
+
+fn has_paused_task(state: &crate::state::State, name: &InvestigatorName) -> bool {
+    state.teams().iter().any(|team| {
+        team.crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member)
+            .chain(team.reviewers().iter())
+            .any(|member| {
+                investigator_of(member) == Some(name)
+                    && member.status() == crate::status::TaskStatus::Paused
+            })
+    })
 }
 
 #[cfg(test)]
