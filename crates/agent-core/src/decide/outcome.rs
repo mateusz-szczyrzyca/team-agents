@@ -1996,4 +1996,48 @@ mod tests {
             );
         }
     }
+
+    /// A rate-limited run whose text names a reset in two hours, and whose structured refusal names 10:30 UTC.
+    fn rate_limited_with_structured_reset(resets_at: Option<u64>) -> Classified {
+        let output = RunOutput {
+            final_message: None,
+            session_id: None,
+            stream: StreamOutcome::Failed,
+            error_tail: ErrorTail::from_text(
+                "rate limit reached; resets in 2 hours",
+                default_config().limits().tail_lines,
+            ),
+            refusal: Some(RefusalSummary::from_fields(
+                "429",
+                "Model busy, retry later",
+                "",
+                resets_at,
+                PauseReason::RateLimit,
+            )),
+        };
+        let config = default_config();
+        let context = LimitContext {
+            limits: config.limits(),
+            now: at(NOW),
+            local_offset: local(),
+        };
+        classify_outcome(
+            &output,
+            RunFinish {
+                exit: ExitStatus::Code(1),
+                stopped_by: StoppedBy::Nobody,
+            },
+            &context,
+        )
+        .unwrap()
+    }
+
+    // Rule: a reset the CLI gives in a structured event ends the pause, ahead of a reset that only the text names.
+    #[test]
+    fn a_structured_reset_ends_the_pause_ahead_of_the_text() {
+        // 1794479400 is 2026-11-12T10:30:00Z; the text names 12:00 UTC (two hours after NOW).
+        let class = rate_limited_with_structured_reset(Some(1_794_479_400));
+
+        assert_eq!(paused(&class).0, at("2026-11-12T10:31:00Z"));
+    }
 }
