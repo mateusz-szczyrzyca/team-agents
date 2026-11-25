@@ -22,6 +22,7 @@ mod last_step;
 mod launch_tests;
 mod owned_request;
 mod plan;
+mod pool_wait;
 mod reminder;
 mod removal;
 mod returned;
@@ -521,6 +522,9 @@ struct PoolDispatch {
     run_teams: HashMap<TaskId, TeamId>,
     /// Provider of the last successful pool dispatch; reset on restart.
     last_served_provider: Option<String>,
+    /// The requests whose note of the wait the daemon holds, with the task whose directory has it: the notes to take away
+    /// when the request is no longer queued, whether or not the bus still lists it. Empty after a restart of the daemon.
+    waits_noted: HashMap<agent_runtime::agentbus::RequestId, TaskId>,
 }
 
 /// The owner.

@@ -377,6 +377,27 @@ pub(in crate::daemon) fn worker_step_returned(
     Ok(texts.render(TeamPrompt::WorkerStepReturned, &values)?)
 }
 
+/// The text that returns to the requester a request that no worker of the pool took for `minutes` whole minutes.
+///
+/// # Errors
+/// [`NoticeRenderError`].
+pub(in crate::daemon) fn worker_wait_returned(
+    texts: &TeamPrompts,
+    request: RequestId,
+    step: &str,
+    minutes: u64,
+) -> Result<String, NoticeRenderError> {
+    let values = Variables::new()
+        .with("request", request.to_string())?
+        .with("step", step)?
+        .with("minutes", minutes.to_string())?;
+    // The text is a summary on the bus: the line break that ends its file is not part of it.
+    Ok(texts
+        .render(TeamPrompt::WorkerWaitReturned, &values)?
+        .trim_end()
+        .to_owned())
+}
+
 /// Why the notification that a team is finished cannot be made.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DoneNoticeError {

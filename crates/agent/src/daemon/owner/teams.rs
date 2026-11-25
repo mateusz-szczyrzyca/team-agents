@@ -1233,6 +1233,7 @@ impl Owner {
                 return Ok(());
             }
         };
+        self.forget_left_waits(&open_requests).await;
         if open_requests.is_empty() {
             return Ok(());
         }
@@ -1282,6 +1283,7 @@ impl Owner {
 
         for req in open_requests {
             if req.status != DelegationStatus::Queued {
+                self.forget_wait(&req).await;
                 continue;
             }
             let requester_team_id = self
@@ -1301,6 +1303,9 @@ impl Owner {
                 if let Some(ref team_id) = requester_team_id {
                     self.look_at(team_id);
                 }
+                continue;
+            }
+            if self.wait_returns(&req).await {
                 continue;
             }
 
