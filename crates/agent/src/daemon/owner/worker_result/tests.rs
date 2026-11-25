@@ -967,3 +967,82 @@ async fn a_request_settled_by_the_owner_is_one_record_of_the_history() {
 
     assert!(observed.contains(&agent_core::log::LogEvent::WorkerRequestEnded));
 }
+
+/// A request whose file is damaged and is returned to its requester is one record of the history, with the request's step,
+/// and a second look at the same request adds none.
+#[tokio::test]
+async fn a_damaged_file_returned_to_the_requester_is_one_record_of_the_history() {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
+    use super::super::fixture::{Daemon, pair_state};
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::LogEvent;
+    use agent_runtime::agentbus::RequestId;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reader, Setup};
+    use agent_runtime::worker_request::PendingError;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let program = scratch.path().join("bus");
+    // The bus has the request for the step 2.1, whatever it is asked.
+    std::fs::write(&program, "#!/bin/sh\necho '{\"step\": \"2.1\"}'\nexit 0\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(MuteReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let daemon = Daemon::new(&pair_state(), Some(&program));
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let mut owner = owner.with_history(started.history.clone());
+    let pending = a_matching_pending();
+    let known: DelegationRequest = serde_json::from_value(serde_json::json!({
+        "id": 1, "from": pending.requester.to_string(), "from_task": pending.requester_task.to_string(),
+        "repo": "example", "branch": "agents/claude-1/task", "worktree": "/tmp/example", "request": "Do it.",
+        "context": "", "status": "running", "worker": pending.worker.to_string(),
+        "helper_task": pending.worker_task.to_string(), "summary": "",
+    }))
+    .unwrap();
+    let task_dir = daemon.home.task_dir(&pending.worker_task);
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let file = task_dir.join("worker-request-1.json");
+    let aside = task_dir.join("worker-request-1.json.damaged");
+    let error = PendingError::Read {
+        path: file.clone(),
+        source: std::io::Error::other("damaged"),
+    };
+
+    owner
+        .settle_unusable(
+            (&pending.team, &pending.worker_task, &pending.worker),
+            (RequestId::new(std::num::NonZeroU64::new(1).unwrap()), &known),
+            (&file, &aside, &error),
+        )
+        .await
+        .unwrap();
+    // A look at the same settlement again, as after a restart, tells nothing.
+    let settled = super::returned_for_damage(
+        (&pending.team, &pending.worker_task, &pending.worker),
+        (pending.request, &known),
+        None,
+        "damaged".to_owned(),
+    );
+    owner.settle_one(&task_dir, settled, None).await.unwrap();
+    started.writer.close().unwrap();
+
+    let rows: Vec<_> = Reader::open(&path)
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event() == LogEvent::WorkerRequestEnded)
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].fields()["outcome"], "returned");
+    assert_eq!(rows[0].fields()["step"], "2.1");
+    assert_eq!(rows[0].fields()["request"], "H1");
+}
