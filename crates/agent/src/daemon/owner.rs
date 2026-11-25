@@ -2100,7 +2100,7 @@ impl Owner {
         now: Timestamp,
     ) -> Result<(), OwnerError> {
         let refused = match (settled, limit_of(end, now)) {
-            (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
+            (Settled::Paused(pause, _), Some(limit)) => Some((pause, limit)),
             _ => None,
         };
         let Some((pause, limit)) = refused else {
