@@ -32,6 +32,7 @@ mod split;
 mod start;
 mod takeover;
 mod teams;
+mod test_lock;
 mod tier_questions;
 mod wakes;
 mod worker_result;
