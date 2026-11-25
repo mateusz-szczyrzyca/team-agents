@@ -251,7 +251,9 @@ fn the_settings_turn_attribution_off_and_give_a_long_bash_timeout() -> TestResul
                 "CLAUDE_CODE_DISABLE_BACKGROUND_TASKS": "1",
                 "BASH_DEFAULT_TIMEOUT_MS": "1200000",
                 "BASH_MAX_TIMEOUT_MS": "1200000",
-                "ENABLE_TOOL_SEARCH": "false"
+                "ENABLE_TOOL_SEARCH": "false",
+                "CLAUDE_CODE_DISABLE_AUTO_MEMORY": "1",
+                "ENABLE_CLAUDEAI_MCP_SERVERS": "false"
             }
         })
     );
