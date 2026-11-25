@@ -415,7 +415,7 @@ impl Notice {
                 return_at,
                 new_agent,
             } => {
-                let values = self.agent_changed_vars(common, refused_agent, refused_provider, return_at, new_agent)?;
+                let values = agent_changed_vars(common, refused_agent, refused_provider, return_at, new_agent)?;
                 (HarnessPrompt::NoticeAgentChanged, values, NoticeKind::AgentChanged)
             }
             Self::NoFreeAgent {
@@ -423,7 +423,7 @@ impl Notice {
                 refused_provider,
                 return_at,
             } => {
-                let values = self.no_free_agent_vars(common, refused_agent, refused_provider, return_at)?;
+                let values = no_free_agent_vars(common, refused_agent, refused_provider, return_at)?;
                 (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
             }
         };
