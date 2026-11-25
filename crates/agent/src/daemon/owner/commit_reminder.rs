@@ -375,7 +375,7 @@ impl Owner {
         cut_after: u32,
         ignored: Ignored,
     ) -> Result<(), LookError> {
-        let Some((_, reminded)) = ignored.reminder else {
+        let Some(reminded) = ignored.reminder.map(|(_, at)| at) else {
             return Ok(());
         };
         let busy = cut_after != 0 && self.worktree_busy(target)?;
