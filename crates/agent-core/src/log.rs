@@ -224,6 +224,9 @@ pub enum LogEvent {
     CommitReminded,
     /// A run reminded to commit was seen at a new commit: the reminder was followed.
     CommitFollowed,
+    /// A session whose context reached the share of its bound that `[commit_reminder] context_percent` names was told
+    /// once on the bus to commit and to write down where it is.
+    ContextReminded,
 }
 
 impl Keyword for LogEvent {
@@ -296,6 +299,7 @@ impl LogEvent {
             | Self::BuildDirectoryRemoved
             | Self::CommitReminded
             | Self::CommitFollowed
+            | Self::ContextReminded
             | Self::TaskHandedOver => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
