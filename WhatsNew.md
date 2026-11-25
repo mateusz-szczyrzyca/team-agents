@@ -5,12 +5,17 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.107.0 — 25.11.2026 — PR #266
+
+### Enhancements
+- [agent] In `agent status --running` the line of a worker under its team is laid out as the lines of the tasks: the worker's task first, then `worker`, the worker with its step, what became of the result and when it ran — `  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00 +01:00`. The request's bus number (`H5`) is no longer shown; look the worker up by its task.
+
 ## 0.106.0 — 25.11.2026 — PR #268
 
 ### Enhancements
 - [agent-runtime] A Claude Code run no longer reads your own auto memory (`~/.claude/projects/<repo>/memory/`) or your claude.ai connectors: its settings carry `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1` and `ENABLE_CLAUDEAI_MCP_SERVERS=false`, so the run starts with less context.
 
-## 0.105.0 — 25.11.2026 — PR #265
+## 0.105.0 — 25.11.2026 — PR #267
 
 ### Enhancements
 - [agent-runtime] Every Claude Code run is started with only agentbus and Serena: none of your own MCP servers or claude.ai connectors, no skills and none of 18 built-in tools it cannot use (`Workflow`, `CronCreate`, `RemoteTrigger`, ...) — the run starts with far less context.

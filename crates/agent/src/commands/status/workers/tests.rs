@@ -8,6 +8,7 @@ use agent_runtime::agentbus::{DelegationStatus, HelperEntry, HelperVerdict, Requ
 use time::UtcOffset;
 
 use super::*;
+use crate::commands::status::members::Columns;
 
 /// The task of the team's member that asks for workers.
 const MEMBER: &str = "task-20261111-153002-k3x9";
@@ -58,6 +59,12 @@ fn span(start: Option<&str>, end: Option<&str>) -> Span {
 /// The zone the lines of the tests are written in.
 const UTC: Zone = Zone::Fixed(UtcOffset::UTC);
 
+/// The line of `record` with the times of `span` in `zone`, in the columns of a team whose roles are as wide as
+/// `worker` and whose agents are narrower than the worker and its step.
+fn shown(record: &HelperRecord, span: Span, zone: Zone) -> String {
+    line(&served(record, span, zone), Columns::new(6, 0))
+}
+
 /// A done request of step 6.1 by `glm-1`, rated `verdict`.
 fn done(verdict: Option<HelperVerdict>) -> HelperRecord {
     record(4, MEMBER, DelegationStatus::Done, Some("glm-1"), Some("6.1"), verdict)
@@ -68,48 +75,49 @@ fn same_day() -> Span {
     span(Some("2026-11-25T08:57:45Z"), Some("2026-11-25T08:59:30Z"))
 }
 
-// Rule: the line names the worker's task, whose ID `agent log --task` and the task's directory know.
+// Rule: the line starts with the worker's task, whose ID `agent log --task` and the task's directory know; a request
+// not yet given a task says so in its place.
 #[test]
 fn a_request_not_yet_given_a_task_names_none() {
     let mut queued = record(6, MEMBER, DelegationStatus::Starting, Some("glm-1"), Some("6.1"), None);
     queued.helper_task = None;
 
     assert_eq!(
-        line(&queued, Span::default(), UTC),
-        "  worker H6  glm-1  step 6.1  not started  working"
+        shown(&queued, Span::default(), UTC),
+        "  no task yet                worker  glm-1  step 6.1  working, not started"
     );
 }
 
-// Rule: a worker whose result was used is accepted, with when it started and ended on one day.
+// Rule: a worker whose result was used is accepted, then when it started and ended on one day.
 #[test]
 fn a_used_result_is_accepted_with_its_start_and_end() {
     assert_eq!(
-        line(&done(Some(HelperVerdict::Used)), same_day(), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted"
+        shown(&done(Some(HelperVerdict::Used)), same_day(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 
 #[test]
 fn a_corrected_result_is_accepted_after_correction() {
     assert_eq!(
-        line(&done(Some(HelperVerdict::Corrected)), same_day(), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  accepted after correction"
+        shown(&done(Some(HelperVerdict::Corrected)), same_day(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted after correction, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 
 #[test]
 fn a_discarded_result_is_rejected() {
     assert_eq!(
-        line(&done(Some(HelperVerdict::Discarded)), same_day(), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  rejected"
+        shown(&done(Some(HelperVerdict::Discarded)), same_day(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  rejected, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 
 #[test]
 fn a_done_result_without_a_verdict_is_not_rated_yet() {
     assert_eq!(
-        line(&done(None), same_day(), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  not rated yet"
+        shown(&done(None), same_day(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  not rated yet, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 
@@ -119,8 +127,8 @@ fn a_running_worker_says_since_when_it_works() {
     let running = record(4, MEMBER, DelegationStatus::Running, Some("glm-1"), Some("6.1"), None);
 
     assert_eq!(
-        line(&running, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  since 2026-11-25 08:57 +00:00  working"
+        shown(&running, span(Some("2026-11-25T08:57:45Z"), None), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  working, since 2026-11-25 08:57 +00:00"
     );
 }
 
@@ -129,8 +137,8 @@ fn a_starting_worker_without_a_step_has_not_started() {
     let starting = record(5, MEMBER, DelegationStatus::Starting, Some("glm-1"), None, None);
 
     assert_eq!(
-        line(&starting, Span::default(), UTC),
-        "  worker H5  glm-1  task-20261125-075745-w8vj  not started  working"
+        shown(&starting, Span::default(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  working, not started"
     );
 }
 
@@ -139,8 +147,8 @@ fn a_failed_worker_whose_end_was_not_written_says_so() {
     let failed = record(4, MEMBER, DelegationStatus::Failed, Some("glm-1"), Some("6.1"), None);
 
     assert_eq!(
-        line(&failed, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57 +00:00, end not recorded  failed"
+        shown(&failed, span(Some("2026-11-25T08:57:45Z"), None), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  failed, 2026-11-25 08:57 +00:00, end not recorded"
     );
 }
 
@@ -149,20 +157,32 @@ fn an_unclear_request_asked_back() {
     let unclear = record(4, MEMBER, DelegationStatus::Unclear, Some("glm-1"), Some("6.1"), None);
 
     assert_eq!(
-        line(&unclear, same_day(), UTC),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +00:00  unclear, asked back"
+        shown(&unclear, same_day(), UTC),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  unclear, asked back, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 
 #[test]
 fn a_run_over_midnight_writes_both_dates() {
     assert_eq!(
-        line(
+        shown(
             &done(Some(HelperVerdict::Used)),
             span(Some("2026-11-25T23:58:00Z"), Some("2026-11-26T00:03:00Z")),
             UTC
         ),
-        "  worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 23:58 +00:00 – 2026-11-26 00:03 +00:00  accepted"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 23:58 +00:00 – 2026-11-26 00:03 +00:00"
+    );
+}
+
+// Rule: the task, the role and the worker with its step are padded to the columns of the team's tasks.
+#[test]
+fn the_line_is_padded_to_the_columns_of_the_tasks() {
+    assert_eq!(
+        line(
+            &served(&done(Some(HelperVerdict::Used)), same_day(), UTC),
+            Columns::new(11, 25)
+        ),
+        "  task-20261125-075745-w8vj  worker       glm-1  step 6.1            accepted, 2026-11-25 08:57–08:59 +00:00"
     );
 }
 

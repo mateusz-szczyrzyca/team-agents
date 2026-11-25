@@ -591,7 +591,7 @@ async fn served_lines(
     activity: &Activity,
     teams: &[TeamSummary],
     observed: Option<&PoolObservation>,
-) -> Vec<(TeamId, Vec<String>)> {
+) -> Vec<(TeamId, Vec<workers::Served>)> {
     let Some(observed) = observed else {
         return Vec::new();
     };
@@ -603,7 +603,7 @@ async fn served_lines(
                 Some(task) => workers::span_of(&activity.home, task).await,
                 None => workers::Span::default(),
             };
-            lines.push(workers::line(record, span, activity.zone));
+            lines.push(workers::served(record, span, activity.zone));
         }
         served.push((team.id.clone(), lines));
     }
@@ -960,8 +960,8 @@ fn render_in(
 struct Under<'a> {
     /// The lines of the requests for workers of a task.
     requests: &'a dyn Fn(&TaskId) -> Vec<String>,
-    /// The lines of the workers that served a team.
-    workers: &'a dyn Fn(&TeamSummary) -> Vec<String>,
+    /// What the lines of the workers that served a team say, padded to the columns of the tasks when written.
+    workers: &'a dyn Fn(&TeamSummary) -> Vec<workers::Served>,
 }
 
 /// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
@@ -977,9 +977,16 @@ fn render_with_requests(
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
-    let columns = members::Columns::of(teams);
+    // The lines of the workers share the columns of the tasks: a worker and its step can widen the column of the agents.
+    let served: Vec<Vec<workers::Served>> = teams.iter().map(|team| (under.workers)(team)).collect();
+    let columns = served
+        .iter()
+        .flatten()
+        .fold(members::Columns::of(teams), |columns, worker| {
+            columns.fit(agent_core::kinds::Role::Worker.to_string().len(), worker.agent_width())
+        });
     let mut lines: Vec<String> = Vec::new();
-    for team in teams {
+    for (team, served) in teams.iter().zip(&served) {
         let items = &team.items;
         let task = team
             .short_desc
@@ -1033,7 +1040,7 @@ fn render_with_requests(
                     .filter(|member| members::listed(member, &team.activities))
                     .map(|member| members::line(member, team, columns, activity, zone)),
             );
-            lines.extend((under.workers)(team));
+            lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }

@@ -20,6 +20,30 @@ pub(super) struct Columns {
 }
 
 impl Columns {
+    /// Widths of `role` and `agent` characters, which the tests of the lines pad to.
+    #[cfg(test)]
+    pub(super) const fn new(role: usize, agent: usize) -> Self {
+        Self { role, agent }
+    }
+
+    /// These widths, widened to fit a role of `role` and an agent of `agent` characters.
+    pub(super) fn fit(self, role: usize, agent: usize) -> Self {
+        Self {
+            role: self.role.max(role),
+            agent: self.agent.max(agent),
+        }
+    }
+
+    /// The width of the column of the roles.
+    pub(super) const fn role(self) -> usize {
+        self.role
+    }
+
+    /// The width of the column of the agents.
+    pub(super) const fn agent(self) -> usize {
+        self.agent
+    }
+
     /// The widths that fit every task of `teams`, listed or not.
     pub(super) fn of(teams: &[TeamSummary]) -> Self {
         let members = || teams.iter().flat_map(|team| team.members.iter());

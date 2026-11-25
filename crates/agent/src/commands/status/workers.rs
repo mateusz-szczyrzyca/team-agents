@@ -1,13 +1,17 @@
 //! What `agent status --running` says of the workers that served a team: for each request of a member of the team that
-//! a worker took, the worker, the step, when its runs started and ended, and what the requester made of the result.
+//! a worker took, the worker's task, the worker, the step, what the requester made of the result, and when the worker's
+//! runs started and ended — in the columns of the team's tasks.
 
 use agent_core::ids::{RunId, TaskId};
+use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::protocol::TeamSummary;
 use agent_core::state::Timestamp;
 use agent_runtime::agentbus::{DelegationStatus, HelperRecord, HelperVerdict};
 use agent_runtime::run::outcome::OUTCOME_FILE;
 use agent_runtime::store::Home;
+
+use super::members::Columns;
 
 #[cfg(test)]
 mod tests;
@@ -32,9 +36,30 @@ pub(crate) fn of_team<'a>(team: &TeamSummary, records: &'a [HelperRecord]) -> Ve
     served
 }
 
-/// The line `agent status --running` prints of `record` under its team, with the times of `span` in `zone`: the
-/// request's number on the bus, the worker, the worker's task (where its runs are), the step, the times and the result.
-pub(crate) fn line(record: &HelperRecord, span: Span, zone: Zone) -> String {
+/// The width of a task's ID, which the line of a request not yet given a task pads its placeholder to.
+const TASK_WIDTH: usize = "task-20261125-075745-w8vj".len();
+
+/// What the line of a worker under its team says, before [`line()`] pads it to the columns of the team's tasks.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Served {
+    /// The worker's task, where its runs and its log are; `no task yet` before the request was given one.
+    task: String,
+    /// The worker and the step it took, in the column of the agents: `glm-1  step 6.1`.
+    agent: String,
+    /// What became of the result, then when the worker's runs went on: `accepted, 2026-11-25 08:57–08:59 +01:00`.
+    state: String,
+}
+
+impl Served {
+    /// The width the column of the agents needs for this worker and its step.
+    pub(crate) fn agent_width(&self) -> usize {
+        self.agent.chars().count()
+    }
+}
+
+/// What `agent status --running` says of `record` under its team, with the times of `span` in `zone`: the worker's task,
+/// the worker and its step, what became of the result and when the worker's runs went on.
+pub(crate) fn served(record: &HelperRecord, span: Span, zone: Zone) -> Served {
     let entry = &record.entry;
     let worker = entry.worker.as_ref().map_or("?", |worker| worker.as_str());
     let step = entry
@@ -45,13 +70,29 @@ pub(crate) fn line(record: &HelperRecord, span: Span, zone: Zone) -> String {
     let task = record
         .helper_task
         .as_ref()
-        .map_or_else(String::new, |task| format!("  {task}"));
+        .map_or_else(|| "no task yet".to_owned(), ToString::to_string);
     let working = matches!(entry.status, DelegationStatus::Starting | DelegationStatus::Running);
+    Served {
+        task,
+        agent: format!("{worker}{step}"),
+        state: format!(
+            "{}, {}",
+            result(entry.status, record.verdict),
+            times(span, working, zone)
+        ),
+    }
+}
+
+/// The line of `served` padded to `columns`, as the lines of the team's tasks are: the task, the role `worker`, the
+/// worker and its step, what became of the result and when it worked.
+pub(super) fn line(served: &Served, columns: Columns) -> String {
+    let (role_width, agent_width) = (columns.role(), columns.agent());
     format!(
-        "  worker H{}  {worker}{task}{step}  {}  {}",
-        entry.id.number(),
-        times(span, working, zone),
-        result(entry.status, record.verdict)
+        "  {:<TASK_WIDTH$}  {:<role_width$}  {:<agent_width$}  {}",
+        served.task,
+        Role::Worker.to_string(),
+        served.agent,
+        served.state
     )
 }
 

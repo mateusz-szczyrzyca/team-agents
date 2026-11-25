@@ -2041,7 +2041,7 @@ agentbus = "{}"
     let count = lines.iter().position(|line| line.starts_with("  tasks:")).unwrap();
     assert_eq!(
         lines[count - 1],
-        "  worker H4  minimax-1  task-20261125-075745-w8vj  step 1.2  2026-11-25 07:57–08:59 +00:00  accepted",
+        "  task-20261125-075745-w8vj  worker       minimax-1  step 1.2  accepted, 2026-11-25 07:57–08:59 +00:00",
         "{}",
         shown.text
     );
@@ -2070,4 +2070,61 @@ async fn status_reads_recorded_provider_cooldowns_and_omits_them_after_return() 
     );
     clock.advance(time::Duration::seconds(10));
     assert_eq!(activity.refused_line().await.unwrap(), None);
+}
+
+// Rule: the line of a worker under its team is written in the columns of the team's tasks — its task, its role, the
+// worker with its step, then what it did — and a worker with its step wider than every agent widens that column for all.
+#[test]
+fn the_lines_of_the_workers_share_the_columns_of_the_tasks() {
+    use std::num::NonZeroU64;
+
+    use agent_runtime::agentbus::{DelegationStatus, HelperEntry, HelperRecord, HelperVerdict, RequestId};
+
+    let team = team(1, false, vec![]);
+    let record = HelperRecord {
+        entry: HelperEntry {
+            id: RequestId::new(NonZeroU64::new(5).unwrap()),
+            from: "claude-1".parse().unwrap(),
+            from_task: team.members[1].task.clone(),
+            repo: "team-agents".parse().unwrap(),
+            branch: "agents/claude-1/test".parse().unwrap(),
+            status: DelegationStatus::Failed,
+            worker: Some("openrouter-minimax".parse().unwrap()),
+            requires: vec![],
+            step: Some("4.2".to_owned()),
+            request: "write the guide".to_owned(),
+        },
+        helper_task: Some("task-20261125-095910-qlb9".parse().unwrap()),
+        verdict: None::<HelperVerdict>,
+    };
+    let span = workers::Span {
+        start: Some("2026-11-25T10:59:10Z".parse().unwrap()),
+        end: Some("2026-11-25T11:00:40Z".parse().unwrap()),
+    };
+    let served = vec![workers::served(&record, span, Zone::Fixed(time::UtcOffset::UTC))];
+
+    let text = render_with_requests(
+        std::slice::from_ref(&team),
+        View::Running,
+        Detail::Short,
+        &|_| None,
+        &|_| String::new(),
+        Under {
+            requests: &|_| Vec::new(),
+            workers: &|_| served.clone(),
+        },
+        Zone::Fixed(time::UtcOffset::UTC),
+    );
+
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines.contains(&"  task-20261111-153002-k3x9  member       claude-1                      queued"),
+        "{text}"
+    );
+    assert!(
+        lines.contains(
+            &"  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00 +00:00"
+        ),
+        "{text}"
+    );
 }
