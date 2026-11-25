@@ -412,6 +412,12 @@ impl State {
         }
     }
 
+    /// Keeps an agent refused until `until`, unless it is already refused until a later time: a refusal that
+    /// ends sooner never brings back an agent whose longer pause is still running.
+    pub fn keep_refused_until(&mut self, agent: crate::ids::AgentName, until: Timestamp) {
+        self.record_refused_until(agent, Some(until));
+    }
+
     /// The wake delivery budget of a task, including historical tasks no longer in the crew.
     #[must_use]
     pub fn wake_delivery(&self, task: &TaskId) -> Option<WakeDelivery> {

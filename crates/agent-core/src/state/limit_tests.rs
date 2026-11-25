@@ -102,3 +102,27 @@ fn the_agents_refused_at_a_moment_are_listed_in_name_order() {
 
     assert_eq!(refused, vec![agent("claude-1"), agent("codex-1")]);
 }
+
+#[test]
+fn keeping_a_refusal_keeps_the_later_return_time() {
+    let mut state = old_state();
+    let longer = at("2026-11-25T11:35:00Z");
+    let shorter = at("2026-11-25T10:07:00Z");
+    state.record_refused_until(agent("claude-1"), Some(longer));
+
+    state.keep_refused_until(agent("claude-1"), shorter);
+
+    assert_eq!(state.refused_until(&agent("claude-1")), Some(longer));
+}
+
+#[test]
+fn keeping_a_refusal_extends_a_shorter_return_time() {
+    let mut state = old_state();
+    let shorter = at("2026-11-25T10:07:00Z");
+    let longer = at("2026-11-25T11:35:00Z");
+    state.record_refused_until(agent("claude-1"), Some(shorter));
+
+    state.keep_refused_until(agent("claude-1"), longer);
+
+    assert_eq!(state.refused_until(&agent("claude-1")), Some(longer));
+}
