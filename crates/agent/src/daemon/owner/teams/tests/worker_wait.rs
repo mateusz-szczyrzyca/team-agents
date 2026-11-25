@@ -155,6 +155,44 @@ async fn the_note_of_a_request_that_left_the_queue_is_removed() {
     f.stop().await.unwrap();
 }
 
+#[tokio::test]
+async fn the_note_of_a_request_that_ended_while_the_daemon_was_stopped_is_removed() {
+    let mut f = fixture("wait_seconds = 0");
+    let waiting = queue_two_requests(&mut f).await;
+    f.stop().await.unwrap();
+    f.bus()
+        .helper_set(
+            waiting.second,
+            &DelegationUpdate {
+                status: Some(DelegationStatus::Failed),
+                task: None,
+                summary: Some("Cancelled.".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(waiting.note(&f).exists());
+
+    f.start().await;
+    f.wait_for("the note to go", || !waiting.note(&f).exists()).await;
+    f.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_note_of_a_request_the_bus_does_not_know_is_removed_at_the_start_of_the_daemon() {
+    let mut f = fixture("wait_seconds = 0");
+    let waiting = queue_two_requests(&mut f).await;
+    f.stop().await.unwrap();
+    let stray = f.home.task_dir(&waiting.task).join("worker-wait-99.json");
+    std::fs::write(&stray, r#"{"request":"H99","since":"2026-11-25T10:00:00Z"}"#).unwrap();
+
+    f.start().await;
+    f.wait_for("the stray note to go", || !stray.exists()).await;
+    f.stop().await.unwrap();
+
+    assert!(waiting.note(&f).exists(), "the note of the request that waits stays");
+}
+
 /// Records `worker_wait_returned` of a real request nobody took into `observed`, after checking its row.
 pub(in crate::daemon::owner) async fn record_worker_wait_returned(observed: &mut BTreeSet<LogEvent>) {
     let mut f = fixture("wait_seconds = 60");

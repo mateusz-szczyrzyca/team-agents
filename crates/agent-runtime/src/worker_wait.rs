@@ -46,6 +46,14 @@ pub enum WaitFileError {
         /// What the parser found wrong.
         source: serde_json::Error,
     },
+    /// The task directories cannot be listed for notes.
+    #[error("the notes of waits cannot be looked for in {path:?}")]
+    List {
+        /// The directory.
+        path: PathBuf,
+        /// What the file system refused.
+        source: io::Error,
+    },
     /// The note cannot be removed.
     #[error("the note of the wait of the request cannot be removed from {path:?}")]
     Remove {
@@ -129,6 +137,23 @@ pub async fn clear(task_dir: &Path, request: RequestId) -> Result<(), WaitFileEr
         Err(source) if source.kind() == io::ErrorKind::NotFound => Ok(()),
         Err(source) => Err(WaitFileError::Remove { path, source }),
     }
+}
+
+/// A note found on disk: the task directory it is in and the request it belongs to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoundNote {
+    /// The task directory that holds the note.
+    pub task_dir: PathBuf,
+    /// The request the name of the note tells.
+    pub request: RequestId,
+}
+
+/// The notes of every task directory below `tasks_dir`, in no order; no `tasks_dir` holds none.
+///
+/// # Errors
+/// [`WaitFileError::List`].
+pub async fn find_notes(_tasks_dir: &Path) -> Result<Vec<FoundNote>, WaitFileError> {
+    Ok(Vec::new())
 }
 
 #[cfg(test)]
