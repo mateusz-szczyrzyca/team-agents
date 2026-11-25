@@ -351,7 +351,6 @@ impl Owner {
         };
         self.put_commit_reminder(target, due_lines, due_minutes).await?;
         self.commit_reminded.insert(target.task.clone(), (head, now));
-        self.commit_cut.remove(&target.task);
         tracing::info!(
             event = LogEvent::CommitReminded.as_str(),
             task = %target.task,

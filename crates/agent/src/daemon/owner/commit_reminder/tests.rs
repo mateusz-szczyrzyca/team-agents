@@ -386,6 +386,33 @@ async fn a_reminder_ignored_for_cut_after_minutes_cuts_the_run_and_resumes_its_s
 }
 
 #[tokio::test]
+async fn a_later_reminder_ignored_again_cuts_the_run_a_second_time() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit-twice",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the first reminder", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the resumed run to leave new work", || {
+        worktree.join("second.txt").exists()
+    })
+    .await;
+
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the second reminder", || chats(&daemon).len() == 2).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(logged(&daemon, LogEvent::CommitCut).len(), 2);
+    assert_eq!(logged(&daemon, LogEvent::CommitReminded).len(), 2);
+    assert_eq!(git(&worktree, &["rev-list", "--count", "HEAD"]), "3");
+}
+
+#[tokio::test]
 async fn the_cut_run_is_snapshotted_and_nothing_is_counted_against_the_task() {
     let (mut daemon, worktree) = daemon_for(
         "dirty-hold-commit",

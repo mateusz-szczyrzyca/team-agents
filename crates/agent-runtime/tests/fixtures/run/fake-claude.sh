@@ -51,6 +51,9 @@
 #                         second.txt of 400 lines, then holds and ends as `dirty-hold` does
 #   dirty-hold-commit     as `dirty-hold` when started; a run that is resumed (--resume) commits dirty.txt and ends like
 #                         `done`
+#   dirty-hold-commit-twice  as `dirty-hold-commit`, but the first resumed run commits dirty.txt, writes second.txt of 400
+#                         lines, holds until .fake-continue exists and ends like `done`; a second resumed run commits
+#                         second.txt and ends like `done`
 #   dirty-late            holds until .fake-more exists, then writes dirty.txt of 400 lines, holds until .fake-continue
 #                         exists and ends like `done`
 #
@@ -420,6 +423,25 @@ case $scenario in
     if [[ $resumed == yes ]]; then
       git add dirty.txt
       commit_long_ago
+      result false 'Finished the item.\nSTATUS: DONE'
+    else
+      write_400_lines dirty.txt
+      hold_until .fake-continue
+      result false 'Finished the item.\nSTATUS: DONE'
+    fi
+    ;;
+  dirty-hold-commit-twice)
+    init
+    if [[ $resumed == yes && -e .fake-second ]]; then
+      git add second.txt
+      commit_long_ago
+      result false 'Finished the item.\nSTATUS: DONE'
+    elif [[ $resumed == yes ]]; then
+      git add dirty.txt
+      commit_long_ago
+      : > .fake-second
+      write_400_lines second.txt
+      hold_until .fake-continue
       result false 'Finished the item.\nSTATUS: DONE'
     else
       write_400_lines dirty.txt
