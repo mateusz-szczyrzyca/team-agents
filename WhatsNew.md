@@ -12,7 +12,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent 0.110.0 · agent-core 0.109.0 — 25.11.2026 — PR #273
 
 ### Enhancements
-- [agent] [agent-core] A reviewer whose provider refuses it again after its retry (a rate limit, an overload, or a quota whose reset is further away than `[replacement] limit_wait_minutes`) is replaced at once by a free investigator of another provider, not after `replace_after_minutes`. On 23.11 a review waited 35 minutes behind such a reviewer while other investigators were free. A reviewer refused once is kept and tried again after its pause, in the same session.
+- [agent] [agent-core] A reviewer whose agent the refusal rule changes (its provider refused it again after its retry, or the first time when `[replacement] limit_retries` is `0` or a quota's reset is further away than `[replacement] limit_wait_minutes`) is replaced at once by a free investigator of another provider, not after `replace_after_minutes`. On 23.11 a review waited 35 minutes behind such a reviewer while other investigators were free. A reviewer refused once is kept and tried again after its pause, in the same session.
 - [agent] With no investigator of another provider free, the review waits for the first that is, or for the refused reviewer's return, and you get one notification naming the provider and the time (also after a restart of the daemon). You are also told once when a refused reviewer is replaced.
 
 ### Configuration
