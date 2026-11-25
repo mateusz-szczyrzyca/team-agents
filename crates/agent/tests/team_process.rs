@@ -1312,6 +1312,31 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     #[test]
+    fn a_refused_agent_gets_no_waiting_task_while_its_pause_lasts() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "turn-limit-quota"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let quota_hit = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate to be refused for its quota", |status| {
+            line_of(status, &quota_hit).contains("paused")
+        });
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        let status = world.status_where("the second task to keep waiting for claude-1", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0, "{status}");
+        assert!(line_of(&status, &quota_hit).contains("paused"), "{status}");
+
+        release(&world, &first);
+        release(&world, &second);
+    }
+
+    #[test]
     fn a_restart_during_the_wait_keeps_the_time_the_task_has_waited() {
         let mut world = World::new(&agents_with(&[
             ("claude-1", "agent", "hold"),
