@@ -339,3 +339,112 @@ async fn the_look_at_a_worktree_waits_a_minute_for_the_next_one() {
 
     assert_eq!(chats(&daemon).len(), 1);
 }
+
+/// The order to commit for 400 lines and 2 minutes, as the catalog has it.
+const ORDER: &str = "The harness stopped your run because 400 changed lines stayed uncommitted for 2 minutes after the reminder. Your files are as you left them. First commit what is finished: a failing new test as its `RED:` commit with its failing output, no debug output. Then go on with your work.";
+
+/// The session the CLI of a run was started with, from the arguments it recorded.
+fn session_of(args: &str) -> String {
+    let lines: Vec<&str> = args.lines().collect();
+    let at = lines
+        .iter()
+        .position(|line| *line == "--session-id" || *line == "--resume")
+        .expect("the run names its session");
+    lines[at + 1].to_owned()
+}
+
+#[tokio::test]
+async fn a_reminder_ignored_for_cut_after_minutes_cuts_the_run_and_resumes_its_session_with_the_order() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    let first_session = session_of(&std::fs::read_to_string(worktree.join(".fake-args")).unwrap());
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(chats(&daemon), vec![REMINDER.to_owned()]);
+    let args = std::fs::read_to_string(worktree.join(".fake-args")).unwrap();
+    assert_eq!(session_of(&args), first_session);
+    assert!(args.lines().any(|line| line == "--resume"), "{args}");
+    assert!(args.contains(ORDER), "{args}");
+    let cut = logged(&daemon, LogEvent::CommitCut);
+    assert_eq!(cut.len(), 1);
+    assert_eq!(cut[0].fields()["lines"], 400);
+    assert_eq!(cut[0].fields()["minutes"], 2);
+    assert_eq!(cut[0].fields()["agent"], "claude-1");
+    assert_eq!(cut[0].task(), Some(&task(1)));
+    assert!(cut[0].run().is_some());
+    assert_eq!(git(&worktree, &["rev-list", "--count", "HEAD"]), "2");
+}
+
+#[tokio::test]
+async fn the_cut_run_is_snapshotted_and_nothing_is_counted_against_the_task() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+
+    let state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    let found = state.find_task(&task(1)).unwrap();
+    let ends: Vec<_> = found
+        .member
+        .runs()
+        .iter()
+        .map(|run| match run.state() {
+            agent_core::state::RunState::Ended { end, .. } => end.clone(),
+            agent_core::state::RunState::Running => panic!("a run is still going"),
+        })
+        .collect();
+    assert_eq!(
+        ends,
+        vec![
+            agent_core::state::RunEnd::Stopped,
+            agent_core::state::RunEnd::Reported {
+                outcome: agent_core::status::RunOutcome::Done
+            },
+        ]
+    );
+    assert_eq!(found.member.bad_runs_since_renewal(), 0);
+    assert!(found.member.renewals().is_none());
+    let reader = Reader::open(&daemon.home.history_file()).unwrap();
+    let round = reader.rounds_of_team(found.team.id()).unwrap()[0].value.round.clone();
+    let snapshots = reader.snapshots_of_round(&round).unwrap();
+    let ours: Vec<_> = snapshots.iter().filter(|snapshot| snapshot.task == task(1)).collect();
+    assert_eq!(ours.len(), 1, "{snapshots:?}");
+}
+
+#[tokio::test]
+async fn cut_after_zero_turns_the_cut_off() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 0\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    for _ in 0..3 {
+        daemon.clock.advance(time::Duration::minutes(5));
+        looked(&daemon).await;
+    }
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    let state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert_eq!(state.find_task(&task(1)).unwrap().member.runs().len(), 1);
+    assert_eq!(logged(&daemon, LogEvent::CommitCut).len(), 0);
+}

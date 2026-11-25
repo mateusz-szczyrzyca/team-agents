@@ -49,6 +49,8 @@
 #   dirty-commit-hold     writes dirty.txt of 400 lines and commits it, then holds and ends as `dirty-hold` does
 #   dirty-twice           writes dirty.txt of 400 lines, holds until .fake-commit exists, commits dirty.txt, writes
 #                         second.txt of 400 lines, then holds and ends as `dirty-hold` does
+#   dirty-hold-commit     as `dirty-hold` when started; a run that is resumed (--resume) commits dirty.txt and ends like
+#                         `done`
 #   dirty-late            holds until .fake-more exists, then writes dirty.txt of 400 lines, holds until .fake-continue
 #                         exists and ends like `done`
 #
@@ -412,6 +414,18 @@ case $scenario in
     write_400_lines second.txt
     hold_until .fake-continue
     result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  dirty-hold-commit)
+    init
+    if [[ $resumed == yes ]]; then
+      git add dirty.txt
+      commit_long_ago
+      result false 'Finished the item.\nSTATUS: DONE'
+    else
+      write_400_lines dirty.txt
+      hold_until .fake-continue
+      result false 'Finished the item.\nSTATUS: DONE'
+    fi
     ;;
   dirty-late)
     init
