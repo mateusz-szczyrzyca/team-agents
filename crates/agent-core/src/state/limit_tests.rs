@@ -89,3 +89,16 @@ fn an_agent_is_refused_only_before_its_return_time() {
     assert!(!state.refused_at(&agent("claude-1"), until));
     assert!(!state.refused_at(&agent("claude-2"), at("2026-11-25T10:06:59Z")));
 }
+
+#[test]
+fn the_agents_refused_at_a_moment_are_listed_in_name_order() {
+    let mut state = old_state();
+    let until = at("2026-11-25T10:07:00Z");
+    state.record_refused_until(agent("codex-1"), Some(until));
+    state.record_refused_until(agent("claude-1"), Some(until));
+    state.record_refused_until(agent("claude-2"), Some(at("2026-11-25T10:00:00Z")));
+
+    let refused = state.refused_agents_at(at("2026-11-25T10:05:00Z"));
+
+    assert_eq!(refused, vec![agent("claude-1"), agent("codex-1")]);
+}
