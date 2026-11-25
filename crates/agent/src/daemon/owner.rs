@@ -2017,7 +2017,7 @@ impl Owner {
             Settled::TurnLimit => Some(Trouble::TurnLimit),
             Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
         };
-        let answer = self.keep_refusal(task, located, &settled, &end, now)?;
+        self.keep_refusal(task, located, &settled, &end, now)?;
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -2040,12 +2040,6 @@ impl Owner {
             }
             Settled::Paused(pause) => {
                 self.hangs.remove(task);
-                match answer {
-                    Decision::Pause => {}
-                    // Features 3 and 4 change the agent here; until they do, a task whose refusals are used up keeps
-                    // its pause and is tried again like any other.
-                    Decision::ChangeAgent => {}
-                }
                 self.wakes.insert(task.clone(), pause.until);
                 let notice = Notice::Paused {
                     until: pause.until,
@@ -2071,7 +2065,8 @@ impl Owner {
 
     /// Keeps what a run's end says about the provider's refusals. A refused run counts one more refusal in a row for its
     /// task and keeps its agent out of new work until the pause ends; any other end clears the count. The answer of
-    /// [`agent_core::decide::limit::decide`] is returned for the caller; a run that was not refused answers `Pause`.
+    /// [`agent_core::decide::limit::decide`] is logged: features 3 and 4 act on a change of agent, until then the pause
+    /// stays and the task is tried again like any other.
     fn keep_refusal(
         &mut self,
         task: &TaskId,
@@ -2079,14 +2074,14 @@ impl Owner {
         settled: &Settled,
         end: &RunEnd,
         now: Timestamp,
-    ) -> Result<Decision, OwnerError> {
+    ) -> Result<(), OwnerError> {
         let refused = match (settled, limit_of(end, now)) {
             (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
             _ => None,
         };
         let Some((pause, limit)) = refused else {
             self.parts.state.record_limit_refusals(task.clone(), 0);
-            return Ok(Decision::Pause);
+            return Ok(());
         };
         let replacement = self.parts.settings.config.replacement();
         let refusals = next_refusals(self.parts.state.limit_refusals(task), true);
@@ -2099,7 +2094,22 @@ impl Owner {
         self.parts.state.record_limit_refusals(task.clone(), refusals);
         let agent: AgentName = located.agent.parse()?;
         self.parts.state.record_refused_until(agent, Some(pause.until));
-        Ok(answer)
+        let decision = match answer {
+            Decision::Pause => "pause",
+            Decision::ChangeAgent => "change_agent",
+        };
+        tracing::debug!(
+            event = LogEvent::DecisionTaken.as_str(),
+            team = %located.team,
+            task = %task,
+            decision = "limit",
+            agent = %located.agent,
+            refusals = refusals,
+            result = decision,
+            return_at = %pause.until,
+            "a run refused by its provider is counted and the rule answers it"
+        );
+        Ok(())
     }
 
     /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no
