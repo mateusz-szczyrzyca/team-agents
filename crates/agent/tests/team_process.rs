@@ -1599,7 +1599,10 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
                 &format!("[binaries]\nopencode = \"{}\"", script("team-cli.sh").display()),
             );
         std::fs::write(path, config).unwrap();
-        configure(&world, "\n[replacement]\nagents = [\"claude-3\"]\n");
+        configure(
+            &world,
+            "\n[log]\nlevel = \"debug\"\n[replacement]\nagents = [\"claude-3\"]\n",
+        );
         world.start();
         let list = world.repo.join("list.md");
         std::fs::write(&list, LIST).unwrap();
