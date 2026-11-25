@@ -878,6 +878,16 @@ waits for a free independent investigator; these permanent exclusions are never 
 Fewer than twice the review count outside the team produces a startup warning and does not prevent starting. A pull request keeps its review count
 even if the configuration changes. Active pull requests migrated from an older daemon retain their original review protocol.
 
+A reviewer of a review pass (not of a second opinion, which keeps the rule above) whose provider refuses it is not held
+to `[review] replace_after_minutes`. The first refusal pauses its task and the reviewer is tried again in the same
+session after the pause (`[replacement] limit_retries`, default `1`), however long the pause is. When the refusal rule
+gives its task to another agent — the retries are used up, or a quota's reset is further away than
+`[replacement] limit_wait_minutes` — its review goes at once to a free investigator of another provider (for OpenCode
+the part of its model before the first `/`, for the other CLIs the CLI itself) that its provider has not refused. When
+none is free the review waits for the first that is free or for the refused reviewer's return, and you are told once,
+with the provider and the time; a restart of the daemon does not tell it again. You are also told once when a refused
+reviewer is replaced. A reviewer that is quiet for another reason is replaced after `replace_after_minutes` as before.
+
 A merge GitHub refuses because the pull request conflicts with its base does not reach you at once: the lead of the round
 is sent to merge the base into its branch (at most `[merge] conflict_passes` times per round, default 3). Its change is
 gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. When
@@ -1045,11 +1055,7 @@ review and follows the round's usual merge or approval policy.
 A failed run, a run without a final status, or a report still missing its opinion after the allowed corrections
 is assigned to another independent investigator. An investigator silent for `[review] replace_after_minutes`
 is replaced too; runs its provider refused (a rate limit, a used-up quota) do not end the silence, so a reviewer
-refused run after run is replaced that long after the review was asked. A reviewer whose task the refusal rule
-(`[replacement] limit_retries`, `limit_wait_minutes`) gives to another agent is not held to that time: its review goes at
-once to a free investigator of another provider (for OpenCode the part of its model before the first `/`, for the other
-CLIs the CLI itself) that its provider has not refused. When none is free the review waits for the first that is free or
-for the refused reviewer's return, and you are told once, with the provider and the time. Replaced queued, waiting or quota-paused tasks are stopped and their scheduled wake is removed,
+refused run after run is replaced that long after the review was asked. Replaced queued, waiting or quota-paused tasks are stopped and their scheduled wake is removed,
 so their investigators become available for other requests. Previous investigators are excluded from subsequent draws. A request has at most three
 assignments (the original and two replacements); when nobody eligible is free it waits until one is available.
 After the third unsuccessful assignment, one human notice lists the round, finding, all three investigators,

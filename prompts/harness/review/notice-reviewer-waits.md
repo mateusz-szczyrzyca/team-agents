@@ -1,2 +1,2 @@
 {{reviewer}} waits for its provider: no other reviewer is free for pull request {{pr}}
-The review of pull request #{{pr}} by {{reviewer}} (task {{task}}) waits: the provider {{provider}} refused it again after its retries and no investigator of another provider is free. The review goes to the first such investigator that is free, or {{reviewer}} tries again at {{until}}, whichever comes first. Nothing is needed from you.
+The review of pull request #{{pr}} by {{reviewer}} (task {{task}}) waits: the provider {{provider}} refused it, its agent is to be changed, and no investigator of another provider is free. The review goes to the first such investigator that is free, or {{reviewer}} tries again at {{until}}, whichever comes first. Nothing is needed from you.
