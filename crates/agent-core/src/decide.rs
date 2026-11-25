@@ -30,6 +30,7 @@ pub mod part;
 pub mod plan;
 pub mod pool;
 pub mod publish;
+pub mod refusal;
 pub mod rejection;
 pub mod reminders;
 pub mod replacement;
