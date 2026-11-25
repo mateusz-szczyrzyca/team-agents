@@ -4,6 +4,11 @@
 //! one by one. A job runs the gate command in the task's worktree under a timeout, records the commit, whether the
 //! tree was clean and how the command ended, and answers the client that waits. A run that waits for its gate holds
 //! the watchdog off (`WatchdogHold`), so that its silence is not taken for a hang.
+//!
+//! A gate asked again for what it has an answer for is not run: when the worktree is clean at the commit and the command
+//! of the task's last gate that gated its commit, and that gate passed, or failed there [`FAILED_RUNS_PER_COMMIT`]
+//! times in a row, the client gets that record with a log of its own: the output of that gate and a note that it was
+//! not run again. The service remembers this while it runs; a restarted daemon runs the next gate of every task.
 
 use std::collections::{BTreeMap, HashMap};
 use std::io;
@@ -31,6 +36,10 @@ use tracing::Instrument;
 
 /// How many gates may wait for their turn; a gate asked for beyond that is refused.
 pub(super) const QUEUE: usize = 16;
+
+/// How many times in a row a gate runs and fails on one clean commit with one command: one failure may be a flaky
+/// test and is run once more, the gate asked for after the second is answered with that failure without running.
+const FAILED_RUNS_PER_COMMIT: u32 = 2;
 
 /// What the service is made of.
 pub(super) struct GateParts {
@@ -243,6 +252,28 @@ fn outcome_of(exit: ExitReport) -> GateOutcome {
     }
 }
 
+/// The name a log record gives `outcome`.
+fn outcome_name(outcome: GateOutcome) -> &'static str {
+    match outcome {
+        GateOutcome::Passed => "passed",
+        GateOutcome::Failed { .. } => "failed",
+        GateOutcome::TimedOut => "timed_out",
+    }
+}
+
+/// The last gate of a task that gated its commit (the tree was clean before and after it), as far as a gate asked again
+/// is concerned.
+struct LastGate {
+    /// The commit it gated.
+    head: CommitId,
+    /// The command it ran: a gate asked with another command (`agents.toml` changed) is run.
+    command: CommandLine,
+    /// Its record, with the log of the gate that ran.
+    record: GateRecord,
+    /// How many gates ran and failed in a row on `head` with `command`, this one included; 0 when it passed.
+    failures: u32,
+}
+
 /// What a wait for the gate command saw.
 enum Ended {
     /// The command ended.
@@ -265,6 +296,8 @@ struct Service {
     supervisor: Supervisor,
     /// The number the next log of each task is tried with.
     next_log: HashMap<TaskId, NonZeroU32>,
+    /// The last gate of each task that gated its commit: one entry a task, kept while the service runs.
+    last: HashMap<TaskId, LastGate>,
 }
 
 impl Service {
@@ -276,6 +309,7 @@ impl Service {
             history: History::disabled(),
             supervisor: Supervisor::new(NonZeroUsize::MIN),
             next_log: HashMap::new(),
+            last: HashMap::new(),
         }
     }
 
@@ -343,6 +377,10 @@ impl Service {
                 source,
             })
             .inspect_err(|error| self.record_capture_loss_or_clock(job, started_at.as_ref().ok().copied(), error))?;
+        if let Some(last) = self.reusable(job, &before) {
+            let (record, failures) = (last.record.clone(), last.failures);
+            return self.reuse(job, record, failures).await;
+        }
         let (log, log_text) = self.open_log(&job.task).await?;
         let outcome = self.run_command(job, &log).await?;
         if matches!(outcome, GateOutcome::TimedOut) {
@@ -396,6 +434,101 @@ impl Service {
                 task: job.task.clone(),
                 source,
             })?;
+        self.remember(job, &record);
+        self.announce(job, &record);
+        Ok(record)
+    }
+
+    /// The last gate of `job`'s task, when `job` is answered with it without running: the worktree is clean at the
+    /// commit that gate gated, the command is the same, and the gate passed or failed there [`FAILED_RUNS_PER_COMMIT`]
+    /// times in a row.
+    fn reusable(&self, job: &GateJob, before: &Inspected) -> Option<&LastGate> {
+        let last = self.last.get(&job.task)?;
+        let same = before.tree == GateTree::Clean && last.head == before.head && last.command == job.command;
+        let settled = last.record.result.outcome == GateOutcome::Passed || last.failures >= FAILED_RUNS_PER_COMMIT;
+        (same && settled).then_some(last)
+    }
+
+    /// Keeps `record` of a gate of `job` that ran, when it gated its commit: a gate that did not (the tree was not
+    /// clean) tells nothing about the commit, and the gate before it is kept.
+    fn remember(&mut self, job: &GateJob, record: &GateRecord) {
+        if record.tree != GateTree::Clean {
+            return;
+        }
+        let failures = match record.result.outcome {
+            GateOutcome::Passed => 0,
+            GateOutcome::Failed { .. } | GateOutcome::TimedOut => match self.last.get(&job.task) {
+                Some(last) if last.head == record.result.head && last.command == job.command => {
+                    last.failures.saturating_add(1)
+                }
+                Some(_) | None => 1,
+            },
+        };
+        self.last.insert(
+            job.task.clone(),
+            LastGate {
+                head: record.result.head.clone(),
+                command: job.command.clone(),
+                record: record.clone(),
+                failures,
+            },
+        );
+    }
+
+    /// Answers `job` with `record` of the gate that ran, without running it: the answer gets a log of its own with the
+    /// output of that gate and, as its last line, why it was not run again and what to do. The answer is saved as the
+    /// task's record and told to the subscribers, as a gate that ran would be; the history keeps the gate that ran.
+    async fn reuse(&mut self, job: &GateJob, mut record: GateRecord, failures: u32) -> Result<GateRecord, GateError> {
+        let (log, log_text) = self.open_log(&job.task).await?;
+        let head = record.result.head.as_str().to_owned();
+        let note = if failures == 0 {
+            format!(
+                "gate: not run again: it passed on commit {head} at {} with the same command, and the tree has not changed since; the output above is that gate's. A new commit is gated again.",
+                record.result.finished_at
+            )
+        } else {
+            format!(
+                "gate: not run again: it failed {failures} times in a row on commit {head} with the same command, and the tree has not changed since; the output above is the last one's. Fix the cause and commit, or, when the failure is not caused by your change (a flaky test, a broken tool), say so in your questions file and wait for the answer."
+            )
+        };
+        let earlier = record.result.log.as_path();
+        let mut text = match tokio::fs::read(earlier).await {
+            Ok(text) => text,
+            // The note matters more than the output: it is told without it, and the reader is told why.
+            Err(error) => format!(
+                "gate: the output of that gate cannot be read from {}: {error}\n",
+                earlier.display()
+            )
+            .into_bytes(),
+        };
+        if !text.is_empty() && !text.ends_with(b"\n") {
+            text.push(b'\n');
+        }
+        text.extend_from_slice(note.as_bytes());
+        text.push(b'\n');
+        tokio::fs::write(&log, text).await.map_err(|source| GateError::Log {
+            path: log.clone(),
+            source,
+        })?;
+        record.result.log = log_text;
+        self.parts
+            .store
+            .save_gate_record(&job.task, &record)
+            .await
+            .map_err(|source| GateError::Record {
+                task: job.task.clone(),
+                source,
+            })?;
+        // The gates that ran are in the history; this is the one place a gate answered without running is told.
+        tracing::info!(
+            event = LogEvent::ChecksDecided.as_str(),
+            outcome = "gate_reused",
+            task = %job.task,
+            head = head.as_str(),
+            gate = outcome_name(record.result.outcome),
+            failures,
+            "a gate was answered with the gate that ran on the same commit, without running"
+        );
         self.announce(job, &record);
         Ok(record)
     }

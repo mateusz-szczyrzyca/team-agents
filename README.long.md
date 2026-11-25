@@ -1150,7 +1150,17 @@ in `tasks/<task>/gate-<n>.log`. The preceding record is kept in `tasks/<task>/ga
 second-run pass; older task directories without that optional file remain readable. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
 or when the gate itself changed the tree or `HEAD`: such a gate may run, but its pass is not a pass of the commit. A run
 that waits for its own gate is never cut by the watchdog. The command succeeds for a pass and fails (status 1) for a
-failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
+failure, a timeout and a refusal. The command says first where the result is recorded: a model CLI cuts a shell command that runs long (the Bash tool of Claude Code has a time limit, in minutes, and a gate may take 30) while the gate goes on, and the agent then reads `tasks/<task>/gate.json`.
+
+A gate is not run again when its answer is already known. When the tree is clean, `HEAD` is the commit of the task's
+last gate and the gate command has not changed, a gate that passed there is answered with that pass, and one that failed
+there twice in a row is answered with its last failure: the command says the same as that gate did, the new
+`gate-<n>.log` holds that gate's output and ends with a line `gate: not run again: ...` that says why and what to do (for
+a failure: fix the cause and commit, or, when the failure is not caused by the change, say so in the questions file and
+wait for the answer). A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
+answer as `checks_decided` with `outcome` `gate_reused`, the `head`, the `gate` it repeats (`passed`, `failed` or
+`timed_out`) and the `failures` in a row. The daemon remembers the last gates in memory only: after a restart of the
+daemon the first gate of each task runs again. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
 
 ### Compatibility and upgrades
 

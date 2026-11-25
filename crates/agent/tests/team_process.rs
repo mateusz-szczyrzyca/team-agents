@@ -344,12 +344,15 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             "{}",
             stderr(&crowded)
         );
-        let version = env!("CARGO_PKG_VERSION");
+        let (version, core, runtime, web) = (
+            env!("CARGO_PKG_VERSION"),
+            agent_core::VERSION,
+            agent_runtime::VERSION,
+            agent_web::VERSION,
+        );
         assert_eq!(
             world.status(),
-            format!(
-                "agent {version} · agent-core {version} · agent-runtime {version} · agent-web {version}\nno teams\n"
-            )
+            format!("agent {version} · agent-core {core} · agent-runtime {runtime} · agent-web {web}\nno teams\n")
         );
         assert!(
             !world.home.join("worktrees").exists()

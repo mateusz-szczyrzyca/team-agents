@@ -1254,3 +1254,239 @@ async fn an_agent_path_naming_the_agent_binary_directory_has_it_once_in_the_gate
     let path = std::fs::read_to_string(marker).unwrap();
     assert_eq!(path.trim(), "/injected/gate/bin:/opt/bin:/usr/bin");
 }
+
+// ---- a gate asked again for a commit it already ran on -------------------------------------------------------------
+
+/// A gate script that adds a line to `count` (outside the worktree, which it leaves clean) and then runs `then`.
+fn counted(count: &Path, then: &str) -> String {
+    format!("echo run >> {count:?}; {then}")
+}
+
+/// How many times the gates of [`counted`] ran.
+fn runs(count: &Path) -> usize {
+    std::fs::read_to_string(count).map_or(0, |text| text.lines().count())
+}
+
+/// The output the client of `record` is shown: the log of its answer.
+fn told(record: &GateRecord) -> String {
+    std::fs::read_to_string(record.result.log.as_path()).unwrap()
+}
+
+#[tokio::test]
+async fn a_gate_asked_again_on_a_clean_commit_it_passed_on_is_answered_with_that_pass_without_running() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = counted(&count, "echo all passed");
+
+    let first = recorded(rig.ask(1, &script, LONG)).await;
+    let again = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert_eq!(runs(&count), 1, "the second gate must not run");
+    assert_eq!(again.result.outcome, GateOutcome::Passed);
+    assert_eq!(again.tree, GateTree::Clean);
+    assert_eq!(again.result.head, first.result.head);
+    assert_eq!(
+        again.result.finished_at, first.result.finished_at,
+        "the pass told is the one that ran"
+    );
+    assert_ne!(again.result.log, first.result.log, "the answer has a log of its own");
+    let told = told(&again);
+    assert!(
+        told.starts_with("all passed\n"),
+        "the output of the gate that ran comes first: {told}"
+    );
+    assert!(told.lines().last().unwrap().contains("not run again"), "{told}");
+    assert_eq!(rig.saved_record(1), again);
+}
+
+#[tokio::test]
+async fn a_gate_that_failed_once_on_a_commit_runs_once_more() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    // Fails on its first run, passes on its second: a flaky test.
+    let script = counted(&count, &format!("test \"$(grep -c run {count:?})\" -ge 2"));
+
+    let first = recorded(rig.ask(1, &script, LONG)).await;
+    let second = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert!(matches!(first.result.outcome, GateOutcome::Failed { .. }), "{first:?}");
+    assert_eq!(second.result.outcome, GateOutcome::Passed);
+    assert_eq!(runs(&count), 2);
+    assert!(!told(&second).contains("not run again"), "{}", told(&second));
+}
+
+#[tokio::test]
+async fn a_gate_that_failed_twice_on_a_commit_is_not_run_a_third_time_and_says_what_to_do() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = counted(&count, "echo tests failed; exit 3");
+
+    recorded(rig.ask(1, &script, LONG)).await;
+    let second = recorded(rig.ask(1, &script, LONG)).await;
+    let third = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert_eq!(runs(&count), 2, "the third gate must not run");
+    assert_eq!(
+        third.result.outcome,
+        GateOutcome::Failed {
+            exit_code: NonZeroI32::new(3).unwrap()
+        }
+    );
+    assert_eq!(third.result.head, second.result.head);
+    assert_eq!(
+        third.result.finished_at, second.result.finished_at,
+        "the failure told is the last that ran"
+    );
+    assert_ne!(third.result.log, second.result.log);
+    let told = told(&third);
+    assert!(told.starts_with("tests failed\n"), "{told}");
+    let note = told.lines().last().unwrap();
+    assert!(
+        note.contains("not run again") && note.contains("questions file"),
+        "{told}"
+    );
+    assert_eq!(rig.saved_record(1), third);
+}
+
+#[tokio::test]
+async fn a_new_commit_runs_the_gate_again_after_two_failures() {
+    let mut rig = Rig::new().await;
+    let dir = rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = counted(&count, "exit 3");
+    let first = recorded(rig.ask(1, &script, LONG)).await;
+    recorded(rig.ask(1, &script, LONG)).await;
+    std::fs::write(dir.join("README.md"), "changed\n").unwrap();
+    git(&dir, &["commit", "-q", "-am", "Second"]);
+
+    let after = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert_eq!(runs(&count), 3);
+    assert_ne!(after.result.head, first.result.head);
+    assert!(!told(&after).contains("not run again"), "{}", told(&after));
+}
+
+#[tokio::test]
+async fn a_gate_on_a_tree_changed_since_a_pass_runs_again() {
+    let mut rig = Rig::new().await;
+    let dir = rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = counted(&count, "true");
+    recorded(rig.ask(1, &script, LONG)).await;
+    std::fs::write(dir.join("new.txt"), "new\n").unwrap();
+
+    let after = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert_eq!(runs(&count), 2);
+    assert_eq!(after.tree, GateTree::NotClean);
+}
+
+#[tokio::test]
+async fn a_changed_gate_command_runs_again_after_a_pass() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    recorded(rig.ask(1, &counted(&count, "true"), LONG)).await;
+
+    recorded(rig.ask(1, &counted(&count, "echo other"), LONG)).await;
+
+    assert_eq!(runs(&count), 2);
+}
+
+/// Serves `scripts` one after the other on task 1 with a service that logs into a history, and returns the daemon log
+/// rows of the gates it answered without running and the HEAD of the worktree.
+async fn reuse_log_rows(scripts: &[&str]) -> (Vec<agent_core::log::LogEntry>, String) {
+    use agent_core::config::Secrets;
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Reader, Setup, TracingReporter};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    let rig = Rig::new().await;
+    let dir = rig.worktree(1);
+    let db = HistoryDb::open(&rig.home.history_file(), MaxTextBytes::default()).unwrap();
+    let started = History::start(
+        db,
+        Setup {
+            reporter: Arc::new(TracingReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Debug,
+        SharedClock::new(rig.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch = tracing::Dispatch::new(tracing_subscriber::registry().with(layer));
+    let mut service = Service::new(rig.parts()).with_history(started.history.clone());
+    for script in scripts {
+        let (job, answer) = rig.job(1, script, LONG);
+        tracing::instrument::WithSubscriber::with_subscriber(service.serve(job), dispatch.clone()).await;
+        recorded(answer).await;
+    }
+    started.writer.close().unwrap();
+    let rows = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| {
+            row.event() == LogEvent::ChecksDecided
+                && row.fields().get("outcome").and_then(serde_json::Value::as_str) == Some("gate_reused")
+        })
+        .collect();
+    (rows, git(&dir, &["rev-parse", "HEAD"]))
+}
+
+/// The text field `name` of `row`.
+fn text_field<'a>(row: &'a agent_core::log::LogEntry, name: &str) -> Option<&'a str> {
+    row.fields().get(name).and_then(serde_json::Value::as_str)
+}
+
+#[tokio::test]
+async fn a_gate_answered_with_its_pass_without_running_is_logged_with_the_commit() {
+    use agent_core::log::LogLevel;
+
+    let (rows, head) = reuse_log_rows(&["echo ok", "echo ok"]).await;
+
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    let row = &rows[0];
+    assert_eq!(row.level(), LogLevel::Info);
+    assert_eq!(row.team(), Some(&team_id(1)));
+    assert_eq!(row.task(), Some(&task(1)));
+    assert_eq!(text_field(row, "head"), Some(head.as_str()), "{row:?}");
+    assert_eq!(text_field(row, "gate"), Some("passed"), "{row:?}");
+    assert_eq!(
+        row.fields().get("failures").and_then(serde_json::Value::as_u64),
+        Some(0)
+    );
+}
+
+#[tokio::test]
+async fn a_gate_answered_with_its_second_failure_without_running_is_logged_with_the_failures() {
+    let (rows, head) = reuse_log_rows(&["exit 3", "exit 3", "exit 3"]).await;
+
+    assert_eq!(
+        rows.len(),
+        1,
+        "only the third gate is answered without running: {rows:?}"
+    );
+    let row = &rows[0];
+    assert_eq!(text_field(row, "head"), Some(head.as_str()), "{row:?}");
+    assert_eq!(text_field(row, "gate"), Some("failed"), "{row:?}");
+    assert_eq!(
+        row.fields().get("failures").and_then(serde_json::Value::as_u64),
+        Some(2)
+    );
+}
