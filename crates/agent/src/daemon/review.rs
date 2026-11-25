@@ -209,6 +209,13 @@ fn occupied_investigators(state: &State) -> HashSet<InvestigatorName> {
         .collect()
 }
 
+/// The investigators of `config` that their provider refused at `now`: they review nothing until their return.
+pub(super) fn refused_investigators(state: &State, config: &Config, now: agent_core::state::Timestamp) -> HashSet<InvestigatorName> {
+    // STUB (RED): names none yet.
+    let _ = (state, config, now);
+    HashSet::new()
+}
+
 /// Applies the common activity selector and preserves each chosen investigator's
 /// team-specific worktree slot. Caller exclusions are never relaxed.
 pub(super) fn select_reviewers(
