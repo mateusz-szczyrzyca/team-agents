@@ -104,8 +104,24 @@ pub fn cut_due(
     busy: bool,
     cut_already: bool,
 ) -> CutDue {
-    let _ = (reminded, now, cut_after, head_moved, busy, cut_already);
-    CutDue::No
+    if cut_after == 0 || head_moved || cut_already {
+        return CutDue::No;
+    }
+    if busy {
+        return CutDue::Wait;
+    }
+    let minutes = minutes_between(reminded, now);
+    if minutes >= u64::from(cut_after) {
+        CutDue::Cut { minutes }
+    } else {
+        CutDue::No
+    }
+}
+
+/// The whole minutes from `earlier` to `later`; none when `later` is not after it.
+fn minutes_between(earlier: Timestamp, later: Timestamp) -> u64 {
+    let minutes = (later.as_utc() - earlier.as_utc()).whole_minutes();
+    if minutes <= 0 { 0 } else { minutes.unsigned_abs() }
 }
 
 #[cfg(test)]
