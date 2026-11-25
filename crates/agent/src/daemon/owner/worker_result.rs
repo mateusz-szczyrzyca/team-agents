@@ -1238,6 +1238,13 @@ impl Owner {
                 )
             }
         };
+        // What the next requests' choice of a worker remembers of this one: a conflict with the requester's branch is not
+        // the worker's failure.
+        match settlement {
+            Settlement::Report | Settlement::Brought { .. } => self.pool_dispatch.turns.succeeded(&pending.worker),
+            Settlement::Returned { .. } | Settlement::Again { .. } => self.pool_dispatch.turns.failed(&pending.worker),
+            Settlement::Conflict { .. } => {}
+        }
         if let Some(outcome) = self.settle_owned_request(pending, status, &summary, &notice).await? {
             if matches!(outcome, OwnedOutcome::Applied | OwnedOutcome::Replay)
                 && let (Settlement::Brought { commit }, Some(step)) = (settlement, checked.step)

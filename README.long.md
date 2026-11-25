@@ -328,8 +328,12 @@ when that run ends. `0` restores the old behaviour, where an agent may run as ma
 
 The agents of `[tiers] workers` form one installation-wide pool. Any team or delegating solo task is served by a
 free worker of the pool that meets its `requires`. The workers are chosen alternately across providers (taking turns
-in the order their first worker appears in `[tiers] workers`; within a provider, in configured order), skipping busy
-providers without waiting. A worker serves each request in a dedicated task and workspace worktree in the requester's
+in the order their first worker appears in `[tiers] workers`), skipping busy providers without waiting. Within a
+provider the workers take turns too: the provider's next request goes to its free worker after the one that served it
+last, in configured order. A worker whose last request ended without a usable result (no result, or one sent back) is
+passed over while any other worker that meets the request is free, of any provider; it serves again when nothing else
+is free, and takes its turns again after a run that brought its result. The daemon remembers the turns and the failed
+workers until it restarts. A worker serves each request in a dedicated task and workspace worktree in the requester's
 repository from the requester's commit (`tasks/<requester task>/request-workspace-<n>.json`, `docs/state.md`), with no
 place in the requester's team crew. A second try after a wrong result goes to another provider where one is free.
 Passing an explicit worker to `agent run` is still accepted: that worker is assigned to the team's crew as a legacy team worker and serves requests of that team alone as before, held exclusively by that team for its lifetime.

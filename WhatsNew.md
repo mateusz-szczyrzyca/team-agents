@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.110.0 · agent-core 0.109.0 — 25.11.2026 — PR #273
+## agent 0.111.0 · agent-core 0.111.0 — 25.11.2026 — PR #273
 
 ### Enhancements
 - [agent] [agent-core] A reviewer whose agent the refusal rule changes (its provider refused it again after its retry, or the first time when `[replacement] limit_retries` is `0` or a quota's reset is further away than `[replacement] limit_wait_minutes`) is replaced at once by a free investigator of another provider, not after `replace_after_minutes`. On 23.11 a review waited 35 minutes behind such a reviewer while other investigators were free. A reviewer refused once is kept and tried again after its pause, in the same session.
@@ -17,6 +17,22 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Configuration
 - [agent] [agent-core] changed: `[review] replace_after_minutes` (default `15`, unchanged) — a reviewer refused by its provider after `[replacement] limit_retries` no longer waits for it; it still bounds a reviewer that is paused for any other reason.
+
+## agent 0.110.0 · agent-core 0.110.0 — 25.11.2026 — PR #277
+
+### Bug fixes
+- [agent] [agent-core] A worker whose last request brought no usable result is no longer given the next request while another worker is free. Before, the first worker of a provider in `[tiers] workers` got every request of that provider, failed or not: on 25.11 `openrouter-minimax` failed three steps in a row of one task while four other workers stood idle.
+
+### Enhancements
+- [agent] [agent-core] The workers of one provider now take turns: with `deepinfra-qwen` and `deepinfra-glm` in `[tiers] workers`, DeepInfra's requests go to one and then the other, instead of always to `deepinfra-qwen` while it is free.
+
+## agent-core 0.109.0 — 25.11.2026 — PR #275
+
+### New features
+- [agent-core] A pure function chooses the agent that takes over a task whose provider refused it (rate limit, overload or quota): from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, the earliest time a refused agent returns is given so the daemon knows when to try again. The daemon is wired in a later release; this one provides the choice.
+
+### Configuration
+- [agent-core] changed: `[replacement] agents` (default `[]`) — the list now also serves a refused-provider takeover: each candidate is tried in order, skipping a name in the task's team, a busy one, a refused one or one of the refused provider; then the tier `normal` is tried in its order (for a coordinator, the investigators); a member never goes to a worker. The daemon is wired in a later release.
 
 ## agent 0.109.0 — 25.11.2026 — PR #271
 
