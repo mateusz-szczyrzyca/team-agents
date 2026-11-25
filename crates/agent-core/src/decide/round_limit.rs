@@ -45,15 +45,37 @@ pub enum Overdue {
 /// and the start of the first run after the last run that ended stopped.
 #[must_use]
 pub fn clock_start(clock: &RoundClock<'_>) -> Timestamp {
-    clock.opened_at
+    let resumed = clock
+        .runs
+        .iter()
+        .rposition(|run| run.stopped)
+        .and_then(|last_stopped| clock.runs.get(last_stopped + 1))
+        .map(|run| run.started_at);
+    [Some(clock.opened_at), clock.held_since, resumed]
+        .into_iter()
+        .flatten()
+        .max()
+        .unwrap_or(clock.opened_at)
 }
 
 /// Whether the round read by `clock` is over `limit_minutes` at `now`. A limit of `0` turns the rule off; a `now` before
 /// the start of the clock is never overdue.
 #[must_use]
 pub fn round_overdue(clock: &RoundClock<'_>, now: Timestamp, limit_minutes: u32) -> Overdue {
-    let _ = (clock, now, limit_minutes);
-    Overdue::NotDue
+    if limit_minutes == 0 {
+        return Overdue::NotDue;
+    }
+    let since = clock_start(clock);
+    let minutes = (now.as_utc() - since.as_utc()).whole_minutes();
+    if minutes < 0 {
+        return Overdue::NotDue;
+    }
+    let minutes = minutes.unsigned_abs();
+    if minutes >= u64::from(limit_minutes) {
+        Overdue::Due { minutes, since }
+    } else {
+        Overdue::NotDue
+    }
 }
 
 #[cfg(test)]
