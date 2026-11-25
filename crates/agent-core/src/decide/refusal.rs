@@ -51,13 +51,7 @@ impl RefusalSummary {
     /// `reason` is how the run's limit was classified (`Quota` or `RateLimit`).
     /// The `kind` is inferred from the status, the code and the pause reason.
     #[must_use]
-    pub fn from_fields(
-        status: &str,
-        message: &str,
-        code: &str,
-        resets_at: Option<u64>,
-        reason: PauseReason,
-    ) -> Self {
+    pub fn from_fields(status: &str, message: &str, code: &str, resets_at: Option<u64>, reason: PauseReason) -> Self {
         let kind = refusal_kind(status, code, reason);
         Self {
             status: status.to_owned(),
@@ -80,9 +74,7 @@ fn refusal_kind(status: &str, code: &str, reason: PauseReason) -> RefusalKind {
     }
     let lower_code = code.to_lowercase();
     // Overloaded: 503, 529, or a code that says so (e.g. engine_overloaded).
-    if matches!(status, "503" | "529")
-        || OVERLOAD_CODES.iter().any(|phrase| lower_code.contains(phrase))
-    {
+    if matches!(status, "503" | "529") || OVERLOAD_CODES.iter().any(|phrase| lower_code.contains(phrase)) {
         return RefusalKind::Overloaded;
     }
     // Rate limit: 429, or rate-limited reason with no specific overload/error status.

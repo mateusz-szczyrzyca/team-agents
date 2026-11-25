@@ -52,13 +52,7 @@ fn builds_from_fields_with_rate_limit_kind_when_status_is_empty() {
 
 #[test]
 fn builds_from_fields_with_rate_limit_kind_for_429_without_overload_code() {
-    let summary = RefusalSummary::from_fields(
-        "429",
-        "Too Many Requests",
-        "",
-        None,
-        PauseReason::RateLimit,
-    );
+    let summary = RefusalSummary::from_fields("429", "Too Many Requests", "", None, PauseReason::RateLimit);
     assert_eq!(summary.kind, RefusalKind::RateLimit);
 }
 
@@ -71,13 +65,7 @@ fn builds_from_fields_with_quota_kind_for_openrouter_402() {
 
 #[test]
 fn builds_from_fields_with_provider_error_for_internal_error() {
-    let summary = RefusalSummary::from_fields(
-        "500",
-        "Internal error upstream",
-        "",
-        None,
-        PauseReason::RateLimit,
-    );
+    let summary = RefusalSummary::from_fields("500", "Internal error upstream", "", None, PauseReason::RateLimit);
     assert_eq!(summary.kind, RefusalKind::ProviderError);
 }
 
