@@ -104,10 +104,10 @@ esac
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
     owner.serve_pool_requests().await.unwrap();
-    assert_eq!(claimed.exists(), false);
+    assert!(!claimed.exists());
     daemon.clock.advance(time::Duration::seconds(11));
     owner.serve_pool_requests().await.unwrap();
-    assert_eq!(claimed.exists(), true);
+    assert!(claimed.exists());
 }
 
 #[tokio::test]
@@ -140,11 +140,8 @@ async fn live_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_ca
         owner.parts.state.refused_until(&"claude-1".parse().unwrap()),
         Some(reset)
     );
-    assert_eq!(
-        owner.parts.state.refused_at(&"claude-1".parse().unwrap(), day_nine),
-        true
-    );
-    assert_eq!(owner.parts.state.refused_at(&"claude-1".parse().unwrap(), reset), false);
+    assert!(owner.parts.state.refused_at(&"claude-1".parse().unwrap(), day_nine));
+    assert!(!owner.parts.state.refused_at(&"claude-1".parse().unwrap(), reset));
 }
 
 /// Captured structured fields of refusal decisions, shared with the tracing layer.
@@ -258,7 +255,7 @@ async fn failure_interruption_and_commit_cut_each_restart_the_refusal_sequence()
                 owner.commit_cuts.insert(task(1), CommitOrder { lines: 10, minutes: 1 });
                 owner.interrupted(&task(1), None).await.unwrap();
             }
-            _ => unreachable!("table lists the four daemon paths"),
+            _ => panic!("table lists the four daemon paths"),
         }
         assert_eq!(owner.parts.state.limit_refusals(&task(1)), 0, "{path}");
         let located = owner.locate(&task(1)).unwrap();

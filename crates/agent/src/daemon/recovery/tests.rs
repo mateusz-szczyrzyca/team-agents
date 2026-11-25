@@ -783,6 +783,6 @@ fn recovered_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_cap
             .any(|(wake, task_id)| *task_id == task(2) && *wake < day_nine)
     );
     assert_eq!(state.refused_until(&agent), Some(reset));
-    assert_eq!(state.refused_at(&agent, day_nine), true);
-    assert_eq!(state.refused_at(&agent, reset), false);
+    assert!(state.refused_at(&agent, day_nine));
+    assert!(!state.refused_at(&agent, reset));
 }
