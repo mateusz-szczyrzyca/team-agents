@@ -241,3 +241,15 @@ fn a_declared_failure_is_stored_as_failed() {
     assert_eq!(serde_json::to_string(&Trouble::Failed).unwrap(), "\"failed\"");
     assert_eq!(serde_json::from_str::<Trouble>("\"failed\"").unwrap(), Trouble::Failed);
 }
+
+#[test]
+fn an_overdue_round_is_stored_as_round_overdue() {
+    assert_eq!(
+        serde_json::to_string(&Trouble::RoundOverdue).unwrap(),
+        "\"round_overdue\""
+    );
+    assert_eq!(
+        serde_json::from_str::<Trouble>("\"round_overdue\"").unwrap(),
+        Trouble::RoundOverdue
+    );
+}

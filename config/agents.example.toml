@@ -122,6 +122,10 @@ wake_ups_per_message = 2
 runs_per_agent = 1
 # The same for the agents of [tiers] workers, whose runs are cheap: 0 is no limit.
 runs_per_worker = 1
+# Minutes an agent may work on an item without its pull request in review: then its run is stopped and the task is
+# handed over through [replacement] (another agent, the lead, or it fails and you are told). 0, the default when the key
+# is absent, turns it off.
+round_minutes = 120
 
 # Reviews: "changes requested" goes back to the team at most `fix_passes` times; then you are asked. The checks
 # before a review (see the repository's `checks` below) send a round back at most `check_passes` times. A reviewer whose
