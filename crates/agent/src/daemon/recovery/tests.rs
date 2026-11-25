@@ -748,3 +748,14 @@ fn recovery_counts_the_refusals_in_a_row_of_a_paused_task_from_its_runs() {
 
     assert_eq!(state.limit_refusals(&task(2)), 2);
 }
+
+#[test]
+fn recovering_an_interrupted_retry_clears_its_previous_refusal_count() {
+    let mut state = team_state();
+    start(&mut state, 2, Some("retry-session"));
+    state.record_limit_refusals(task(2), 1);
+
+    recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(state.limit_refusals(&task(2)), 0);
+}

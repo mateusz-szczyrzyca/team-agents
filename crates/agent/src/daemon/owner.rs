@@ -23,6 +23,8 @@ mod launch_tests;
 mod owned_request;
 mod plan;
 mod pool_wait;
+#[cfg(test)]
+mod refusal_fix_tests;
 mod reminder;
 mod removal;
 mod returned;
