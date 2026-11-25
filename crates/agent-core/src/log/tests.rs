@@ -4,7 +4,7 @@ use std::str::FromStr;
 
 use serde_json::json;
 
-use super::LogEvent::{WorkerRequestRequeued, WorkerRequestReturned};
+use super::LogEvent::{HistoryRecordIncomplete, WorkerRequestRequeued, WorkerRequestReturned};
 use super::*;
 use crate::history::{MaxTextBytes, UnknownCutField};
 use crate::ids::{RoundId, RunId, TaskId, TeamId};
@@ -140,11 +140,7 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::DaemonTaskFailed, "daemon_task_failed", LogLevel::Error),
         (LogEvent::TeamNotStarted, "team_not_started", LogLevel::Error),
         (LogEvent::NotificationFailed, "notification_failed", LogLevel::Error),
-        (
-            LogEvent::HistoryRecordIncomplete,
-            "history_record_incomplete",
-            LogLevel::Warn,
-        ),
+        (HistoryRecordIncomplete, "history_record_incomplete", LogLevel::Warn),
         (LogEvent::TeamChanged, "team_changed", LogLevel::Info),
         (LogEvent::TeamRemoved, "team_removed", LogLevel::Info),
         (LogEvent::RoundChanged, "round_changed", LogLevel::Info),
