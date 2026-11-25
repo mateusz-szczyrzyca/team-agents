@@ -10,6 +10,11 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 ### Enhancements
 - [agent] In `agent status --running` the line of a worker under its team is laid out as the lines of the tasks: the worker's task first, then `worker`, the worker with its step, what became of the result and when it ran — `  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00 +01:00`. The request's bus number (`H5`) is no longer shown; look the worker up by its task.
 
+## 0.105.0 — 25.11.2026 — PR #267
+
+### Enhancements
+- [agent-runtime] Every Claude Code run is started with only agentbus and Serena: none of your own MCP servers or claude.ai connectors, no skills and none of 18 built-in tools it cannot use (`Workflow`, `CronCreate`, `RemoteTrigger`, ...) — the run starts with far less context.
+
 ## 0.104.0 — 25.11.2026 — PR #264
 
 ### New features

@@ -39,6 +39,10 @@ fn a_new_run_has_these_exact_arguments() -> TestResult {
             "/work/run/mcp.json",
             "--max-turns",
             "300",
+            "--strict-mcp-config",
+            "--disallowedTools",
+            DISALLOWED,
+            "--disable-slash-commands",
             "--settings",
             "/work/run/claude-settings.json",
             "--model",
@@ -72,6 +76,10 @@ fn a_resumed_run_has_these_exact_arguments() -> TestResult {
             "/work/run/mcp.json",
             "--max-turns",
             "300",
+            "--strict-mcp-config",
+            "--disallowedTools",
+            DISALLOWED,
+            "--disable-slash-commands",
             "--settings",
             "/work/run/claude-settings.json",
             "--model",
@@ -147,15 +155,85 @@ fn a_run_without_mcp_servers_gets_an_empty_configuration_and_only_that() -> Test
 }
 
 #[test]
-fn a_run_with_agentbus_is_not_strict() -> TestResult {
+fn a_run_with_agentbus_is_strict() -> TestResult {
     let spec = ClaudeAdapter.build_run(&request(new_run()?, Servers::Bus)?)?;
 
-    assert!(
-        !spec.args.contains(&"--strict-mcp-config".to_owned()),
-        "{:?}",
-        spec.args
+    let max_turns = spec
+        .args
+        .iter()
+        .position(|arg| arg == "--max-turns")
+        .ok_or("no --max-turns")?;
+    assert_eq!(
+        spec.args.get(max_turns + 2).map(String::as_str),
+        Some("--strict-mcp-config")
     );
+    let strict = spec.args.iter().filter(|arg| *arg == "--strict-mcp-config").count();
+    assert_eq!(strict, 1);
     Ok(())
+}
+
+/// The built-in tools of Claude Code that a run of the harness is not given, in the order the adapter passes them.
+const DISALLOWED: &str = "CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,\
+ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,\
+RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow";
+
+/// The tools a run needs; none of them may be in the disallowed list.
+const NEEDED_TOOLS: [&str; 7] = ["Edit", "Bash", "Read", "Write", "Task", "LSP", "WebSearch"];
+
+/// Checks the three flags that make a run strict, right after `--max-turns N`, in their order.
+fn assert_strict_flags(args: &[String]) -> TestResult {
+    let max_turns = args
+        .iter()
+        .position(|arg| arg == "--max-turns")
+        .ok_or("no --max-turns")?;
+    let after: Vec<&str> = args.iter().skip(max_turns + 2).take(4).map(String::as_str).collect();
+    assert_eq!(
+        after,
+        [
+            "--strict-mcp-config",
+            "--disallowedTools",
+            DISALLOWED,
+            "--disable-slash-commands"
+        ],
+        "{args:?}"
+    );
+    for flag in ["--strict-mcp-config", "--disallowedTools", "--disable-slash-commands"] {
+        assert_eq!(args.iter().filter(|arg| *arg == flag).count(), 1, "{flag} in {args:?}");
+    }
+    let tools: Vec<&str> = DISALLOWED.split(',').collect();
+    assert_eq!(tools.len(), 18);
+    for needed in NEEDED_TOOLS {
+        assert!(!tools.contains(&needed), "{needed} is disallowed");
+    }
+    Ok(())
+}
+
+#[test]
+fn a_run_with_agentbus_is_strict_and_disallows_the_tools_it_cannot_use() -> TestResult {
+    let spec = ClaudeAdapter.build_run(&request(new_run()?, Servers::Bus)?)?;
+
+    assert_strict_flags(&spec.args)
+}
+
+#[test]
+fn a_run_with_agentbus_and_serena_is_strict_and_disallows_the_tools_it_cannot_use() -> TestResult {
+    let spec = ClaudeAdapter.build_run(&request(new_run()?, Servers::BusAndSerena)?)?;
+
+    assert_strict_flags(&spec.args)
+}
+
+#[test]
+fn a_run_without_servers_disallows_the_tools_it_cannot_use() -> TestResult {
+    let spec = ClaudeAdapter.build_run(&request(new_run()?, Servers::None)?)?;
+
+    assert_strict_flags(&spec.args)
+}
+
+#[test]
+fn a_resumed_run_is_strict_and_disallows_the_tools_it_cannot_use() -> TestResult {
+    let spec = ClaudeAdapter.build_run(&request(resumed_run()?, Servers::Bus)?)?;
+
+    assert_strict_flags(&spec.args)
 }
 
 #[test]
