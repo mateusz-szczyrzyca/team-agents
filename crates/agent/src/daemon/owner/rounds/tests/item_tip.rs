@@ -394,3 +394,39 @@ pub(in crate::daemon::owner) async fn record_publish_off_branch(observed: &mut B
     assert_eq!(found[0].task(), Some(&items.task));
     observed.insert(LogEvent::PublishOffBranch);
 }
+
+/// Like [`off_branch_fix_pass`], but the worktree ends detached at the tip of 2.1 instead of on its branch.
+async fn detached_off_branch_fix_pass() -> (Rig, Items) {
+    let mut rig = rig_of("fix-script-answers:bfix", "done").await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::write(
+        scripts.join("bfix.sh"),
+        format!("{PRELUDE}{FIX_WITHOUT_ISSUE}{BACK_TO_THE_OTHER_ITEM}git checkout -q --detach HEAD\n"),
+    )
+    .unwrap();
+    let items = items_ready(&mut rig).await;
+    rig.prompt(&items.task, 4).await;
+    (rig, items)
+}
+
+// Rule: a worktree detached at the tip of another item is that item's work, not this one's: the lead is sent back with the
+// text that names the other branch, and nothing of 2.1 is pushed to the branch of 1.1.
+#[tokio::test]
+async fn detached_at_another_items_tip_is_sent_back() {
+    let (mut rig, items) = detached_off_branch_fix_pass().await;
+
+    let prompt = rig.prompt(&items.task, 4).await;
+    let remote = rig.remote_tip(&items.fixed);
+    rig.stop().await.unwrap();
+
+    let fixed = &items.fixed;
+    assert!(
+        prompt.contains(&format!("The harness publishes `{fixed}`, but your worktree has")),
+        "{prompt}"
+    );
+    assert_eq!(remote, items.fixed_tip_before);
+    assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
+    let off = rows(&rig, LogEvent::PublishOffBranch);
+    assert_eq!(off.len(), 1, "{off:#?}");
+    assert_eq!(field(&off[0], "branch"), fixed.as_str());
+}
