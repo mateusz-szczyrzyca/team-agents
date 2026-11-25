@@ -454,6 +454,10 @@ impl OutputParser for ClaudeParser {
         }
     }
 
+    fn latest_context(&self) -> Option<u64> {
+        self.usage.latest_context()
+    }
+
     fn finish(self: Box<Self>, stderr: &str, tail_lines: NonZeroU32) -> RunOutput {
         self.progress.finish(stderr, tail_lines)
     }

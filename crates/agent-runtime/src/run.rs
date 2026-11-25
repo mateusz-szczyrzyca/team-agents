@@ -1039,12 +1039,12 @@ impl Follow<'_> {
         Ok(())
     }
 
-    /// Writes the context of the run's latest model call to the context file of the task when it differs from what this
+    /// Writes the context of the run's latest model call that told one to the context file of the task when it differs from what this
     /// run wrote last, so that the daemon can remind a session that nears the bound of its context while the run goes
     /// on. A stream that tells no context writes nothing. Best-effort: a refused write is logged with its cause and tried
     /// again at the next lines, and the run goes on; the reminder is only lost when no later write succeeds.
     async fn keep_context(&mut self) {
-        let Some(context) = self.parser.usage().last_context else {
+        let Some(context) = self.parser.latest_context() else {
             return;
         };
         if self.written_context == Some(context) {

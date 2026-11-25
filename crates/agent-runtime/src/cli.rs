@@ -484,7 +484,11 @@ impl UsageTally {
 
     /// The context of the latest call that tells one, in the order the stream first named the calls.
     pub(crate) fn latest_context(&self) -> Option<u64> {
-        None
+        self.calls
+            .values()
+            .filter_map(|(order, call)| call.context.map(|context| (*order, context)))
+            .max_by_key(|(order, _)| *order)
+            .map(|(_, context)| context)
     }
 
     /// What the calls tell of the run. The context is that of the first and of the last call; the output and the cost

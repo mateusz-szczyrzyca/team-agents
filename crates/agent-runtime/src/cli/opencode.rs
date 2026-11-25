@@ -548,4 +548,8 @@ impl OutputParser for OpencodeParser {
     fn usage(&self) -> RunUsage {
         self.usage.usage()
     }
+
+    fn latest_context(&self) -> Option<u64> {
+        self.usage.latest_context()
+    }
 }
