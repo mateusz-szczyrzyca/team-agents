@@ -3065,7 +3065,10 @@ Integrate the guide.
         let reply2 = world.delegate_as(member, MEMBER_REQUEST);
         assert!(!answers(&reply2)[0].0, "{reply2}");
         eventually("request 2 to be given to a worker", || {
-            world.requests().get("2").is_some_and(|request| request["worker"].is_string())
+            world
+                .requests()
+                .get("2")
+                .is_some_and(|request| request["worker"].is_string())
         });
         assert_eq!(world.requests()["2"]["worker"], "w-b", "w-a failed its last run");
         world.request_is("2", "done");

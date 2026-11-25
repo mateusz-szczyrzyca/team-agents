@@ -706,7 +706,11 @@ fn agent(name: &str) -> AgentName {
 // that served it last, in the pool's order, wrapping around.
 #[test]
 fn the_workers_of_one_provider_take_turns() {
-    let workers = pool(&[("qwen", "deepinfra", false), ("minimax", "openrouter", false), ("glm", "deepinfra", false)]);
+    let workers = pool(&[
+        ("qwen", "deepinfra", false),
+        ("minimax", "openrouter", false),
+        ("glm", "deepinfra", false),
+    ]);
     let mut turns = Turns::default();
     let mut got = Vec::new();
     let mut last: Option<&str> = None;
@@ -720,7 +724,11 @@ fn the_workers_of_one_provider_take_turns() {
     assert_eq!(got, ["qwen", "minimax", "glm", "minimax"]);
     let (worker, _) =
         next_pool_worker_in_turn(&workers, &requires(&[]), LastServed(last), &turns, RunLimit::Unlimited).unwrap();
-    assert_eq!(worker.as_str(), "qwen", "the turn wraps around to the provider's first worker");
+    assert_eq!(
+        worker.as_str(),
+        "qwen",
+        "the turn wraps around to the provider's first worker"
+    );
 }
 
 // Rule: a busy worker is skipped in the turn of its provider; the next free one serves.
@@ -738,7 +746,11 @@ fn a_busy_worker_is_skipped_in_its_providers_turn() {
 // first, and in another provider when its provider has no other.
 #[test]
 fn a_worker_whose_last_run_failed_is_passed_over() {
-    let workers = pool(&[("qwen", "deepinfra", false), ("minimax", "openrouter", false), ("glm", "deepinfra", false)]);
+    let workers = pool(&[
+        ("qwen", "deepinfra", false),
+        ("minimax", "openrouter", false),
+        ("glm", "deepinfra", false),
+    ]);
     let mut turns = Turns::default();
     turns.failed(&agent("minimax"));
     let (worker, provider) = next_pool_worker_in_turn(
@@ -749,7 +761,11 @@ fn a_worker_whose_last_run_failed_is_passed_over() {
         RunLimit::Unlimited,
     )
     .unwrap();
-    assert_eq!((worker.as_str(), provider), ("qwen", "deepinfra"), "openrouter's turn, but its only worker failed");
+    assert_eq!(
+        (worker.as_str(), provider),
+        ("qwen", "deepinfra"),
+        "openrouter's turn, but its only worker failed"
+    );
 
     turns.failed(&agent("qwen"));
     let (worker, _) =
@@ -781,7 +797,13 @@ fn with_nothing_remembered_the_turn_is_that_of_next_pool_worker() {
     let workers = pool(&[("a", "p1", false), ("b", "p1", false), ("c", "p2", false)]);
     for last in [None, Some("p1"), Some("p2")] {
         assert_eq!(
-            next_pool_worker_in_turn(&workers, &requires(&[]), LastServed(last), &Turns::default(), RunLimit::Unlimited),
+            next_pool_worker_in_turn(
+                &workers,
+                &requires(&[]),
+                LastServed(last),
+                &Turns::default(),
+                RunLimit::Unlimited
+            ),
             next_pool_worker(&workers, &requires(&[]), LastServed(last), RunLimit::Unlimited)
         );
     }
@@ -791,16 +813,32 @@ fn with_nothing_remembered_the_turn_is_that_of_next_pool_worker() {
 // even of the failed worker's own provider; with only failed ones it falls back to `second_try_pool_worker`.
 #[test]
 fn a_second_try_passes_over_workers_whose_last_run_failed() {
-    let workers = pool(&[("qwen", "deepinfra", false), ("minimax", "openrouter", false), ("glm", "deepinfra", false)]);
+    let workers = pool(&[
+        ("qwen", "deepinfra", false),
+        ("minimax", "openrouter", false),
+        ("glm", "deepinfra", false),
+    ]);
     let mut turns = Turns::default();
     turns.failed(&agent("qwen"));
     turns.failed(&agent("minimax"));
-    let got =
-        second_try_pool_worker_in_turn(&workers, &requires(&[]), &agent("qwen"), "deepinfra", &turns, RunLimit::Unlimited);
+    let got = second_try_pool_worker_in_turn(
+        &workers,
+        &requires(&[]),
+        &agent("qwen"),
+        "deepinfra",
+        &turns,
+        RunLimit::Unlimited,
+    );
     assert_eq!(got.map(|(worker, _)| worker.as_str()), Some("glm"));
 
     turns.failed(&agent("glm"));
-    let got =
-        second_try_pool_worker_in_turn(&workers, &requires(&[]), &agent("qwen"), "deepinfra", &turns, RunLimit::Unlimited);
+    let got = second_try_pool_worker_in_turn(
+        &workers,
+        &requires(&[]),
+        &agent("qwen"),
+        "deepinfra",
+        &turns,
+        RunLimit::Unlimited,
+    );
     assert_eq!(got.map(|(worker, _)| worker.as_str()), Some("minimax"));
 }
