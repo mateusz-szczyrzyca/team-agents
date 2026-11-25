@@ -2,6 +2,8 @@
 
 use serde::Deserialize;
 
+use super::ConfigError;
+
 /// The uncommitted lines at which a run is reminded, when `[commit_reminder]` says nothing. The measurements of
 /// 24.11.2026 (two members that worked 40 minutes with 618 and 271 uncommitted lines) are the reason for it.
 pub const DEFAULT_LINES: u32 = 300;
@@ -10,7 +12,7 @@ pub const DEFAULT_LINES: u32 = 300;
 pub const DEFAULT_MINUTES: u32 = 30;
 
 /// The percent of its context bound at which a session is reminded, when `[commit_reminder]` says nothing.
-pub const DEFAULT_CONTEXT_PERCENT: u8 = 0;
+pub const DEFAULT_CONTEXT_PERCENT: u8 = 80;
 
 /// `[commit_reminder]`: the two bounds a run must reach, both, to be reminded to commit, and the share of the context
 /// bound at which a session is reminded.
@@ -34,6 +36,24 @@ impl Default for CommitReminder {
             minutes: DEFAULT_MINUTES,
             context_percent: DEFAULT_CONTEXT_PERCENT,
         }
+    }
+}
+
+/// The highest value `context_percent` may have: all of the bound.
+const MAX_CONTEXT_PERCENT: u8 = 100;
+
+impl CommitReminder {
+    /// Checks the section: `context_percent` is at most 100.
+    ///
+    /// # Errors
+    /// [`ConfigError::ContextPercentAbove`] when `context_percent` is above 100.
+    pub(super) const fn check(&self) -> Result<(), ConfigError> {
+        if self.context_percent > MAX_CONTEXT_PERCENT {
+            return Err(ConfigError::ContextPercentAbove {
+                percent: self.context_percent,
+            });
+        }
+        Ok(())
     }
 }
 

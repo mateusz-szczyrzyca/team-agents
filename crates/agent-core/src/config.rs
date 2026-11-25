@@ -1192,6 +1192,7 @@ impl RawConfig {
             repos,
         } = self;
         check_plan(&plan)?;
+        commit_reminder.check()?;
         let worker_settings = check_workers(worker_settings)?;
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
