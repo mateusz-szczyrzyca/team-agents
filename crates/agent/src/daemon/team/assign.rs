@@ -1,6 +1,6 @@
 //! Which item goes to which member next, and the branch names that go with it.
 
-use agent_core::decide::assign::dispatch::{dispatch_with_candidates, required_tier, reusable_split_member};
+use agent_core::decide::assign::dispatch::{dispatch_refusing, required_tier, reusable_split_member};
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::ids::{AgentName, BranchName, InvalidBranchName, InvalidName, ItemId, TaskId};
 use agent_core::state::{AdvanceError, ItemMut, ItemPhase, Participant, Team};
@@ -78,10 +78,11 @@ pub(in crate::daemon) fn assignable_in_policy(
     mode: ReplacementMode,
     configured_replacements: &[AgentName],
 ) -> Result<Vec<Assigned>, AssignmentError> {
-    assignable_with_candidates(team, mode, configured_replacements, &[])
+    assignable_with_candidates(team, mode, configured_replacements, &[], &[])
 }
 
-/// Assigns split parts using real outside participants and their availability.
+/// Assigns split parts using real outside participants and their availability; the agents in `refused` are given no item
+/// until their provider's refusal ends.
 ///
 /// # Errors
 /// [`AssignmentError`] if the selected participant has no reusable task or branch.
@@ -90,6 +91,7 @@ pub(in crate::daemon) fn assignable_with_candidates(
     mode: ReplacementMode,
     configured_replacements: &[AgentName],
     outside: &[agent_core::decide::part::Candidate<'_>],
+    refused: &[AgentName],
 ) -> Result<Vec<Assigned>, AssignmentError> {
     let takers = team
         .crew()
@@ -98,7 +100,7 @@ pub(in crate::daemon) fn assignable_with_candidates(
         .map(|(_, member)| Ok((agent_name(member.agent())?, member.task())))
         .collect::<Result<Vec<_>, InvalidName>>()?;
     let available: Vec<AgentName> = takers.iter().map(|(name, _)| name.clone()).collect();
-    let decided = dispatch_with_candidates(team, mode, configured_replacements, outside).assigned;
+    let decided = dispatch_refusing(team, mode, configured_replacements, outside, refused).assigned;
     if !decided.is_empty() {
         let span = tracing::error_span!("team", team = %team.id());
         let _entered = span.enter();

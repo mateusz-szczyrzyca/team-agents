@@ -19,7 +19,8 @@ use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{AgentBus, AgentBusError, HelperEntry, HelperRecord};
-use agent_runtime::clock::SystemClock;
+use agent_runtime::clock::{SharedClock, SystemClock};
+use agent_runtime::debug::{DebugRuntimeError, load_debug_state};
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
@@ -37,6 +38,12 @@ pub(crate) enum StatusError {
     /// The daemon could not be asked.
     #[error("cannot ask the daemon for the status")]
     Client(#[from] ClientError),
+    /// The state file is there but cannot be read, so the refused agents cannot be shown.
+    #[error("cannot read the state to show the refused agents")]
+    Refusals(#[source] DebugRuntimeError),
+    /// The clock of the system gives a time that the state cannot hold.
+    #[error("cannot tell the time to show the refused agents")]
+    Clock(#[source] agent_core::state::InvalidTimestamp),
     /// The daemon answered with something else than a list of teams.
     #[error("the daemon answered a status request with {kind}")]
     UnexpectedReply {
@@ -82,15 +89,18 @@ pub(crate) struct Activity {
     zone: Zone,
     /// Where the requests for workers of the tasks shown are read.
     requests: requests::Source,
+    /// The clock used to decide which provider cooldowns are still active.
+    clock: SharedClock,
 }
 
 impl Activity {
     /// The activity of the tasks of `home`, told in the local time `zone` gives.
-    pub(crate) const fn new(home: Home, zone: Zone) -> Self {
+    pub(crate) fn new(home: Home, zone: Zone) -> Self {
         Self {
             home,
             zone,
             requests: requests::Source::Unread,
+            clock: SharedClock::new(SystemClock),
         }
     }
 
@@ -151,6 +161,21 @@ impl Activity {
                 error_chain(&error)
             )),
         }
+    }
+
+    /// The line of the agents their provider refused at the time of the status, read from the state of the daemon; `None`
+    /// when no state is written yet or no agent is refused.
+    ///
+    /// # Errors
+    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
+    pub(crate) async fn refused_line(&self) -> Result<Option<String>, StatusError> {
+        let state = match load_debug_state(&self.home).await {
+            Ok(state) => state,
+            Err(DebugRuntimeError::Missing { .. }) => return Ok(None),
+            Err(source) => return Err(StatusError::Refusals(source)),
+        };
+        let now = Timestamp::now(&self.clock).map_err(StatusError::Clock)?;
+        Ok(refusals::refused_line(&state.refusals_at(now), self.zone))
     }
 
     /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
@@ -222,6 +247,8 @@ struct Shown {
     text: String,
     /// The line of runs going per configured CLI, when at least one run is going.
     cli_runs: Option<String>,
+    /// The line of the agents their provider refused and their return times, when any is refused.
+    refused: Option<String>,
     /// The lines describing pool workers, when configured.
     pool: Option<String>,
     /// The versions of the daemon that answered; absent from a daemon before it told them.
@@ -379,6 +406,7 @@ async fn listing_text(
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let refused = activity.refused_line().await?;
     let text = render_with_requests(
         &listing.teams,
         View::Full,
@@ -399,6 +427,7 @@ async fn listing_text(
     Ok(Shown {
         text: format!("{text}{}", told.unread()),
         cli_runs,
+        refused,
         pool,
         daemon: listing.daemon,
         history: listing.history,
@@ -414,6 +443,7 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
+    let refused = activity.refused_line().await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -468,6 +498,7 @@ async fn running_text(
     Ok(Shown {
         text,
         cli_runs,
+        refused,
         pool,
         daemon: listing.daemon,
         history: listing.history,
@@ -656,10 +687,11 @@ fn damaged_pool_workspace(path: &std::path::Path, source: &dyn std::error::Error
 /// and the line about the history when it is not whole.
 fn write_shown(out: &mut impl Write, prefix: &str, shown: &Shown, activity: &Activity) -> Result<(), StatusError> {
     let cli_runs = shown.cli_runs.as_deref().unwrap_or_default();
+    let refused = shown.refused.as_deref().unwrap_or_default();
     let pool = shown.pool.as_deref().unwrap_or_default();
     write(
         out,
-        &format!("{prefix}{}{cli_runs}{pool}", shown.text),
+        &format!("{prefix}{}{cli_runs}{refused}{pool}", shown.text),
         shown.history.as_ref(),
         activity.disk_line().as_deref(),
     )
@@ -1306,6 +1338,7 @@ const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 mod investigators;
 mod members;
 pub(crate) mod pool;
+mod refusals;
 pub(crate) mod requests;
 mod returned;
 mod reviewer;

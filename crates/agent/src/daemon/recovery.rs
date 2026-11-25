@@ -5,7 +5,7 @@ use agent_core::decide::ladder::Trouble;
 use agent_core::decide::outcome::{
     AfterNoStatus, ClassifyError, NO_STATUS_RETRIES, after_no_status, consecutive_no_status,
 };
-use agent_core::ids::{RoundId, TaskId};
+use agent_core::ids::{AgentName, RoundId, TaskId};
 use agent_core::kinds::Role;
 use agent_core::state::{Member, RenewTaskError, Round, Run, RunEnd, RunError, RunState, State, Timestamp};
 use agent_core::status::{InvalidTransition, TaskStatus};
@@ -89,6 +89,7 @@ pub(super) fn recover_with(
 ) -> Result<Recovery, RecoveryError> {
     let waiting = state.queued_order();
     let mut recovery = Recovery::default();
+    let mut kept_out: Vec<Refusal> = Vec::new();
     for task in all_tasks(state) {
         let role = state
             .find_task(&task)
@@ -160,8 +161,31 @@ pub(super) fn recover_with(
                 source,
             })?
         {
+            // A state from before the refusals keeps no record of them: the runs of the paused task are the record.
+            let until = if let Some(RunState::Ended {
+                end: RunEnd::QuotaExhausted { resets_at: Some(reset) },
+                ..
+            }) = member.runs().last().map(Run::state)
+            {
+                (*reset).max(wake)
+            } else {
+                wake
+            };
+            kept_out.push(Refusal {
+                task: task.clone(),
+                agent: member.agent().agent_name(),
+                refusals: trailing_refusals(member.runs()),
+                until,
+            });
             recovery.wakes.push((wake, task));
         }
+    }
+    for task in &recovery.interrupted {
+        state.record_limit_refusals(task.clone(), 0);
+    }
+    for refusal in kept_out {
+        state.record_limit_refusals(refusal.task, refusal.refusals);
+        state.keep_refused_until(refusal.agent, refusal.until);
     }
     if !recovery.interrupted.is_empty() {
         state.place_waiting_after_interrupted(&waiting);
@@ -257,6 +281,32 @@ fn trailing_hangs(runs: &[Run]) -> u32 {
         .take_while(|end| matches!(end, RunEnd::Hung))
         .count();
     u32::try_from(hangs).unwrap_or(u32::MAX)
+}
+
+/// A paused task's provider refusal, found in its runs at recovery: the agent is kept out until `until`.
+struct Refusal {
+    /// The paused task.
+    task: TaskId,
+    /// The agent the task was paused on, kept out until `until`.
+    agent: AgentName,
+    /// The refusals in a row that end the task's runs.
+    refusals: u32,
+    /// The time the task goes on, which is when the agent returns.
+    until: Timestamp,
+}
+
+/// How many runs in a row, up to the last one, ended refused by the provider: what the rule counts for a paused task.
+fn trailing_refusals(runs: &[Run]) -> u32 {
+    let refused = runs
+        .iter()
+        .rev()
+        .filter_map(|run| match run.state() {
+            RunState::Ended { end, .. } => Some(end),
+            RunState::Running => None,
+        })
+        .take_while(|end| matches!(end, RunEnd::RateLimited | RunEnd::QuotaExhausted { .. }))
+        .count();
+    u32::try_from(refused).unwrap_or(u32::MAX)
 }
 
 /// When a task whose last run is `last` goes on, if its pause is a provider's limit.

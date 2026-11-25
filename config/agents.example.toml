@@ -196,6 +196,9 @@ replacements = 1
 mode = "auto"
 agents = []
 rejections = 5
+# A provider that refuses a run (rate limit, overload or exhausted quota) is waited out: the task is tried again in the same session after the pause, `limit_retries` times (0 to 10, default 1). When the retries are used up, or a quota's reset is further away than `limit_wait_minutes` (default 60; 0 never waits for a reset), the rule answers "change agent"; that change is recorded in the log and is not made by this release. A refused agent gets no new task, review or takeover until its return time.
+limit_retries = 1
+limit_wait_minutes = 60
 # A queued task waits this many seconds for its busy agent (one that runs another task at its limit of runs, see
 # [limits] runs_per_agent) before a free agent of `agents`, of the same or a higher place, takes it over. 0 never does.
 busy_after = 300

@@ -11,6 +11,8 @@ mod commit_reminder;
 pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_AFTER, DEFAULT_LINES, DEFAULT_MINUTES};
 mod replacement;
 #[cfg(test)]
+mod replacement_limit_tests;
+#[cfg(test)]
 mod replacement_tests;
 mod restart;
 mod session;
