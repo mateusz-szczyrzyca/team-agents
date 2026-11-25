@@ -1155,3 +1155,34 @@ fn outside_split_replacement_without_a_reusable_task_waits_for_the_human() {
         }
     );
 }
+
+#[test]
+fn refused_configured_outside_split_replacement_waits_until_available() {
+    use crate::state::fixtures::normal;
+    let team = split_without_available_crew();
+    let agent = normal("outside-agent");
+    let names = vec!["outside-agent".parse().unwrap()];
+    let candidates = [Candidate {
+        agent: &agent,
+        status: TaskStatus::Waiting,
+        handed_over: false,
+        busy: false,
+    }];
+    assert_eq!(
+        dispatch_refusing(&team, ReplacementMode::Auto, &names, &candidates, &names),
+        Dispatch {
+            assigned: vec![],
+            waiting: vec![Waiting {
+                item: "1.1".parse().unwrap(),
+                required: Tier::Normal,
+                reason: WaitReason::Busy,
+            }],
+        }
+    );
+    assert_eq!(
+        dispatch_refusing(&team, ReplacementMode::Auto, &names, &candidates, &[])
+            .assigned
+            .len(),
+        1
+    );
+}

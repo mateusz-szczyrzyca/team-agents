@@ -276,6 +276,20 @@ gate = ["true"]
     }
 
     #[test]
+    fn a_refused_investigator_reviews_nothing_until_its_return_time() {
+        let mut refused_state = state();
+        let inv_b: InvestigatorName = "inv-b".parse().unwrap();
+        refused_state.record_refused_until(inv_b.as_str().parse().unwrap(), Some(at(500)));
+
+        let before = super::super::refused_investigators(&refused_state, &config(), at(499));
+        let after = super::super::refused_investigators(&refused_state, &config(), at(500));
+
+        assert!(before.contains(&inv_b));
+        assert!(!after.contains(&inv_b));
+        assert!(!before.contains(&"inv-c".parse::<InvestigatorName>().unwrap()));
+    }
+
+    #[test]
     fn the_coordinator_of_a_team_does_not_review_its_own_pull_requests() {
         let free = free_reviewers(&state(), &config(), &team_id(0));
 

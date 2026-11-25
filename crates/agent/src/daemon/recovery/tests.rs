@@ -681,3 +681,108 @@ fn a_member_running_in_a_state_written_before_the_restart_key_begins_a_daemon_do
     );
     assert_eq!(found.renewals().map(agent_core::state::Renewals::used), Some(0));
 }
+
+#[test]
+fn a_task_paused_by_a_limit_before_the_refusals_keeps_its_agent_out_until_its_wake() {
+    let mut state = State::from_json(include_str!(
+        "../../../../agent-core/tests/fixtures/state-before-limit-refusals.json"
+    ))
+    .unwrap();
+    let paused: TaskId = "task-20261120-144101-r7q2".parse().unwrap();
+    let agent: agent_core::ids::AgentName = "codex-1".parse().unwrap();
+    let now: Timestamp = "2026-11-20T14:47:00Z".parse().unwrap();
+
+    let recovery = recover_with(&mut state, now, &limits(), RestartSession::New).unwrap();
+
+    let wake = recovery
+        .wakes
+        .iter()
+        .find(|(_, task)| *task == paused)
+        .map(|(wake, _)| *wake)
+        .expect("the paused task is woken");
+    assert_eq!(state.refused_until(&agent), Some(wake));
+    assert!(
+        state.refused_at(&agent, now),
+        "the agent is kept out while its task is paused"
+    );
+    assert!(!state.refused_at(&agent, wake), "the agent is free again at its return");
+    assert_eq!(state.limit_refusals(&paused), 1);
+}
+
+#[test]
+fn a_quota_pause_before_the_refusals_keeps_its_agent_out_until_the_named_reset() {
+    let mut state = team_state();
+    start(&mut state, 2, Some("ses-1"));
+    let reset: Timestamp = "2026-11-11T22:15:00Z".parse().unwrap();
+    end(
+        &mut state,
+        2,
+        RunEnd::QuotaExhausted { resets_at: Some(reset) },
+        TaskStatus::Paused,
+    );
+    let agent = state.find_task(&task(2)).unwrap().member.agent().agent_name();
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    let quota_wake = Timestamp::from_utc(reset.as_utc() + RESET_MARGIN).unwrap();
+    assert_eq!(recovery.wakes, [(quota_wake, task(2))]);
+    assert_eq!(state.refused_until(&agent), Some(quota_wake));
+    assert_eq!(state.limit_refusals(&task(2)), 1);
+}
+
+#[test]
+fn recovery_counts_the_refusals_in_a_row_of_a_paused_task_from_its_runs() {
+    let mut state = team_state();
+    start(&mut state, 2, Some("ses-1"));
+    end(&mut state, 2, RunEnd::RateLimited, TaskStatus::Paused);
+    let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+    member.transition(TaskStatus::Queued).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(run(3), at(30), Some("ses-1".parse().unwrap()))
+        .unwrap();
+    member.end_run(at(40), RunEnd::RateLimited).unwrap();
+    member.transition(TaskStatus::Paused).unwrap();
+
+    recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(state.limit_refusals(&task(2)), 2);
+}
+
+#[test]
+fn recovering_an_interrupted_retry_clears_its_previous_refusal_count() {
+    let mut state = team_state();
+    start(&mut state, 2, Some("retry-session"));
+    state.record_limit_refusals(task(2), 1);
+
+    recover(&mut state, at(100), &limits()).unwrap();
+
+    assert_eq!(state.limit_refusals(&task(2)), 0);
+}
+
+#[test]
+fn recovered_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_cap() {
+    let mut state = team_state();
+    let reset = Timestamp::from_utc(at(0).as_utc() + time::Duration::days(10)).unwrap();
+    let day_nine = Timestamp::from_utc(at(0).as_utc() + time::Duration::days(9)).unwrap();
+    let agent = "claude-1".parse().unwrap();
+    start(&mut state, 2, Some("quota-session"));
+    end(
+        &mut state,
+        2,
+        RunEnd::QuotaExhausted { resets_at: Some(reset) },
+        TaskStatus::Paused,
+    );
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert!(
+        recovery
+            .wakes
+            .iter()
+            .any(|(wake, task_id)| *task_id == task(2) && *wake < day_nine)
+    );
+    assert_eq!(state.refused_until(&agent), Some(reset));
+    assert!(state.refused_at(&agent, day_nine));
+    assert!(!state.refused_at(&agent, reset));
+}

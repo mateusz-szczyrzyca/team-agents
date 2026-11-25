@@ -16,7 +16,7 @@ use super::super::{Owner, OwnerError};
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
-use crate::daemon::review::{free_reviewers, select_reviewers};
+use crate::daemon::review::{free_reviewers, refused_investigators, select_reviewers};
 
 /// A review that does not come: its reviewer cannot work.
 pub(super) struct Gone {
@@ -207,7 +207,13 @@ impl Owner {
     ) -> Result<bool, PublishError> {
         let free = free_reviewers(&self.parts.state, &self.parts.settings.config, team_id);
         let among: Vec<_> = free.iter().map(|reviewer| reviewer.name.clone()).collect();
-        let excluded = gone.pass.iter().cloned().collect();
+        let mut excluded: HashSet<InvestigatorName> = gone.pass.iter().cloned().collect();
+        // An investigator its provider refused reviews nothing until its return.
+        excluded.extend(refused_investigators(
+            &self.parts.state,
+            &self.parts.settings.config,
+            now,
+        ));
         let Some(chosen) = select_reviewers(
             &self.parts.state,
             &self.parts.settings.config,

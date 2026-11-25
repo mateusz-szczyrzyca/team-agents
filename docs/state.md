@@ -271,6 +271,12 @@ State
         └── questions[] Question     number, file, asked_at, state (open | answered: at, via)
 ```
 
+**Refusals (optional, absent in a state written before the refusal rule).** `limit_refusals` maps a task to the number of
+provider refusals in a row (rate limit, overload or quota) that ended its runs paused; a run that ends any other way
+removes its task from the map. `refused_agents` maps an agent to the time its provider refusal lasts until; the agent is
+refused strictly before that time; an entry whose time has passed no longer refuses it. Both are optional maps: a state without
+them loads with none, and a version that does not know them refuses a state that has them.
+
 **A solo task is a team of one.** Every unit of work is a `Team`; the solo agent is its only member, with the role
 `solo`. One code path serves both.
 

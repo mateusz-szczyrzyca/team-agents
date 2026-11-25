@@ -23,6 +23,8 @@ mod launch_tests;
 mod owned_request;
 mod plan;
 mod pool_wait;
+#[cfg(test)]
+mod refusal_fix_tests;
 mod reminder;
 mod removal;
 mod request_end;
@@ -49,6 +51,7 @@ use std::time::Duration;
 use agent_core::cli::SessionId as CliSessionId;
 use agent_core::config::{AbsolutePath, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
+use agent_core::decide::limit::{Decision, Refusal, decide, next_refusals};
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::replacement::ReplacementMode;
@@ -99,7 +102,7 @@ use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
 use super::recovery::{AfterCut, RecoveryError, after_cut, interrupted_status, open_round_of, recover_with};
-use super::settle::{Settled, settle};
+use super::settle::{Settled, limit_of, settle};
 use super::team::{AssignmentError, DoneNoticeError, NoticeRenderError, Why};
 use agent_runtime::process::error_chain;
 
@@ -951,7 +954,7 @@ impl Owner {
 
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
-        let queued: Vec<Queued> = self
+        let waiting: Vec<Queued> = self
             .parts
             .state
             .queued_tasks()
@@ -965,7 +968,23 @@ impl Owner {
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits
-            .retain(|task| queued.iter().any(|item| item.task == *task));
+            .retain(|task| waiting.iter().any(|item| item.task == *task));
+        // Fresh assignments must wait even when a reused task has earlier runs. Incumbent retries
+        // remain governed by their pause and explicit human resume.
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
+        let queued: Vec<Queued> = waiting
+            .into_iter()
+            .filter(|item| {
+                !(refused.contains(&item.agent)
+                    && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
+                        || self
+                            .parts
+                            .state
+                            .find_task(&item.task)
+                            .is_some_and(|task| task.member.runs().is_empty())))
+            })
+            .collect();
         if queued.is_empty() {
             return Ok(());
         }
@@ -1644,6 +1663,7 @@ impl Owner {
         let (status, notice) = if let Some(halt) = overruled {
             self.hangs.remove(task);
             self.wakes.remove(task);
+            self.parts.state.record_limit_refusals(task.clone(), 0);
             (halted_status(halt), None)
         } else {
             let ended = Ended {
@@ -2023,6 +2043,7 @@ impl Owner {
             Settled::TurnLimit => Some(Trouble::TurnLimit),
             Settled::Status(_) | Settled::Failed(_) | Settled::Questions | Settled::Paused(_) => None,
         };
+        self.keep_refusal(task, located, &settled, &end, now)?;
         let next = match settled {
             Settled::Status(status) => {
                 self.hangs.remove(task);
@@ -2066,6 +2087,65 @@ impl Owner {
             return Ok(asked);
         }
         Ok(next)
+    }
+
+    /// Keeps what a run's end says about the provider's refusals. A refused run counts one more refusal in a row for its
+    /// task and keeps its agent out of new work until the pause ends; any other end clears the count. The answer of
+    /// [`agent_core::decide::limit::decide`] is logged: features 3 and 4 act on a change of agent, until then the pause
+    /// stays and the task is tried again like any other.
+    fn keep_refusal(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        settled: &Settled,
+        end: &RunEnd,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        let refused = match (settled, limit_of(end, now)) {
+            (Settled::Paused(pause), Some(limit)) => Some((pause, limit)),
+            _ => None,
+        };
+        let Some((pause, limit)) = refused else {
+            self.parts.state.record_limit_refusals(task.clone(), 0);
+            return Ok(());
+        };
+        let replacement = self.parts.settings.config.replacement();
+        let refusals = next_refusals(self.parts.state.limit_refusals(task), end);
+        let answer = decide(&Refusal {
+            limit,
+            refusals,
+            retries: replacement.limit_retries().get(),
+            wait_limit: time::Duration::minutes(i64::from(replacement.limit_wait_minutes())),
+        });
+        self.parts.state.record_limit_refusals(task.clone(), refusals);
+        let agent: AgentName = located.agent.parse()?;
+        let return_at = match end {
+            RunEnd::QuotaExhausted { resets_at: Some(reset) } => (*reset).max(pause.until),
+            RunEnd::QuotaExhausted { resets_at: None }
+            | RunEnd::RateLimited
+            | RunEnd::Reported { .. }
+            | RunEnd::NoStatus { .. }
+            | RunEnd::Hung
+            | RunEnd::TurnLimit
+            | RunEnd::Stopped => pause.until,
+        };
+        self.parts.state.keep_refused_until(agent, return_at);
+        let decision = match answer {
+            Decision::Pause => "pause",
+            Decision::ChangeAgent => "change_agent",
+        };
+        tracing::debug!(
+            event = LogEvent::DecisionTaken.as_str(),
+            team = %located.team,
+            task = %task,
+            decision = "limit",
+            agent = %located.agent,
+            refusals = refusals,
+            result = decision,
+            return_at = %return_at,
+            "a run refused by its provider is counted and the rule answers it"
+        );
+        Ok(())
     }
 
     /// What the run of `task` that failed does with its task, at `at`: a run that reported `STATUS: FAILED`, called no
@@ -2953,6 +3033,12 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        match &end {
+            RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited => {}
+            RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit | RunEnd::Stopped => {
+                self.parts.state.record_limit_refusals(task.clone(), 0);
+            }
+        }
         let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
         let span = tracing::error_span!(
             "run",

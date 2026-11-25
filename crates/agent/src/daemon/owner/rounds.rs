@@ -874,6 +874,10 @@ mod last_step_tests;
 mod agent_slots_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/refused_agents.rs"]
+mod refused_agents_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/serena_reminder.rs"]
 mod serena_reminder_tests;
 

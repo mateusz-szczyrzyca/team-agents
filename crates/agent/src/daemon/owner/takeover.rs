@@ -161,10 +161,12 @@ impl Owner {
             .map(|member| member.agent().name())
             .collect();
         let busy = self.agents_in_runs();
+        let now = Timestamp::now(&self.parts.clock)?;
+        let refused = self.parts.state.refused_agents_at(now);
         let listed: Vec<(&AgentName, Tier, Activity)> = replacement
             .agents()
             .iter()
-            .filter(|name| name.as_str() != held.name() && !in_team.contains(&name.as_str()))
+            .filter(|name| name.as_str() != held.name() && !in_team.contains(&name.as_str()) && !refused.contains(name))
             .filter_map(|name| {
                 let activity = if busy.contains(&name.as_str()) {
                     Activity::InRun
@@ -478,6 +480,8 @@ impl Owner {
         let teams = self.parts.state.teams();
         let going = self.all_runs_going();
         let busy: std::collections::HashSet<_> = going.iter().map(|run| &run.agent).collect();
+        // An agent its provider refused is not free until its return: it takes no task over.
+        let refused = self.parts.state.refused_agents_at(Timestamp::now(&self.parts.clock)?);
         let in_team: Vec<&str> = found
             .team
             .crew()
@@ -500,6 +504,8 @@ impl Owner {
                 in_team.contains(&name.as_str()),
                 if busy.contains(name) {
                     Availability::Busy
+                } else if refused.contains(name) {
+                    Availability::Paused
                 } else {
                     availability_of(teams, name)
                 },

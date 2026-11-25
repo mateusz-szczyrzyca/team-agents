@@ -5,7 +5,7 @@ use super::reviewers::Prepared;
 use super::verdicts::Asked;
 use super::waiting::WaitingStep;
 use super::{PublishError, Pulls};
-use crate::daemon::review::{pending_opinion, select_reviewers};
+use crate::daemon::review::{pending_opinion, refused_investigators, select_reviewers};
 use crate::daemon::team::Why;
 use agent_core::decide::opinion::{Next, Tip, after_opinions};
 use agent_core::history::HistoryEvent;
@@ -151,7 +151,8 @@ impl Owner {
                 .map(|(number, opinion)| (*number, opinion.request.clone()))
                 .collect();
             for (number, request) in waiting {
-                let excluded = opinion_exclusions(&item, &ledger, number);
+                let mut excluded = opinion_exclusions(&item, &ledger, number);
+                excluded.extend(self.refused_reviewers()?);
                 let Some(reviewer) = select_reviewers(
                     &self.parts.state,
                     &self.parts.settings.config,
@@ -648,5 +649,16 @@ impl Owner {
             }
         }
         Ok(())
+    }
+}
+
+impl Owner {
+    /// The investigators their provider refused at the moment: they review nothing until their return.
+    fn refused_reviewers(&self) -> Result<HashSet<agent_core::ids::InvestigatorName>, OwnerError> {
+        Ok(refused_investigators(
+            &self.parts.state,
+            &self.parts.settings.config,
+            Timestamp::now(&self.parts.clock)?,
+        ))
     }
 }
