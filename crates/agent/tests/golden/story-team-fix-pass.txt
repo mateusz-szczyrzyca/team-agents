@@ -30,7 +30,7 @@ Story
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-3>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-3>/claude-settings.json --session-id <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -55,7 +55,7 @@ STATUS: SLEEPING
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-5>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-5>/claude-settings.json --session-id <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-5>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-6>/runs/<run-5>/claude-settings.json --session-id <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -78,7 +78,7 @@ STATUS: DONE
       to spend its own tokens on it. You work unattended.
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-7>/mcp.json --max-turns 300 --settings <home>/tasks/<task-8>/runs/<run-7>/claude-settings.json --resume <uuid> --scenario 'sleep,done:Result: looked' --as glm-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-7>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-8>/runs/<run-7>/claude-settings.json --resume <uuid> --scenario 'sleep,done:Result: looked' --as glm-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-8>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -105,7 +105,7 @@ STATUS: DONE
       
       A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -128,7 +128,7 @@ STATUS: DONE
       
       A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -188,7 +188,7 @@ Log: `<home>/tasks/<task-4>/gate-1.log`.
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-13>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-11>/runs/<run-13>/claude-settings.json --session-id <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -212,7 +212,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --strict-mcp-config --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-14>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-12>/runs/<run-14>/claude-settings.json --session-id <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -294,7 +294,7 @@ or empty, publication continues and says that you supplied no description. If wr
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-15>/mcp.json --max-turns 300 --settings <home>/tasks/<task-4>/runs/<run-15>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-15>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-15>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -322,7 +322,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-16>/mcp.json --max-turns 300 --settings <home>/tasks/<task-11>/runs/<run-16>/claude-settings.json --resume <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-16>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-11>/runs/<run-16>/claude-settings.json --resume <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-3>
     steps (2):
       1. <time> info: session started, model fake-model
@@ -345,7 +345,7 @@ STATUS: DONE
       The human does not answer live: you reach them only through a questions file (below).
       
       … <n> more lines
-    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-17>/mcp.json --max-turns 300 --settings <home>/tasks/<task-12>/runs/<run-17>/claude-settings.json --resume <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
+    command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-17>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-12>/runs/<run-17>/claude-settings.json --resume <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-3>
     steps (2):
       1. <time> info: session started, model fake-model
