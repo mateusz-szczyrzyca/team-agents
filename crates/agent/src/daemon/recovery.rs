@@ -173,7 +173,9 @@ pub(super) fn recover_with(
     }
     for refusal in kept_out {
         state.record_limit_refusals(refusal.task, refusal.refusals);
-        let until = state.refused_until(&refusal.agent).map_or(refusal.until, |known| known.max(refusal.until));
+        let until = state
+            .refused_until(&refusal.agent)
+            .map_or(refusal.until, |known| known.max(refusal.until));
         state.record_refused_until(refusal.agent, Some(until));
     }
     if !recovery.interrupted.is_empty() {
