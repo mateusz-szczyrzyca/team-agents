@@ -889,7 +889,7 @@ async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
     };
     let notification = notice.render(&texts().await, &context).unwrap();
     let body = notification.body();
-    assert!(body.contains("paused until 2026-11-11 21:15"), "{body}");
+    assert!(body.contains("paused until 2026-11-11T21:15:00+01:00"), "{body}");
     assert!(!body.contains("2026-11-11T20:15:00Z"), "{body}");
     assert!(
         body.contains("an overload: 429 · Model busy, retry later · engine_overloaded"),
