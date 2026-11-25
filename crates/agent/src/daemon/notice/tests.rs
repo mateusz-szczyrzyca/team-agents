@@ -103,7 +103,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         "{questions}"
     );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");
-    assert!(paused.contains("2026-11-11T20:15:00Z"), "{paused}");
+    assert!(paused.contains("2026-11-11 20:15 +00:00"), "{paused}");
     assert!(paused.contains("rate_limit") && paused.contains("HTTP 429"), "{paused}");
     assert!(none.contains("exit: signal"), "{none}");
     assert!(code.contains("exit: 3"), "{code}");
