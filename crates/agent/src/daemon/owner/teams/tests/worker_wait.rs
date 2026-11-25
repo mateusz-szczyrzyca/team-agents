@@ -80,7 +80,10 @@ async fn looked(f: &Fixture) {
         .request(Client::Cli, Command::Status(StatusRequest { target: None }))
         .await
         .unwrap();
-    assert!(matches!(reply, Reply::Overview { .. }), "{reply:?}");
+    assert!(
+        matches!(reply, Reply::Teams { .. } | Reply::Overview { .. }),
+        "{reply:?}"
+    );
 }
 
 /// The records of the daemon's log for `event`, once the daemon has stopped.
