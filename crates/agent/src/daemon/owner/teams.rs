@@ -503,6 +503,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved or is found inconsistent.
     pub(super) async fn team_life(&mut self) -> Result<(), OwnerError> {
+        self.retry_owned_recovery().await?;
         self.brief_leads().await;
         self.queue_busy_handover_notices().await?;
         self.flush_outbox().await?;
@@ -1076,6 +1077,9 @@ impl Owner {
     /// read on, and put back before the next team is looked at: each team's workers serve its own requests, and a team
     /// with a free worker does not keep another team's request from it.
     async fn serve_requests(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        if self.request_recovery == super::owned_request::RequestRecovery::Pending {
+            return Ok(());
+        }
         let Some(Workers {
             in_order: workers,
             mut busy,
@@ -1204,6 +1208,9 @@ impl Owner {
         reason = "loop checks busy state across teams, selects provider turn, dispatches, and handles held requests"
     )]
     pub(super) async fn serve_pool_requests(&mut self) -> Result<(), OwnerError> {
+        if self.request_recovery == super::owned_request::RequestRecovery::Pending {
+            return Ok(());
+        }
         self.retry_cleanup_obligations().await;
         let pool = self.parts.settings.config.worker_agents().to_vec();
         if pool.is_empty() {

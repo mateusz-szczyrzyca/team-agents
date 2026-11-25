@@ -564,6 +564,8 @@ pub(super) struct Owner {
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
     serving: HashMap<TaskId, Served>,
+    /// Startup reconciliation fences worker dispatch while its bus operations wait to be retried.
+    request_recovery: owned_request::RequestRecovery,
     /// Pool bookkeeping is boxed to keep owner lifecycle futures compact.
     pool_dispatch: Box<PoolDispatch>,
     /// The teams that are finished and closed: the human was told.
@@ -693,6 +695,7 @@ impl Owner {
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
+            request_recovery: owned_request::RequestRecovery::Ready,
             pool_dispatch: Box::default(),
             closed: HashSet::new(),
             reminders: reminder::Backlog::default(),
@@ -900,7 +903,8 @@ impl Owner {
             self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
-        self.recover_owned_requests().await?;
+        self.request_recovery = owned_request::RequestRecovery::Pending;
+        self.retry_owned_recovery().await?;
         self.recover_plan_checks().await?;
         Ok(())
     }
@@ -912,7 +916,12 @@ impl Owner {
             .state
             .queued_tasks()
             .into_iter()
-            .filter(|item| !self.in_flight.contains(&item.task) && !self.pending_removals.contains(&item.task))
+            .filter(|item| {
+                !(self.in_flight.contains(&item.task)
+                    || self.pending_removals.contains(&item.task)
+                    || self.request_recovery == owned_request::RequestRecovery::Pending
+                        && item.tier == agent_core::kinds::Tier::Worker)
+            })
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits

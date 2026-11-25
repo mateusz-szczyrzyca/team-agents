@@ -19,6 +19,15 @@ pub(super) enum WorkspaceUse {
     Retained,
 }
 
+/// Whether startup ownership reconciliation permits worker dispatch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum RequestRecovery {
+    /// Ownership is reconciled, or this owner has not begun startup recovery.
+    Ready,
+    /// The bus must become available before worker requests can be dispatched.
+    Pending,
+}
+
 impl Owner {
     /// Records an owned run's declared ending or interruption before ordinary task settlement.
     pub(super) async fn settle_owned_run(
@@ -87,6 +96,26 @@ impl Owner {
             self.observe_owned_request(task, run_id, ending, summary).await?
         };
         Ok(owned)
+    }
+
+    /// Retries startup reconciliation without making a bus outage fatal to unrelated tasks.
+    pub(super) async fn retry_owned_recovery(&mut self) -> Result<(), OwnerError> {
+        if self.request_recovery == RequestRecovery::Ready {
+            return Ok(());
+        }
+        match self.recover_owned_requests().await {
+            Ok(()) => self.request_recovery = RequestRecovery::Ready,
+            Err(OwnerError::RequestBus(error)) => {
+                // Worker dispatch remains fenced until a later look reconciles every saved attempt.
+                tracing::warn!(
+                    event = agent_core::log::LogEvent::BusDown.as_str(),
+                    error = %agent_runtime::process::error_chain(&error),
+                    "owned request recovery is waiting for the bus"
+                );
+            }
+            Err(error) => return Err(error),
+        }
+        Ok(())
     }
 
     /// Reconciles durable owned attempts before the queue may dispatch a replacement.
