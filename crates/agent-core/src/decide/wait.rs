@@ -128,8 +128,16 @@ pub fn provider_line(agent: &AgentName, until: &str) -> String {
 
 /// The wait line of a round whose `task` the human stopped, at `stopped_at` as the reader is shown it when it is known.
 #[must_use]
-pub fn resume_line(task: &TaskId, _stopped_at: Option<&str>) -> String {
-    Waiting::Resume.text().replace("{{task}}", task.as_str())
+pub fn resume_line(task: &TaskId, stopped_at: Option<&str>) -> String {
+    match stopped_at {
+        Some(at) => Waiting::Resume
+            .text()
+            .replace("{{task}}", task.as_str())
+            .replace("{{at}}", at),
+        None => {
+            include_str!("../../../../prompts/harness/pr/wait-resume-undated.md").replace("{{task}}", task.as_str())
+        }
+    }
 }
 
 impl Waiting {

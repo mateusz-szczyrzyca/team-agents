@@ -121,7 +121,16 @@ impl Zone {
     /// that shows a moment too far from now for the time of the day to tell it.
     #[must_use]
     pub fn local_minute(&self, at: Timestamp) -> String {
-        self.clock_minute(at)
+        let (local, _) = self.localized(at);
+        let date = local.date();
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            date.year(),
+            u8::from(date.month()),
+            date.day(),
+            local.hour(),
+            local.minute()
+        )
     }
 
     /// Formats the timestamp that ends a daemon `waiting` line (`..., next try <timestamp>`, `..., owed by the lead since <timestamp>`) in

@@ -8,7 +8,7 @@ use agent_core::status::TaskStatus;
 use crate::daemon::owner::Owner;
 use crate::daemon::settle::limit_of;
 
-/// How far ahead the return of a refused agent is shown with its date: nearer than this, the time of the day tells it.
+/// How far from now a moment of a wait line is shown with its date: nearer than this, the time of the day tells it.
 const SAME_DAY: time::Duration = time::Duration::hours(24);
 
 /// A task of a round that its provider refused: its agent and the moment the agent returns.
@@ -66,14 +66,17 @@ impl Owner {
         Some(ProviderPause { agent, until })
     }
 
-    /// The wait line of a round that waits at the provider: the agent and the time it returns, in the host's zone, with the
-    /// date when it is more than a day away.
+    /// The wait line of a round that waits at the provider: the agent and the time it returns.
     pub(in crate::daemon::owner) fn provider_line(&self, pause: &ProviderPause, now: Timestamp) -> String {
-        let until = if pause.until.as_utc() - now.as_utc() < SAME_DAY {
-            self.parts.zone.clock_minute(pause.until)
-        } else {
-            self.parts.zone.stamp_minute(pause.until)
-        };
-        agent_core::decide::wait::provider_line(&pause.agent, &until)
+        agent_core::decide::wait::provider_line(&pause.agent, &self.local_moment(pause.until, Some(now)))
+    }
+
+    /// `at` as the host's zone shows it in a wait line, with no offset: the time of the day when it is less than a day from
+    /// `now`, and with its date otherwise, or when `now` is not known.
+    pub(in crate::daemon::owner) fn local_moment(&self, at: Timestamp, now: Option<Timestamp>) -> String {
+        match now {
+            Some(now) if (at.as_utc() - now.as_utc()).abs() < SAME_DAY => self.parts.zone.clock_minute(at),
+            Some(_) | None => self.parts.zone.local_minute(at),
+        }
     }
 }
