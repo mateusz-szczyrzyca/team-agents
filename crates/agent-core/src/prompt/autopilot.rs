@@ -86,6 +86,8 @@ pub enum AutopilotPrompt {
     PrUnpushedBase,
     /// The steps of the round's plans that workers did, as the harness lists them.
     PrWorkerSteps,
+    /// The steps of the round's plans whose requests for a worker came back to the requester, as the harness lists them.
+    PrReturnedSteps,
     /// Durable split identity, approval authority and executor.
     PrSplit,
     /// The lead's instructions after GitHub refused an approved pull request for a conflict with its base.
@@ -296,6 +298,7 @@ impl AutopilotPrompt {
         Self::PrAllowedBeforehand,
         Self::PrUnpushedBase,
         Self::PrWorkerSteps,
+        Self::PrReturnedSteps,
         Self::PrSplit,
         Self::PrMergeConflict,
         Self::PrMergeConflictAsk,
@@ -462,6 +465,7 @@ impl AutopilotPrompt {
             Self::PrAllowedBeforehand => "harness/pr/allowed-beforehand.md",
             Self::PrUnpushedBase => "harness/pr/unpushed-base.md",
             Self::PrWorkerSteps => "harness/pr/worker-steps.md",
+            Self::PrReturnedSteps => "harness/pr/returned-steps.md",
             Self::PrSplit => "harness/pr/split.md",
             Self::PrMergeConflict => "harness/pr/merge-conflict.md",
             Self::PrMergeConflictAsk => "harness/pr/merge-conflict-ask.md",
@@ -611,7 +615,7 @@ impl AutopilotPrompt {
             Self::PrSize => &["size"],
             Self::PrAllowedBeforehand => &["paths"],
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
-            Self::PrWorkerSteps => &["steps"],
+            Self::PrWorkerSteps | Self::PrReturnedSteps => &["steps"],
             Self::PrSplit => &["split"],
             Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes"],
             Self::PublishFailed => &["branch", "reason"],

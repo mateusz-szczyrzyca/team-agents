@@ -184,3 +184,200 @@ async fn a_bus_that_does_not_list_the_requests_at_the_first_try_delays_the_publi
         "the human is told that the harness tries again: {told:?}"
     );
 }
+
+/// The line the section of the returned steps holds for the first request of a test.
+const RETURNED_LINE: &str =
+    "- step 1.1 of claude-1's plan — returned to claude-1 (H1): Result: the worker ran out of turns.";
+
+/// Asks for a worker for each of `ends` as the agent of `task` does, through `agentbus serve` with a plan of steps 1.1,
+/// 1.2, ...: the request for the n-th step is given to the worker glm-1 and ends with the given status and summary, as
+/// when the worker returned its result or its run failed.
+async fn requests_that_end(rig: &Rig, task: &TaskId, ends: &[(DelegationStatus, &str)]) {
+    let agent = rig.home.root().join("accepting-agent");
+    std::fs::write(&agent, ACCEPTING_AGENT).unwrap();
+    std::fs::set_permissions(&agent, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let worktree = rig.worktree(task);
+    let plan = rig.home.root().join("plan.md");
+    std::fs::write(&plan, "Do it.\n\n1. Work\n[>] 1.1 Write it\n[ ] 1.2 Write it again\n").unwrap();
+    let bus = bus(rig);
+    for (index, (status, summary)) in ends.iter().enumerate() {
+        if index > 0 {
+            let rating = format!(
+                "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"delegation_feedback\",\"arguments\":{{\"id\":\"H{index}\",\"verdict\":\"used\"}}}}}}\n"
+            );
+            let rated = through_serve(rig, task, &plan, &agent, &rating);
+            assert!(!rated.contains("isError\":true"), "{rated}");
+        }
+        let call = format!(
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"delegate\",\"arguments\":{{\"goal\":\"the work\",\"workdir\":\"{}\",\"steps\":\"write it\",\"returns\":\"the file\",\"for\":\"1.{}\",\"files\":\"work-1.txt\",\"check\":\"exists work-1.txt\",\"do\":\"Write it.\"}}}}}}\n",
+            worktree.display(),
+            index + 1
+        );
+        let answer = through_serve(rig, task, &plan, &agent, &call);
+        assert!(answer.contains(&format!("Request H{} accepted", index + 1)), "{answer}");
+        let given = bus.helper_next(&"glm-1".parse().unwrap()).await.unwrap().unwrap();
+        bus.helper_set(
+            given.id,
+            &DelegationUpdate {
+                status: Some(*status),
+                task: None,
+                summary: Some((*summary).to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+    }
+}
+
+/// What `agentbus serve` of the solo agent's task answers to the line `call` on its input.
+fn through_serve(rig: &Rig, task: &TaskId, plan: &Path, agent: &Path, call: &str) -> String {
+    let mut serve = Command::new(crate::daemon::owner::fixture::agentbus_binary())
+        .args(["serve", "--agent", "claude-1", "--task", task.as_str(), "--dir"])
+        .arg(rig.home.root().join("bus"))
+        .arg("--home")
+        .arg(rig.home.root())
+        .args(["--repo", "example", "--branch"])
+        .arg(format!("agents/claude-1/{task}"))
+        .arg("--worktree")
+        .arg(rig.worktree(task))
+        .arg("--plan")
+        .arg(plan)
+        .arg("--agent-cmd")
+        .arg(agent)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    std::io::Write::write_all(&mut serve.stdin.take().unwrap(), call.as_bytes()).unwrap();
+    String::from_utf8(serve.wait_with_output().unwrap().stdout).unwrap()
+}
+
+/// The body of the pull request the daemon opens for a round of the solo agent whose requests end as `ends`.
+async fn body_after_requests(ends: &[(DelegationStatus, &str)]) -> String {
+    let mut rig = holding_rig().await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let release = rig.home.root().join("fake-scripts/release");
+    rig.wait_for("the solo run to hold", || {
+        Path::new(&format!("{}-ready", release.display())).exists()
+    })
+    .await;
+    requests_that_end(&rig, &tasks[0], ends).await;
+    std::fs::write(&release, "go\n").unwrap();
+    rig.item_where("1.1", "in review", |phase| {
+        matches!(
+            phase,
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+        )
+    })
+    .await;
+    let opened = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls"));
+    rig.stop().await.unwrap();
+    assert_eq!(opened.len(), 1, "one pull request is opened");
+    let request: serde_json::Value = serde_json::from_str(&opened[0].body).unwrap();
+    request["body"].as_str().unwrap().to_owned()
+}
+
+#[tokio::test]
+async fn a_round_with_a_returned_request_for_a_step_is_published_with_the_steps_returned_to_their_requesters() {
+    let body = body_after_requests(&[(
+        DelegationStatus::Failed,
+        "Result: the worker ran out of turns.\nMore text.",
+    )])
+    .await;
+
+    assert!(body.contains("## Steps returned to their requesters"), "{body}");
+    assert!(body.contains(RETURNED_LINE), "{body}");
+    assert!(!body.contains("## Steps done by a worker"), "{body}");
+    assert!(!body.contains("More text."), "{body}");
+}
+
+#[tokio::test]
+async fn a_round_with_a_done_and_a_returned_request_is_published_with_both_sections_the_worker_steps_first() {
+    let body = body_after_requests(&[
+        (DelegationStatus::Done, "Result: written."),
+        (DelegationStatus::Failed, "Result: the worker ran out of turns."),
+    ])
+    .await;
+
+    let done = body.find("## Steps done by a worker").expect(&body);
+    let returned = body.find("## Steps returned to their requesters").expect(&body);
+    assert!(done < returned, "{body}");
+    assert!(body.contains(STEP_LINE), "{body}");
+    assert!(
+        body.contains(&RETURNED_LINE.replace("step 1.1", "step 1.2").replace("(H1)", "(H2)")),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn a_round_without_a_returned_request_is_published_without_the_section() {
+    let body = body_after_requests(&[(DelegationStatus::Done, "Result: written.")]).await;
+
+    assert!(!body.contains("Steps returned to their requesters"), "{body}");
+}
+
+/// Makes the daemon's bus of `rig` refuse the first call of the subcommand `refused`, as a bus that is not there for a
+/// moment.
+fn refuse_first_call_of(rig: &Rig, refused: &str) {
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let real = crate::daemon::owner::fixture::agentbus_binary().display().to_string();
+    let flaky = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
+    assert!(config.contains(&format!("agentbus = \"{real}\"")), "{config}");
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace(
+            &format!("agentbus = \"{real}\""),
+            &format!("agentbus = \"{}\"", flaky.display()),
+        ),
+    )
+    .unwrap();
+    std::fs::write(rig.home.root().join("real-agentbus"), &real).unwrap();
+    std::fs::write(rig.home.root().join("flaky-bus-refuse-once"), refused).unwrap();
+}
+
+#[tokio::test]
+async fn a_bus_that_does_not_read_a_returned_request_at_the_first_try_delays_the_publication_and_the_section_is_kept() {
+    let mut rig = holding_rig().await;
+    refuse_first_call_of(&rig, "helper-get");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let release = rig.home.root().join("fake-scripts/release");
+    rig.wait_for("the solo run to hold", || {
+        Path::new(&format!("{}-ready", release.display())).exists()
+    })
+    .await;
+    requests_that_end(
+        &rig,
+        &tasks[0],
+        &[(DelegationStatus::Failed, "Result: the worker ran out of turns.")],
+    )
+    .await;
+    std::fs::write(&release, "go\n").unwrap();
+    rig.item_where("1.1", "in review", |phase| {
+        matches!(
+            phase,
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+        )
+    })
+    .await;
+    let opened = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls"));
+    rig.stop().await.unwrap();
+
+    assert_eq!(opened.len(), 1, "one pull request is opened");
+    let request: serde_json::Value = serde_json::from_str(&opened[0].body).unwrap();
+    let body = request["body"].as_str().unwrap();
+    assert!(
+        !rig.home.root().join("flaky-bus-refuse-once").exists(),
+        "the first helper-get was refused"
+    );
+    assert!(body.contains(RETURNED_LINE), "{body}");
+    let told = rig.notifications();
+    assert!(
+        told.iter()
+            .any(|text| text.contains("cannot list the requests for workers")
+                && text.contains("The harness tries again by itself")),
+        "the human is told that the harness tries again: {told:?}"
+    );
+}
