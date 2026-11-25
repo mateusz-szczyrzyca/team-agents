@@ -181,6 +181,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         (LogEvent::TaskHandedOver, "task_handed_over", LogLevel::Info),
         (LogEvent::TaskWaitsForAgent, "task_waits_for_agent", LogLevel::Info),
         (LogEvent::WorkerRequestDamaged, "worker_request_damaged", LogLevel::Warn),
+        (LogEvent::CommitReminded, "commit_reminded", LogLevel::Info),
+        (LogEvent::CommitFollowed, "commit_followed", LogLevel::Info),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
