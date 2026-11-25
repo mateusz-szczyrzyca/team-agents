@@ -587,3 +587,25 @@ async fn the_order_of_a_task_that_is_stopped_or_paused_is_dropped() {
     assert!(owner.commit_cuts.is_empty());
     assert!(owner.reasons.is_empty());
 }
+
+/// Runs a daemon whose run ignores the reminder to commit and is cut, and records the event the daemon logged for it,
+/// for the test that every log event has a production cause.
+pub(in crate::daemon::owner) async fn record_commit_cut(observed: &mut BTreeSet<LogEvent>) {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    assert!(
+        !logged(&daemon, LogEvent::CommitCut).is_empty(),
+        "commit_cut was not logged"
+    );
+    observed.insert(LogEvent::CommitCut);
+}
