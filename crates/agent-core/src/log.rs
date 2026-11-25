@@ -234,6 +234,8 @@ pub enum LogEvent {
     /// A run that ignored the reminder to commit for `[commit_reminder] cut_after` minutes was stopped, to be resumed in
     /// its session with the order to commit.
     CommitCut,
+    /// A request that no worker of the pool took for `[workers] wait_seconds` was failed and returned to its requester.
+    WorkerWaitReturned,
 }
 
 impl Keyword for LogEvent {
@@ -308,6 +310,7 @@ impl LogEvent {
             | Self::CommitFollowed
             | Self::WorkerRequestReturned
             | Self::WorkerRequestRequeued
+            | Self::WorkerWaitReturned
             | Self::ContextReminded
             | Self::CommitCut
             | Self::TaskHandedOver => LogLevel::Info,

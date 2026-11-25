@@ -43,6 +43,7 @@ pub mod team;
 
 pub mod wait;
 pub mod worker_result;
+pub mod worker_wait;
 
 /// Deterministic assignment of investigators to any team activity.
 pub mod investigator;

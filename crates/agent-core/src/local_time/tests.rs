@@ -288,3 +288,26 @@ fn waiting_lines_reformat_the_start_of_a_wait_into_the_zone() {
         "the lead's correction, owed by the lead since yesterday"
     );
 }
+
+#[test]
+fn a_clock_minute_is_the_hour_and_the_minute_in_the_zone_without_the_date() {
+    let at = stamp("2026-11-21T20:10:59Z");
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid")).clock_minute(at),
+        "21:10"
+    );
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid")).clock_minute(at),
+        "15:10"
+    );
+    assert_eq!(
+        Zone::Fixed(UtcOffset::from_hms(5, 30, 0).expect("valid")).clock_minute(at),
+        "01:40"
+    );
+    assert_eq!(
+        Zone::Lookup(central_european).clock_minute(stamp("2026-03-29T01:00:00Z")),
+        "03:00"
+    );
+    assert_eq!(Zone::Lookup(unknown).clock_minute(at), "20:10");
+    assert_eq!(Zone::Utc.clock_minute(at), "20:10");
+}

@@ -879,6 +879,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::CommitFollowed,
             LogEvent::ContextReminded,
             LogEvent::CommitCut,
+            LogEvent::WorkerWaitReturned,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1455,6 +1456,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     crate::daemon::owner::commit_reminder::tests::record_commit_events(&mut observed).await;
     crate::daemon::owner::context_reminder::tests::record_context_reminded(&mut observed).await;
     crate::daemon::owner::commit_reminder::tests::record_commit_cut(&mut observed).await;
+    crate::daemon::owner::teams::tests::worker_wait::record_worker_wait_returned(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();

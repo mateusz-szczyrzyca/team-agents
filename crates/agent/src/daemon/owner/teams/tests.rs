@@ -3535,3 +3535,5 @@ impl Fixture {
         std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
     }
 }
+
+pub(in crate::daemon::owner) mod worker_wait;

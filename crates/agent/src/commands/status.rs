@@ -19,6 +19,7 @@ use agent_core::review_findings::Severity;
 use agent_core::state::{Round, RoundLife, RunState, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{AgentBus, AgentBusError, HelperEntry, HelperRecord};
+use agent_runtime::clock::SystemClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::history::{ReadError, Reader};
 use agent_runtime::process::error_chain;
@@ -479,13 +480,19 @@ async fn requests_of(activity: &Activity, teams: &[TeamSummary], detail: Detail)
     match detail {
         Detail::Short => requests::Told::default(),
         Detail::Tasks => {
-            requests::told(
-                &activity.requests,
-                teams
-                    .iter()
-                    .flat_map(|team| team.members.iter().map(|member| &member.task)),
-            )
-            .await
+            let tasks = teams
+                .iter()
+                .flat_map(|team| team.members.iter().map(|member| &member.task));
+            match Timestamp::now(&SystemClock) {
+                Ok(now) => {
+                    let shown = requests::Shown {
+                        now,
+                        zone: activity.zone,
+                    };
+                    requests::told_waiting(&activity.requests, tasks, &activity.home, shown).await
+                }
+                Err(error) => requests::told(&requests::Source::Unknown(error_chain(&error)), tasks).await,
+            }
         }
     }
 }

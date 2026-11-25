@@ -5,6 +5,18 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
+## 0.101.0 — 25.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] [agent-runtime] A request that no worker of the pool takes for `[workers] wait_seconds` (default 10 minutes) is answered `failed` and returned to its requester with the words `Nobody took your request H3 (step 2) for 10 minutes: no worker of the pool was free. Do the step yourself now.` The log event is `worker_wait_returned`.
+- [agent] `agent status` shows since when a queued request waits: `request H3  step 2  no worker yet  queued  waiting since 21:10 (12 min)`.
+
+### Enhancements
+- [agent-runtime] A history of version 27 is read and upgraded to version 28, which admits the new log event.
+
+### Configuration
+- [agent-core] new: `[workers] wait_seconds` (default `600`) — how long a request waits in the queue for a free worker of the pool, in seconds; `0` waits for ever. A file without the key gets the default.
+
 ## 0.100.0 — 25.11.2026 — PR #260
 
 ### Enhancements
