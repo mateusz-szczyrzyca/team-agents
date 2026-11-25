@@ -51,6 +51,21 @@ fn provider_records_have_their_expected_descriptions() {
             r#"{"type":"text","text":"hello"}"#,
             None,
         ),
+        (
+            "codex_turn_failed",
+            r#"{"type":"turn.failed","error":{"message":"Selected model is at capacity. Please try a different model."}}"#,
+            Some("an overload: Selected model is at capacity. Please try a different model."),
+        ),
+        (
+            "claude_seven_day",
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"seven_day"}}"#,
+            Some("a quota: rejected · seven_day"),
+        ),
+        (
+            "claude_request_rate",
+            r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","rateLimitType":"requests_per_minute"}}"#,
+            Some("a rate limit: rejected · requests_per_minute"),
+        ),
     ];
     for (name, line, expected) in cases {
         assert_eq!(describe(line).as_deref(), expected, "{name}");
