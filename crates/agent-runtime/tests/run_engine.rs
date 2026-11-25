@@ -523,7 +523,7 @@ mod run_engine {
             pause.until,
             after(time::Duration::hours(2) + time::Duration::minutes(1))
         );
-        assert!(pause.evidence.starts_with("a quota: 429"), "{pause:?}");
+        assert!(pause.evidence.starts_with("a quota: API Error: 429"), "{pause:?}");
         assert!(pause.evidence.ends_with(" · resets 2026-11-12T12:00:00Z"), "{pause:?}");
     }
 
@@ -572,7 +572,7 @@ mod run_engine {
     #[tokio::test]
     async fn a_claude_rejected_window_keeps_the_complete_result_evidence() {
         let env = env().await;
-        let run = env.finished("rate-limit-window").await;
+        let run = env.finished("rejected-window-fixture").await;
         assert_eq!(run.classified.end, RunEnd::RateLimited);
         assert_eq!(
             run.classified.pause.as_ref().unwrap().kind,

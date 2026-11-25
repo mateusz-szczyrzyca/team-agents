@@ -290,6 +290,10 @@ case $scenario in
     result true 'API Error: 429 rate limit exceeded'
     exit 1
     ;;
+  rejected-window-fixture)
+    cat "$(dirname -- "$0")/../cli/claude/rejected-window.jsonl"
+    exit 1
+    ;;
   rate-limit-window)
     init
     printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794484800,"rateLimitType":"five_hour"},"session_id":"%s"}\n' "$session"
