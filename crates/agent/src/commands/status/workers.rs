@@ -86,8 +86,14 @@ pub(crate) fn served(record: &HelperRecord, span: Span, zone: Zone) -> Served {
 /// The line of `served` padded to `columns`, as the lines of the team's tasks are: the task, the role `worker`, the
 /// worker and its step, what became of the result and when it worked.
 pub(super) fn line(served: &Served, columns: Columns) -> String {
-    let _ = (served, columns, TASK_WIDTH, Role::Worker);
-    String::new()
+    let (role_width, agent_width) = (columns.role(), columns.agent());
+    format!(
+        "  {:<TASK_WIDTH$}  {:<role_width$}  {:<agent_width$}  {}",
+        served.task,
+        Role::Worker.to_string(),
+        served.agent,
+        served.state
+    )
 }
 
 /// When the work of `span` went on, in `zone`: one date when it started and ended on the same day; `since` for work
