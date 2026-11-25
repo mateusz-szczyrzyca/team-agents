@@ -2108,7 +2108,7 @@ impl Owner {
         });
         self.parts.state.record_limit_refusals(task.clone(), refusals);
         let agent: AgentName = located.agent.parse()?;
-        self.parts.state.record_refused_until(agent, Some(pause.until));
+        self.parts.state.keep_refused_until(agent, pause.until);
         let decision = match answer {
             Decision::Pause => "pause",
             Decision::ChangeAgent => "change_agent",
