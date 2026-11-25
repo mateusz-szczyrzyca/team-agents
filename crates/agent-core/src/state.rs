@@ -390,6 +390,16 @@ impl State {
             .collect()
     }
 
+    /// The agents refused by their provider at `now` with the time each returns, in name order.
+    #[must_use]
+    pub fn refusals_at(&self, now: Timestamp) -> Vec<(crate::ids::AgentName, Timestamp)> {
+        self.refused_agents
+            .iter()
+            .filter(|(_, until)| now < **until)
+            .map(|(agent, until)| (agent.clone(), *until))
+            .collect()
+    }
+
     /// Records until when an agent is refused by its provider, or forgets the refusal with `None`.
     pub fn record_refused_until(&mut self, agent: crate::ids::AgentName, until: Option<Timestamp>) {
         match until {
