@@ -26,3 +26,86 @@ async fn every_non_refusal_run_end_clears_the_previous_count() {
         assert_eq!(owner.parts.state.limit_refusals(&task(1)), 0);
     }
 }
+
+#[tokio::test]
+async fn ordinary_ladder_takeover_skips_an_idle_refused_agent() {
+    use super::takeover::Takeover;
+    use agent_core::decide::ladder::Trouble;
+    use agent_core::kinds::Role;
+
+    let mut state = solo_state();
+    state.keep_refused_until("claude-2".parse().unwrap(), at(10));
+    let daemon = Daemon::new(&state, None);
+    daemon.configure("[replacement]\nagents = [\"claude-2\"]\n");
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    assert_eq!(
+        owner.take_over(&task(1), Role::Solo, Trouble::NoStatus).unwrap(),
+        Takeover::Nobody
+    );
+    assert_eq!(
+        owner.parts.state.find_task(&task(1)).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
+
+#[tokio::test]
+async fn reused_task_waiting_for_a_fresh_assignment_observes_the_cooldown() {
+    use crate::daemon::team::Why;
+
+    let mut state = solo_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(0), None).unwrap();
+        member.end_run(at(1), RunEnd::Stopped).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    state.keep_refused_until("claude-1".parse().unwrap(), at(10));
+    let daemon = Daemon::new(&state, None);
+    daemon.scenario(1, "done");
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.reasons.insert(task(1), Why::Assigned("1.1".parse().unwrap()));
+
+    owner.start_queued().await.unwrap();
+
+    assert_eq!(owner.parts.state.find_task(&task(1)).unwrap().member.runs().len(), 1);
+    assert_eq!(owner.runs.len(), 0);
+}
+
+#[tokio::test]
+async fn recorded_worker_refusal_blocks_pool_requests_until_return() {
+    use super::fixture::pair_state;
+    use std::os::unix::fs::PermissionsExt;
+
+    let scripts = tempfile::tempdir().unwrap();
+    let bus = scripts.path().join("bus");
+    let claimed = scripts.path().join("claimed");
+    std::fs::write(&bus, r#"#!/bin/sh
+case "$*" in
+ *helper-list*) printf '%s\n' '[{"id":1,"from":"claude-1","from_task":"task-20261122-120000-aaaa","repo":"team-agents","branch":"main","status":"queued"}]' ;;
+ *helper-next*) touch "$(dirname "$0")/claimed" ;;
+ *) exit 1 ;;
+esac
+"#).unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let mut state = pair_state();
+    state.keep_refused_until("glm-1".parse().unwrap(), at(10));
+    let daemon = Daemon::new(&state, Some(&bus));
+    let config = std::fs::read_to_string(daemon.home.config_file()).unwrap();
+    std::fs::write(
+        daemon.home.config_file(),
+        config.replace(
+            "[tiers]",
+            "[agents.glm-1]\ncli = \"claude\"\n[tiers]\nworkers = [\"glm-1\"]",
+        ),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.serve_pool_requests().await.unwrap();
+    assert_eq!(claimed.exists(), false);
+    daemon.clock.advance(time::Duration::seconds(11));
+    owner.serve_pool_requests().await.unwrap();
+    assert_eq!(claimed.exists(), true);
+}
