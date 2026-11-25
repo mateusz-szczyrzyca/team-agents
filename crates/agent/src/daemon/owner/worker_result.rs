@@ -597,7 +597,19 @@ impl Owner {
         let task_dir = self.parts.store.home().task_dir(worker_task);
         // Kept first, so that an answer the bus cannot take now is tried again at the next look.
         match write_pending(&task_dir, &pending) {
-            Ok(()) => self.settle_one(&task_dir, pending, None).await,
+            Ok(()) => {
+                // The end is decided and kept here: `settle_one` answers it, and also replays a kept settlement after a
+                // restart, so it does not tell it.
+                if let Stage::Settled { checked, settlement } = &pending.stage {
+                    self.log_request_end(
+                        EndedRequest::from(&pending),
+                        checked.step.map(|step| step.to_string()),
+                        EndOutcome::Settled(settlement),
+                    )
+                    .await;
+                }
+                self.settle_one(&task_dir, pending, None).await
+            }
             Err(failure) => self.settle_unkept(&task_dir, pending, &failure).await,
         }
     }
