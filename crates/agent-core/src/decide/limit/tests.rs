@@ -2,6 +2,8 @@
 
 use time::Duration;
 
+use crate::state::RunEnd;
+
 use super::{Decision, Limit, Refusal, decide, next_refusals};
 
 /// A refusal of a rate limit or an overload, with `refusals` in a row and `retries` retries.
@@ -84,15 +86,18 @@ fn quota_without_a_named_reset_follows_the_retries() {
 
 #[test]
 fn refusals_in_a_row_are_counted_and_a_good_run_clears_them() {
-    let first = next_refusals(0, true);
+    let first = next_refusals(0, &RunEnd::RateLimited);
     assert_eq!(first, 1);
-    let second = next_refusals(first, true);
+    let second = next_refusals(first, &RunEnd::RateLimited);
     assert_eq!(second, 2);
-    assert_eq!(next_refusals(second, false), 0);
-    assert_eq!(decide(&rate(next_refusals(0, true), 1)), Decision::Pause);
+    assert_eq!(next_refusals(second, &RunEnd::Stopped), 0);
+    assert_eq!(
+        decide(&rate(next_refusals(0, &RunEnd::RateLimited), 1)),
+        Decision::Pause
+    );
 }
 
 #[test]
 fn the_count_saturates_instead_of_wrapping() {
-    assert_eq!(next_refusals(u32::MAX, true), u32::MAX);
+    assert_eq!(next_refusals(u32::MAX, &RunEnd::RateLimited), u32::MAX);
 }
