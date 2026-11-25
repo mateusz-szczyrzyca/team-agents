@@ -1064,7 +1064,7 @@ func (s *Server) delegateWith(request, context string, follows int64, named Dele
 			}
 			first.AnsweredBy = st.NextHelperID
 		}
-		h := &Helper{Recovery: len(caps) == 0, ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
+		h := &Helper{Recovery: true, ID: st.NextHelperID, From: s.me, FromTask: s.info.Task, Repo: s.info.Repo, Branch: s.info.Branch,
 			Worktree: s.info.Worktree, Request: request, Context: strings.TrimSpace(context), Status: HelperQueued, Created: Now(), Requires: caps, BaseSHA: sha,
 			FollowsUp: follows, Step: named.Step, Files: requestFiles(named.Files), Check: strings.TrimSpace(named.Check),
 			Doing: strings.TrimSpace(named.Doing)}

@@ -324,7 +324,12 @@ impl Owner {
         };
         // The pending must belong to this team and name the record's worker, task and requester before any
         // record path is used or the workspace is released; a mismatch is a damaged file.
-        if pending.worker != record.record().worker
+        if (pending.worker != record.record().worker
+            && !(self
+                .owned_journal(&pending.requester_task, pending.request)
+                .await?
+                .is_some()
+                && self.owns_observed_result(&pending).await?))
             || pending.team != *team
             || pending.worker_task != record.record().worker_task
             || pending.requester != record.record().requester
@@ -681,6 +686,9 @@ impl Owner {
                     return Ok(());
                 }
                 Stage::Settled { checked, settlement } => {
+                    // The durable final settlement carries the retry causes; its notice must not expose a live try.
+                    // Keep the pending settlement until delivery succeeds so a crash can still replay it.
+                    Self::drop_try(task_dir, pending.request);
                     if self.answer_requester(&pending, checked, settlement).await? {
                         self.answered_requests.insert(pending.request);
                         return self.drop_settled(task_dir, &pending, workspace).await;

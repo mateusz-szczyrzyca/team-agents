@@ -173,3 +173,34 @@ async fn failed_bus_claim_leaves_the_unstarted_request_dispatchable() {
         assert_eq!(journal.current_workspace(), &workspace);
     }
 }
+
+#[tokio::test]
+async fn unavailable_bus_defers_startup_request_recovery_until_the_next_look() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let program = scratch.path().join("recoverable-bus");
+    let marker = scratch.path().join("listed");
+    let daemon = Daemon::new(&pair_state(), Some(&program));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let recovered = owner.recover().await;
+    assert!(
+        matches!(recovered, Ok(())),
+        "a bus outage must defer recovery: {recovered:?}"
+    );
+    assert!(!marker.exists());
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\ncase \"$1\" in\nhelper-list) echo listed >> '{}'; echo '[]';;\n*) exit 1;;\nesac\n",
+            marker.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    owner.looks.clear();
+    owner.team_life().await.unwrap();
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "listed\n");
+    owner.team_life().await.unwrap();
+    assert_eq!(std::fs::read_to_string(&marker).unwrap(), "listed\n");
+}

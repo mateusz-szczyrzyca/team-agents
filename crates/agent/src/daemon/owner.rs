@@ -566,6 +566,8 @@ pub(super) struct Owner {
     outbox: VecDeque<Outbound>,
     /// The requests for workers that are being served, by the task of the worker.
     serving: HashMap<TaskId, Served>,
+    /// Startup reconciliation fences worker dispatch while its bus operations wait to be retried.
+    request_recovery: owned_request::RequestRecovery,
     /// Pool bookkeeping is boxed to keep owner lifecycle futures compact.
     pool_dispatch: Box<PoolDispatch>,
     /// The teams that are finished and closed: the human was told.
@@ -704,6 +706,7 @@ impl Owner {
             wake_notes: HashMap::new(),
             outbox: VecDeque::new(),
             serving: HashMap::new(),
+            request_recovery: owned_request::RequestRecovery::Ready,
             pool_dispatch: Box::default(),
             closed: HashSet::new(),
             reminders: reminder::Backlog::default(),
@@ -914,6 +917,8 @@ impl Owner {
             self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
             self.save().await?;
         }
+        self.request_recovery = owned_request::RequestRecovery::Pending;
+        self.retry_owned_recovery().await?;
         self.recover_plan_checks().await?;
         Ok(())
     }
@@ -925,7 +930,12 @@ impl Owner {
             .state
             .queued_tasks()
             .into_iter()
-            .filter(|item| !self.in_flight.contains(&item.task) && !self.pending_removals.contains(&item.task))
+            .filter(|item| {
+                !(self.in_flight.contains(&item.task)
+                    || self.pending_removals.contains(&item.task)
+                    || self.request_recovery == owned_request::RequestRecovery::Pending
+                        && item.tier == agent_core::kinds::Tier::Worker)
+            })
             .collect();
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits
@@ -1286,40 +1296,7 @@ impl Owner {
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
-            let (ending, summary) = match &outcome {
-                Outcome::Verdict(verdict) => match verdict.as_ref() {
-                    RunVerdict::Finished(run) => {
-                        let ending = match &run.classified.end {
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Done,
-                            } => agent_core::decide::worker_result::WorkerEnding::Done,
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Failed,
-                            } => agent_core::decide::worker_result::WorkerEnding::Failed,
-                            RunEnd::Reported {
-                                outcome: RunOutcome::Questions,
-                            } => agent_core::decide::worker_result::WorkerEnding::Cannot,
-                            RunEnd::Reported { .. }
-                            | RunEnd::NoStatus { .. }
-                            | RunEnd::QuotaExhausted { .. }
-                            | RunEnd::RateLimited
-                            | RunEnd::Hung
-                            | RunEnd::TurnLimit
-                            | RunEnd::Stopped => agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                        };
-                        (ending, run.final_message.clone().unwrap_or_default())
-                    }
-                    RunVerdict::Interrupted { .. } => (
-                        agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                        "worker interrupted".to_owned(),
-                    ),
-                },
-                Outcome::Failed(reason) => (
-                    agent_core::decide::worker_result::WorkerEnding::NoStatus,
-                    reason.clone(),
-                ),
-            };
-            owned = self.observe_owned_request(&task, &run_id, ending, summary).await?;
+            owned = self.settle_owned_run(&task, &run_id, &outcome).await?;
         }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);

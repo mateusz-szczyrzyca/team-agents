@@ -518,7 +518,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
   stages; an unknown field is refused, and a file that is refused, cut short or cannot be read is set aside as
   `worker-request-<n>.json.damaged` (kept, never read again), logged (`worker_request_damaged`, with its name) and its request is
   answered as a wrong result, while the other files are read. `base` is the commit the worker's worktree was at when the request was given to it. A task directory without such files reads as before.
-- **An explicitly prepared recovery journal** — optional `tasks/<requester task>/worker-recovery-<n>.json`.
+- **An opt-in recovery journal** — optional `tasks/<requester task>/worker-recovery-<n>.json`.
   New local requests carry an optional bus `recovery` marker; the daemon prepares their journal before launching.
   Older requests lack that marker and retain their previous handling. An optional bus `attempt_run` binds the current execution.
   Absence means legacy handling, including for open requests from an older version. Loading never creates a journal.
@@ -534,6 +534,11 @@ Each is derived or lives elsewhere, so that there is one place for it:
   change ownership. Snapshots name the current attempt's worker task, round, nonzero reference number, commit and parent head;
   they refer to the existing `refs/agents/snapshots` facility rather than copying worktree contents into JSON.
   The original workspace identity remains immutable; a wrong-result retry can assign a new workspace and worker task.
+  An interrupted execution reuses its current workspace: its original worker still defines the branch while
+  `started.worker` and the bus identify the replacement worker. Startup replays unfinished interruption updates
+  and repairs claims saved before their journal assignment; queued requests keep their last provider-failure preference.
+  A bus outage defers startup reconciliation until a later look. Worker dispatch waits for reconciliation;
+  unrelated tasks continue, and the outage is logged as `bus_down`.
   Final settlement uses an ownership-checked bus receipt in the message log. Loading repairs a state save interrupted
   after the receipt was appended, without publishing another notice. Stale ownership cannot settle the request.
   The bus state optionally stores `owned_receipt_offset`, the byte count already consumed from its append-only

@@ -853,3 +853,43 @@ fn retry_journal_retains_check_and_ending_causes_instead_of_a_done_failure() {
         assert_eq!(super::rejection_causes(&value, ending, 0, 0), want);
     }
 }
+
+#[tokio::test]
+async fn durable_final_settlement_removes_its_try_before_publishing_the_answer() {
+    use std::os::unix::fs::PermissionsExt;
+
+    use super::super::fixture::{Daemon, pair_state};
+    use agent_runtime::worker_request::{Settlement, Stage, Try, try_path, write_pending, write_try};
+
+    let scratch = tempfile::tempdir().unwrap();
+    let program = scratch.path().join("observe-answer");
+    let observations = scratch.path().join("observations");
+    let daemon = Daemon::new(&pair_state(), Some(&program));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let mut pending = a_matching_pending();
+    let task_dir = daemon.home.task_dir(&pending.worker_task);
+    std::fs::create_dir_all(&task_dir).unwrap();
+    let retry = try_path(&task_dir, pending.request);
+    pending.stage = Stage::Settled {
+        checked: Box::new(checked(&[], &[], None)),
+        settlement: Settlement::Returned {
+            reasons: vec!["try 1: empty result; try 2: worker failed".to_owned()],
+        },
+    };
+    write_pending(&task_dir, &pending).unwrap();
+    write_try(&task_dir, pending.request, &Try::first()).unwrap();
+    std::fs::write(
+        &program,
+        format!(
+            "#!/bin/sh\nif test -e '{}'; then echo present; else echo absent; fi >> '{}'\nexit 0\n",
+            retry.display(),
+            observations.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    owner.settle_one(&task_dir, pending, None).await.unwrap();
+
+    assert_eq!(std::fs::read_to_string(observations).unwrap(), "absent\nabsent\n");
+}
