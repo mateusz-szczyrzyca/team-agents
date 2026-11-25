@@ -24,7 +24,8 @@ impl Owner {
     /// The pause of the provider that the idle `round` waits for, or `None` when it waits for anybody else.
     ///
     /// A task is paused by its provider when its last run ended refused, the task is paused and its agent is still refused at
-    /// `now`: a pause the human asked for ends its run another way, and a refusal that is over holds nothing. The round
+    /// `now`: a pause the human asked for ends its run another way or comes after the refusal, and a refusal that is over
+    /// holds nothing. The round
     /// waits at the provider only when every task that holds it is paused so; a question that is open or a task that is
     /// stopped or failed is the human's. A reviewer whose review is no longer asked holds nothing.
     pub(in crate::daemon::owner) fn provider_pause(
@@ -54,7 +55,10 @@ impl Owner {
 
     /// The pause of `member` by its provider at `now`, or `None` when it is paused for another reason.
     fn refused_pause(&self, member: &Member, now: Timestamp) -> Option<ProviderPause> {
-        if member.status() != TaskStatus::Paused || member.open_question().is_some() {
+        if member.status() != TaskStatus::Paused
+            || member.open_question().is_some()
+            || self.human_pauses.contains(member.task())
+        {
             return None;
         }
         let Some(RunState::Ended { at, end }) = member.runs().last().map(agent_core::state::Run::state) else {

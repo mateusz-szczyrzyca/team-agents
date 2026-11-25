@@ -1345,7 +1345,10 @@ async fn a_reviewer_unpaused_and_paused_again_by_the_human_waits_for_the_human()
     daemon.clock.advance(time::Duration::seconds(60));
     let (mut owner, _sinks) = daemon.bare_owner().await;
     let target = agent_core::protocol::Target::Task(task(4));
-    for steer in [crate::daemon::control::Steer::Unpause, crate::daemon::control::Steer::Pause] {
+    for steer in [
+        crate::daemon::control::Steer::Unpause,
+        crate::daemon::control::Steer::Pause,
+    ] {
         owner
             .control_request(&agent_core::protocol::Client::Cli, steer, &target)
             .await

@@ -202,6 +202,13 @@ impl Owner {
         // What waited for a time or for a hang count that no longer applies: the human decided.
         self.wakes.remove(task);
         self.hangs.remove(task);
+        // A pause is the human's own from here on, whatever refusal the last run of the task ended with; any other control
+        // moves the task out of it.
+        if steer == Steer::Pause {
+            self.human_pauses.insert(task.clone());
+        } else {
+            self.human_pauses.remove(task);
+        }
         // A stopped task starts again with the whole task, not with a reason it was given before it was stopped.
         if steer == Steer::Stop {
             self.reasons.remove(task);
