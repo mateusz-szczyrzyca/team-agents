@@ -11,7 +11,6 @@ use crate::state::Timestamp;
 /// An agent the pick considers as a replacement for a refused task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
-#[cfg_attr(not(test), expect(unreachable_pub, reason = "wired in 4.2"))]
 pub struct Candidate<'a> {
     /// Its name.
     pub name: &'a AgentName,
@@ -28,7 +27,6 @@ pub struct Candidate<'a> {
 /// The result of picking a replacement for a refused task.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
-#[cfg_attr(not(test), expect(unreachable_pub, reason = "wired in 4.2"))]
 pub enum Pick<'a> {
     /// The agent that takes the task over.
     Agent(&'a AgentName),
@@ -39,6 +37,27 @@ pub enum Pick<'a> {
         /// The earliest time a refused candidate returns; `None` when none is refused.
         earliest_return: Option<Timestamp>,
     },
+}
+
+/// The facts a [`pick`] needs.
+#[derive(Debug, Clone)]
+pub struct Request<'a> {
+    /// The task's role.
+    pub role: Role,
+    /// The agents in the task's team.
+    pub team: &'a [AgentName],
+    /// The provider that refused the task's agent.
+    pub refused_provider: &'a str,
+    /// The agents of `[replacement] agents`, in the configured order.
+    pub replacement_agents: &'a [Candidate<'a>],
+    /// The agents of the tier `normal`, in the configured order.
+    pub normal_agents: &'a [Candidate<'a>],
+    /// The investigators, in name order.
+    pub investigators: &'a [Candidate<'a>],
+    /// The current time, for checking which agents are still refused.
+    pub now: Timestamp,
+    /// Whether `[replacement] replacements` is used up: no more takeovers are left.
+    pub replacements_exhausted: bool,
 }
 
 /// Picks the agent that takes over a task whose agent was refused by its provider.
@@ -64,39 +83,41 @@ pub enum Pick<'a> {
 /// Never.
 #[must_use]
 #[cfg_attr(not(test), expect(dead_code, reason = "wired in 4.2"))]
-#[cfg_attr(not(test), expect(unreachable_pub, reason = "wired in 4.2"))]
-pub fn pick<'a>(
-    role: Role,
-    team: &[AgentName],
-    refused_provider: &str,
-    replacement_agents: &'a [Candidate<'a>],
-    normal_agents: &'a [Candidate<'a>],
-    investigators: &'a [Candidate<'a>],
-    now: Timestamp,
-    replacements_exhausted: bool,
-) -> Pick<'a> {
+pub fn pick<'a>(request: &Request<'a>) -> Pick<'a> {
     let all_candidates: &[&[Candidate<'_>]] =
-        &[replacement_agents, normal_agents, investigators];
+        &[request.replacement_agents, request.normal_agents, request.investigators];
 
-    if replacements_exhausted {
+    if request.replacements_exhausted {
         return Pick::NoneFree {
-            earliest_return: earliest_refused_return(all_candidates, now),
+            earliest_return: earliest_refused_return(all_candidates, request.now),
         };
     }
 
     // First group: [replacement] agents.
-    if let Some(found) = find_fitting(role, team, refused_provider, replacement_agents, now) {
+    if let Some(found) = find_fitting(
+        request.role,
+        request.team,
+        request.refused_provider,
+        request.replacement_agents,
+        request.now,
+    ) {
         return Pick::Agent(found);
     }
 
     // Second group: the fallback.
-    let fallback = fallback_candidates(role, normal_agents, investigators);
-    if let Some(found) = find_fitting(role, team, refused_provider, fallback, now) {
+    let fallback = fallback_candidates(request.role, request.normal_agents, request.investigators);
+    if let Some(found) = find_fitting(
+        request.role,
+        request.team,
+        request.refused_provider,
+        fallback,
+        request.now,
+    ) {
         return Pick::Agent(found);
     }
 
     Pick::NoneFree {
-        earliest_return: earliest_refused_return(all_candidates, now),
+        earliest_return: earliest_refused_return(all_candidates, request.now),
     }
 }
 
@@ -119,20 +140,11 @@ fn find_fitting<'a>(
 
 /// Whether `candidate` may take the task over: not in the team, not refused, not of the same provider, not busy,
 /// and the right tier for `role`.
-fn fits(
-    role: Role,
-    team: &[AgentName],
-    refused_provider: &str,
-    candidate: &Candidate<'_>,
-    now: Timestamp,
-) -> bool {
+fn fits(role: Role, team: &[AgentName], refused_provider: &str, candidate: &Candidate<'_>, now: Timestamp) -> bool {
     if team.contains(candidate.name) {
         return false;
     }
-    if candidate
-        .refused_until
-        .is_some_and(|until| now < until)
-    {
+    if candidate.refused_until.is_some_and(|until| now < until) {
         return false;
     }
     if candidate.provider == refused_provider {

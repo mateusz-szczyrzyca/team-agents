@@ -5,7 +5,7 @@
 //! held it, the configured agents in order with their places and whether each is in a run, and `[replacement] mode`.
 //! It touches nothing; the daemon asks who holds it and records the answer.
 
-pub(crate) mod refused;
+pub mod refused;
 
 use crate::ids::AgentName;
 use crate::kinds::{Role, Tier};
