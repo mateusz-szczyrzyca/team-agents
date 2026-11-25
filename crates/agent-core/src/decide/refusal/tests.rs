@@ -10,7 +10,7 @@ fn builds_from_fields_with_quota_kind_for_quota_reason() {
 }
 
 #[test]
-fn builds_from_fields_with_rate_limit_kind_for_429_status() {
+fn builds_from_fields_with_overloaded_kind_for_429_with_engine_overloaded_code() {
     let summary = RefusalSummary::from_fields(
         "429",
         "Model busy, retry later",
@@ -20,7 +20,7 @@ fn builds_from_fields_with_rate_limit_kind_for_429_status() {
     assert_eq!(summary.status, "429");
     assert_eq!(summary.message, "Model busy, retry later");
     assert_eq!(summary.code, "engine_overloaded");
-    assert_eq!(summary.kind, RefusalKind::RateLimit);
+    assert_eq!(summary.kind, RefusalKind::Overloaded);
 }
 
 #[test]
