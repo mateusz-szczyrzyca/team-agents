@@ -22,7 +22,10 @@ pub struct CommitReminder {
 
 impl Default for CommitReminder {
     fn default() -> Self {
-        Self { lines: 0, minutes: 0 }
+        Self {
+            lines: DEFAULT_LINES,
+            minutes: DEFAULT_MINUTES,
+        }
     }
 }
 

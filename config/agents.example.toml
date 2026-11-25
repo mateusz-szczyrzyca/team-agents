@@ -291,6 +291,17 @@ session = "new"
 [session]
 max_context = 150000
 
+# --- Reminder to commit ---------------------------------------------------------------------------------------------
+# A run that holds many uncommitted lines and has made no commit for a while is told once, on the bus, to commit what is
+# finished. Both bounds must be reached; a commit re-arms the reminder. Only a solo agent, a coordinator and a member are
+# reminded, never a reviewer or a worker. A key at 0 turns the reminder off.
+#   lines     uncommitted lines (added plus removed) at which a run is reminded (default: 300)
+#   minutes   minutes since the later of the run's last commit and its start at which a run is reminded (default: 30)
+
+[commit_reminder]
+lines = 300
+minutes = 30
+
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
 # asked to merge the base into its branch, at most `conflict_passes` times per round; after that you are asked.
