@@ -1104,3 +1104,72 @@ gate = ["true"]
     let member = owner.parts.state.find_task(&task(number)).unwrap().member;
     assert_eq!(member.agent().name(), "inv-a");
 }
+
+#[tokio::test]
+async fn refusal_replacement_counts_active_pool_runs_against_capacity() {
+    use crate::daemon::owner::teams::Served;
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+    use agent_runtime::agentbus::RequestId;
+    use std::num::NonZeroU64;
+
+    let mut state = solo_state();
+    state.record_limit_refusals(task(1), 1);
+    let daemon = Daemon::new(&state, None);
+    write_config(
+        &daemon,
+        r#"
+[agents.claude-1]
+cli = "claude"
+[agents.codex-1]
+cli = "codex"
+[tiers]
+normal = ["claude-1", "codex-1"]
+[limits]
+runs_per_agent = 1
+[replacement]
+agents = ["codex-1"]
+replacements = 3
+[binaries]
+claude = "fake"
+codex = "fake"
+[repos.team-agents]
+base_branch = "main"
+gate = ["true"]
+"#,
+    );
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.serving.insert(
+        task(4),
+        Served {
+            request: RequestId::new(NonZeroU64::new(1).unwrap()),
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            worker: "codex-1".parse().unwrap(),
+            started: at(0),
+            base: None,
+        },
+    );
+    let located = owner.locate(&task(1)).unwrap();
+    let handled = owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: at(100),
+                reason: PauseReason::RateLimit,
+                kind: agent_core::decide::refusal::Kind::RateLimit,
+                evidence: String::new(),
+            }),
+            &RunEnd::RateLimited,
+            at(0),
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(handled.status, TaskStatus::Paused);
+    assert!(matches!(handled.notice, Notice::NoFreeAgent { .. }));
+    assert_eq!(
+        owner.parts.state.find_task(&task(1)).unwrap().member.agent().name(),
+        "claude-1"
+    );
+}
