@@ -12,10 +12,10 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent-core 0.109.0 — 25.11.2026 — PR #???
 
 ### New features
-- [agent-core] The pure function `pick()` in `decide/replacement/refused.rs` chooses the agent that takes over a task whose provider refused it (rate limit, overload or quota): from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, it returns the earliest time a refused agent returns. The daemon is wired in a later item (4.2); this release provides the choice.
+- [agent-core] A pure function chooses the agent that takes over a task whose provider refused it (rate limit, overload or quota): from `[replacement] agents` — of another provider, not in the task's team, not busy and not refused — then from the tier `normal` in its order. A coordinator's task goes to an investigator; a member's task never goes to a worker. When no agent fits, the earliest time a refused agent returns is given so the daemon knows when to try again. The daemon is wired in a later release; this one provides the choice.
 
 ### Configuration
-- [agent-core] new clarification: `[replacement] agents` — the list also provides the candidates for a refused-provider takeover, in the same order (to be wired in a later release).
+- [agent-core] changed: `[replacement] agents` (default `[]`) — the list now also serves a refused-provider takeover: each candidate is tried in order, skipping a name in the task's team, a busy one, a refused one or one of the refused provider; then the tier `normal` is tried in its order (for a coordinator, the investigators); a member never goes to a worker. The daemon is wired in a later release.
 
 ## agent 0.109.0 — 25.11.2026 — PR #271
 
