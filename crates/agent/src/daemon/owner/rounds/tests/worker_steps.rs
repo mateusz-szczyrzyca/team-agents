@@ -317,3 +317,67 @@ async fn a_round_without_a_returned_request_is_published_without_the_section() {
 
     assert!(!body.contains("Steps returned to their requesters"), "{body}");
 }
+
+/// Makes the daemon's bus of `rig` refuse the first call of the subcommand `refused`, as a bus that is not there for a
+/// moment.
+fn refuse_first_call_of(rig: &Rig, refused: &str) {
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let real = crate::daemon::owner::fixture::agentbus_binary().display().to_string();
+    let flaky = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/flaky-agentbus.sh");
+    assert!(config.contains(&format!("agentbus = \"{real}\"")), "{config}");
+    std::fs::write(
+        rig.home.config_file(),
+        config.replace(
+            &format!("agentbus = \"{real}\""),
+            &format!("agentbus = \"{}\"", flaky.display()),
+        ),
+    )
+    .unwrap();
+    std::fs::write(rig.home.root().join("real-agentbus"), &real).unwrap();
+    std::fs::write(rig.home.root().join("flaky-bus-refuse-once"), refused).unwrap();
+}
+
+#[tokio::test]
+async fn a_bus_that_does_not_read_a_returned_request_at_the_first_try_delays_the_publication_and_the_section_is_kept() {
+    let mut rig = holding_rig().await;
+    refuse_first_call_of(&rig, "helper-get");
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let release = rig.home.root().join("fake-scripts/release");
+    rig.wait_for("the solo run to hold", || {
+        Path::new(&format!("{}-ready", release.display())).exists()
+    })
+    .await;
+    requests_that_end(
+        &rig,
+        &tasks[0],
+        &[(DelegationStatus::Failed, "Result: the worker ran out of turns.")],
+    )
+    .await;
+    std::fs::write(&release, "go\n").unwrap();
+    rig.item_where("1.1", "in review", |phase| {
+        matches!(
+            phase,
+            ItemPhase::InReview { .. } | ItemPhase::Approved { .. } | ItemPhase::Done { .. }
+        )
+    })
+    .await;
+    let opened = rig.github.calls("POST", &format!("/repos/{SLUG}/pulls"));
+    rig.stop().await.unwrap();
+
+    assert_eq!(opened.len(), 1, "one pull request is opened");
+    let request: serde_json::Value = serde_json::from_str(&opened[0].body).unwrap();
+    let body = request["body"].as_str().unwrap();
+    assert!(
+        !rig.home.root().join("flaky-bus-refuse-once").exists(),
+        "the first helper-get was refused"
+    );
+    assert!(body.contains(RETURNED_LINE), "{body}");
+    let told = rig.notifications();
+    assert!(
+        told.iter()
+            .any(|text| text.contains("cannot list the requests for workers")
+                && text.contains("The harness tries again by itself")),
+        "the human is told that the harness tries again: {told:?}"
+    );
+}
