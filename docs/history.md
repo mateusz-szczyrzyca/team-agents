@@ -879,3 +879,7 @@ Its migration (`026-worker-request-recovery.sql`) preserves existing daemon logs
 cursors. The populated version-25 fixture `crates/agent-runtime/tests/fixtures/history-before-worker-recovery.sql`
 verifies that earlier log records remain readable with the recovery events. Older daemons refuse the upgraded
 history; keep a backup before upgrading if you need to return to an older daemon.
+
+History version 28 admits the `worker_wait_returned` information event. Its migration (`028-worker-wait.sql`) preserves
+existing daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
+daemon.
