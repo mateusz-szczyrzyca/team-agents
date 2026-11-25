@@ -27,6 +27,7 @@
 //! `[limits]` `quota_pause_minutes` or `rate_limit_pause_minutes` have passed, plus the margin. It is never longer than
 //! [`MAX_PAUSE`]. Hangs and everything else pause nothing; [`after_hang`] decides whether a hung run is resumed.
 
+use serde_json::Value;
 use time::error::ConversionRange;
 use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDateTime, UtcOffset};
 
@@ -223,9 +224,11 @@ const UNIX_TIME_DIGITS: usize = 10;
 /// What `limit reached|` is followed by in the final message of an old Claude Code: the Unix time of the reset.
 const UNIX_RESET_MARKER: &str = "limit reached|";
 
-/// What `"resetsat":` is followed by in a rejected Claude rate-limit window, in lower case as the lines are: the Unix time
-/// the window opens again.
-const RESETS_AT_MARKER: &str = "\"resetsat\":";
+/// The `type` of a Claude Code record about a rate-limit window.
+const RATE_LIMIT_EVENT: &str = "rate_limit_event";
+
+/// The `status` of a rate-limit window that refused the request.
+const REJECTED: &str = "rejected";
 
 /// Digits of a year in a date such as `Nov 12th, 2026`.
 const YEAR_DIGITS: usize = 4;
@@ -345,12 +348,18 @@ struct Limit {
     evidence: String,
     /// The lines of that kind, in lower case: where the reset time is looked for.
     lines: Vec<String>,
+    /// The moment a rejected Claude rate-limit window opens again, from its own field, whatever the reason; it is exact,
+    /// so it is preferred to any time the text says.
+    window: Option<UtcDateTime>,
 }
 
 /// The provider limit that `lines` — the error tail and the tail of the final message of a failed run — show, if any: an
 /// exhausted quota wins over a rate limit, as in the old harness.
 fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
+    let lines: Vec<&String> = lines.collect();
+    let window = lines.iter().find_map(|line| rejected_window(line));
     let shown: Vec<(&str, String, PauseReason)> = lines
+        .into_iter()
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
         .filter_map(|line| {
@@ -382,7 +391,24 @@ fn find_limit<'a>(lines: impl Iterator<Item = &'a String>) -> Option<Limit> {
         reason,
         evidence,
         lines,
+        window,
     })
+}
+
+/// The moment the rejected Claude rate-limit window that `line` records opens again: the `resetsAt` of its
+/// `rate_limit_event`. A line that is not JSON, or another record, or a window that did not refuse, gives none.
+fn rejected_window(line: &str) -> Option<UtcDateTime> {
+    // A line that is not JSON is no record: the text forms of the reset are read from it instead.
+    let record: Value = serde_json::from_str(line).ok()?;
+    if record.get("type")?.as_str()? != RATE_LIMIT_EVENT {
+        return None;
+    }
+    let info = record.get("rate_limit_info")?;
+    if info.get("status")?.as_str()? != REJECTED {
+        return None;
+    }
+    let opens = info.get("resetsAt")?.as_i64()?;
+    UtcDateTime::from_unix_timestamp(opens).ok()
 }
 
 /// What a line, in lower case, says about the provider's limits: a quota first, then a rate limit or an overload.
@@ -452,11 +478,7 @@ impl Limit {
     /// The end and the pause of a run that stopped on this limit.
     fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
-        let structured = self
-            .lines
-            .iter()
-            .find_map(|line| read_resets_at(line, now, context.local_offset))
-            .filter(|reset| *reset > now);
+        let structured = self.window.filter(|reset| *reset > now);
         let reset = structured.or_else(|| reset_time(&self.lines, now, context.local_offset));
         let wait = match reset {
             Some(reset) => (reset - now).min(MAX_PAUSE),
@@ -519,8 +541,7 @@ type ResetReader = fn(&str, UtcDateTime, UtcOffset) -> Option<UtcDateTime>;
 /// The first reset time after `now` that the `lines` give, by the order of the forms: a Unix time, a duration, an ISO
 /// time, a date, a time of day.
 fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
-    const READERS: [ResetReader; 6] = [
-        read_resets_at,
+    const READERS: [ResetReader; 5] = [
         read_unix_time,
         read_duration,
         read_iso_time,
@@ -537,12 +558,6 @@ fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<U
 /// `limit reached|1794478200`.
 fn read_unix_time(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
     let (_, after) = line.split_once(UNIX_RESET_MARKER)?;
-    unix_time_digits(after)
-}
-
-/// `"resetsat":1794478200` of a rejected Claude window: the field is exact, so it is read before the text forms.
-fn read_resets_at(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
-    let (_, after) = line.split_once(RESETS_AT_MARKER)?;
     unix_time_digits(after)
 }
 
