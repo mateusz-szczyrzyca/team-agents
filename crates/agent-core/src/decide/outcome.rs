@@ -1769,6 +1769,28 @@ mod tests {
         );
     }
 
+    /// Claude's rejected rate-limit window, which resets at 12:00 UTC, and the text of its result, which says 3pm local.
+    const REJECTED_WINDOW: &str = r#"{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794484800,"rateLimitType":"five_hour"}}"#;
+    const RESULT_TEXT: &str = "API Error: 429 rate limit exceeded · resets 3pm";
+
+    // Rule: the reset of a rejected Claude window is its resetsAt, the moment the window opens again; the text's time
+    // of day is only read when the window names none.
+    #[test]
+    fn a_rejected_window_resets_at_its_field_before_the_text() {
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
+        assert_eq!(class.end, RunEnd::RateLimited);
+        assert_eq!(class.pause.unwrap().until, at("2026-11-12T12:01:00Z"));
+    }
+
+    // Rule: a structured reset is told in the machine's local time in the evidence, as the notices tell times.
+    #[test]
+    fn a_structured_reset_is_told_in_local_time_in_the_evidence() {
+        let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
+        let evidence = class.pause.unwrap().evidence;
+        assert!(evidence.starts_with("a rate limit: rejected"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+    }
+
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.
     #[test]
     fn the_pause_reasons_have_their_texts() {
