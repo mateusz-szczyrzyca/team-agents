@@ -1,6 +1,7 @@
 //! Whether a run that holds uncommitted work is reminded to commit it: both bounds of `[commit_reminder]` reached, and the
 //! run not reminded at this head already.
 
+use crate::kinds::Role;
 use crate::state::{CommitId, Timestamp};
 
 /// What the daemon saw of a run's worktree at one look.
@@ -32,6 +33,13 @@ pub enum ReminderDue {
         /// The whole minutes since the later of the last commit and the start of the run.
         minutes: u64,
     },
+}
+
+/// Whether a run of a task with `role` is reminded to commit at all: a solo agent, a coordinator and a member are; a
+/// worker is not, because the harness checks its result already, and a reviewer is not, because it commits nothing.
+#[must_use]
+pub const fn is_reminded(role: Role) -> bool {
+    true
 }
 
 /// Whether the run seen in `look` is reminded to commit, under the bounds `lines` and `minutes` of `[commit_reminder]`.

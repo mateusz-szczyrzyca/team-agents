@@ -108,3 +108,17 @@ fn a_run_reminded_at_an_older_head_is_reminded_again() {
 fn a_last_commit_after_now_counts_as_no_idle_time() {
     assert_eq!(reminder_due(&look(400, -5), 300, 1), ReminderDue::NotDue);
 }
+
+#[test]
+fn only_a_solo_agent_a_coordinator_and_a_member_are_reminded() {
+    let table = [
+        (Role::Solo, true),
+        (Role::Coordinator, true),
+        (Role::Member, true),
+        (Role::Worker, false),
+        (Role::Reviewer, false),
+    ];
+    for (role, expected) in table {
+        assert_eq!(is_reminded(role), expected, "{role:?}");
+    }
+}
