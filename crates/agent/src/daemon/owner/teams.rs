@@ -1340,34 +1340,58 @@ impl Owner {
                         run_limit,
                     )
                     .map(|(name, prov)| (name.clone(), prov.to_owned()))
-                } else if let Some((worker, failed_provider)) = journal.as_ref().and_then(|journal| {
-                    use agent_core::decide::worker_recovery::Cause;
+                } else if let Some(journal) = journal.as_ref().filter(|_| recovering) {
+                    use agent_core::decide::worker_recovery::{Cause, Decision, Event, Preference, decide};
                     use agent_runtime::worker_request::recovery::Transition;
-                    if !matches!(
-                        journal.events().last(),
-                        Some(Transition::Interrupted {
-                            cause: Cause::Quota | Cause::Refused,
-                            ..
+                    // A queued restart records another interruption without erasing the provider failure.
+                    let cause = journal
+                        .events()
+                        .iter()
+                        .rev()
+                        .find_map(|event| match event {
+                            Transition::Interrupted { cause, .. } => Some(*cause),
+                            _ => None,
                         })
-                    ) {
-                        return None;
-                    }
-                    let worker = journal.events().iter().rev().find_map(|event| match event {
-                        Transition::Started { worker, .. } => Some(worker),
-                        Transition::Assigned { workspace, .. } => Some(&workspace.record().worker),
-                        _ => None,
-                    })?;
-                    let config = self.parts.settings.config.agent(worker)?;
-                    Some((worker, provider_of(config.cli, config.model.as_ref())))
-                }) {
-                    agent_core::decide::pool::second_try_pool_worker(
+                        .unwrap_or(Cause::RestartQueued);
+                    let worker = journal
+                        .events()
+                        .iter()
+                        .rev()
+                        .find_map(|event| match event {
+                            Transition::Started { worker, .. } => Some(worker),
+                            Transition::Assigned { workspace, .. } => Some(&workspace.record().worker),
+                            _ => None,
+                        })
+                        .unwrap_or(&journal.current_workspace().record().worker);
+                    let failed_provider = self
+                        .parts
+                        .settings
+                        .config
+                        .agent(worker)
+                        .map(|config| provider_of(config.cli, config.model.as_ref()))
+                        .unwrap_or("");
+                    let elsewhere = agent_core::decide::pool::second_try_pool_elsewhere(
                         &pool_workers,
                         &requires,
                         worker,
                         failed_provider,
                         run_limit,
-                    )
-                    .map(|(name, provider)| (name.clone(), provider.to_owned()))
+                    );
+                    let selection = match decide(Event::NoResult(cause), journal.returns().saturating_sub(1), elsewhere)
+                    {
+                        Decision::Serve(Preference::OtherProvider) => agent_core::decide::pool::second_try_pool_worker(
+                            &pool_workers,
+                            &requires,
+                            worker,
+                            failed_provider,
+                            run_limit,
+                        ),
+                        Decision::Serve(Preference::FirstFree) => {
+                            next_pool_worker(&pool_workers, &requires, LastServed(None), run_limit)
+                        }
+                        Decision::Wait(_) | Decision::Return | Decision::Settle | Decision::Drop => None,
+                    };
+                    selection.map(|(name, provider)| (name.clone(), provider.to_owned()))
                 } else {
                     let last_served = LastServed(if recovering {
                         None
