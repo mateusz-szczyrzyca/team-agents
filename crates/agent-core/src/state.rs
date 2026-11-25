@@ -383,8 +383,11 @@ impl State {
     /// The agents refused by their provider at `now`, in name order.
     #[must_use]
     pub fn refused_agents_at(&self, now: Timestamp) -> Vec<crate::ids::AgentName> {
-        let _ = now;
-        Vec::new()
+        self.refused_agents
+            .keys()
+            .filter(|agent| self.refused_at(agent, now))
+            .cloned()
+            .collect()
     }
 
     /// Records until when an agent is refused by its provider, or forgets the refusal with `None`.
