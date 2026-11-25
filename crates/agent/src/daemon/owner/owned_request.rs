@@ -177,6 +177,9 @@ impl Owner {
                     )
                     .await?;
                 }
+                Phase::Running(attempt) => {
+                    self.restore_observed_result(&served, &task, &attempt.run).await?;
+                }
                 Phase::Queued
                     if matches!(
                         journal.events().last(),
@@ -195,7 +198,7 @@ impl Owner {
                     let run = assigned_run(&journal, &task, worker).ok_or(OwnerError::RequestOwnership)?;
                     self.finish_owned_interruption(&journal, &served, &task, run).await?;
                 }
-                Phase::Running(_) | Phase::Queued | Phase::Settled => {}
+                Phase::Queued | Phase::Settled => {}
             }
         }
         Ok(())
@@ -550,6 +553,36 @@ impl Owner {
         self.serving.remove(task);
         Ok(true)
     }
+    /// Rebuilds a missing pending result from the outcome persisted before its observed ending.
+    async fn restore_observed_result(
+        &mut self,
+        served: &super::teams::Served,
+        task: &TaskId,
+        run: &RunId,
+    ) -> Result<(), OwnerError> {
+        let dir = self.parts.store.home().task_dir(task);
+        let pending = agent_runtime::worker_request::read_pending_each(&dir)
+            .await?
+            .into_iter()
+            .collect::<Result<Vec<_>, _>>()?;
+        // A pending result may already have advanced through its check or settlement.
+        if pending.iter().any(|pending| pending.request == served.request) {
+            return Ok(());
+        }
+        let outcome = agent_runtime::run::outcome::read_outcome(&self.parts.store.home().run_dir(task, run)).await?;
+        let summary = outcome.and_then(|outcome| outcome.final_message).unwrap_or_default();
+        if let Some(team) = self
+            .parts
+            .state
+            .find_task(&served.requester_task)
+            .map(|found| found.team.id().clone())
+        {
+            self.keep_worker_result(&team, served, task, crate::daemon::team::worker_report(&summary))?;
+            self.look_at(&team);
+        }
+        Ok(())
+    }
+
     /// Publishes an owned final notice atomically, including crash replays.
     pub(super) async fn settle_owned_request(
         &self,
