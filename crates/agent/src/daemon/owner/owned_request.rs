@@ -92,10 +92,40 @@ impl Owner {
     /// Reconciles durable owned attempts before the queue may dispatch a replacement.
     pub(super) async fn recover_owned_requests(&mut self) -> Result<(), OwnerError> {
         for entry in self.parts.bus.helper_list(false).await? {
-            let Some(journal) = self.owned_journal(&entry.from_task, entry.id).await? else {
+            let Some(mut journal) = self.owned_journal(&entry.from_task, entry.id).await? else {
                 // Requests created before recovery was enabled retain their original lifecycle.
                 continue;
             };
+            if journal.phase() == &Phase::Queued && entry.status == DelegationStatus::Running {
+                let run = self
+                    .parts
+                    .bus
+                    .helper_attempt_run(entry.id)
+                    .await?
+                    .ok_or(OwnerError::RequestOwnership)?;
+                let worker = entry.worker.as_ref().ok_or(OwnerError::RequestOwnership)?;
+                let workspace = journal.current_workspace();
+                if assigned_run(&journal, &workspace.record().worker_task, worker) != Some(&run) {
+                    // The bus claim is written first; a crash may precede its journal assignment.
+                    let transition = if journal.events().is_empty() {
+                        Transition::Assigned {
+                            workspace: workspace.clone(),
+                            run,
+                        }
+                    } else {
+                        Transition::Started {
+                            worker: worker.clone(),
+                            run,
+                        }
+                    };
+                    journal = recovery::advance(
+                        &self.parts.store.home().task_dir(&entry.from_task),
+                        entry.id,
+                        transition,
+                    )
+                    .await?;
+                }
+            }
             let workspace = journal.current_workspace().record();
             let task = workspace.worker_task.clone();
             let worker = entry.worker.as_ref().ok_or(OwnerError::RequestOwnership)?;

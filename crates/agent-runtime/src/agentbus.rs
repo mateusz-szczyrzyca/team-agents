@@ -1423,6 +1423,28 @@ impl AgentBus {
         Ok(metadata.recovery)
     }
 
+    /// Reads the durable run claim, absent on requests from before execution ownership.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] when the request cannot be read or decoded.
+    pub async fn helper_attempt_run(
+        &self,
+        request: RequestId,
+    ) -> Result<Option<agent_core::ids::RunId>, AgentBusError> {
+        #[derive(Deserialize)]
+        struct Metadata {
+            /// The durable execution claim; absent before the first owned dispatch.
+            #[serde(default)]
+            attempt_run: Option<agent_core::ids::RunId>,
+        }
+        let command = BusCommand::HelperGet;
+        let output = self
+            .run(command, Args::new().flag("--id", request.number().to_string()), None)
+            .await?;
+        let metadata: Metadata = decode_json(command, &output)?;
+        Ok(metadata.attempt_run)
+    }
+
     /// Reads a request for a worker.
     ///
     /// # Errors
