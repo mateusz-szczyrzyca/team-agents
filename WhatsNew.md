@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.110.0 · agent-core 0.109.0 — 25.11.2026 — PR (number to come)
+## agent 0.110.0 · agent-core 0.109.0 — 25.11.2026 — PR #277
 
 ### Bug fixes
 - [agent] [agent-core] A worker whose last request brought no usable result is no longer given the next request while another worker is free. Before, the first worker of a provider in `[tiers] workers` got every request of that provider, failed or not: on 25.11 `openrouter-minimax` failed three steps in a row of one task while four other workers stood idle.
