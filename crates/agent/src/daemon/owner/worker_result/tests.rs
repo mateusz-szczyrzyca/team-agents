@@ -893,3 +893,77 @@ async fn durable_final_settlement_removes_its_try_before_publishing_the_answer()
 
     assert_eq!(std::fs::read_to_string(observations).unwrap(), "absent\nabsent\n");
 }
+
+/// A reporter of the history that says nothing: the tests read the rows.
+#[derive(Debug)]
+struct MuteReporter;
+
+impl agent_runtime::history::Reporter for MuteReporter {
+    fn report(&self, _problem: &agent_runtime::history::Problem) {}
+}
+
+/// Settles a request of the pair team that has nothing to bring over, in an owner that writes to a history, checks the one
+/// record of its end and records `worker_request_ended` into `observed`.
+pub(in crate::daemon::owner) async fn record_worker_request_ended(
+    observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>,
+) {
+    use std::os::unix::fs::PermissionsExt;
+    use std::sync::Arc;
+
+    use super::super::fixture::{Daemon, pair_state};
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::LogEvent;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reader, Setup};
+    use agent_runtime::worker_request::Stage;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let program = scratch.path().join("bus");
+    std::fs::write(&program, "#!/bin/sh\nexit 0\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(MuteReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let daemon = Daemon::new(&pair_state(), Some(&program));
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let mut owner = owner.with_history(started.history.clone());
+    let mut pending = a_matching_pending();
+    pending.stage = Stage::Checked(Box::new(checked(&[], &[], None)));
+    let task_dir = daemon.home.task_dir(&pending.worker_task);
+    std::fs::create_dir_all(&task_dir).unwrap();
+    agent_runtime::worker_request::write_pending(&task_dir, &pending).unwrap();
+
+    owner.settle_one(&task_dir, pending, None).await.unwrap();
+    started.writer.close().unwrap();
+
+    let rows: Vec<_> = Reader::open(&path)
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event() == LogEvent::WorkerRequestEnded)
+        .collect();
+    assert_eq!(rows.len(), 1, "{rows:?}");
+    assert_eq!(rows[0].fields()["outcome"], "report");
+    assert_eq!(rows[0].fields()["request"], "H1");
+    assert_eq!(rows[0].fields()["step"], "2.1");
+    assert_eq!(
+        rows[0].team().map(ToString::to_string),
+        Some(crate::fixtures::team_id(0).to_string())
+    );
+    observed.insert(LogEvent::WorkerRequestEnded);
+}
+
+#[tokio::test]
+async fn a_request_settled_by_the_owner_is_one_record_of_the_history() {
+    let mut observed = std::collections::BTreeSet::new();
+
+    record_worker_request_ended(&mut observed).await;
+
+    assert!(observed.contains(&agent_core::log::LogEvent::WorkerRequestEnded));
+}
