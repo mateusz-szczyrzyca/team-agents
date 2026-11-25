@@ -2392,6 +2392,11 @@ impl Owner {
             .participant_of(refused_agent)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         self.hand_task_over(task, new_agent, &held, Trouble::NoStatus, now)?;
+        log_decision(
+            "takeover",
+            &format!("task={task}, from={}", held.name()),
+            &format!("agent={new_agent}"),
+        );
         tracing::info!(
             event = LogEvent::TaskAgentChanged.as_str(),
             team = %located.team,
