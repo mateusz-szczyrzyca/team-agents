@@ -204,3 +204,73 @@ async fn unavailable_bus_defers_startup_request_recovery_until_the_next_look() {
     owner.team_life().await.unwrap();
     assert_eq!(std::fs::read_to_string(&marker).unwrap(), "listed\n");
 }
+
+impl super::super::Owner {
+    /// Produces both recovery log events through the production interruption settlement path.
+    pub(crate) async fn produce_recovery_log_events() -> (agent_core::ids::TeamId, RunId) {
+        use agent_runtime::worker_request::recovery::SnapshotIdentity;
+        use std::os::unix::fs::PermissionsExt;
+        use tracing::Instrument;
+
+        let scratch = tempfile::tempdir().unwrap();
+        let program = scratch.path().join("bus");
+        std::fs::write(&program, r#"#!/bin/sh
+case "$1" in
+helper-owned) echo '"applied"';;
+helper-list) echo '[{"id":1,"from":"claude-1","from_task":"task-20261115-090000-0001","repo":"example","branch":"main","status":"queued","step":"1.1"}]';;
+*) exit 1;;
+esac
+"#).unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let daemon = Daemon::new(&pair_state(), Some(&program));
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let worker = "claude-2".parse().unwrap();
+        let workspace = RequestWorkspace::try_from(WorkspaceRecord {
+            request: agent_runtime::agentbus::RequestId::new(std::num::NonZeroU64::MIN),
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            requester_round: "round-20261124-120000-cccc".parse().unwrap(),
+            requester_repo: "example".parse().unwrap(),
+            worker,
+            worker_task: task(2),
+            branch: branch(&"claude-2".parse().unwrap(), &task(2)).unwrap(),
+            base: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+            stage: Stage::Working,
+        })
+        .unwrap();
+        let snapshot = SnapshotIdentity {
+            round: workspace.record().requester_round.clone(),
+            task: task(2),
+            number: std::num::NonZeroU32::MIN,
+            commit: workspace.record().base.clone(),
+            head: workspace.record().base.clone(),
+        };
+        let mut journal = Journal::new(workspace).unwrap();
+        let served = Served {
+            request: journal.workspace().record().request,
+            requester: "claude-1".parse().unwrap(),
+            requester_task: task(1),
+            worker: "claude-2".parse().unwrap(),
+            started: at(0),
+            base: None,
+        };
+        let run: RunId = "run-20261124-120000-dddd".parse().unwrap();
+        let team = owner.parts.state.find_task(&task(1)).unwrap().team.id().clone();
+        async {
+            for _ in 0..4 {
+                journal = journal
+                    .advance(Transition::RestartedQueued {
+                        snapshot: snapshot.clone(),
+                    })
+                    .unwrap();
+                owner
+                    .finish_owned_interruption(&journal, &served, &task(2), &run)
+                    .await
+                    .unwrap();
+            }
+        }
+        .instrument(tracing::info_span!("run", team = %team, task = %task(2), run = %run))
+        .await;
+        (team, run)
+    }
+}
