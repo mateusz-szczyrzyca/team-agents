@@ -450,14 +450,17 @@ fn error_message(error: &Value) -> String {
 }
 
 /// Extracts a [`RefusalSummary`] from an opencode error event, when the error has the structured fields.
-fn refusal_from_error(error: &Value) -> Option<agent_core::decide::outcome::RefusalSummary> {
+fn refusal_from_error(error: &Value) -> agent_core::decide::outcome::RefusalSummary {
     let error_type = error.get("type").and_then(Value::as_str).unwrap_or("");
     let reason = match error_type {
         "provider.quota" => agent_core::decide::outcome::PauseReason::Quota,
         _ => agent_core::decide::outcome::PauseReason::RateLimit,
     };
     let message = error.get("message").and_then(Value::as_str).unwrap_or("").to_owned();
-    let status = error.get("status").map(|s| s.to_string()).unwrap_or_default();
+    let status = error
+        .get("status")
+        .map(std::string::ToString::to_string)
+        .unwrap_or_default();
     // The provider's code is inside `response.body` which is a JSON string.
     let code = error
         .pointer("/response/body")
@@ -465,9 +468,7 @@ fn refusal_from_error(error: &Value) -> Option<agent_core::decide::outcome::Refu
         .and_then(|body| serde_json::from_str::<Value>(body).ok())
         .and_then(|body| body.pointer("/error/code").and_then(Value::as_str).map(str::to_owned))
         .unwrap_or_default();
-    Some(agent_core::decide::outcome::RefusalSummary::from_fields(
-        &status, &message, &code, reason,
-    ))
+    agent_core::decide::outcome::RefusalSummary::from_fields(&status, &message, &code, reason)
 }
 
 /// The parser of one opencode run.
@@ -547,7 +548,7 @@ impl OutputParser for OpencodeParser {
                 self.progress.note_error_line(line);
                 self.progress.stream = StreamOutcome::Failed;
                 if self.progress.refusal.is_none() {
-                    self.progress.refusal = refusal_from_error(&error);
+                    self.progress.refusal = Some(refusal_from_error(&error));
                 }
                 vec![ActivityEvent::Error(error_message(&error))]
             }
