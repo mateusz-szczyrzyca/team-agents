@@ -3,8 +3,9 @@
 resolver = "3"
 members = ["crates/agent-core", "crates/agent-runtime", "crates/agent", "crates/agent-web"]
 
+# Each crate has its own `version` in its manifest: a pull request raises the version of the crates whose code it changes
+# and only theirs (AGENTS.md, "Commits and pull requests").
 [workspace.package]
-version = "0.109.0"
 edition = "2024"
 rust-version = "1.99"
 license = "MIT"
