@@ -171,6 +171,9 @@ pub(super) fn recover_with(
             recovery.wakes.push((wake, task));
         }
     }
+    for task in &recovery.interrupted {
+        state.record_limit_refusals(task.clone(), 0);
+    }
     for refusal in kept_out {
         state.record_limit_refusals(refusal.task, refusal.refusals);
         state.keep_refused_until(refusal.agent, refusal.until);
