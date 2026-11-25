@@ -15,7 +15,7 @@ pub const DEFAULT_MINUTES: u32 = 30;
 pub const DEFAULT_CONTEXT_PERCENT: u8 = 80;
 
 /// The minutes a reminder to commit may be ignored before the run is cut, when `[commit_reminder]` says nothing.
-pub const DEFAULT_CUT_AFTER: u32 = 0;
+pub const DEFAULT_CUT_AFTER: u32 = 20;
 
 /// `[commit_reminder]`: the two bounds a run must reach, both, to be reminded to commit, and the share of the context
 /// bound at which a session is reminded.
