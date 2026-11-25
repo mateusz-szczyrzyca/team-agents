@@ -1444,6 +1444,7 @@ async fn a_reviewer_refused_again_and_again_by_its_provider_is_replaced_after_th
         (26, RunEnd::RateLimited),
     ];
     runs_then_paused(&mut step, &task, asked, &refused);
+    counted_refusals(&mut step, &task, 4);
 
     assert_eq!(gone_after(&step, &team, asked, 27), vec![task]);
     crate::daemon::history::close(step.writer).await;
