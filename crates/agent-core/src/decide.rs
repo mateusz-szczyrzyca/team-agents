@@ -21,6 +21,7 @@ pub mod disclosure;
 pub mod fix;
 pub mod idle;
 pub mod ladder;
+pub mod limit;
 pub mod last_step;
 pub mod merge_refusal;
 pub mod no_tool_call;
