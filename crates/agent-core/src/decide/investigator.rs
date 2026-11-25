@@ -39,7 +39,6 @@ pub fn choose(
     required: NonZeroUsize,
     rng: &mut impl Rng,
 ) -> Option<Vec<InvestigatorName>> {
-    let _ = rng;
     let mut candidates = Vec::new();
     for name in configured.intersection(free) {
         if excluded.contains(name) {
@@ -61,7 +60,12 @@ pub fn choose(
             .map(|activity| activity.asked_at)
             .max();
         let last_anywhere = own.iter().map(|activity| activity.asked_at).max();
-        candidates.push((last_team, last_anywhere, name));
+        let tie_breaker = if last_team.is_some() || last_anywhere.is_some() {
+            rng.next_u64()
+        } else {
+            0
+        };
+        candidates.push(((last_team, last_anywhere), tie_breaker, name));
     }
     if candidates.len() < required.get() {
         return None;
@@ -71,7 +75,7 @@ pub fn choose(
         candidates
             .into_iter()
             .take(required.get())
-            .map(|(_, _, name)| name.clone())
+            .map(|(_, _, name)| (*name).clone())
             .collect(),
     )
 }
