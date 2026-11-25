@@ -458,7 +458,14 @@ impl Limit {
         refusal: Option<RefusalSummary>,
     ) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
-        let reset = reset_time(&self.lines, now, context.local_offset);
+        // The reset the CLI gives in a structured event is exact; the text is read only when it gives none ahead of now.
+        let structured = refusal
+            .as_ref()
+            .and_then(|refusal| refusal.resets_at)
+            .and_then(|epoch| i64::try_from(epoch).ok())
+            .and_then(|epoch| UtcDateTime::from_unix_timestamp(epoch).ok())
+            .filter(|reset| *reset > now);
+        let reset = structured.or_else(|| reset_time(&self.lines, now, context.local_offset));
         let wait = match reset {
             Some(reset) => (reset - now).min(MAX_PAUSE),
             None => self.default_pause(context.limits)?,
