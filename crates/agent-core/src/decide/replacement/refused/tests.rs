@@ -75,377 +75,207 @@ fn default_request<'a>(
     }
 }
 
-// --- Empty lists ---
-
 #[test]
-fn returns_none_free_when_no_candidates_are_given() {
-    let req = default_request("openrouter", &[], &[], &[]);
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::NoneFree { earliest_return: None });
-}
-
-#[test]
-fn returns_none_free_when_replacements_are_exhausted() {
-    let agent = name("claude-2");
-    let replacement = [free(&agent, "claude", Tier::Normal)];
-    let mut req = default_request("openrouter", &replacement, &[], &[]);
-    req.replacements_exhausted = true;
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::NoneFree { earliest_return: None });
-}
-
-// --- [replacement] agents ---
-
-#[test]
-fn picks_the_first_free_agent_of_the_replacement_list() {
+fn chooses_replacements_by_role_availability_provider_and_return_time() {
     let first = name("claude-2");
     let second = name("gemini-2");
-    let replacement = [
-        free(&first, "claude", Tier::Normal),
-        free(&second, "gemini", Tier::Normal),
-    ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&first));
-}
-
-#[test]
-fn skips_a_replacement_agent_of_the_same_provider() {
-    let same = name("claude-2");
-    let other = name("gemini-2");
-    let replacement = [
-        free(&same, "openrouter", Tier::Normal),
-        free(&other, "gemini", Tier::Normal),
-    ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    // Skips claude-2 (same provider openrouter) and picks gemini-2.
-    assert_eq!(result, Pick::Agent(&other));
-}
-
-#[test]
-fn skips_a_busy_replacement_agent() {
-    let busy_agent = name("claude-2");
-    let free_agent = name("gemini-2");
-    let replacement = [
-        busy(&busy_agent, "claude", Tier::Normal),
-        free(&free_agent, "gemini", Tier::Normal),
-    ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&free_agent));
-}
-
-#[test]
-fn skips_a_refused_replacement_agent() {
-    let refused_agent = name("claude-2");
-    let free_agent = name("gemini-2");
-    let replacement = [
-        refused(&refused_agent, "claude", Tier::Normal, later()),
-        free(&free_agent, "gemini", Tier::Normal),
-    ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&free_agent));
-}
-
-#[test]
-fn an_agent_refused_until_a_past_time_is_not_refused_now() {
-    let past = name("claude-2");
-    let replacement = [refused(&past, "claude", Tier::Normal, earlier())];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&past));
-}
-
-#[test]
-fn skips_a_replacement_agent_in_the_team() {
-    let teammate = name("claude-2");
-    let outsider = name("gemini-2");
-    let team = [teammate.clone()];
-    let replacement = [
-        free(&teammate, "claude", Tier::Normal),
-        free(&outsider, "gemini", Tier::Normal),
-    ];
-    let req = Request {
-        role: Role::Member,
-        team: &team,
-        refused_provider: "openrouter",
-        replacement_agents: &replacement,
-        normal_agents: &[],
-        investigators: &[],
-        now: now(),
-        replacements_exhausted: false,
-    };
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&outsider));
-}
-
-#[test]
-fn deepinfra_and_openrouter_count_as_two_providers() {
-    let deepinfra_agent = name("deepinfra-gemini");
-    let openrouter_agent = name("openrouter-gemini");
-    let replacement = [
-        free(&deepinfra_agent, "deepinfra", Tier::Normal),
-        free(&openrouter_agent, "openrouter", Tier::Normal),
-    ];
-    let req = default_request("deepinfra", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&openrouter_agent));
-}
-
-// --- Fallback to tier normal ---
-
-#[test]
-fn falls_back_to_tier_normal_when_no_replacement_agent_fits() {
-    let replacement_agent = name("claude-2");
-    let normal_agent = name("codex-1");
-    let replacement = [free(&replacement_agent, "openrouter", Tier::Normal)];
-    let normal = [free(&normal_agent, "codex", Tier::Normal)];
-    let req = default_request("openrouter", &replacement, &normal, &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&normal_agent));
-}
-
-#[test]
-fn falls_back_to_tier_normal_when_replacement_list_is_empty() {
-    let normal_agent = name("codex-1");
-    let normal = [free(&normal_agent, "codex", Tier::Normal)];
-    let req = default_request("openrouter", &[], &normal, &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&normal_agent));
-}
-
-#[test]
-fn tier_normal_respects_the_same_skip_rules() {
-    let same_provider = name("codex-1");
-    let good = name("gemini-2");
-    let normal = [
-        free(&same_provider, "openrouter", Tier::Normal),
-        free(&good, "gemini", Tier::Normal),
-    ];
-    let req = default_request("openrouter", &[], &normal, &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&good));
-}
-
-// --- Tier rules ---
-
-#[test]
-fn a_member_never_goes_to_a_worker() {
-    let worker_agent = name("glm");
-    let normal_agent = name("codex-1");
-    let replacement = [
-        free(&worker_agent, "opencode", Tier::Worker),
-        free(&normal_agent, "codex", Tier::Normal),
-    ];
-    let req = default_request("claude", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    // Skips the worker, picks the normal agent.
-    assert_eq!(result, Pick::Agent(&normal_agent));
-}
-
-#[test]
-fn a_member_also_skips_workers_in_tier_normal_fallback() {
-    let worker_agent = name("glm");
-    let normal_agent = name("codex-1");
-    let normal = [
-        free(&worker_agent, "opencode", Tier::Worker),
-        free(&normal_agent, "codex", Tier::Normal),
-    ];
-    let req = default_request("claude", &[], &normal, &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&normal_agent));
-}
-
-#[test]
-fn a_coordinator_goes_to_an_investigator() {
-    let normal_agent = name("codex-1");
-    let investigator_agent = name("inv-opus");
-    let replacement = [
-        free(&normal_agent, "codex", Tier::Normal),
-        free(&investigator_agent, "claude", Tier::Investigator),
-    ];
-    let req = Request {
-        role: Role::Coordinator,
-        team: &[],
-        refused_provider: "openrouter",
-        replacement_agents: &replacement,
-        normal_agents: &[],
-        investigators: &[],
-        now: now(),
-        replacements_exhausted: false,
-    };
-
-    let result = pick(&req);
-
-    // Skips the normal agent (coordinator needs an investigator), picks the investigator.
-    assert_eq!(result, Pick::Agent(&investigator_agent));
-}
-
-#[test]
-fn a_coordinator_falls_back_to_investigators_not_tier_normal() {
-    let normal_agent = name("codex-1");
-    let investigator_agent = name("inv-opus");
-    let normal = [free(&normal_agent, "codex", Tier::Normal)];
-    let investigators = [free(&investigator_agent, "claude", Tier::Investigator)];
-    let req = Request {
-        role: Role::Coordinator,
-        team: &[],
-        refused_provider: "openrouter",
-        replacement_agents: &[],
-        normal_agents: &normal,
-        investigators: &investigators,
-        now: now(),
-        replacements_exhausted: false,
-    };
-
-    let result = pick(&req);
-
-    // Falls back to investigators, not tier normal.
-    assert_eq!(result, Pick::Agent(&investigator_agent));
-}
-
-#[test]
-fn a_solo_task_can_go_to_a_normal_agent_in_the_fallback() {
-    let normal_agent = name("codex-1");
-    let normal = [free(&normal_agent, "codex", Tier::Normal)];
-    let req = Request {
-        role: Role::Solo,
-        team: &[],
-        refused_provider: "openrouter",
-        replacement_agents: &[],
-        normal_agents: &normal,
-        investigators: &[],
-        now: now(),
-        replacements_exhausted: false,
-    };
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&normal_agent));
-}
-
-// --- None free with earliest return ---
-
-#[test]
-fn returns_earliest_return_when_all_are_refused() {
-    let first = name("claude-2");
-    let second = name("gemini-2");
+    let normal = name("codex-1");
+    let investigator = name("inv-opus");
+    let worker = name("glm");
+    let team = [first.clone()];
     let early_return: Timestamp = "2026-11-25T12:30:00Z".parse().unwrap();
-    let late_return: Timestamp = "2026-11-25T13:00:00Z".parse().unwrap();
-    let replacement = [
-        refused(&first, "claude", Tier::Normal, late_return),
-        refused(&second, "gemini", Tier::Normal, early_return),
+    let a = free(&first, "claude", Tier::Normal);
+    let b = free(&second, "gemini", Tier::Normal);
+    let n = free(&normal, "codex", Tier::Normal);
+    let i = free(&investigator, "claude", Tier::Investigator);
+    let w = free(&worker, "opencode", Tier::Worker);
+    let same = free(&first, "openrouter", Tier::Normal);
+    let occupied = busy(&first, "claude", Tier::Normal);
+    let future = refused(&first, "claude", Tier::Normal, later());
+    let past = refused(&first, "claude", Tier::Normal, earlier());
+    let exact = refused(&first, "claude", Tier::Normal, now());
+    let soon = refused(&second, "gemini", Tier::Normal, early_return);
+    let none = Pick::NoneFree { earliest_return: None };
+    let returns_soon = Pick::NoneFree {
+        earliest_return: Some(early_return),
+    };
+    let primary = [a];
+    let ordered_free = [a, b];
+    let same_then_free = [same, b];
+    let busy_then_free = [occupied, b];
+    let refused_then_free = [future, b];
+    let expired = [past];
+    let opencode_providers = [
+        free(&first, "deepinfra", Tier::Normal),
+        free(&second, "openrouter", Tier::Normal),
     ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(
-        result,
-        Pick::NoneFree {
-            earliest_return: Some(early_return)
-        }
-    );
-}
-
-#[test]
-fn earliest_return_considers_all_candidate_groups() {
-    let early_return: Timestamp = "2026-11-25T12:30:00Z".parse().unwrap();
-    let late_return: Timestamp = "2026-11-25T13:00:00Z".parse().unwrap();
-    let repl_agent = name("claude-2");
-    let normal_agent = name("codex-1");
-    let replacement = [refused(&repl_agent, "openrouter", Tier::Normal, late_return)];
-    let normal = [refused(&normal_agent, "openrouter", Tier::Normal, early_return)];
-    let req = default_request("deepinfra", &replacement, &normal, &[]);
-
-    let result = pick(&req);
-
-    // Both are refused (provider is "openrouter", not "deepinfra").
-    // The earliest return comes from the normal agent.
-    assert_eq!(
-        result,
-        Pick::NoneFree {
-            earliest_return: Some(early_return)
-        }
-    );
-}
-
-#[test]
-fn none_free_when_every_candidate_is_filtered_out() {
-    let same_provider_agent = name("claude-2");
-    let busy_agent = name("gemini-2");
-    let replacement = [
-        free(&same_provider_agent, "openrouter", Tier::Normal),
-        busy(&busy_agent, "gemini", Tier::Normal),
+    let same_provider = [same];
+    let normal_only = [n];
+    let worker_then_normal = [w, n];
+    let normal_then_investigator = [n, i];
+    let investigator_only = [i];
+    let all_refused = [future, soon];
+    let late_refusal = [future];
+    let early_refusal = [soon];
+    let all_unavailable = [same, busy(&second, "gemini", Tier::Normal)];
+    let exact_then_free = [exact, b];
+    let expired_busy = [Candidate { busy: true, ..past }];
+    let exact_busy = [Candidate { busy: true, ..exact }];
+    let investigator_refused = [refused(&investigator, "claude", Tier::Investigator, early_return)];
+    let cases = [
+        (
+            "returns_none_free_when_no_candidates_are_given",
+            default_request("openrouter", &[], &[], &[]),
+            none,
+        ),
+        (
+            "returns_none_free_when_replacements_are_exhausted",
+            Request {
+                replacements_exhausted: true,
+                ..default_request("openrouter", &primary, &[], &[])
+            },
+            none,
+        ),
+        (
+            "picks_the_first_free_agent_of_the_replacement_list",
+            default_request("openrouter", &ordered_free, &[], &[]),
+            Pick::Agent(&first),
+        ),
+        (
+            "skips_a_replacement_agent_of_the_same_provider",
+            default_request("openrouter", &same_then_free, &[], &[]),
+            Pick::Agent(&second),
+        ),
+        (
+            "skips_a_busy_replacement_agent",
+            default_request("openrouter", &busy_then_free, &[], &[]),
+            Pick::Agent(&second),
+        ),
+        (
+            "skips_a_refused_replacement_agent",
+            default_request("openrouter", &refused_then_free, &[], &[]),
+            Pick::Agent(&second),
+        ),
+        (
+            "an_agent_refused_until_a_past_time_is_not_refused_now",
+            default_request("openrouter", &expired, &[], &[]),
+            Pick::Agent(&first),
+        ),
+        (
+            "skips_a_replacement_agent_in_the_team",
+            Request {
+                team: &team,
+                ..default_request("openrouter", &ordered_free, &[], &[])
+            },
+            Pick::Agent(&second),
+        ),
+        (
+            "deepinfra_and_openrouter_count_as_two_providers",
+            default_request("deepinfra", &opencode_providers, &[], &[]),
+            Pick::Agent(&second),
+        ),
+        (
+            "falls_back_to_tier_normal_when_no_replacement_agent_fits",
+            default_request("openrouter", &same_provider, &normal_only, &[]),
+            Pick::Agent(&normal),
+        ),
+        (
+            "falls_back_to_tier_normal_when_replacement_list_is_empty",
+            default_request("openrouter", &[], &normal_only, &[]),
+            Pick::Agent(&normal),
+        ),
+        (
+            "tier_normal_respects_the_same_skip_rules",
+            default_request("openrouter", &[], &same_then_free, &[]),
+            Pick::Agent(&second),
+        ),
+        (
+            "a_member_never_goes_to_a_worker",
+            default_request("claude", &worker_then_normal, &[], &[]),
+            Pick::Agent(&normal),
+        ),
+        (
+            "a_member_also_skips_workers_in_tier_normal_fallback",
+            default_request("claude", &[], &worker_then_normal, &[]),
+            Pick::Agent(&normal),
+        ),
+        (
+            "a_coordinator_goes_to_an_investigator",
+            Request {
+                role: Role::Coordinator,
+                ..default_request("openrouter", &normal_then_investigator, &[], &[])
+            },
+            Pick::Agent(&investigator),
+        ),
+        (
+            "a_coordinator_falls_back_to_investigators_not_tier_normal",
+            Request {
+                role: Role::Coordinator,
+                ..default_request("openrouter", &[], &normal_only, &investigator_only)
+            },
+            Pick::Agent(&investigator),
+        ),
+        (
+            "a_solo_task_can_go_to_a_normal_agent_in_the_fallback",
+            Request {
+                role: Role::Solo,
+                ..default_request("openrouter", &[], &normal_only, &[])
+            },
+            Pick::Agent(&normal),
+        ),
+        (
+            "returns_earliest_return_when_all_are_refused",
+            default_request("openrouter", &all_refused, &[], &[]),
+            returns_soon,
+        ),
+        (
+            "earliest_return_considers_all_candidate_groups",
+            default_request("openrouter", &late_refusal, &early_refusal, &[]),
+            returns_soon,
+        ),
+        (
+            "none_free_when_every_candidate_is_filtered_out",
+            default_request("openrouter", &all_unavailable, &[], &[]),
+            none,
+        ),
+        (
+            "replacements_exhausted_returns_earliest_refused_return",
+            Request {
+                replacements_exhausted: true,
+                ..default_request("openrouter", &early_refusal, &[], &[])
+            },
+            returns_soon,
+        ),
+        (
+            "a_fitting_agent_in_the_fallback_does_not_beat_a_fitting_replacement_agent",
+            default_request("openrouter", &primary, &normal_only, &[]),
+            Pick::Agent(&first),
+        ),
+        (
+            "exact_return_is_eligible",
+            default_request("openrouter", &exact_then_free, &[], &[]),
+            Pick::Agent(&first),
+        ),
+        (
+            "expired_only_refusals_do_not_supply_a_return",
+            default_request("openrouter", &expired_busy, &[], &[]),
+            none,
+        ),
+        (
+            "exact_expiry_does_not_supply_a_return",
+            default_request("openrouter", &exact_busy, &[], &[]),
+            none,
+        ),
+        (
+            "coordinator_earliest_return_comes_from_investigators",
+            Request {
+                role: Role::Coordinator,
+                ..default_request("openrouter", &late_refusal, &[], &investigator_refused)
+            },
+            returns_soon,
+        ),
     ];
-    let req = default_request("openrouter", &replacement, &[], &[]);
-
-    let result = pick(&req);
-
-    // First: same provider → skipped. Second: busy → skipped. None left.
-    assert_eq!(result, Pick::NoneFree { earliest_return: None });
-}
-
-// --- Replacements exhausted returns earliest return among refused ---
-
-#[test]
-fn replacements_exhausted_returns_earliest_refused_return() {
-    let early_return: Timestamp = "2026-11-25T12:30:00Z".parse().unwrap();
-    let agent = name("claude-2");
-    let replacement = [refused(&agent, "claude", Tier::Normal, early_return)];
-    let mut req = default_request("openrouter", &replacement, &[], &[]);
-    req.replacements_exhausted = true;
-
-    let result = pick(&req);
-
-    assert_eq!(
-        result,
-        Pick::NoneFree {
-            earliest_return: Some(early_return)
-        }
-    );
-}
-
-// --- Order: replacement agents before fallback ---
-
-#[test]
-fn a_fitting_agent_in_the_fallback_does_not_beat_a_fitting_replacement_agent() {
-    let repl_agent = name("claude-2");
-    let normal_agent = name("codex-1");
-    let replacement = [free(&repl_agent, "claude", Tier::Normal)];
-    let normal = [free(&normal_agent, "codex", Tier::Normal)];
-    let req = default_request("openrouter", &replacement, &normal, &[]);
-
-    let result = pick(&req);
-
-    assert_eq!(result, Pick::Agent(&repl_agent));
+    for (label, request, expected) in cases {
+        assert_eq!(pick(&request), expected, "{label}");
+    }
 }
