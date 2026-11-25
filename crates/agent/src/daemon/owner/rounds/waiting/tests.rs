@@ -1143,3 +1143,37 @@ async fn a_lead_and_a_member_paused_by_their_provider_are_waited_for_at_the_prov
         }
     }
 }
+
+/// A clock that shows the given moments one after the other, the last one for good: the moments at which a refusal ends
+/// between two readings of one status look.
+struct SteppingClock(Mutex<std::collections::VecDeque<agent_core::state::Timestamp>>);
+
+impl agent_core::ids::Clock for SteppingClock {
+    fn now(&self) -> time::UtcDateTime {
+        let mut readings = self.0.lock().unwrap();
+        let reading = if readings.len() > 1 {
+            readings.pop_front()
+        } else {
+            readings.front().copied()
+        };
+        reading.unwrap().as_utc()
+    }
+}
+
+// Rule: the status looks at the clock once. A refusal that ends between two readings must not leave the line half written.
+#[tokio::test]
+async fn a_provider_wait_that_ends_while_the_line_is_written_is_still_told_whole() {
+    let until = at(100);
+    let (state, team, round, agent) = round_of_a_paused_reviewer(RunEnd::RateLimited, false, until);
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.parts.clock =
+        agent_runtime::clock::SharedClock::new(SteppingClock(Mutex::new([at(99), at(100)].into_iter().collect())));
+    let found = owner.parts.state.team(&team).unwrap();
+    let found = found.round(&round).map(|round| (found, round)).unwrap();
+
+    let line = owner.wait_line(found.0, found.1);
+
+    let clock = owner.parts.zone.clock_minute(until);
+    assert_eq!(line, Some(format!("the provider of {agent} until {clock}")));
+}
