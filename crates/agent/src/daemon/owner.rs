@@ -2265,7 +2265,7 @@ impl Owner {
         let replacements_exhausted = taken_over >= replacement.replacements().get();
         let holder_tier = found.member.agent().tier();
         let return_at = self.parts.state.refused_until(agent).unwrap_or(until);
-        let going = runs_going(self.parts.state.teams());
+        let going = self.all_runs_going();
         let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going);
         let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going);
         let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
