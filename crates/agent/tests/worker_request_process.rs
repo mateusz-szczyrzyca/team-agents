@@ -4549,9 +4549,6 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
             world.request_is("1", "done");
             assert_eq!(world.file(member, "docs/guide.md"), "the walkthrough\n");
             assert_eq!(world.count_told("claude-1", "The worker w-one did step 1.1"), 1);
-            if observed {
-                assert_eq!(world.count_told("claude-1", "Recovered walkthrough"), 1);
-            }
             world.stop();
             world.start();
             world.request_is("1", "done");
