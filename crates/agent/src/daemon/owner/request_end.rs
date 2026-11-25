@@ -3,13 +3,19 @@
 
 use std::collections::BTreeMap;
 
+use std::path::Path;
+
 use agent_core::history::Cut;
-use agent_core::ids::{AgentName, ItemId, RoundId, TaskId, TeamId};
+use agent_core::ids::{AgentName, ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::{LogEvent, LogRecord, LogTaskScope, LogTeamScope};
 use agent_core::state::Timestamp;
 use agent_runtime::agentbus::RequestId;
-use agent_runtime::worker_request::Settlement;
+use agent_runtime::history::{ReadError, Reader};
+use agent_runtime::process::error_chain;
+use agent_runtime::worker_request::{Pending, Settlement};
 use serde_json::Value;
+
+use super::Owner;
 
 /// How a request ended, as the one word of the record's `outcome`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,6 +106,94 @@ impl RequestEnd<'_> {
             message: format!("request {} ended: {}", self.request, self.outcome.word()),
             fields,
             cut: Cut::default(),
+        }
+    }
+}
+
+/// The cost in US dollars the history keeps for `run`: none when the run has no usage row, the CLI told no cost or there
+/// is no history.
+///
+/// # Errors
+/// The cause, as text, when the history cannot be read.
+async fn cost_of_run(history: &Path, run: &RunId) -> Result<Option<f64>, String> {
+    if !history.exists() {
+        return Ok(None);
+    }
+    let (path, wanted) = (history.to_path_buf(), run.clone());
+    match tokio::task::spawn_blocking(move || Reader::open(&path).and_then(|reader| reader.run_usage(&wanted))).await {
+        Err(join) => Err(error_chain(&join)),
+        Ok(Err(ReadError::Empty { .. })) => Ok(None),
+        Ok(Err(source)) => Err(error_chain(&source)),
+        Ok(Ok(usage)) => Ok(usage.and_then(|usage| usage.cost_usd)),
+    }
+}
+
+impl Owner {
+    /// Writes the record of an end of the request of `pending` to the history, once: the caller calls it at the one place
+    /// where the end is decided, and never for an end it reads again from a file. A fact that cannot be read leaves its
+    /// field empty; a record that cannot be written is told in the log and lost, because the request goes on to its
+    /// answer without it.
+    pub(super) async fn log_request_end(&self, pending: &Pending, step: Option<ItemId>, outcome: EndOutcome<'_>) {
+        if self.history.is_disabled() {
+            return;
+        }
+        let worker_run = self
+            .parts
+            .state
+            .team(&pending.team)
+            .and_then(|team| team.find(&pending.worker_task))
+            .and_then(|(_, member)| member.runs().last().map(|run| (run.id().clone(), run.started_at())));
+        let cost_usd = match &worker_run {
+            Some((run, _)) => cost_of_run(self.parts.store.home().history_file().as_path(), run)
+                .await
+                .unwrap_or_else(|cause| {
+                    tracing::warn!(
+                        event = LogEvent::HistoryRecordIncomplete.as_str(),
+                        request = %pending.request,
+                        cause,
+                        "the cost of the worker's run cannot be read: the record of the end of its request has none"
+                    );
+                    None
+                }),
+            None => None,
+        };
+        let end = RequestEnd {
+            request: pending.request,
+            team: pending.team.clone(),
+            rounds: self
+                .requester_round(&pending.team, &pending.requester_task)
+                .into_iter()
+                .collect(),
+            requester: pending.requester.clone(),
+            requester_task: pending.requester_task.clone(),
+            step,
+            worker: pending.worker.clone(),
+            worker_task: pending.worker_task.clone(),
+            try_number: self.try_of(pending).number,
+            outcome,
+            started: worker_run.map(|(_, started)| started),
+            seconds: pending.run_seconds,
+            cost_usd,
+        };
+        let at = match Timestamp::now(&self.parts.clock) {
+            Ok(at) => at,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::HistoryRecordIncomplete.as_str(),
+                    request = %pending.request,
+                    error = %error_chain(&error),
+                    "the clock gives a time that cannot be recorded: the history has no record of the end of a request"
+                );
+                return;
+            }
+        };
+        if let Err(error) = self.history.persist_log(end.record(at)).await {
+            tracing::warn!(
+                event = LogEvent::HistoryRecordIncomplete.as_str(),
+                request = %pending.request,
+                error = %error_chain(&error),
+                "the record of the end of a request cannot be written: the history has none"
+            );
         }
     }
 }

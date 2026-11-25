@@ -196,7 +196,7 @@ impl Owner {
     }
 
     /// The try a result is judged as: what the file of its try says, the first when it has none or it cannot be read.
-    pub(super) fn try_of(&self, pending: &Pending) -> Try {
+    pub(in crate::daemon::owner) fn try_of(&self, pending: &Pending) -> Try {
         let task_dir = self.parts.store.home().task_dir(&pending.worker_task);
         read_try(&task_dir, pending.request).unwrap_or_else(|error| {
             tracing::warn!(
