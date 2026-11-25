@@ -1337,6 +1337,89 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     }
 
     #[test]
+    fn a_refused_agent_gets_a_waiting_task_after_its_return_and_a_good_retry() {
+        let mut world = World::new(&agents_with(&[
+            ("claude-1", "agent", "hold"),
+            ("claude-2", "agent", "turn-limit-quota,done"),
+        ]));
+        configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
+        world.start();
+        let quota_hit = solo_task(&world.agent(&["run", "claude-2", "Its own work."]));
+        world.status_where("the candidate to be refused for its quota", |status| {
+            line_of(status, &quota_hit).contains("paused")
+        });
+        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+        expire_and_wait_for_the_daemon_to_look(&mut world, &second);
+        world.status_where("the second task to keep waiting for claude-1", |status| {
+            line_of(status, &second).contains("waits for claude-1")
+        });
+        assert_eq!(world.runs(&second), 0);
+
+        move_the_refusal_and_the_pause_back(&mut world, "claude-2");
+        let status = world.status_where("the paused task to be done after its good retry", |status| {
+            line_of(status, &quota_hit).contains("done")
+        });
+        assert_eq!(world.runs(&quota_hit), 2, "{status}");
+        let status = world.status_where("the second task to run on claude-2 after its return", |status| {
+            line_of(status, &second).contains("claude-2")
+        });
+        assert_eq!(world.runs(&second), 1, "{status}");
+
+        release(&world, &first);
+    }
+
+    /// Moves every ended run and the return time of `agent` back to 2020, as if the time had passed: the daemon is
+    /// stopped, the file is edited, and the daemon starts again. The paused task is woken at once and its next run is
+    /// the good one.
+    fn move_the_refusal_and_the_pause_back(world: &mut World, agent: &str) {
+        if let Some(mut daemon) = world.daemon.take() {
+            let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+            rustix::process::kill_process(pid, Signal::TERM).unwrap();
+            daemon.wait().unwrap();
+        }
+        let state_path = world.home.join("state.json");
+        let state_text = std::fs::read_to_string(&state_path).unwrap();
+        let key = format!("\"{agent}\": \"");
+        let mut lines: Vec<String> = state_text.lines().map(str::to_owned).collect();
+        let mut in_refusals = false;
+        let mut last_started: Option<usize> = None;
+        let mut ended = 0;
+        let mut refusals = 0;
+        for index in 0..lines.len() {
+            let line = lines[index].clone();
+            let trimmed = line.trim_start();
+            let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+            let comma = if line.trim_end().ends_with(',') { "," } else { "" };
+            if line.contains("\"refused_agents\": {") {
+                in_refusals = true;
+            } else if in_refusals && trimmed.starts_with('}') {
+                in_refusals = false;
+            } else if in_refusals && trimmed.starts_with(&key) {
+                refusals += 1;
+                lines[index] = format!("{indent}\"{agent}\": \"2020-01-01T00:00:00Z\"{comma}");
+            } else if trimmed.starts_with("\"started_at\": \"") {
+                last_started = Some(index);
+            } else if trimmed == "\"status\": \"ended\"," {
+                ended += 1;
+                if let Some(started) = last_started {
+                    let started_indent: String = lines[started].chars().take_while(|c| c.is_whitespace()).collect();
+                    let started_comma = if lines[started].trim_end().ends_with(',') {
+                        ","
+                    } else {
+                        ""
+                    };
+                    lines[started] = format!("{started_indent}\"started_at\": \"2019-12-31T00:00:00Z\"{started_comma}");
+                }
+            } else if trimmed.starts_with("\"at\": \"") && lines[index - 1].trim_start() == "\"status\": \"ended\"," {
+                lines[index] = format!("{indent}\"at\": \"2020-01-01T00:00:00Z\"{comma}");
+            }
+        }
+        assert!(ended >= 1 && refusals == 1, "unexpected state:\n{state_text}");
+        std::fs::write(&state_path, lines.join("\n")).unwrap();
+        world.start();
+    }
+
+    #[test]
     fn a_restart_during_the_wait_keeps_the_time_the_task_has_waited() {
         let mut world = World::new(&agents_with(&[
             ("claude-1", "agent", "hold"),
