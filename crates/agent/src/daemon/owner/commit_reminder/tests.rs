@@ -302,7 +302,10 @@ async fn a_second_run_at_the_head_that_was_reminded_is_not_reminded_again() {
         }))
         .await
         .unwrap();
-    until("the second run to leave its work", || worktree.join("dirty.txt").exists()).await;
+    until("the second run to leave its work", || {
+        worktree.join("dirty.txt").exists()
+    })
+    .await;
     daemon.clock.advance(time::Duration::minutes(2));
     looked(&daemon).await;
     daemon.clock.advance(time::Duration::minutes(2));
