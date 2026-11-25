@@ -466,4 +466,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 28,
         sql: include_str!("028-worker-wait.sql"),
     },
+    Migration {
+        version: 29,
+        sql: include_str!("029-worker-request-ended.sql"),
+    },
 ];

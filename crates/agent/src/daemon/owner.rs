@@ -25,6 +25,7 @@ mod plan;
 mod pool_wait;
 mod reminder;
 mod removal;
+mod request_end;
 mod returned;
 mod round_state;
 mod rounds;

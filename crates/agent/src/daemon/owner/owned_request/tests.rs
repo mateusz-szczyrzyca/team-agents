@@ -274,3 +274,112 @@ esac
         (team, run)
     }
 }
+
+/// A reporter of the history that says nothing: the test reads the rows.
+#[derive(Debug)]
+struct MuteReporter;
+
+impl agent_runtime::history::Reporter for MuteReporter {
+    fn report(&self, _problem: &agent_runtime::history::Problem) {}
+}
+
+#[tokio::test]
+async fn every_interruption_of_a_request_is_one_record_of_its_end() {
+    use agent_core::history::MaxTextBytes;
+    use agent_core::log::LogEvent;
+    use agent_runtime::history::{DEFAULT_QUEUE, History, HistoryDb, Reader, Setup};
+    use agent_runtime::worker_request::recovery::{SnapshotIdentity, Transition};
+    use std::os::unix::fs::PermissionsExt;
+
+    let scratch = tempfile::tempdir().unwrap();
+    let program = scratch.path().join("bus");
+    std::fs::write(
+        &program,
+        r#"#!/bin/sh
+case "$1" in
+helper-owned) echo '"applied"';;
+helper-list) echo '[{"id":1,"from":"claude-1","from_task":"task-20261115-090000-0001","repo":"example","branch":"main","status":"queued","step":"1.1"}]';;
+*) exit 1;;
+esac
+"#,
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: std::sync::Arc::new(MuteReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let daemon = Daemon::new(&pair_state(), Some(&program));
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let mut owner = owner.with_history(started.history.clone());
+    let workspace = RequestWorkspace::try_from(WorkspaceRecord {
+        request: agent_runtime::agentbus::RequestId::new(std::num::NonZeroU64::MIN),
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        requester_round: "round-20261124-120000-cccc".parse().unwrap(),
+        requester_repo: "example".parse().unwrap(),
+        worker: "claude-2".parse().unwrap(),
+        worker_task: task(2),
+        branch: branch(&"claude-2".parse().unwrap(), &task(2)).unwrap(),
+        base: "0123456789abcdef0123456789abcdef01234567".parse().unwrap(),
+        stage: Stage::Working,
+    })
+    .unwrap();
+    let snapshot = SnapshotIdentity {
+        round: workspace.record().requester_round.clone(),
+        task: task(2),
+        number: std::num::NonZeroU32::MIN,
+        commit: workspace.record().base.clone(),
+        head: workspace.record().base.clone(),
+    };
+    let mut journal = Journal::new(workspace).unwrap();
+    let served = Served {
+        request: journal.workspace().record().request,
+        requester: "claude-1".parse().unwrap(),
+        requester_task: task(1),
+        worker: "claude-2".parse().unwrap(),
+        started: at(0),
+        base: None,
+    };
+    let run: RunId = "run-20261124-120000-dddd".parse().unwrap();
+
+    for _ in 0..4 {
+        journal = journal
+            .advance(Transition::RestartedQueued {
+                snapshot: snapshot.clone(),
+            })
+            .unwrap();
+        owner
+            .finish_owned_interruption(&journal, &served, &task(2), &run)
+            .await
+            .unwrap();
+    }
+    started.writer.close().unwrap();
+
+    let rows: Vec<_> = Reader::open(&path)
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|row| row.event() == LogEvent::WorkerRequestEnded)
+        .collect();
+    let outcomes: Vec<_> = rows.iter().map(|row| row.fields()["outcome"].clone()).collect();
+    assert_eq!(
+        outcomes,
+        [
+            "worker_request_requeued",
+            "worker_request_requeued",
+            "worker_request_requeued",
+            "worker_request_returned"
+        ]
+    );
+    assert_eq!(rows[0].fields()["request"], "H1");
+    assert_eq!(rows[0].fields()["step"], "1.1");
+    assert_eq!(rows[0].fields()["worker"], "claude-2");
+    assert_eq!(rows[0].fields()["requester"], "claude-1");
+}

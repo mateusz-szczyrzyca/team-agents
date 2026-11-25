@@ -5,7 +5,7 @@ Newest first. One entry per version, written by the pull request that raises it 
 change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[agentbus]`. The entries start with
 0.16.0; what came before is in the merged pull requests.
 
-## 0.102.0 — 25.11.2026 — PR pending
+## 0.103.0 — 25.11.2026 — PR pending
 
 ### Enhancements
 - [agent] [agent-core] A provider that refused a run (rate limit, overload or quota) keeps its agent out of new tasks, solo tasks queued for it that have not run yet, reviews, takeovers and team dispatch until the time it returns; `agent status` shows the agent as refused until then. The agent comes back by itself, with no change of `agents.toml`.
@@ -22,7 +22,15 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent-core] new: `[replacement] limit_retries` (default `1`, `0` to `10`) — how many times a task is tried again in the same session after a pause for a refusal; when the retries are used up the rule answers "change agent". Until the replacement of an agent on a refusal is in place, the task keeps its pause.
 - [agent-core] new: `[replacement] limit_wait_minutes` (default `60`; `0` never waits) — a quota whose reset is named further away than this answers "change agent" at once, because a retry before the reset is certain to be refused.
 
-## 0.101.0 — 25.11.2026 — PR pending
+## 0.102.0 — 25.11.2026 — PR #263
+
+### New features
+- [agent] [agent-core] [agent-runtime] Every end of a request to a worker is one record of the history, `worker_request_ended`, under the requester's team and round: who asked, which worker served, the try, how it ended (`brought`, `again`, `returned`, `conflict`, `report`, or an interrupted request requeued or returned), when it started, how many seconds the worker's run took and what it cost. Example fields: `request H3, step 2.1, worker glm-1, try 1, outcome brought, seconds 90, cost_usd 0.0123`.
+
+### Enhancements
+- [agent-runtime] A history of version 28 is read and upgraded to version 29, which admits the new log event.
+
+## 0.101.0 — 25.11.2026 — PR #258
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A request that no worker of the pool takes for `[workers] wait_seconds` (default 10 minutes) is answered `failed` and returned to its requester with the words `Nobody took your request H3 (step 2) for 10 minutes: no worker of the pool was free. Do the step yourself now.` The log event is `worker_wait_returned`.
@@ -40,7 +48,7 @@ change is in: `[agent]`, `[agent-core]`, `[agent-runtime]`, `[agent-web]`, `[age
 - [agent] [agent-core] [agent-runtime] `agent status --running` lists under each team every worker that took a request of the team, with the worker's task, its step, when it started and ended and whether its work was accepted: `worker H4  glm-1  task-20261125-075745-w8vj  step 6.1  2026-11-25 08:57–08:59 +01:00  accepted`.
 - [agent] `agent status --running` no longer lists free workers: its `pool:` section shows only the busy workers of teams not listed above.
 
-## 0.99.0 — 25.11.2026 — PR pending
+## 0.99.0 — 25.11.2026 — PR #255
 
 ### Bug fixes
 - [agent] A restart after a worker result was recorded but before its pending result was saved now finishes the request and tells the requester once who served it.

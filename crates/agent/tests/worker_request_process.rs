@@ -4598,4 +4598,102 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
             assert_eq!(world.count_told("claude-1", "The worker w-one did step 1.1"), 1);
         }
     }
+
+    /// The records of the end of a request in the history of `world`, oldest first, once the daemon is stopped.
+    fn ended_records(world: &mut World) -> Vec<agent_core::log::LogEntry> {
+        world.stop();
+        agent_runtime::history::Reader::open(&world.home.join("history.db"))
+            .unwrap()
+            .daemon_logs()
+            .unwrap()
+            .into_iter()
+            .filter(|entry| entry.event() == agent_core::log::LogEvent::WorkerRequestEnded)
+            .collect()
+    }
+
+    /// The text of the field `name` of `record`.
+    fn field(record: &agent_core::log::LogEntry, name: &str) -> String {
+        record.fields()[name].as_str().unwrap().to_owned()
+    }
+
+    #[test]
+    fn a_request_served_and_brought_over_is_one_record_with_its_team_round_and_fields() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:guide"),
+        ]);
+        world.script("guide", &commit_script("the walkthrough", &[]));
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
+        std::fs::write(world.worktree(task(&tasks, "claude-1")).join(".fake-ask"), "").unwrap();
+        world.request_is("1", "done");
+        let team = world.team_id();
+
+        let records = ended_records(&mut world);
+
+        assert_eq!(records.len(), 1, "{records:?}");
+        let record = &records[0];
+        assert_eq!(record.team().map(ToString::to_string), Some(team));
+        assert_eq!(record.rounds().len(), 1);
+        assert_eq!(
+            record.task().map(ToString::to_string).as_deref(),
+            Some(task(&tasks, "claude-1"))
+        );
+        assert_eq!(field(record, "request"), "H1");
+        assert_eq!(field(record, "task"), task(&tasks, "claude-1"));
+        assert_eq!(field(record, "requester"), "claude-1");
+        assert_eq!(field(record, "step"), "1.1");
+        assert_eq!(field(record, "worker"), "glm-1");
+        assert_eq!(field(record, "worker_task"), task(&tasks, "glm-1"));
+        assert_eq!(field(record, "outcome"), "brought");
+        assert_eq!(record.fields()["try"], 1);
+        assert!(!field(record, "started").is_empty(), "{record:?}");
+        assert!(record.fields()["seconds"].is_u64(), "{record:?}");
+        assert!(record.fields().contains_key("cost_usd"), "{record:?}");
+    }
+
+    #[test]
+    fn a_wrong_result_given_again_and_then_accepted_is_two_records_again_and_brought() {
+        let (mut world, tasks) = second_try_world(
+            &[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,script:guide")],
+            None,
+        );
+        world.request_is("1", "done");
+
+        let records = ended_records(&mut world);
+
+        assert_eq!(
+            records
+                .iter()
+                .map(|record| field(record, "outcome"))
+                .collect::<Vec<_>>(),
+            ["again", "brought"],
+            "{records:?}"
+        );
+        assert_eq!(records[0].fields()["try"], 1);
+        assert_eq!(field(&records[0], "worker"), "glm-1");
+        assert_eq!(records[1].fields()["try"], 2);
+        assert_eq!(field(&records[1], "worker"), "glm-2");
+        assert_eq!(field(&records[1], "worker_task"), task(&tasks, "glm-2"));
+    }
+
+    #[test]
+    fn a_daemon_restarted_after_a_settlement_logs_no_second_record_for_it() {
+        let (mut world, member, worker) = world_with_a_served_request();
+        let checked = serde_json::json!({"stage": "checked", "step": "1.1", "files": ["docs/guide.md"], "head": null,
+            "committed": true, "outside": [],
+            "found": {"outcome": "passed", "line": "exists docs/guide.md",
+                      "tail": "", "reason": null, "duration_ms": 1, "output": null}});
+        world.worker_ended_and_daemon_down(&member, &worker, checked, MEMBER_REQUEST);
+        world.start();
+        world.request_is("1", "done");
+        world.stop();
+        world.start();
+        world.request_is("1", "done");
+
+        let records = ended_records(&mut world);
+
+        assert_eq!(records.len(), 1, "{records:?}");
+        assert_eq!(field(&records[0], "outcome"), "brought");
+    }
 }
