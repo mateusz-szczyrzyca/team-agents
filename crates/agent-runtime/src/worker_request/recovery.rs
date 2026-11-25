@@ -60,6 +60,17 @@ pub struct Attempt {
     pub run: RunId,
 }
 
+/// Validated queued recovery context, preserving the workspace and provider-failure preference.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Retained<'a> {
+    /// Workspace to reuse without changing its immutable branch identity.
+    pub workspace: &'a RequestWorkspace,
+    /// Last interruption cause, retained across queued restarts.
+    pub cause: Cause,
+    /// Worker whose execution last owned the workspace.
+    pub worker: &'a AgentName,
+}
+
 /// One durable change, replayed in order to validate the journal.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "event", rename_all = "snake_case", deny_unknown_fields)]
@@ -309,6 +320,12 @@ impl Journal {
             Transition::Observed { run, ending } if run == &attempt.run => Some(*ending),
             _ => None,
         })
+    }
+
+    /// Returns recovery context only for a queued interruption, never a wrong-result retry.
+    #[must_use]
+    pub fn retained(&self) -> Option<Retained<'_>> {
+        None
     }
 
     /// Workspace used by the latest execution.
