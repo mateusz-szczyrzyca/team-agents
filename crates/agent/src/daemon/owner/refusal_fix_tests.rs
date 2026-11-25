@@ -109,3 +109,40 @@ esac
     owner.serve_pool_requests().await.unwrap();
     assert_eq!(claimed.exists(), true);
 }
+
+#[tokio::test]
+async fn live_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_cap() {
+    use crate::daemon::settle::Settled;
+    use agent_core::decide::outcome::{Pause, PauseReason};
+
+    let state = solo_state();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let reset = agent_core::state::Timestamp::from_utc(at(0).as_utc() + time::Duration::days(10)).unwrap();
+    let day_nine = agent_core::state::Timestamp::from_utc(at(0).as_utc() + time::Duration::days(9)).unwrap();
+    let capped = agent_core::state::Timestamp::from_utc(at(0).as_utc() + time::Duration::days(8)).unwrap();
+    let located = owner.locate(&task(1)).unwrap();
+    owner
+        .keep_refusal(
+            &task(1),
+            &located,
+            &Settled::Paused(Pause {
+                until: capped,
+                reason: PauseReason::Quota,
+                evidence: String::new(),
+            }),
+            &RunEnd::QuotaExhausted { resets_at: Some(reset) },
+            at(0),
+        )
+        .unwrap();
+
+    assert_eq!(
+        owner.parts.state.refused_until(&"claude-1".parse().unwrap()),
+        Some(reset)
+    );
+    assert_eq!(
+        owner.parts.state.refused_at(&"claude-1".parse().unwrap(), day_nine),
+        true
+    );
+    assert_eq!(owner.parts.state.refused_at(&"claude-1".parse().unwrap(), reset), false);
+}

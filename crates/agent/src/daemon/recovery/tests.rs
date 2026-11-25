@@ -759,3 +759,30 @@ fn recovering_an_interrupted_retry_clears_its_previous_refusal_count() {
 
     assert_eq!(state.limit_refusals(&task(2)), 0);
 }
+
+#[test]
+fn recovered_quota_cooldown_keeps_the_full_named_reset_beyond_the_task_pause_cap() {
+    let mut state = team_state();
+    let reset = Timestamp::from_utc(at(0).as_utc() + time::Duration::days(10)).unwrap();
+    let day_nine = Timestamp::from_utc(at(0).as_utc() + time::Duration::days(9)).unwrap();
+    let agent = "claude-1".parse().unwrap();
+    start(&mut state, 2, Some("quota-session"));
+    end(
+        &mut state,
+        2,
+        RunEnd::QuotaExhausted { resets_at: Some(reset) },
+        TaskStatus::Paused,
+    );
+
+    let recovery = recover(&mut state, at(100), &limits()).unwrap();
+
+    assert!(
+        recovery
+            .wakes
+            .iter()
+            .any(|(wake, task_id)| *task_id == task(2) && *wake < day_nine)
+    );
+    assert_eq!(state.refused_until(&agent), Some(reset));
+    assert_eq!(state.refused_at(&agent, day_nine), true);
+    assert_eq!(state.refused_at(&agent, reset), false);
+}
