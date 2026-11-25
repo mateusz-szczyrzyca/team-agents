@@ -19,6 +19,9 @@ use agent_runtime::run::RunJob;
 
 use super::rig::{ONE, PATIENCE, Rig, investigator, normal};
 
+/// How long the stop of a daemon whose history queue is full may take to write that queue.
+const DRAIN_PATIENCE: std::time::Duration = std::time::Duration::from_secs(300);
+
 /// An isolated repository with an agent and two approving reviewers.
 async fn rig() -> Rig {
     Rig::new(
@@ -160,7 +163,9 @@ git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false com
     let health = merge_and_status(&rig, 1).await;
     // Release the external writer only after the merge, so draining history cannot be required for progress.
     db.execute_batch("ROLLBACK").unwrap();
-    rig.stop().await.unwrap();
+    // The stop writes the full queue (4096 records, 16 transactions) before the daemon ends. Alone that takes a second; in
+    // the one process of the whole suite a batch of 256 took 4-5 s of contended system time, more than one PATIENCE in all.
+    rig.stop_within(DRAIN_PATIENCE).await.unwrap();
     assert_eq!(health.state, HistoryState::Writing);
     assert!(health.lost > 0, "{health:?}");
     let integrity: String = db.query_row("PRAGMA integrity_check", [], |row| row.get(0)).unwrap();

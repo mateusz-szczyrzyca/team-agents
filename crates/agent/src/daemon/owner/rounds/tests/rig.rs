@@ -428,6 +428,14 @@ impl Rig {
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
     }
 
+    /// Stops the daemon, waits up to `patience` for it to end and returns how it ended: for a daemon whose stop has more
+    /// to write than one run's wait allows.
+    pub(super) async fn stop_within(&mut self, patience: Duration) -> Result<(), DaemonError> {
+        self.shutdown.cancel();
+        let daemon = self.daemon.take().unwrap();
+        tokio::time::timeout(patience, daemon).await.unwrap().unwrap()
+    }
+
     /// Asks the daemon to run `agents` on `list` in the scratch repository with `merge`.
     pub(super) async fn run(
         &self,
