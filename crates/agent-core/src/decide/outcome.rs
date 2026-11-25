@@ -33,6 +33,7 @@ use time::{Date, Duration, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcDa
 use crate::cli::{ErrorTail, RunOutput, SessionId, StreamOutcome};
 use crate::config::{Limits, Watchdog};
 use crate::kinds::Role;
+use crate::local_time::Zone;
 use crate::state::{InvalidTimestamp, RunEnd, Timestamp};
 use crate::status::RunOutcome;
 
@@ -221,6 +222,10 @@ const UNIX_TIME_DIGITS: usize = 10;
 
 /// What `limit reached|` is followed by in the final message of an old Claude Code: the Unix time of the reset.
 const UNIX_RESET_MARKER: &str = "limit reached|";
+
+/// What `"resetsat":` is followed by in a rejected Claude rate-limit window, in lower case as the lines are: the Unix time
+/// the window opens again.
+const RESETS_AT_MARKER: &str = "\"resetsat\":";
 
 /// Digits of a year in a date such as `Nov 12th, 2026`.
 const YEAR_DIGITS: usize = 4;
@@ -447,7 +452,12 @@ impl Limit {
     /// The end and the pause of a run that stopped on this limit.
     fn classify(self, context: &LimitContext<'_>) -> Result<Classified, ClassifyError> {
         let now = context.now.as_utc();
-        let reset = reset_time(&self.lines, now, context.local_offset);
+        let structured = self
+            .lines
+            .iter()
+            .find_map(|line| read_resets_at(line, now, context.local_offset))
+            .filter(|reset| *reset > now);
+        let reset = structured.or_else(|| reset_time(&self.lines, now, context.local_offset));
         let wait = match reset {
             Some(reset) => (reset - now).min(MAX_PAUSE),
             None => self.default_pause(context.limits)?,
@@ -463,12 +473,16 @@ impl Limit {
             },
             PauseReason::RateLimit => RunEnd::RateLimited,
         };
+        let evidence = match structured {
+            Some(reset) => with_local_reset(&self.evidence, recorded(reset, context.now)?, context),
+            None => self.evidence,
+        };
         Ok(Classified {
             end,
             pause: Some(Pause {
                 until,
                 reason: self.reason,
-                evidence: self.evidence,
+                evidence,
             }),
         })
     }
@@ -481,6 +495,15 @@ impl Limit {
         };
         Duration::try_from(minutes.as_duration()).map_err(|source| ClassifyError::DefaultPauseTooLong { source })
     }
+}
+
+/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets <RFC 3339>`. The evidence is
+/// cut first, so that the whole stays within [`MAX_EVIDENCE_CHARS`].
+fn with_local_reset(evidence: &str, reset: Timestamp, context: &LimitContext<'_>) -> String {
+    let suffix = format!(" · resets {}", Zone::Fixed(context.local_offset).rfc3339(reset));
+    let room = MAX_EVIDENCE_CHARS.saturating_sub(suffix.chars().count());
+    let words: String = evidence.chars().take(room).collect();
+    format!("{words}{suffix}")
 }
 
 /// `time` as a [`Timestamp`], for the run that ended at `now`.
@@ -496,7 +519,8 @@ type ResetReader = fn(&str, UtcDateTime, UtcOffset) -> Option<UtcDateTime>;
 /// The first reset time after `now` that the `lines` give, by the order of the forms: a Unix time, a duration, an ISO
 /// time, a date, a time of day.
 fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<UtcDateTime> {
-    const READERS: [ResetReader; 5] = [
+    const READERS: [ResetReader; 6] = [
+        read_resets_at,
         read_unix_time,
         read_duration,
         read_iso_time,
@@ -513,7 +537,18 @@ fn reset_time(lines: &[String], now: UtcDateTime, offset: UtcOffset) -> Option<U
 /// `limit reached|1794478200`.
 fn read_unix_time(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
     let (_, after) = line.split_once(UNIX_RESET_MARKER)?;
-    let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+    unix_time_digits(after)
+}
+
+/// `"resetsat":1794478200` of a rejected Claude window: the field is exact, so it is read before the text forms.
+fn read_resets_at(line: &str, _now: UtcDateTime, _offset: UtcOffset) -> Option<UtcDateTime> {
+    let (_, after) = line.split_once(RESETS_AT_MARKER)?;
+    unix_time_digits(after)
+}
+
+/// The Unix time of the ten digits that start `text`, when it starts with ten digits.
+fn unix_time_digits(text: &str) -> Option<UtcDateTime> {
+    let digits: String = text.chars().take_while(char::is_ascii_digit).collect();
     if digits.len() != UNIX_TIME_DIGITS {
         return None;
     }
