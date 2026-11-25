@@ -368,6 +368,11 @@ with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `war
 journal. The daemon emits late observations, stale pending results and settlement replay to tracing
 stderr/journal (replay at `info`). These diagnostics are not daemon history database events.
 
+The daemon also emits tracing diagnostics `worker_request_requeued` and `worker_request_returned` at `info`,
+with `request` and `run`, after replaying the bus update for an interruption. The first keeps the workspace
+for another execution; the second reports exhaustion of the three-return budget. Replaying startup repair may
+repeat these diagnostics, but never the final requester notice. They are not history database events.
+
 Capability staffing questions use the existing question lifecycle events and question history records. A retained
 `tier_wait` triggers at most one question until that wait ends, even after an answer or daemon restart; answers
 queue the lead with the human's instructions while the item stays blocked on its required capability.

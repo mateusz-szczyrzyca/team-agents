@@ -1,4 +1,4 @@
-//! Opt-in durable attempt journals for fenced settlement; automatic no-result requeue remains deferred.
+//! Opt-in durable attempt journals for fenced settlement and interruption recovery.
 
 use std::collections::BTreeSet;
 use std::num::NonZeroU32;
