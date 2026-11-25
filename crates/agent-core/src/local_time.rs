@@ -117,6 +117,13 @@ impl Zone {
         format!("{:02}:{:02}", local.hour(), local.minute())
     }
 
+    /// The date, the hour and the minute of the moment `at` in this zone, `2026-11-21 17:29`, without the zone: for a line
+    /// that shows a moment too far from now for the time of the day to tell it.
+    #[must_use]
+    pub fn local_minute(&self, at: Timestamp) -> String {
+        self.clock_minute(at)
+    }
+
     /// Formats the timestamp that ends a daemon `waiting` line (`..., next try <timestamp>`, `..., owed by the lead since <timestamp>`) in
     /// this zone.
     ///

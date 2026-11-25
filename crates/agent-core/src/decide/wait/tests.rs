@@ -1,6 +1,6 @@
 //! Every activity and wait reason, including the deliberately unowned round.
 
-use super::{Activity, Obligation, Told, WaitOwner, Waiting, round_wait};
+use super::{Activity, Obligation, Told, WaitOwner, Waiting, resume_line, round_wait};
 use strum::IntoEnumIterator;
 
 #[test]
@@ -213,4 +213,17 @@ fn the_provider_wait_line_names_the_agent_and_the_time_it_returns() {
     for (agent, until, expected) in cases {
         assert_eq!(super::provider_line(&agent.parse().unwrap(), until), expected);
     }
+}
+
+// Rule (#233): a round whose task the human stopped waits for `agent resume`, not for an answer: the line names the task and,
+// when it is known, the time it was stopped.
+#[test]
+fn the_wait_for_a_stopped_task_names_the_task_and_when_it_was_stopped() {
+    let task = "task-20261125-161204-67e1".parse().unwrap();
+
+    assert_eq!(
+        resume_line(&task, Some("17:12")),
+        "you to resume task-20261125-161204-67e1 (stopped at 17:12)"
+    );
+    assert_eq!(resume_line(&task, None), "you to resume task-20261125-161204-67e1");
 }
