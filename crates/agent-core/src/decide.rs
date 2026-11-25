@@ -14,6 +14,7 @@ pub mod checks;
 pub mod commit_guard;
 pub mod commit_reminder;
 pub mod context;
+pub mod context_reminder;
 pub mod delivered;
 pub mod delivery;
 pub mod disclosure;
