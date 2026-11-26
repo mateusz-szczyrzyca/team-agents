@@ -950,6 +950,10 @@ async fn a_team_whose_state_cannot_be_saved_is_refused_and_what_was_made_for_it_
         normal("claude-1", "sleep"),
     ]);
     f.start().await;
+    // The socket is there from the daemon's rename of it, a moment before the daemon removes the directory it staged the
+    // socket in: a home made read-only in between makes that removal, and so the daemon, fail. Its answer to a
+    // request is the proof that it has started.
+    f.answered().await;
     // The worktrees and the bus have their directories; the state, saved through a file beside it, has none it can write.
     std::fs::create_dir_all(f.home.root().join("worktrees/example")).unwrap();
     std::fs::create_dir_all(f.home.root().join("bus")).unwrap();
