@@ -265,6 +265,9 @@ pub enum AgentBusError {
         command: BusCommand,
         /// What it printed, bounded.
         output: String,
+        /// Why decoding failed, when a typed decode was attempted on valid JSON.
+        #[source]
+        source: Option<serde_json::Error>,
     },
 }
 
@@ -1639,6 +1642,7 @@ impl AgentBus {
                 Some(id) => AgentBusError::Unexpected {
                     command,
                     output: format!("could not decode request #{id}"),
+                    source: Some(source),
                 },
                 None => AgentBusError::Decode { command, source },
             }
@@ -1790,6 +1794,7 @@ fn unexpected(command: BusCommand, output: &str) -> AgentBusError {
     AgentBusError::Unexpected {
         command,
         output: diagnostic(output.as_bytes()),
+        source: None,
     }
 }
 
