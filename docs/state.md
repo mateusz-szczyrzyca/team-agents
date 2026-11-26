@@ -168,7 +168,10 @@ The migrated round uses the current opinion protocol without incrementing its fi
 
 The optional top-level `pending_team_replaces` list records bus membership changes that must finish before a
 replacement run starts. Each entry has `team`, `from` and `to` IDs. The daemon saves the entry before calling
-`agentbus team-replace`, retries failures on later passes, and saves removal after success or a not-found response.
+`agentbus team-replace`, retries failures on later passes, and saves removal after success or confirmation that
+the old member is absent from an open team. A missing or closed team leaves the entry pending. When loading a team
+handed over by an earlier daemon, the daemon queues a replacement from the original name to the current holder
+unless a replacement for that holder is already pending.
 An absent list loads as empty; an empty list is omitted when saving. The schema version stays 15. The fixture
 [`state-before-team-replaces.json`](../crates/agent-core/tests/fixtures/state-before-team-replaces.json) verifies
 loading the previous format. Older binaries reject this field; before downgrading, finish pending replacements

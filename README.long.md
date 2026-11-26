@@ -358,8 +358,9 @@ times (default `1`); when the retries are used up, or a quota's reset is later t
 (default `60`), the rule answers "change the agent", which is logged as a `decision_taken` with `decision` `limit`.
 The daemon hands a solo task or team member's task to the first free agent of another provider from `[replacement]
 agents`, then `[tiers] normal`. A lead goes to a free investigator. Candidates already in the team, at their run
-limit, or refused by their provider are skipped. The task keeps its worktree, branch, bus name and history, and the
-new agent receives a briefing. Each takeover counts against `[replacement] replacements`. One notification and a
+limit, or refused by their provider are skipped. The task keeps its worktree, branch and history, and the new agent receives a briefing. A team task moves to
+the new agent's name on the bus before its next run. Each takeover counts against `[replacement] replacements`.
+One notification and a
 `task_agent_changed` history log record name the old agent, its provider and return time, and the new agent.
 When none is free, the task stays paused and records `task_wait_for_free_agent` once. It starts when a suitable agent
 becomes free or its original provider returns, whichever happens first, including after a daemon restart.
@@ -493,8 +494,10 @@ not in a run, and of the same tier as the agent it replaces — normal for norma
 (`[replacement] replacements = 1`; `0` takes none over; a takeover is not counted among the new sessions). Before the replacement's first run, the daemon moves the old agent's membership on the team bus to the new agent;
 the lead receives a message about the change. This also applies to a busy hand-over and to the coordinator.
 If the bus is unavailable, the daemon saves the pending change and retries it on a later pass; the replacement
-waits until the bus accepts it. An already-moved member is treated as complete. Solo tasks make no bus membership
-change. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
+waits until the bus accepts it. A missing old member on an open team is treated as complete; a missing or closed
+team keeps the change pending. On upgrading, the daemon also queues hand-overs saved by earlier versions, so their
+current holders join the bus before starting another run. Solo tasks make no bus membership change. With no such
+agent — also when no `agents` are listed — a member's task stops and the team's lead
 gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
 asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is
 marked failed and the coordinator or you are notified, as before. When the agent that took a task over goes bad too, or
