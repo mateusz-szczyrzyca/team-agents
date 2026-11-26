@@ -29,13 +29,32 @@ impl Owner {
             return Ok(());
         };
 
+        let live_tasks: BTreeSet<TaskId> = self
+            .parts
+            .state
+            .team(team_id)
+            .map(|team| {
+                team.crew()
+                    .roster()
+                    .into_iter()
+                    .filter(|(_, m)| {
+                        !matches!(
+                            m.status(),
+                            TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
+                        )
+                    })
+                    .map(|(_, m)| m.task().clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
         loop {
             let free =
                 agent_core::decide::investigator::free_for_request(&self.parts.state, &self.parts.settings.config, now);
             if free.is_empty() {
                 break;
             }
-            let req = match self.parts.bus.inv_next(queue_max, slots).await {
+            let req = match self.parts.bus.inv_next(queue_max, slots, &live_tasks).await {
                 Ok(Some(req)) => req,
                 Ok(None) => break,
                 Err(error) => {
