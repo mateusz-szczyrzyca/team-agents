@@ -1,5 +1,6 @@
 //! The verdict of a report and the text that is posted.
 
+use agent_core::decide::investigator::refused_investigators;
 use agent_core::status::ReviewVerdict;
 
 use super::{MAX_REPORT_CHARS, VerdictProblem, parse_verdict, report_text};
@@ -281,8 +282,8 @@ gate = ["true"]
         let inv_b: InvestigatorName = "inv-b".parse().unwrap();
         refused_state.record_refused_until(inv_b.as_str().parse().unwrap(), Some(at(500)));
 
-        let before = super::super::refused_investigators(&refused_state, &config(), at(499));
-        let after = super::super::refused_investigators(&refused_state, &config(), at(500));
+        let before = refused_investigators(&refused_state, &config(), at(499));
+        let after = refused_investigators(&refused_state, &config(), at(500));
 
         assert!(before.contains(&inv_b));
         assert!(!after.contains(&inv_b));
