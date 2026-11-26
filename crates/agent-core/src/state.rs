@@ -606,7 +606,7 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         // The ladder never starts a worker or a reviewer anew; the retry of a failed run without a tool call applies to
         // every role, so it is the one trouble their task may be renewed for.
-        if matches!(role, Role::Worker | Role::Reviewer)
+        if matches!(role, Role::Worker | Role::Reviewer | Role::Investigator)
             && !matches!(trouble, crate::decide::ladder::Trouble::NoToolCall)
         {
             return Err(RenewTaskError::Role {
@@ -675,7 +675,7 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         match role {
             Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => {
+            Role::Worker | Role::Reviewer | Role::Investigator => {
                 return Err(RenewTaskError::Role {
                     task: task.clone(),
                     role,
@@ -710,7 +710,7 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         match role {
             Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => {
+            Role::Worker | Role::Reviewer | Role::Investigator => {
                 return Err(RenewTaskError::Role {
                     task: task.clone(),
                     role,
@@ -742,7 +742,7 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         match role {
             Role::Member => {}
-            Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer => {
+            Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer | Role::Investigator => {
                 return Err(RenewTaskError::Role {
                     task: task.clone(),
                     role,
@@ -780,7 +780,7 @@ impl State {
             .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
         match role {
             Role::Solo | Role::Coordinator | Role::Member => member.owe_busy_notice(true),
-            Role::Worker | Role::Reviewer => {
+            Role::Worker | Role::Reviewer | Role::Investigator => {
                 return Err(RenewTaskError::Role {
                     task: task.clone(),
                     role,
@@ -833,7 +833,7 @@ impl State {
             .ok_or_else(no_task)?;
         match role {
             Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => {
+            Role::Worker | Role::Reviewer | Role::Investigator => {
                 return Err(HandOverError::Role {
                     task: task.clone(),
                     role,

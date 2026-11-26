@@ -94,7 +94,7 @@ const fn may_be_handed_over(waiting: &Waiting<'_>) -> bool {
         return false;
     }
     match waiting.role {
-        Role::Worker | Role::Reviewer => false,
+        Role::Worker | Role::Reviewer | Role::Investigator => false,
         Role::Coordinator => !waiting.member_runs,
         Role::Solo | Role::Member => true,
     }

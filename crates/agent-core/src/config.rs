@@ -1302,7 +1302,7 @@ fn check_plan(plan: &Plan) -> Result<(), ConfigError> {
     for role in &plan.roles {
         match role {
             Role::Solo | Role::Member | Role::Coordinator => {}
-            Role::Worker | Role::Reviewer => return Err(ConfigError::PlanRole { role: *role }),
+            Role::Worker | Role::Reviewer | Role::Investigator => return Err(ConfigError::PlanRole { role: *role }),
         }
         if !seen.insert(*role) {
             return Err(ConfigError::PlanRoleTwice { role: *role });

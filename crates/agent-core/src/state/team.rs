@@ -886,7 +886,7 @@ const fn tier_fits(role: Role, participant: &Participant) -> bool {
             Role::Solo | Role::Coordinator | Role::Member,
             Participant::Normal(_) | Participant::Investigator(_)
         ) | (Role::Worker, Participant::Worker(_))
-            | (Role::Reviewer, Participant::Investigator(_))
+            | (Role::Reviewer | Role::Investigator, Participant::Investigator(_))
     )
 }
 
@@ -1004,6 +1004,7 @@ mod tests {
             (Role::Member, [true, false, true]),
             (Role::Worker, [false, true, false]),
             (Role::Reviewer, [false, false, true]),
+            (Role::Investigator, [false, false, true]),
         ];
         let participants = [normal("a"), worker("b"), inv("c")];
         for (role, fits) in table {

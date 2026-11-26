@@ -122,7 +122,7 @@ pub fn done_ends_with<'a>(
                 DoneEnds::Work
             }
         }
-        Role::Solo | Role::Member | Role::Worker | Role::Reviewer => DoneEnds::Work,
+        Role::Solo | Role::Member | Role::Worker | Role::Reviewer | Role::Investigator => DoneEnds::Work,
     }
 }
 

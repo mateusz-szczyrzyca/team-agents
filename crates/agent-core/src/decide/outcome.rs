@@ -949,7 +949,7 @@ pub fn after_no_status(role: Role, count: u64, session: Option<&crate::state::Se
     } else {
         match role {
             Role::Solo | Role::Coordinator | Role::Member => AfterNoStatus::Resume,
-            Role::Worker | Role::Reviewer => AfterNoStatus::Fail,
+            Role::Worker | Role::Reviewer | Role::Investigator => AfterNoStatus::Fail,
         }
     }
 }

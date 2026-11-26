@@ -78,7 +78,7 @@ pub const fn rank(tier: Tier) -> u8 {
 pub fn choose<'a>(role: Role, replaced: Tier, candidates: &[Candidate<'a>], mode: ReplacementMode) -> Handover<'a> {
     // A worker's and a reviewer's task is outside this choice, whatever the configuration names.
     match role {
-        Role::Worker | Role::Reviewer => return Handover::Human,
+        Role::Worker | Role::Reviewer | Role::Investigator => return Handover::Human,
         Role::Solo | Role::Coordinator | Role::Member => {}
     }
     match mode {
@@ -105,7 +105,7 @@ fn first_fit<'a, 'b>(replaced: Tier, candidates: &'b [Candidate<'a>]) -> Option<
 const fn lead_of(role: Role) -> Handover<'static> {
     match role {
         Role::Member => Handover::Lead,
-        Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer => Handover::Human,
+        Role::Solo | Role::Coordinator | Role::Worker | Role::Reviewer | Role::Investigator => Handover::Human,
     }
 }
 

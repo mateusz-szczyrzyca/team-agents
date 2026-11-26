@@ -105,7 +105,7 @@ pub fn next_step(
     }
     match role {
         Role::Solo | Role::Coordinator | Role::Member => LadderStep::NewSession,
-        Role::Worker | Role::Reviewer => LadderStep::GiveUp,
+        Role::Worker | Role::Reviewer | Role::Investigator => LadderStep::GiveUp,
     }
 }
 

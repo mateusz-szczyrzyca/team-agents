@@ -962,7 +962,7 @@ pub fn explain_plan(
             Role::Solo | Role::Member => HowChosen::Named,
             Role::Worker => HowChosen::ConfiguredOrder,
             Role::Coordinator => coordinator_how(request, config, named)?,
-            Role::Reviewer => {
+            Role::Reviewer | Role::Investigator => {
                 return Err(ExplainError::NotFormed {
                     agent: agent.clone(),
                     role: *role,
