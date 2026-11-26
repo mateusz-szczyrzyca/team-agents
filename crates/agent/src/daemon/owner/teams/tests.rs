@@ -327,7 +327,7 @@ impl Fixture {
     }
 
     async fn connect(&self) -> Connection {
-        Connection::connect(&self.home.socket_file()).await.unwrap()
+        connect_when_listening(&self.home.socket_file()).await
     }
 
     /// Asks the daemon to run `agents` on `list` in the scratch repository.
@@ -3534,6 +3534,42 @@ impl Fixture {
         state["helpers"][id.number().to_string()]["recovery"] = serde_json::json!(false);
         std::fs::write(path, serde_json::to_vec(&state).unwrap()).unwrap();
     }
+}
+
+/// Connects to the daemon at `socket`, waiting for it to accept: the socket file is there from the daemon's bind, a
+/// moment before it listens, and a connection in between is refused.
+async fn connect_when_listening(socket: &Path) -> Connection {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        match Connection::connect(socket).await {
+            Ok(connection) => return connection,
+            Err(ClientError::NotRunning { .. }) if Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Err(error) => panic!("cannot connect to the daemon at {}: {error}", socket.display()),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_connection_made_before_the_daemon_listens_waits_for_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let socket = dir.path().join("agent.sock");
+    // A socket file that nothing listens on: what a daemon that has bound but not yet listened looks like.
+    drop(tokio::net::UnixListener::bind(&socket).unwrap());
+    let waiting = tokio::spawn({
+        let socket = socket.clone();
+        async move { connect_when_listening(&socket).await }
+    });
+    tokio::task::yield_now().await;
+    assert!(!waiting.is_finished(), "the connection was refused, so it must wait");
+
+    std::fs::remove_file(&socket).unwrap();
+    let listener = tokio::net::UnixListener::bind(&socket).unwrap();
+    let (accepted, connected) = tokio::join!(listener.accept(), waiting);
+
+    accepted.unwrap();
+    connected.unwrap();
 }
 
 pub(in crate::daemon::owner) mod worker_wait;
