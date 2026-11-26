@@ -261,7 +261,7 @@ Every step of a run, in order. Key `(run, n)`, `WITHOUT ROWID`. A step has the c
 | `text` | TEXT | `message`, `command`, `error`, `info`: the text, the command line, the error, the information |
 | `path` | TEXT | `file_edit`: the file, as the CLI names it |
 | `tool`, `detail` | TEXT | `bus_call`, `tool_call`: the tool and, in `detail`, the arguments of a bus call or what another tool is asked to do |
-| `action`, `client`, `login` | TEXT | `control`: what the human did (`stop`, `pause`, `unpause`, `resume`, `say`), through which client (`cli` or `dashboard`) and, for the dashboard, the Tailscale login |
+| `action`, `client`, `login` | TEXT | `control`: what the human did (`stop`, `pause`, `unpause`, `resume`, `say`, `renew`), through which client (`cli` or `dashboard`) and, for the dashboard, the Tailscale login |
 | `cut` | TEXT | the fields that were cut |
 
 `kind`: `message`, `command`, `file_edit`, `bus_call`, `tool_call`, `error`, `info` (the model and the end of the run) and

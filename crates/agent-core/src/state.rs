@@ -693,8 +693,7 @@ impl State {
     /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the session does not fit
     /// its runs.
     pub fn begin_human_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
-        let _ = (task, at);
-        Ok(false)
+        self.begin_holder_session(task, crate::decide::ladder::Trouble::Human, at)
     }
 
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no

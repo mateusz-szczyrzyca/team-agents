@@ -2853,16 +2853,8 @@ impl Owner {
                         Command::Unpause(request) => {
                             self.control_request(&client, Steer::Unpause, &request.target).await?
                         }
-                        Command::Resume(request) => {
-                            if self.resume_waits(&request.target) > 0 {
-                                // The resume is for the steps that waited: they are tried at the next look, and no
-                                // task of the team is started again for it.
-                                Ok(Reply::Applied { tasks: Vec::new() })
-                            } else {
-                                self.control_request(&client, Steer::Resume, &request.target).await?
-                            }
-                        }
-                        Command::Renew(request) => self.renew_request(&client, request)?,
+                        Command::Resume(request) => self.resume_request(&client, &request.target).await?,
+                        Command::Renew(request) => self.renew_request(&client, request).await?,
                         Command::Say(request) => self.say_request(&client, request).await?,
                         Command::Remove(request) => self.remove_reply(&client, request).await?,
                         other => self.answer(&other),
