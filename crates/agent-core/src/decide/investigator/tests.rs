@@ -224,6 +224,20 @@ fn the_least_recently_used_investigator_is_chosen_whatever_the_seed() {
 }
 
 #[test]
+fn two_never_used_investigators_are_both_chosen_over_seeds() {
+    use std::collections::BTreeSet;
+    let mut chosen_names = BTreeSet::new();
+    for seed in 1..=32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen = select_with_rng(&[], &["a", "b"], &[], 1, &mut rng).unwrap();
+        assert_eq!(chosen.len(), 1);
+        chosen_names.insert(chosen[0].clone());
+    }
+    assert!(chosen_names.contains("a"), "seed 1..=32 should choose a");
+    assert!(chosen_names.contains("b"), "seed 1..=32 should choose b");
+}
+
+#[test]
 fn an_investigator_never_used_is_chosen_before_one_used() {
     let records = vec![("b", 1, ActivityKind::Reviewer, 10)];
     for seed in 1..=32 {
