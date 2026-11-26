@@ -5,7 +5,7 @@ use agent_core::decide::fix::{Answers, Budget, Progress, Step, fix_step};
 use agent_core::decide::publish::{GateHold, GateStep, HarnessGate, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::decide::wait::Obligation;
-use agent_core::history::HistoryEvent;
+use agent_core::history::{CheckpointCause, HistoryEvent};
 use std::num::NonZeroU32;
 
 use crate::daemon::pr::description::RequestWithSummary;
@@ -692,6 +692,7 @@ impl Owner {
             }
             Ok(found)
         } else {
+            self.flush_checkpoints().await;
             let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
             let created = github
                 .create_pull_request(&NewPullRequest {
@@ -742,6 +743,8 @@ impl Owner {
             };
             github.update_pull_request(remote.number, &update).await?;
         }
+        // The checkpoint of the opening is in the history before the pull request is marked ready.
+        self.flush_checkpoints().await;
         github.mark_ready(remote.number).await?;
         self.record_event(
             team,
@@ -1576,6 +1579,7 @@ impl Owner {
                     .and_then(|v| v.with("rounds", rounds))
                     .and_then(|v| v.with("task", lead.task.as_str()));
                 self.tell_human(pulls, AutopilotNotice::HandoverHeld, values, lead, now);
+                self.queue_for_task(&lead.task, CheckpointCause::WaitsForHuman);
             }
             return Ok(());
         }

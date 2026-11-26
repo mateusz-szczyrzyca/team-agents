@@ -278,7 +278,9 @@ impl Git {
             .scratch_text(GitOperation::WriteTree, &overrides, &[arg("write-tree")])
             .await?;
         if let Some(previous) = previous
-            && let Some((commit, earlier)) = self.reusable_snapshot(previous, kind, &tree, head).await?
+            && let Some((commit, earlier)) = self
+                .reusable_snapshot(previous, kind, (round, task), &tree, head)
+                .await?
         {
             let bytes = self.tree_bytes(&tree).await?;
             return Ok(Written {
@@ -323,18 +325,21 @@ impl Git {
     }
 
     /// The commit and the number of the snapshot under `reference` when it holds `tree` on `head`; `None` when the
-    /// reference is not a snapshot reference of `kind`, is gone, or holds something else.
+    /// reference is not a snapshot reference of `kind` of this `owner` (round and task), is gone, or holds something else.
+    /// A reference of another round or task is never reused: the new snapshot would be recorded under a reference that
+    /// was never written.
     async fn reusable_snapshot(
         &self,
         reference: &str,
         kind: SnapshotKind,
+        owner: (&RoundId, &TaskId),
         tree: &str,
         head: &CommitId,
     ) -> Result<Option<(CommitId, u32)>, GitError> {
+        let (round, task) = owner;
         let Some(number) = reference
-            .strip_prefix(SNAPSHOT_REFS)
-            .and_then(|rest| rest.rsplit_once('/'))
-            .and_then(|(_, leaf)| SnapshotKind::parse_leaf(leaf))
+            .strip_prefix(&format!("{SNAPSHOT_REFS}/{round}/{task}/"))
+            .and_then(SnapshotKind::parse_leaf)
             .and_then(Result::ok)
             .filter(|(found, _)| *found == kind)
             .map(|(_, number)| number)
