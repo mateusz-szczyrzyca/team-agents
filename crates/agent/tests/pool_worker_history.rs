@@ -282,14 +282,6 @@ Write the walkthrough of the guide.
         fn worktree(&self, task: &str) -> PathBuf {
             self.home.join("worktrees/example").join(task)
         }
-
-        /// The file `name` of the worktree of `task`, once it is there.
-        #[expect(dead_code, reason = "used by other tests that may need to read worktree files")]
-        fn file(&self, task: &str, name: &str) -> String {
-            let path = self.worktree(task).join(name);
-            eventually(&format!("{path}", path = path.display()), || path.exists());
-            std::fs::read_to_string(path).unwrap()
-        }
     }
 
     impl Drop for World {
