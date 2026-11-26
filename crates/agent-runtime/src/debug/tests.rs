@@ -372,29 +372,44 @@ fn redacts_secrets_before_compacting_required_summary_reasons() {
 #[test]
 fn command_summary_uses_supplied_machine_offset() {
     let (_dir, home, args) = fixture();
+    let offset = time::UtcOffset::from_hms(5, 30, 0).unwrap();
+    let minute = |at: time::OffsetDateTime| {
+        format!(
+            "{:04}-{:02}-{:02} {:02}:{:02}",
+            at.year(),
+            u8::from(at.month()),
+            at.day(),
+            at.hour(),
+            at.minute()
+        )
+    };
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .unwrap();
+    let before = minute(time::OffsetDateTime::now_utc().to_offset(offset));
     let result = runtime
         .block_on(execute_debug_at(
             &home,
             args,
             None,
             DebugLocation {
-                zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::from_hms(5, 30, 0).unwrap()),
+                zone: agent_core::local_time::Zone::Fixed(offset),
                 checkout: None,
             },
             &mut Vec::new(),
         ))
         .unwrap();
+    let after = minute(time::OffsetDateTime::now_utc().to_offset(offset));
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let line = summary.lines().find(|line| line.starts_with("Collected at:")).unwrap();
+    assert!(!line.contains("+05:30"), "{line}");
+    // The shown time is a local time of the supplied zone: `YYYY-MM-DD HH:MM` and the seconds.
+    let shown = line.strip_prefix("Collected at: ").unwrap();
+    let shown_minute = shown.get(..16).unwrap();
     assert!(
-        summary
-            .lines()
-            .find(|line| line.starts_with("Collected at:"))
-            .unwrap()
-            .contains("+05:30")
+        before.as_str() <= shown_minute && shown_minute <= after.as_str(),
+        "{shown} is not between {before} and {after}"
     );
 }
 

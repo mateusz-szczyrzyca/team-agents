@@ -46,7 +46,7 @@ pub(crate) struct Served {
     task: String,
     /// The worker and the step it took, in the column of the agents: `glm-1  step 6.1`.
     agent: String,
-    /// What became of the result, then when the worker's runs went on: `accepted, 2026-11-25 08:57–08:59 +01:00`.
+    /// What became of the result, then when the worker's runs went on: `accepted, 2026-11-25 08:57–08:59`.
     state: String,
 }
 
@@ -110,7 +110,10 @@ fn times(span: Span, working: bool, zone: Zone) -> String {
             let ended = zone.stamp_minute(end);
             match (split_stamp(&started), split_stamp(&ended)) {
                 (Some((day, from, label)), Some((end_day, to, end_label))) if day == end_day && label == end_label => {
-                    format!("{day} {from}–{to} {label}")
+                    match label {
+                        Some(label) => format!("{day} {from}–{to} {label}"),
+                        None => format!("{day} {from}–{to}"),
+                    }
                 }
                 _ => format!("{started} – {ended}"),
             }
@@ -118,11 +121,11 @@ fn times(span: Span, working: bool, zone: Zone) -> String {
     }
 }
 
-/// The date, the clock and the zone of a stamp `2026-11-25 08:57 +01:00`; `None` for another form, such as the RFC
-/// 3339 text the UTC zone writes.
-fn split_stamp(stamp: &str) -> Option<(&str, &str, &str)> {
+/// The date, the clock and the mark after them of a stamp `2026-11-25 08:57`, or `2026-11-25 08:57 UTC` for a moment
+/// that could not be shown locally; `None` for another form, such as the RFC 3339 text the UTC zone writes.
+fn split_stamp(stamp: &str) -> Option<(&str, &str, Option<&str>)> {
     let mut parts = stamp.splitn(3, ' ');
-    Some((parts.next()?, parts.next()?, parts.next()?))
+    Some((parts.next()?, parts.next()?, parts.next()))
 }
 
 /// What became of a request in `status` whose requester gave `verdict`.

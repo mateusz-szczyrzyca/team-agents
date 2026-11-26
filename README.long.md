@@ -627,7 +627,7 @@ Task files and git output are bounded to 4 MiB each; task files together to 64 M
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
 History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
 the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
-source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS +HH:MM`, or `UTC` when the zone cannot be found), as `agent log` does.
+source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS`, or with `UTC` after it when the zone cannot be found), as `agent log` does.
 Each task shows its latest run's reason, final message and steps, and how many tool calls that run made, Serena's and
 the shell's among them (`tools: 214 (serena 12, shell 160, other 42)`, or `tools: none recorded` when its steps name
 no tool): the count comes from the steps the run recorded in the history, so it tells whether the agents reach Serena
@@ -709,7 +709,7 @@ size, table counts and the oldest timestamp. A scoped `--show` selects `tasks`, 
 `changes`, `reviews`, `log` or `usage`. `[history] keep_days` removes expired closed rounds and their gate output;
 `[log] keep_days` removes old rows of no round. Both default to `0` (keep all), and open rounds always stay.
 
-The text of `agent log` shows times in the zone of this machine with its offset, as `date` does; `agent log --utc` shows
+The text of `agent log` shows times in the zone of this machine, as `date` does, without the offset written after them (`2026-11-21 17:29:53`; a time that cannot be shown locally is written in UTC with `UTC` after it); `agent log --utc` shows
 them in UTC, as the files hold them, and `--json` is always UTC. A `--since` or `--until` without a zone is read in the
 zone of this machine.
 
@@ -736,7 +736,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status` | the short view: every team with its rounds, a line for each of its tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks listed are the team's coordinator, members, workers and reviewers (a solo task too), whatever their status; a reviewer whose review is over is listed with when it finished. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number. When workers are configured, a `pool:` section shows each worker, whom it serves (team or task, step) or that it is free |
 | `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
-| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now and who works on it. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over. Under each team, before its count of tasks, a line for every request of its tasks that a worker took, in the columns of the tasks' lines: `  task-20261125-075745-w8vj  worker       glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59 +01:00` — the worker's task (`agent log --task` takes it; its runs are in `tasks/<task>/runs/`; `no task yet` before the request was given one), the role `worker`, the worker and the step in the column of the agents (a worker with its step wider than every agent widens that column for the whole list), what became of the result (`accepted`, `accepted after correction`, `rejected`, `not rated yet`, `working`, `queued`, `failed`, `unclear, asked back`), then when the worker's runs started and ended (`since …` while it works, `not started` before). Its `pool:` section names only the busy workers of teams not listed; a free worker is not shown |
+| `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now and who works on it. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over. Under each team, before its count of tasks, a line for every request of its tasks that a worker took, in the columns of the tasks' lines: `  task-20261125-075745-w8vj  worker       glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59` — the worker's task (`agent log --task` takes it; its runs are in `tasks/<task>/runs/`; `no task yet` before the request was given one), the role `worker`, the worker and the step in the column of the agents (a worker with its step wider than every agent widens that column for the whole list), what became of the result (`accepted`, `accepted after correction`, `rejected`, `not rated yet`, `working`, `queued`, `failed`, `unclear, asked back`), then when the worker's runs started and ended (`since …` while it works, `not started` before). Its `pool:` section names only the busy workers of teams not listed; a free worker is not shown |
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
 | `agent status <team>`, `<task>`, `<round>` | the team or task with its tasks, or the round as before |
 | `agent status --investigators` | what each configured investigator is doing: its last two activities in the teams that are not closed (no versions line) |
@@ -800,13 +800,13 @@ finished, or when and why it stopped) instead of the status of its task:
 
 ```
 team-20261111-153000-t5m8  team-agents  autopilot  1 pending, 1 in progress, 0 in review, 0 approved, 0 done
-  round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00
-  task-20261111-153001-k3x9  coordinator  inv-opus   running, last activity 2026-11-11 19:20:11 +00:00
+  round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15
+  task-20261111-153001-k3x9  coordinator  inv-opus   running, last activity 2026-11-11 19:20:11
   task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers
   task-20261111-153003-k3x9  worker       glm-1      done
-  task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 2026-11-11 19:19:58 +00:00
-  task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:16:30 +00:00
-  task-20261111-153006-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:18:05 +00:00
+  task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 2026-11-11 19:19:58
+  task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:16:30
+  task-20261111-153006-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:18:05
   tasks: 2 running, 1 waiting, 1 with questions, 2 done; questions number 2 wait for answers (claude-1, task-20261111-153002-k3x9)
 ```
 
@@ -827,17 +827,17 @@ Every view of `agent status` prints the same state for a part of a split, whethe
 is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed
 without a merge is not `done`. In `agent status --running`, an item whose every part merged shows no part line.
 
-`agent status` ends the line of a task that runs with `last activity YYYY-MM-DD HH:MM:SS +HH:MM`: the local time the output of its run last
-changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs. Every time `agent status` prints is in the zone of this machine with the offset of that moment, as `agent log` writes it; `agent status --json` stays in UTC.
+`agent status` ends the line of a task that runs with `last activity YYYY-MM-DD HH:MM:SS`: the local time the output of its run last
+changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs. Every time `agent status` prints is in the zone of this machine, as `agent log` writes it, without the offset after it; `agent status --json` stays in UTC.
 
 The line of a reviewer says what it did or does, from the record of the team's investigators, instead of the one word of
 its status (a reviewer that waits between its reviews said only `waiting`):
 
 | Says | Means |
 |---|---|
-| `working`, with `last activity YYYY-MM-DD HH:MM:SS +HH:MM` while its run writes | a review goes, or one is queued for it |
-| `done, 1st review finished 2026-11-19 12:08:17 +01:00` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
-| `stopped at 2026-11-19 12:10:00 +01:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
+| `working`, with `last activity YYYY-MM-DD HH:MM:SS` while its run writes | a review goes, or one is queued for it |
+| `done, 1st review finished 2026-11-19 12:08:17` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
+| `stopped at 2026-11-19 12:10:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
 
 A reviewer task without recorded activity shows the word of its status as before. The lines of the coordinator, the
 members and the workers do not change.
@@ -845,17 +845,17 @@ members and the workers do not change.
 `agent status --investigators` shows every investigator of `[investigators.NAME]` in `agents.toml`, in the order of
 their names, with the last two of its activities in the teams that are not closed, the newest first: the task, the kind of
 the activity (`team-member`, `reviewer`, `investigator`, `task-allocator`), the investigator, the team, and what it did:
-`done at 2026-11-19 12:15:15 +01:00, 1st review finished`, `working, 2nd review`, `done at 2026-11-19 12:00:00 +01:00, tasks allocated`, or, for one that
-ended without its report, `stopped at 2026-11-19 12:10:00 +01:00, reason: …` as on a reviewer's line. A team counts as open while it has a
+`done at 2026-11-19 12:15:15, 1st review finished`, `working, 2nd review`, `done at 2026-11-19 12:00:00, tasks allocated`, or, for one that
+ended without its report, `stopped at 2026-11-19 12:10:00, reason: …` as on a reviewer's line. A team counts as open while it has a
 round that goes on. An investigator with no activity in an open team is listed as `free, no activity in an open team`:
 
 ```text
 task-20261119-094409-saal  reviewer  inv-gemini-argon  for team-20261119-094000-saal  working, 2nd review
-task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119-094000-p4vt  done at 2026-11-19 12:00:00 +01:00, tasks allocated
+task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119-094000-p4vt  done at 2026-11-19 12:00:00, tasks allocated
 inv-opus  free, no activity in an open team
 ```
 
-The line of a round ends with when the round started, in local time (`started YYYY-MM-DD HH:MM +HH:MM`), and for a round that
+The line of a round ends with when the round started, in local time (`started YYYY-MM-DD HH:MM`), and for a round that
 is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
 
 | Says | Means |
@@ -1032,7 +1032,7 @@ yet or holds it for a free agent or a limit of runs: the run goes on with the ro
 opened right after a merge of a part writes no error. A task that waits for a message, an assignment or a merge has no
 run to come. `nothing: this is a defect` means the harness has lost its next action, as when every task of the round
 waits; it logs one `daemon_task_failed` error for that round with `operation=round_wait`. Every other line also names who
-is obliged and since when the round last went idle (`the lead's correction, owed by the lead since 2026-11-22 03:12 +01:00`):
+is obliged and since when the round last went idle (`the lead's correction, owed by the lead since 2026-11-22 03:12`):
 the lead and the reviewers are told what is expected of them in their next prompt or a message that wakes them, you in a
 question or a notification, and the harness's own work (a gate, a merge, a queued run, a free investigator) needs no telling.
 A test lists every state a round can wait in with its owner and fails when one is added without.
@@ -1067,7 +1067,7 @@ Reopening a PR before the daemon observes its closure preserves the claim; reope
 restores that claim. A stopped team resumes this recovery when its member is resumed.
 
 A step of a round that GitHub or git fails does not stop the daemon: the round says `waits for GitHub: refresh the
-description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00` and the step is tried again by itself, after 30
+description of the pull requests, tried 4 times, next try 2026-11-21 01:07` and the step is tried again by itself, after 30
 seconds, then after a pause that doubles up to 10 minutes. When GitHub refuses it for good (a 404, a token that may not
 do it) the line says `refused: <GitHub's answer>`, you are told once while it waits, and `agent resume <team>` tries it
 again at once after you fixed the cause. Such a resume is for the waiting steps only: it starts no task of the team; a
@@ -1135,7 +1135,7 @@ per-file questions and verdict rules, including `ok` accepting the recommendatio
 A task file can say what it is in one line: `Short desc: Fix the typo in the README`, among the header lines before the
 brief, at most 70 characters ([the format](docs/task-list.md)). For a task given as text use
 `agent run --short-desc "Fix the typo" claude-1 "..."`. Every notification the daemon sends about a task starts with
-`Repo`, `Time` (the minute in the daemon's local time zone with its offset, `Time: 2026-11-21 17:30 +01:00`) and `Task:` (that description), then the agent, `Task ID:`, the team, the status and the note; when it
+`Repo`, `Time` (the minute in the daemon's local time zone, `Time: 2026-11-21 17:30`) and `Task:` (that description), then the agent, `Task ID:`, the team, the status and the note; when it
 concerns an item it names it, number and title, on a line of its own after the fields (the title of the part for a
 split part), and it ends with a block `TASK (<task>):` with the first sentences of the task's brief. A task without the
 line has a description derived from its brief: its first sentence cut to 70 characters. `agent status` ends the line of

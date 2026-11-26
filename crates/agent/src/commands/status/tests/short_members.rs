@@ -121,10 +121,10 @@ fn crew_short() -> String {
          task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers\n  \
          task-20261111-153003-k3x9  worker       glm-1      done\n  \
          task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 23:10:11\n  \
-         task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00\n  \
-         task-20261111-153006-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the run \
+         task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30\n  \
+         task-20261111-153006-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: the run \
          showed no activity for too long\n  \
-         task-20261111-153007-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it\n  \
+         task-20261111-153007-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: the human stopped it\n  \
          task-20261111-153008-k3x9  reviewer     inv-codex  queued\n  \
          task-20261111-153009-k3x9  reviewer     inv-codex  done\n  \
          tasks: 2 running, 1 waiting, 1 with questions, 1 queued, 1 stopped, 1 failed, 2 done; questions number 2 wait \
@@ -279,8 +279,7 @@ fn team_with_a_finished_reviewer() -> TeamSummary {
 // view and in the list of the running teams.
 #[test]
 fn a_reviewer_whose_review_is_over_is_listed_with_when_it_finished() {
-    let line =
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 23:35:56 +00:00";
+    let line = "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 23:35:56";
     let teams = [team_with_a_finished_reviewer()];
 
     let tasks = shown(&teams, View::Full, Detail::Tasks);

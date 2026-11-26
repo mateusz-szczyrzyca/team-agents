@@ -97,8 +97,8 @@ fn the_investigators_show_their_last_two_activities_newest_first_or_are_free() {
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         [
-            "task-20261111-153022-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:16:00 +00:00, 2nd review finished",
-            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:40 +00:00, 1st review finished",
+            "task-20261111-153022-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:16:00, 2nd review finished",
+            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:40, 1st review finished",
             "task-20261111-153005-k3x9  reviewer  inv-opus  for team-20261111-153000-t5m8  working, 1st review",
             "inv-gemini  free, no activity in an open team",
         ]
@@ -114,25 +114,25 @@ fn each_kind_of_activity_says_what_it_did_and_an_ended_one_says_why_it_stopped()
             "inv-alloc",
             ActivityRequest::TaskAllocation,
             ActivityEnd::Reported,
-            "task-allocator  inv-alloc  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30 +00:00, tasks allocated",
+            "task-allocator  inv-alloc  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30, tasks allocated",
         ),
         (
             "inv-crew",
             ActivityRequest::TeamMember,
             ActivityEnd::Reported,
-            "team-member  inv-crew  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30 +00:00, work in the team finished",
+            "team-member  inv-crew  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30, work in the team finished",
         ),
         (
             "inv-asked",
             ActivityRequest::Investigation,
             ActivityEnd::Reported,
-            "investigator  inv-asked  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30 +00:00, investigation finished",
+            "investigator  inv-asked  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:30, investigation finished",
         ),
         (
             "inv-halted",
             ActivityRequest::FirstReview,
             ActivityEnd::Stopped,
-            "reviewer  inv-halted  for team-20261111-153000-t5m8  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it",
+            "reviewer  inv-halted  for team-20261111-153000-t5m8  stopped at 2026-11-11 19:15:30, reason: the human stopped it",
         ),
         (
             "inv-hung",
@@ -140,7 +140,7 @@ fn each_kind_of_activity_says_what_it_did_and_an_ended_one_says_why_it_stopped()
             ActivityEnd::Failed {
                 reason: Some(agent_core::state::RunEnd::Hung),
             },
-            "reviewer  inv-hung  for team-20261111-153000-t5m8  stopped at 2026-11-11 19:15:30 +00:00, reason: the run showed no activity for too long",
+            "reviewer  inv-hung  for team-20261111-153000-t5m8  stopped at 2026-11-11 19:15:30, reason: the run showed no activity for too long",
         ),
     ];
     for (investigator, request, end, said) in cases {
@@ -188,7 +188,7 @@ fn a_review_that_ended_without_its_report_is_not_counted_in_the_ordinal() {
     assert_eq!(
         text.lines().next(),
         Some(
-            "task-20261111-153022-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:16:00 +00:00, 1st review finished"
+            "task-20261111-153022-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:16:00, 1st review finished"
         )
     );
 }
@@ -236,7 +236,7 @@ fn passes_asked_in_one_second_are_shown_newest_pass_first() {
         text.lines().collect::<Vec<_>>(),
         [
             "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  working, 3rd review",
-            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:40 +00:00, 2nd review finished",
+            "task-20261111-153021-k3x9  reviewer  inv-codex  for team-20261111-153000-t5m8  done at 2026-11-11 19:15:40, 2nd review finished",
         ]
     );
 }

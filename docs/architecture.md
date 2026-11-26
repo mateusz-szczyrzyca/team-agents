@@ -226,7 +226,7 @@ look; such a resume starts no task of the team. The quick retries inside one cal
 stay as they were. The waits live in the owner's memory, not in `state.json`: a daemon that starts has none, so every
 step is tried at its first look; a verdict held for its commit is not kept over a start. While a step waits the rest
 of the look, the other rounds and the other teams go on; `agent status` says what the round waits for ("GitHub:
-refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"). The log has one `github_step_waiting`
+refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07"). The log has one `github_step_waiting`
 warning when a step starts to wait and one `github_step_resumed` when it goes through. Publishing, merging, posting
 comments and reviews, asking for and replacing reviewers and the fetches log a failure of GitHub or git and try again
 at a later look, as before; none of them ends the owner. Two failures of the home, not of GitHub or git, still end
@@ -1398,7 +1398,7 @@ Every notification sent to the human follows a standardized layout rendered thro
   ```text
   Repo: <repo>
   Agent: <agent> (<cli>, <model>)
-  Time: <YYYY-MM-DD HH:MM> <zone>
+  Time: <YYYY-MM-DD HH:MM>
   Task: <task>
   Team: <team>
   Status: <icon> <label>

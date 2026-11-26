@@ -170,7 +170,7 @@ mod log_zone {
 
         let text = text_of(&home, &["--round", round], CENTRAL_EUROPE);
 
-        assert!(text.contains("2026-11-11 20:30:00 +01:00"), "{text}");
+        assert!(text.contains("2026-11-11 20:30:00"), "{text}");
         assert!(!text.contains("19:30:00Z"), "{text}");
     }
 
@@ -221,10 +221,7 @@ mod log_zone {
         );
 
         assert_eq!(local, with_zone);
-        assert!(
-            local.contains("2026-11-11 20:31:44 +01:00 step 1 of the run"),
-            "{local}"
-        );
+        assert!(local.contains("2026-11-11 20:31:44 step 1 of the run"), "{local}");
         assert!(!local.contains("run-20261111-193001-r7q2"), "{local}");
         assert_eq!(as_utc_zone, "");
         assert!(
@@ -255,8 +252,8 @@ mod log_zone {
 
         let text = text_of(&home, &["--round", round], CENTRAL_EUROPE);
 
-        assert!(text.contains("2026-07-01 14:00:00 +02:00"), "{text}");
-        assert!(text.contains("2026-11-11 20:30:04 +01:00"), "{text}");
+        assert!(text.contains("2026-07-01 14:00:00"), "{text}");
+        assert!(text.contains("2026-11-11 20:30:04"), "{text}");
     }
 
     #[test]
@@ -271,7 +268,7 @@ mod log_zone {
         assert!(stderr.contains("is not a moment that exists"), "{stderr}");
     }
 
-    /// The text with every time of a person (`YYYY-MM-DD HH:MM:SS +HH:MM`) replaced by `<time>`.
+    /// The text with every time of a person (`YYYY-MM-DD HH:MM:SS`) replaced by `<time>`.
     fn normalized(text: &str) -> String {
         let bytes = text.as_bytes();
         let digits = |at: usize, count: usize| {
@@ -292,15 +289,10 @@ mod log_zone {
                 && bytes.get(at + 13) == Some(&b':')
                 && digits(at + 14, 2)
                 && bytes.get(at + 16) == Some(&b':')
-                && digits(at + 17, 2)
-                && bytes.get(at + 19) == Some(&b' ')
-                && matches!(bytes.get(at + 20), Some(b'+' | b'-'))
-                && digits(at + 21, 2)
-                && bytes.get(at + 23) == Some(&b':')
-                && digits(at + 24, 2);
+                && digits(at + 17, 2);
             if shaped {
                 out.push_str("<time>");
-                at += 26;
+                at += 19;
             } else {
                 let Some(next) = text.get(at..).and_then(|rest| rest.chars().next()) else {
                     break;
@@ -320,8 +312,8 @@ mod log_zone {
         let east = text_of(&home, &["--round", round], CENTRAL_EUROPE);
         let west = text_of(&home, &["--round", round], NEW_YORK);
 
-        assert!(east.contains(" +01:00"), "{east}");
-        assert!(west.contains(" -05:00"), "{west}");
+        assert!(!east.contains("+01:00") && !east.contains("-05:00"), "{east}");
+        assert!(!west.contains("+01:00") && !west.contains("-05:00"), "{west}");
         assert_ne!(east, west);
         assert_eq!(normalized(&east), normalized(&west));
     }

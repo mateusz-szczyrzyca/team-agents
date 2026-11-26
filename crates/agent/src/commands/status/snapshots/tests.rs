@@ -37,8 +37,8 @@ fn each_task_shows_its_last_snapshot_with_its_number_time_and_size() {
 
     assert_eq!(
         snapshot_lines(&snapshots, Zone::Fixed(UtcOffset::UTC)),
-        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05 +00:00, 20 bytes\n\
-         \x20 snapshot task-20261120-100000-bbbb number 1 at 1970-01-01 01:02:05 +00:00, 30 bytes\n"
+        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05, 20 bytes\n\
+         \x20 snapshot task-20261120-100000-bbbb number 1 at 1970-01-01 01:02:05, 30 bytes\n"
     );
 }
 
@@ -72,6 +72,6 @@ fn snapshots_of_reads_the_history_or_reports_when_it_cannot_be_read() {
 
     assert_eq!(
         snapshots_of(&home, &round, Zone::Fixed(UtcOffset::UTC)),
-        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05 +00:00, 20 bytes\n"
+        "  snapshot task-20261120-100000-aaaa number 2 at 1970-01-01 01:01:05, 20 bytes\n"
     );
 }

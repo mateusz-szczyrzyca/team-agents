@@ -1411,7 +1411,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
     #[test]
     fn a_deepinfra_refusal_pauses_the_task_and_its_notice_tells_the_provider_words_and_the_local_resume_time() {
         // The daemon runs in UTC+01:00 (a POSIX zone string, so no zone database is needed): the notice must give its
-        // resume time with that offset, never in UTC.
+        // resume time in that zone, with no offset after it, never in UTC.
         let mut world = deepinfra_world("deepinfra-overload");
         start_in_zone(&mut world, "<+01>-1");
 
@@ -1440,7 +1440,8 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
             "{notice}"
         );
         assert!(notice.contains("paused until "), "{notice}");
-        assert!(notice.contains("+01:00"), "{notice}");
+        assert!(!notice.contains("+01:00"), "{notice}");
+        assert!(!notice.contains("UTC"), "{notice}");
         assert!(!notice.contains('Z'), "{notice}");
     }
 

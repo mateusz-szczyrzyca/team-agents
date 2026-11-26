@@ -1,8 +1,10 @@
-//! The times a person reads: one form, in the zone of the system, with the offset valid at the moment shown.
+//! The times a person reads: one form, `2026-11-21 17:29:53`, in the zone of the system with the offset valid at the
+//! moment shown, and without that offset written after it.
 //!
 //! The files, the protocol and `--json` keep UTC (RFC 3339 through [`Timestamp`]'s `Display`); this module is only for
 //! what a person reads. A [`Zone`] says where a moment is shown: [`Zone::Utc`] is the RFC 3339 text of the files
 //! (`agent log --utc`), [`Zone::Fixed`] a fixed offset, [`Zone::Lookup`] the offset that the system has at each moment.
+//! A moment that cannot be shown locally is written in UTC with ` UTC` after it.
 //! Nothing here reads the clock or the environment: a lookup is a function the caller passes in, so the tests choose the
 //! rules of their zones.
 
@@ -20,7 +22,8 @@ use crate::state::Timestamp;
 /// The seconds of a day, as the offset of a lookup is asked for one day before and after a moment.
 const DAY_SECONDS: i64 = 86_400;
 
-/// The text a zone that cannot be found is marked with, so that a pasted time says it is UTC.
+/// The text after a moment that could not be shown locally (the zone cannot be found, or the local year leaves 0000 to
+/// 9999), so that a pasted time says it is UTC.
 const UTC_MARK: &str = "UTC";
 
 /// Where a moment is shown.
@@ -29,7 +32,7 @@ pub enum Zone {
     /// UTC in the RFC 3339 form of the files, with `Z`: what `agent log --utc` prints. The default: the files' form.
     #[default]
     Utc,
-    /// A fixed offset from UTC, shown as `2026-11-21 17:29:53 +01:00`.
+    /// A fixed offset from UTC, shown as the local time without the offset: `2026-11-21 17:29:53`.
     Fixed(UtcOffset),
     /// The offset the system has at the moment asked for, found by the function passed in. When the function gives
     /// no offset, the moment is shown in UTC and marked as UTC.
@@ -103,7 +106,7 @@ impl TypedTime {
 }
 
 impl Zone {
-    /// The moment `at` in this zone as [`Zone::stamp`] writes it, without the seconds: `2026-11-21 17:29 +01:00`.
+    /// The moment `at` in this zone as [`Zone::stamp`] writes it, without the seconds: `2026-11-21 17:29`.
     /// [`Zone::Utc`] writes the RFC 3339 text of the files, which has its seconds.
     #[must_use]
     pub fn stamp_minute(&self, at: Timestamp) -> String {
@@ -164,9 +167,10 @@ impl Zone {
         local.format(&Rfc3339).unwrap_or_else(|_| at.to_string())
     }
 
-    /// The moment `at` in this zone, written as the person reads it: `2026-11-21 17:29:53 +01:00`. The zone is always
-    /// written: its offset, or `UTC` when the zone cannot be found or the offset would leave the four-digit years.
-    /// [`Zone::Utc`] writes the RFC 3339 text of the files.
+    /// The moment `at` in this zone, written as the person reads it: the local date and time, `2026-11-21 17:29:53`, with
+    /// no offset after it. A moment that cannot be shown locally (the zone cannot be found, or the local year would leave
+    /// the four-digit years) is written in UTC with `UTC` after it: `2026-11-21 16:29:53 UTC`. [`Zone::Utc`] writes the
+    /// RFC 3339 text of the files.
     #[must_use]
     pub fn stamp(&self, at: Timestamp) -> String {
         self.written(at, Precision::Second)
@@ -204,13 +208,18 @@ impl Zone {
             Precision::Second => format!("{:02}:{:02}:{:02}", time.hour(), time.minute(), time.second()),
             Precision::Minute => format!("{:02}:{:02}", time.hour(), time.minute()),
         };
-        format!(
-            "{:04}-{:02}-{:02} {clock} {}",
+        let written = format!(
+            "{:04}-{:02}-{:02} {clock}",
             date.year(),
             u8::from(date.month()),
-            date.day(),
-            zone_label(resolved),
-        )
+            date.day()
+        );
+        // Only a moment that could not be shown locally says its zone: a local time has none, as the person reads it.
+        if resolved.marked {
+            format!("{written} {UTC_MARK}")
+        } else {
+            written
+        }
     }
 
     /// The moment a typed time means in this zone.
@@ -296,21 +305,6 @@ impl fmt::Debug for Zone {
             Self::Fixed(offset) => write!(f, "Zone::Fixed({offset})"),
             Self::Lookup(_) => f.write_str("Zone::Lookup"),
         }
-    }
-}
-
-/// The zone of a shown moment: its offset as `+01:00` (with seconds when it has some), or `UTC` when it is marked.
-fn zone_label(resolved: Resolved) -> String {
-    if resolved.marked {
-        return UTC_MARK.to_owned();
-    }
-    let seconds = resolved.offset.whole_seconds();
-    let (sign, magnitude) = if seconds < 0 { ('-', -seconds) } else { ('+', seconds) };
-    let (hours, minutes, rest) = (magnitude / 3600, magnitude % 3600 / 60, magnitude % 60);
-    if rest == 0 {
-        format!("{sign}{hours:02}:{minutes:02}")
-    } else {
-        format!("{sign}{hours:02}:{minutes:02}:{rest:02}")
     }
 }
 

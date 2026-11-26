@@ -80,7 +80,7 @@ fn the_times_of_a_story_are_written_in_the_zone_of_its_page() {
     };
     let at = "2026-11-11T19:50:00Z".parse().expect("a literal time is valid");
     entry(&mut page, at, "the run ended");
-    assert_eq!(page.text, "2026-11-11 20:50:00 +01:00  the run ended\n");
+    assert_eq!(page.text, "2026-11-11 20:50:00  the run ended\n");
 }
 
 #[test]
@@ -96,7 +96,7 @@ fn the_reset_time_of_an_exhausted_quota_is_written_in_the_zone_of_the_story() {
             },
             zone
         ),
-        "quota exhausted (back at 2026-11-21 18:00:00 +01:00)"
+        "quota exhausted (back at 2026-11-21 18:00:00)"
     );
     assert_eq!(
         run_end(&RunEnd::QuotaExhausted { resets_at: Some(edge) }, zone),

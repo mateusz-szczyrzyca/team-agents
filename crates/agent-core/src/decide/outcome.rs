@@ -542,10 +542,10 @@ impl Limit {
     }
 }
 
-/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets <RFC 3339>`. The evidence
+/// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets YYYY-MM-DD HH:MM:SS`. The evidence
 /// already bounds message fields, so status and provider code survive the reset suffix.
 fn with_local_reset(evidence: &str, reset: Timestamp, context: &LimitContext<'_>) -> String {
-    let suffix = format!(" · resets {}", Zone::Fixed(context.local_offset).rfc3339(reset));
+    let suffix = format!(" · resets {}", Zone::Fixed(context.local_offset).stamp(reset));
     format!("{evidence}{suffix}")
 }
 
@@ -1859,7 +1859,7 @@ mod tests {
         let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
         let evidence = class.pause.unwrap().evidence;
         assert!(evidence.starts_with("a quota: rejected"), "{evidence}");
-        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12 13:00:00"), "{evidence}");
     }
 
     // Rule: a rejected window's resetsAt is the JSON field of the window, whatever the spacing of its line.
@@ -1886,7 +1886,7 @@ mod tests {
         let class = failed(None, &format!("{REJECTED_WINDOW}\n{quota_text}"));
         assert_eq!(class.end, quota(Some("2026-11-12T12:00:00Z")));
         let evidence = class.pause.unwrap().evidence;
-        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12 13:00:00"), "{evidence}");
     }
 
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.

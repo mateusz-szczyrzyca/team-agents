@@ -47,7 +47,7 @@ STATUS: DONE
       uncommitted: added .fake-runs (+<n> -<n>)
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (975 bytes) -----
+  ----- pull request body (968 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -162,7 +162,7 @@ Write `allow` to let the round go to its review as it is; the harness records it
 **Verdict:**
   ----- end of questions -----
 <time>  notification sent: ❓ example (task <task-4>)
-  ----- notification (548 bytes) -----
+  ----- notification (541 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.

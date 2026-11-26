@@ -334,12 +334,9 @@ mod daemon_process {
         let ended = finish(daemon);
         assert!(ended.status.success(), "{ended:?}");
 
-        assert!(status_east.contains("started 2026-11-11 20:15 +01:00"), "{status_east}");
-        assert!(status_west.contains("started 2026-11-11 14:15 -05:00"), "{status_west}");
-        assert!(
-            round_east.contains("  opened 2026-11-11 20:15:00 +01:00\n"),
-            "{round_east}"
-        );
+        assert!(status_east.contains("started 2026-11-11 20:15"), "{status_east}");
+        assert!(status_west.contains("started 2026-11-11 14:15"), "{status_west}");
+        assert!(round_east.contains("  opened 2026-11-11 20:15:00\n"), "{round_east}");
         assert_eq!(json_east, json_utc);
         assert!(json_east.contains("\"2026-11-11T19:15:00Z\""), "{json_east}");
 
@@ -351,10 +348,9 @@ mod daemon_process {
             log_east.contains(&format!("{ended_stamp} info run_ended")),
             "log={log_east}\nround={round_east}"
         );
-        let (date_time, zone) = ended_stamp.rsplit_once(' ').expect("stamp has zone");
-        let minute = date_time.get(..16).expect("minute prefix");
+        let minute = ended_stamp.get(..16).expect("minute prefix");
         assert!(
-            notice.contains(&format!("\nTime: {minute} {zone}\n")),
+            notice.contains(&format!("\nTime: {minute}\n")),
             "notice={notice}\nended_stamp={ended_stamp}"
         );
     }
@@ -407,11 +403,48 @@ mod daemon_process {
             .find_map(|line| line.strip_prefix("Debug summary: "))
             .expect("debug prints the summary path");
         let summary = std::fs::read_to_string(summary_path).unwrap();
-        assert!(summary.contains(" +01:00\n"), "{summary}");
+        assert!(!summary.contains("+01:00"), "{summary}");
         let collected = summary
             .lines()
             .find(|line| line.starts_with("Collected at: "))
             .expect("summary has a Collected at line");
-        assert!(collected.ends_with(" +01:00"), "{collected}");
+        assert!(!collected.contains("+01:00"), "{collected}");
+    }
+
+    #[test]
+    fn agent_debug_shows_a_round_opened_at_a_fixed_moment_in_the_process_zone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CENTRAL_EUROPE: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
+        const NEW_YORK: &str = "EST5EDT,M3.2.0,M11.1.0";
+        const ROUND: &str = "round-20261111-153000-q1w2";
+
+        let (dir, home) = home();
+        let secrets = home.root().join("secrets.toml");
+        std::fs::write(&secrets, "").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        seed_open_round_questions(&home, ROUND);
+
+        let east = run_in_zone(
+            &home,
+            &["debug", "--task", TASK, "--out", dir.path().to_str().unwrap()],
+            CENTRAL_EUROPE,
+        );
+        let west = run_in_zone(
+            &home,
+            &["debug", "--task", TASK, "--out", dir.path().to_str().unwrap()],
+            NEW_YORK,
+        );
+
+        let read_summary = |printed: &str| {
+            let path = printed
+                .lines()
+                .find_map(|line| line.strip_prefix("Debug summary: "))
+                .expect("debug prints the summary path");
+            std::fs::read_to_string(path).unwrap()
+        };
+        // The round opened at 19:15:00 UTC on 2026-11-11.
+        assert!(read_summary(&east).contains("| 2026-11-11 20:15:00 |"), "{east}");
+        assert!(read_summary(&west).contains("| 2026-11-11 14:15:00 |"), "{west}");
     }
 }

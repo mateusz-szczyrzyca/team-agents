@@ -195,5 +195,5 @@ fn step_line_in_writes_the_time_of_the_step_in_the_zone_given() {
         &[],
         &zone,
     );
-    assert_eq!(line, "2026-11-21 07:50:32 -05:00 command: cargo test");
+    assert_eq!(line, "2026-11-21 07:50:32 command: cargo test");
 }

@@ -55,7 +55,7 @@ team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 i
 /// The full running task listing of the sample team with one open round on item 1.1 in UTC.
 const RUNNING_TASKS_GOLDEN: &str = "\
 team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done
-  round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00
+  round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15
   task-20261111-153001-k3x9  coordinator  inv-opus   queued
   task-20261111-153002-k3x9  member       claude-1   queued
   task-20261111-153003-k3x9  worker       glm-1      queued
@@ -245,7 +245,7 @@ async fn running_names_the_team_its_open_round_and_its_tasks() {
         format!(
             "{}daemon: version unknown\n\
              team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done\n  \
-             round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00\n  \
+             round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15\n  \
              task-20261111-153001-k3x9  coordinator  inv-opus   queued\n  \
              task-20261111-153002-k3x9  member       claude-1   queued\n  \
              task-20261111-153003-k3x9  worker       glm-1      queued\n  \
@@ -600,7 +600,7 @@ async fn running_lists_the_tasks_of_the_team_with_their_last_activity_and_no_pla
         format!(
             "{}daemon: version unknown\n\
              team-20261111-153000-t5m8  team-agents  autopilot  2 pending, 0 in progress, 0 in review, 0 approved, 0 done\n  \
-             round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15 +00:00\n  \
+             round-20261111-153001-q1w2  item 1.1  open, only local  started 2026-11-11 19:15\n  \
              task-20261111-153001-k3x9  coordinator  inv-opus   running\n  \
              task-20261111-153002-k3x9  member       claude-1   running, last activity {}\n  \
              task-20261111-153003-k3x9  worker       glm-1      queued\n  \

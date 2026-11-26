@@ -275,7 +275,7 @@ fn record_line_in_writes_the_time_in_the_zone_given_and_the_rest_of_the_line_as_
     assert_eq!(
         line,
         format!(
-            "2026-11-21 13:50:32 +01:00 {} {}: queued ← waiting",
+            "2026-11-21 13:50:32 {} {}: queued ← waiting",
             row_prefix(&row),
             subject("inv-claude-sonnet")
         )
@@ -300,7 +300,7 @@ fn record_line_in_writes_the_reset_time_of_an_exhausted_quota_in_the_zone_given(
     assert_eq!(
         local,
         format!(
-            "2026-11-21 13:50:32 +01:00 {} {}: ended quota exhausted (back at 2026-11-21 18:00:00 +01:00)",
+            "2026-11-21 13:50:32 {} {}: ended quota exhausted (back at 2026-11-21 18:00:00)",
             row_prefix(&row),
             subject("inv-claude-sonnet")
         )

@@ -126,7 +126,7 @@ async fn measured_sections_in_formats_gate_finished_time_in_the_daemon_zone() {
 
     let rendered = measured_sections_in(&texts, 42, &gate, None, east).unwrap();
 
-    assert!(rendered.contains("Finished: 2026-11-19 10:30:00 +01:00."), "{rendered}");
+    assert!(rendered.contains("Finished: 2026-11-19 10:30:00."), "{rendered}");
 }
 
 /// A request of a task as the bus lists it.
