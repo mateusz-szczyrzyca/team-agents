@@ -854,6 +854,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::WorkerRequestDamaged,
             LogEvent::RequestRefused,
             LogEvent::WorktreeSwitchRefused,
+            LogEvent::PublishOffBranch,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::warn!(
@@ -1465,6 +1466,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     crate::daemon::owner::teams::tests::worker_wait::record_worker_wait_returned(&mut observed).await;
     crate::daemon::owner::worker_result::tests::record_worker_request_ended(&mut observed).await;
     super::item_branch_tests::record_worktree_switch_events(&mut observed).await;
+    super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();

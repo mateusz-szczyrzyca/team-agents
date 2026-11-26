@@ -22,7 +22,7 @@ use agent_runtime::process::error_chain;
 
 use super::super::teams::Look;
 use super::super::{Owner, OwnerError};
-use super::publish::{Own, Site};
+use super::publish::{ItemTip, Own, Site};
 use super::{Lead, PublishError, Pulls};
 use crate::daemon::merge::{items_of, ran_since};
 use crate::daemon::pr::{Joining, Publication, Publish};
@@ -689,9 +689,8 @@ impl Owner {
             PullState::Merged => Ok(SplitPullStatus::Merged),
             PullState::Closed => Ok(SplitPullStatus::ClosedUnmerged),
             PullState::Open => {
-                let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
                 let budget = self.conflict_budget(team, pr.number);
-                let tip = git.rev_parse(&Revision::Head).await?;
+                let tip = self.item_tip(lead, &pr.branch).await?.tip;
                 let record = self.parts.store.load_gate_record(&lead.task).await?;
                 let is_gated = record
                     .as_ref()
@@ -801,10 +800,30 @@ impl Owner {
 
     /// Whether the lead's tip of `pr` is the commit to push: it merged the base, and the gate of the harness or of the
     /// lead passed at it.
+    ///
+    /// The tip is the tip of the branch of the pull request the pass is for, whatever the worktree has out; the worktree's
+    /// own `HEAD` is read only when no item of the lead's team has a pass for `approved_head`.
     async fn judge_tip(&mut self, lead: &Lead, approved_head: &CommitId) -> Result<Judgement, PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
         let base = self.base_branch(&lead.repo)?;
-        let tip = git.rev_parse(&Revision::Head).await?;
+        let branch = self.parts.state.find_task(&lead.task).and_then(|found| {
+            found.team.items().iter().find_map(|item| {
+                if let ItemPhase::Approved { pr, .. } = item.phase()
+                    && item.conflict_approved_head() == Some(approved_head)
+                {
+                    Some(pr.branch.clone())
+                } else {
+                    None
+                }
+            })
+        });
+        let ItemTip { tip, checked_out } = match branch {
+            Some(branch) => self.item_tip(lead, &branch).await?,
+            None => ItemTip {
+                tip: git.rev_parse(&Revision::Head).await?,
+                checked_out: true,
+            },
+        };
         if &tip == approved_head
             || !git
                 .is_ancestor(&Revision::RemoteBranch(base), &Revision::Commit(tip.clone()))
@@ -826,6 +845,8 @@ impl Owner {
         }
         match own {
             Own::Running => Ok(Judgement::Wait),
+            // The gate of the harness runs in the worktree: it does not see the tip of a branch the worktree has not out.
+            Own::NotRun if !checked_out => Ok(Judgement::Ask),
             Own::NotRun => {
                 self.start_own_gate(&lead.task, &tip, false);
                 Ok(Judgement::Wait)

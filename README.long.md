@@ -1014,7 +1014,7 @@ The first run of the lead after a verdict with findings gets the full text of ev
 reviewer and its level, and the same text is written to `fix-pass-<n>-findings.md` in the lead's task directory; the line
 that says the pass is still open and the request to correct a response name that file, so a lead that has lost the text
 reads it again instead of asking you. A lead's response is judged only when it was given in a run that started at or
-after the verdict, never a message from before the review. Before a fix pass the harness switches the task's worktree to the item's branch when the tree is clean (no change to a tracked file, nothing staged), and otherwise tells the lead to commit its changes and switch itself.
+after the verdict, never a message from before the review. Before a fix pass the harness switches the task's worktree to the item's branch when the tree is clean (no change to a tracked file, nothing staged), and otherwise tells the lead to commit its changes and switch itself. An item's pull request is always pushed from the tip of the item's own branch, never from the branch of another item that the worktree has out (work the lead did on a detached `HEAD` or on a branch of its own, going on from the item, is still the item's work); when the worktree has another branch out and no gate has passed at that tip, nothing is pushed and the lead is sent back to switch to the branch and run `agent gate`.
 
 An idle open round's line in `agent status` and `agent status <round>` names what it waits for: a harness gate,
 a review, a free independent investigator (for a review, a second opinion or the replacement of a reviewer that cannot
