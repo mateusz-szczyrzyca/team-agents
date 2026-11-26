@@ -126,7 +126,7 @@ CREATE TABLE runs (
     tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
     cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
     model TEXT,
-    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer')),
+    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer', 'investigator')),
     why TEXT NOT NULL CHECK (why IN (
         'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
         'answers', 'resumed_by_human', 'continuation'
@@ -329,7 +329,7 @@ CREATE TABLE daemon_logs (
         'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
-        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone'
+        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone', 'investigation_started', 'investigation_answered', 'investigation_kind_unknown'
     )),
     team TEXT,
     task TEXT,
@@ -349,13 +349,13 @@ CREATE TABLE daemon_logs (
             'cli_output_unreadable', 'run_ended_without_status', 'run_hung', 'run_quota_exhausted', 'run_rate_limited',
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
-            'history_record_incomplete'
+            'history_record_incomplete', 'investigation_kind_unknown'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
-            'questions_file_opened', 'build_directory_removed'
+            'questions_file_opened', 'build_directory_removed', 'investigation_started', 'investigation_answered'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
@@ -481,5 +481,9 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     Migration {
         version: 32,
         sql: include_str!("032-publish-off-branch.sql"),
+    },
+    Migration {
+        version: 33,
+        sql: include_str!("033-investigation-events.sql"),
     },
 ];
