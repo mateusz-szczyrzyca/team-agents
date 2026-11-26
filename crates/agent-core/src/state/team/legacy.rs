@@ -109,6 +109,7 @@ impl Team {
             crew,
             reviewers,
             activities: Vec::new(),
+            investigations: Vec::new(),
             unpushed_base: None,
             idle_watch: None,
             splits: Vec::new(),

@@ -441,6 +441,9 @@ pub struct Team {
     /// Durable assignments of investigators, including completed and replaced work.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     activities: Vec<Activity>,
+    /// Attempts and retry exclusions for standalone investigation requests.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    investigations: Vec<InvestigationRecord>,
     /// Explicit permission and evidence for an unpublished base at team creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unpushed_base: Option<super::UnpushedBase>,
@@ -491,6 +494,9 @@ struct TeamWire {
     /// See [`Team`]; older states are rebuilt by the schema migration.
     #[serde(default)]
     activities: Vec<Activity>,
+    /// Missing in teams written before investigation retries.
+    #[serde(default)]
+    investigations: Vec<InvestigationRecord>,
     /// Older teams carry no permission to start from unpublished commits.
     #[serde(default)]
     unpushed_base: Option<super::UnpushedBase>,
@@ -649,6 +655,7 @@ impl Team {
             crew,
             reviewers: Vec::new(),
             activities: Vec::new(),
+            investigations: Vec::new(),
             unpushed_base: None,
             idle_watch: None,
             splits: Vec::new(),

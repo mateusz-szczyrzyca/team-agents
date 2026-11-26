@@ -24,11 +24,22 @@ impl Team {
     /// Requests assigned to this team, including their retry exclusions.
     #[must_use]
     pub fn investigations(&self) -> &[InvestigationRecord] {
-        &[]
+        &self.investigations
     }
 }
 
 impl CheckedMut<'_, Team> {
     /// Records the current assignment, replacing the previous attempt of that request.
-    pub fn record_investigation(&mut self, _record: InvestigationRecord) {}
+    pub fn record_investigation(&mut self, record: InvestigationRecord) {
+        if let Some(previous) = self
+            .value
+            .investigations
+            .iter_mut()
+            .find(|previous| previous.id == record.id)
+        {
+            *previous = record;
+        } else {
+            self.value.investigations.push(record);
+        }
+    }
 }
