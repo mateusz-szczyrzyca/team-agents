@@ -19,6 +19,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Bug fixes
 - [agent] [agent-core] A file you refused at the checks before the review no longer stays refused for good after the team changes it again: a commit to the file made after the refusal lifts the refusal, and you are asked about the file again (`allow` starts the review, `refuse` sends the round back once more). A refused file with no later commit is sent back and not asked, as before.
 
+## agentbus — 26.11.2026 — PR #302
+
+### New features
+- [agentbus] `agentbus team-replace --team ID --from OLD --to NEW` moves a member, the board work they claimed and their unread team messages to the replacement, and informs the team.
+
 ## agent 0.125.0 — 26.11.2026 — PR #300
 
 ### Bug fixes

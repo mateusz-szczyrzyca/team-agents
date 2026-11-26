@@ -11,9 +11,11 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -1142,4 +1144,158 @@ func cmdNotes(args []string) {
 	var out cliWriter
 	out.printf("%s", text)
 	exitOn(fromStorage(CmdNotesStorage, out.err).asError())
+}
+
+// cmdTeamReplace moves a team member to a replacement agent name.
+func cmdTeamReplace(args []string) {
+	fs := newFlagSet("team-replace")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team ID")
+	from := fs.String("from", "", "outgoing member")
+	to := fs.String("to", "", "replacement agent")
+	parseFlags(fs, args)
+	out, err := teamReplace(&Bus{dir: *dir}, *team, *from, *to)
+	exitOn(err.asError())
+	var writer cliWriter // command output errors use the operation's storage cause
+	writer.println(out)
+	exitOn(fromStorage(CmdTeamReplaceStorage, writer.err).asError())
+}
+
+// teamReplace atomically transfers a member and its pending work to another agent.
+func teamReplace(b *Bus, team, from, to string) (string, *CmdTeamReplaceError) {
+	if from == "" || to == "" {
+		return "", opErr(CmdTeamReplaceMissingArgument, "--from and --to must be nonempty agent names")
+	}
+	err := transact(b, CmdTeamReplaceStorage, func(st *State) *CmdTeamReplaceError {
+		t := st.Teams[team]
+		if t == nil || t.Done {
+			return opErr(CmdTeamReplaceNoSuchTeam, "no open team %s", team)
+		}
+		if from == to {
+			return opErr(CmdTeamReplaceSameAgent, "replacement agent %s is the outgoing member", to)
+		}
+		member := t.Members[from]
+		if member == nil {
+			return opErr(CmdTeamReplaceNoSuchMember, "no member %s in team %s", from, team)
+		}
+		if _, present := t.Members[to]; present {
+			return opErr(CmdTeamReplaceAlreadyMember, "%s is already a member of team %s", to, team)
+		}
+		if serr := retargetTeamMessages(b, st, team, from, to); serr != nil {
+			return fromStorage(CmdTeamReplaceStorage, serr)
+		}
+		// Post under the outgoing name before moving it: the replacement can read
+		// the notice, while the existing sleeping member is not woken.
+		if _, serr := b.post(st, from, teamRecipient(team), memberReplacedEvent{From: from, To: to}); serr != nil {
+			return fromStorage(CmdTeamReplaceStorage, serr)
+		}
+		st.Cursors[messageCursor(to, team)] = cursor(st, from, team)
+		delete(t.Members, from)
+		member.Agent = to
+		t.Members[to] = member
+		if t.Lead == from {
+			t.Lead = to
+		}
+		for _, item := range t.Board {
+			if item.Status == BoardClaimed && item.Assignee == from {
+				item.Assignee = to
+			}
+		}
+		return nil
+	}, replacementRollback{})
+	if err != nil {
+		return "", err
+	}
+	logInfo(LogMemberReplaced, "team", team, "from", from, "to", to)
+	return fmt.Sprintf("REPLACED %s %s", from, to), nil
+}
+
+// retargetTeamMessages rewrites only unread recipients under the caller's transaction
+// lock, retaining unknown fields and the receipt replay cursor's message boundary.
+func retargetTeamMessages(b *Bus, st *State, team, from, to string) *StorageError {
+	path := b.path("messages.jsonl")
+	var input io.Reader = strings.NewReader("")
+	file, err := os.Open(path) //nolint:gosec // G304: fixed message log in the configured bus directory.
+	if err == nil {
+		input = file
+		defer func() { warnReplacementCleanup("close replacement message source", file.Close()) }()
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return storageErr(err, "cannot open %s", path)
+	}
+	out, err := os.CreateTemp(b.dir, "replacement-messages-*")
+	if err != nil {
+		return storageErr(err, "cannot create replacement message log")
+	}
+	defer func() {
+		// A failed operation may leave a partial temporary file; it is never published.
+		if err := os.Remove(out.Name()); err != nil && !errors.Is(err, os.ErrNotExist) {
+			warnReplacementCleanup("remove replacement message temporary file", err)
+		}
+	}()
+	if serr := streamTeamMessages(input, out, st, team, from, to); serr != nil {
+		warnReplacementCleanup("close failed replacement message log", out.Close())
+		return serr
+	}
+	if err := out.Sync(); err != nil {
+		warnReplacementCleanup("close failed replacement message log", out.Close())
+		return storageErr(err, "cannot flush replacement message log")
+	}
+	if err := out.Close(); err != nil {
+		return storageErr(err, "cannot close replacement message log")
+	}
+	if err := os.Rename(out.Name(), path); err != nil {
+		return storageErr(err, "cannot replace %s", path)
+	}
+	return nil
+}
+
+// streamTeamMessages retains only one message line at a time, preserving unknown JSON fields.
+func streamTeamMessages(input io.Reader, output io.Writer, st *State, team, from, to string) *StorageError {
+	reader := bufio.NewReader(input)
+	var oldEnd int64 // byte boundary in the original log
+	offset := st.OwnedReceiptOffset
+	cur := cursor(st, from, team)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return storageErr(err, "cannot read replacement messages")
+		}
+		if len(line) == 0 {
+			break
+		}
+		oldEnd += int64(len(line))
+		next := line
+		if len(bytes.TrimSpace(line)) > 0 {
+			var message Message // envelope used to identify unread messages of this team
+			if err := json.Unmarshal(line, &message); err != nil {
+				return storageErr(err, "cannot decode replacement message")
+			}
+			if message.Team == team && message.To == from && message.ID > cur {
+				var fields map[string]json.RawMessage // retain fields unknown to this bus version
+				if err := json.Unmarshal(line, &fields); err != nil {
+					return storageErr(err, "cannot decode replacement message fields")
+				}
+				recipient, err := json.Marshal(to)
+				if err != nil {
+					return storageErr(err, "cannot encode replacement recipient")
+				}
+				fields["to"] = recipient
+				encoded, err := json.Marshal(fields)
+				if err != nil {
+					return storageErr(err, "cannot encode replacement message")
+				}
+				next = append(encoded, '\n')
+			}
+		}
+		if oldEnd <= st.OwnedReceiptOffset {
+			offset += int64(len(next)) - int64(len(line))
+		}
+		if n, err := output.Write(next); err != nil {
+			return storageErr(err, "cannot write replacement message log")
+		} else if n != len(next) {
+			return storageErr(io.ErrShortWrite, "cannot write complete replacement message")
+		}
+	}
+	st.OwnedReceiptOffset = offset
+	return nil
 }

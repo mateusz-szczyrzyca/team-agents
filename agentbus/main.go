@@ -172,6 +172,9 @@ func (b *Bus) load() (*State, *StorageError) {
 // The caller must hold the bus lock: receipt recovery can save the whole state.
 // An unknown enum value in the file is a decoding error (see types.go).
 func (b *Bus) loadLocked() (*State, *StorageError) {
+	if serr := b.recoverReplacement(); serr != nil {
+		return nil, serr
+	}
 	st := &State{}
 	data, err := os.ReadFile(b.path("state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -271,7 +274,11 @@ func (b *Bus) locked(fn func(*State)) *StorageError {
 
 // transact runs one operation on the shared state. A storage failure (lock, load, save) becomes the
 // operation's storage cause; otherwise the operation's own error (or nil) is returned.
-func transact[C opCause](b *Bus, storage C, fn func(*State) *OpError[C]) *OpError[C] {
+// Passing replacementRollback also restores state and messages after any failure.
+func transact[C opCause](b *Bus, storage C, fn func(*State) *OpError[C], rollback ...replacementRollback) *OpError[C] {
+	if len(rollback) > 0 {
+		return replacementTransact(b, storage, fn)
+	}
 	var opErr *OpError[C]
 	if serr := b.locked(func(st *State) { opErr = fn(st) }); serr != nil {
 		return fromStorage(storage, serr)
@@ -1611,7 +1618,7 @@ func main() {
   agentbus inv-next|inv-set|inv-get|inv-pending|inv-add   (used by the agent script)
   agentbus normalize --type claude|codex|gemini|opencode   (stdin: CLI stream, stdout: activity JSONL)
   agentbus team-list [--all] | notes --repo R [--section S] [-n 30] [--search Q]
-  agentbus team-create|team-set|team-done|team-get|team-waiting   (used by the agent script)
+  agentbus team-create|team-set|team-replace|team-done|team-get|team-waiting   (used by the agent script)
   agentbus round-size --repo DIR --base REF [--exclude PATTERNS] [--json]   size of a round's change
   agentbus node-request --url URL [--path PATH] [--get|--validate]   node HTTP transport
   agentbus node-checkout --repo NAME --base REF [--sha SHA] --repo-path NAME=PATH   resolve a node job base
@@ -1660,6 +1667,8 @@ func main() {
 		cmdTeamCreate(os.Args[2:])
 	case "team-set":
 		cmdTeamSet(os.Args[2:])
+	case "team-replace":
+		cmdTeamReplace(os.Args[2:])
 	case "team-done":
 		cmdTeamDone(os.Args[2:])
 	case "team-get":

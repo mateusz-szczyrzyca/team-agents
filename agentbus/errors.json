@@ -891,6 +891,38 @@
    ]
   },
   {
+   "type": "CmdTeamReplace",
+   "op": "team-replace",
+   "what": "the subcommand team-replace",
+   "causes": [
+    {
+     "name": "NoSuchTeam",
+     "class": "NotFound",
+     "doc": "nonexistent or finished team"
+    },
+    {
+     "name": "NoSuchMember",
+     "class": "NotFound",
+     "doc": "from absent"
+    },
+    {
+     "name": "AlreadyMember",
+     "class": "Conflict",
+     "doc": "to present"
+    },
+    {
+     "name": "SameAgent",
+     "class": "InvalidArgument",
+     "doc": "from equals to"
+    },
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "the outgoing or replacement agent name is empty"
+    }
+   ]
+  },
+  {
    "type": "CmdTeamDone",
    "op": "team-done",
    "what": "the subcommand team-done",

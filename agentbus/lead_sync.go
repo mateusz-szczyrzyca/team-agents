@@ -283,7 +283,7 @@ func readSyncJSON(path string, out any) *StorageError {
 
 // writeSyncFile atomically replaces one mirror-owned file while bus.lock is held.
 func writeSyncFile(path string, data []byte) *StorageError {
-	if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
+	if err := os.WriteFile(path+".tmp", data, 0600); err != nil { //nolint:gosec // G703: callers select bus-owned files under the configured state directory.
 		return storageErr(err, "cannot write %s", path)
 	}
 	if err := os.Rename(path+".tmp", path); err != nil {

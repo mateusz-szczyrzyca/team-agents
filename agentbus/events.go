@@ -44,6 +44,7 @@ const (
 	KindConsultRequest         MessageKind = "consult_request"         // a member asks the others for their answer (consult_start)
 	KindConsultReply           MessageKind = "consult_reply"           // an answer to a consultation (consult_reply)
 	KindExcludedNotice         MessageKind = "excluded_notice"         // tells the excluded member to stop
+	KindMemberReplaced         MessageKind = "member_replaced"         // a member task moved to a replacement agent
 	KindMemberExcluded         MessageKind = "member_excluded"         // tells the team that a member was excluded
 	KindBoardItemAdded         MessageKind = "board_item_added"        // a board item was added
 	KindBoardResult            MessageKind = "board_result"            // a board item was completed (sent to its creator)
@@ -62,7 +63,7 @@ func (k MessageKind) Valid() bool {
 		KindInvestigationWaiting, KindInvestigationRequeued, KindInvestigationFinished, KindDecisionRecorded,
 		KindReviewQueued, KindTeamCreated, KindTeamResumed, KindTeamFinished, KindCoordinatorClaimed,
 		KindCoordinatorTakeover, KindCoordinatorHandover, KindQuizQuestion, KindConsultRequest, KindConsultReply,
-		KindExcludedNotice, KindMemberExcluded,
+		KindExcludedNotice, KindMemberExcluded, KindMemberReplaced,
 		KindBoardItemAdded, KindBoardResult, KindBoardReturned, KindWorkerRequest, KindCheckpoint, KindStopAll,
 		KindScript:
 		return true
@@ -552,3 +553,17 @@ type EventScript struct {
 
 func (e EventScript) Kind() MessageKind { return KindScript } // Kind implements busEvent.
 func (e EventScript) Text() string      { return e.Body }     // Text implements busEvent.
+
+// memberReplacedEvent tells a team which agent now owns a member's task.
+type memberReplacedEvent struct {
+	From string `json:"from"` // outgoing member's agent name
+	To   string `json:"to"`   // replacement agent's name
+}
+
+// Kind implements busEvent.
+func (e memberReplacedEvent) Kind() MessageKind { return KindMemberReplaced }
+
+// Text implements busEvent.
+func (e memberReplacedEvent) Text() string {
+	return fmt.Sprintf("%s was replaced by %s; send to %s from now on.", e.From, e.To, e.To)
+}
