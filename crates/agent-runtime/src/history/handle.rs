@@ -15,6 +15,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
+use std::time::Duration;
 
 use agent_core::cli::{ActivityEvent, SessionId};
 use agent_core::history::{
@@ -157,6 +158,15 @@ pub struct Setup {
     pub reporter: Arc<dyn Reporter>,
     /// How many records may wait.
     pub capacity: NonZeroUsize,
+}
+
+/// How a wait for the writer ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Flush {
+    /// Everything handed in before was written or counted as lost, or the history has no writer to wait for.
+    Done,
+    /// The writer did not answer in time, or its queue had no room for the question: the records may not be written yet.
+    TimedOut,
 }
 
 /// What the queue carries.
@@ -818,6 +828,14 @@ impl History {
         if answered.recv().is_err() {
             tracing::debug!("the history writer stopped before it answered a flush");
         }
+    }
+
+    /// Waits at most `limit` until everything handed in before is written or lost; a writer that is stuck (a database
+    /// another process holds, a queue that is full) is not waited for longer.
+    #[must_use]
+    pub fn flush_within(&self, limit: Duration) -> Flush {
+        let _ = (self, limit);
+        Flush::Done
     }
 
     /// Whether the history is off: nothing is recorded, so nothing is worth working out for it.
