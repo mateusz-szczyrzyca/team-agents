@@ -633,6 +633,23 @@ case $action in
     done
     result 'Nothing to do now.\nSTATUS: SLEEPING'
     ;;
+  replacement-inbox)
+    init
+    # Records membership at launch, then reads messages while its code searches make a Serena reminder due.
+    team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+    task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+    "$bus_bin" team-get --dir "$bus_dir" --team "$team" > .fake-replacement-members
+    for i in $(seq 0 41); do
+      printf '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"replacement%d","name":"Read","input":{"file_path":"src/module-%d.rs"}}]}}\n' "$i" "$((i % 3))"
+    done
+    while [[ ! -f .fake-continue ]]; do
+      echo '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"read_messages","arguments":{"history":50}}}' |
+        "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" >> .fake-replacement-inbox
+      printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"working"}]}}'
+      sleep 0.2
+    done
+    result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
   serena-hold)
     # A run that reads forty-two files of code with its own `Read` tool, none with Serena, and then holds until the test
     # creates `.fake-continue`: the reminder of Serena comes due while the run goes on. It ends with STATUS: DONE.
