@@ -2944,12 +2944,15 @@ impl Owner {
                 kind: FailureKind::Internal,
                 message: "answers are taken by the owner, not answered from the state".to_owned(),
             }),
-            Command::Stop(_) | Command::Pause(_) | Command::Unpause(_) | Command::Resume(_) | Command::Say(_) => {
-                Err(Failure {
-                    kind: FailureKind::Internal,
-                    message: "the controls are carried out by the owner, not answered from the state".to_owned(),
-                })
-            }
+            Command::Stop(_)
+            | Command::Pause(_)
+            | Command::Unpause(_)
+            | Command::Resume(_)
+            | Command::Renew(_)
+            | Command::Say(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "the controls are carried out by the owner, not answered from the state".to_owned(),
+            }),
             Command::Gate(_) => Err(Failure {
                 kind: FailureKind::Internal,
                 message: "a gate is queued by the owner, not answered from the state".to_owned(),

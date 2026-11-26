@@ -52,6 +52,8 @@ pub enum ControlAction {
     Resume,
     /// `say`.
     Say,
+    /// `renew`.
+    Renew,
 }
 
 impl Keyword for ControlAction {

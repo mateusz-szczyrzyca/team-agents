@@ -44,6 +44,8 @@ pub enum Trouble {
     /// The round of the task's item went on longer than `[limits] round_minutes` without its pull request in review: the
     /// daemon cut the run and another agent took the task over. No run went bad.
     RoundOverdue,
+    /// The human started the task anew with `agent renew`; no run went bad.
+    Human,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -95,7 +97,8 @@ pub fn next_step(
         | Trouble::DaemonDown
         | Trouble::ContextBound
         | Trouble::Failed
-        | Trouble::RoundOverdue => false,
+        | Trouble::RoundOverdue
+        | Trouble::Human => false,
     };
     if retried {
         return LadderStep::SameSession;

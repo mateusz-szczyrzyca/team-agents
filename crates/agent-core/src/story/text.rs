@@ -1226,6 +1226,7 @@ const fn control_verb(action: ControlAction) -> &'static str {
         ControlAction::Unpause => "unpaused",
         ControlAction::Resume => "resumed",
         ControlAction::Say => "said something to",
+        ControlAction::Renew => "renewed",
     }
 }
 
