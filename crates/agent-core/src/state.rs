@@ -1068,7 +1068,7 @@ impl State {
     ///
     /// # Errors
     /// [`AddReviewerError`] when the state has no such team, or the reviewer is not an investigator, is in the team's
-    /// crew or among its reviewers already, or its task ID is in use.
+    /// crew or among its reviewers already, its task ID is in use, or it has a crew role.
     pub fn add_reviewer(&mut self, team: &TeamId, reviewer: Member) -> Result<(), AddReviewerError> {
         if self.team(team).is_none() {
             return Err(AddReviewerError::UnknownTeam { team: team.clone() });

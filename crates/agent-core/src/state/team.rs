@@ -836,6 +836,12 @@ fn check_items(team: &TeamId, task_list: &TaskListText, items: &[ItemProgress]) 
 
 /// Checks a proposed reviewer against a crew and the reviewers already before it.
 fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<(), ReviewerProblem> {
+    match member.role() {
+        None | Some(Role::Reviewer | Role::Investigator) => {}
+        Some(role @ (Role::Solo | Role::Coordinator | Role::Member | Role::Worker)) => {
+            return Err(ReviewerProblem::CrewRole { role });
+        }
+    }
     let name = member.agent().name();
     if !tier_fits(member.role().unwrap_or(Role::Reviewer), member.agent()) {
         return Err(ReviewerProblem::NotInvestigator {
