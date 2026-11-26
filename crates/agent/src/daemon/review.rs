@@ -10,7 +10,7 @@ use agent_core::config::Config;
 use agent_core::decide::investigator::{Activity, choose};
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
-use agent_core::state::{ItemPhase, Member, Participant, ReviewOutcome, State, Team, Timestamp};
+use agent_core::state::{ItemPhase, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
@@ -155,13 +155,7 @@ fn in_crew(team: &Team, name: &InvestigatorName) -> bool {
         .any(|(_, member)| investigator_of(member).is_some_and(|crewing| crewing == name))
 }
 
-/// The investigator that works in the task of `member`, if it is one.
-pub(super) fn investigator_of(member: &Member) -> Option<&InvestigatorName> {
-    match member.agent() {
-        Participant::Investigator(name) => Some(name),
-        Participant::Normal(_) | Participant::Worker(_) => None,
-    }
-}
+pub(super) use agent_core::decide::investigator::{investigator_of, occupied_investigators, pending_opinion};
 
 /// Where the investigator `name` reviews for `team`: its review task of the team when it waits, a new one when it has
 /// none, nowhere when its task of the team is over (the team has one task for an investigator, and it does not end its
@@ -186,40 +180,6 @@ fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
     }
 }
 
-/// Investigators with a running or queued run, including accepted review requests
-/// waiting for the scheduler to queue their reusable task.
-fn occupied_investigators(state: &State) -> HashSet<InvestigatorName> {
-    state
-        .teams()
-        .iter()
-        .flat_map(|team| {
-            team.crew()
-                .roster()
-                .into_iter()
-                .map(|(_, member)| member)
-                .chain(team.reviewers().iter())
-                .filter(|member| {
-                    member.current_run().is_some()
-                        || matches!(member.status(), TaskStatus::Queued | TaskStatus::Running)
-                        || (member.status() == TaskStatus::Waiting && has_pending_review(team, member))
-                })
-                .filter_map(investigator_of)
-                .cloned()
-        })
-        .collect()
-}
-
-/// The investigators of `config` that their provider refused at `now`: they review nothing until their return.
-pub(super) fn refused_investigators(state: &State, config: &Config, now: Timestamp) -> HashSet<InvestigatorName> {
-    let refused = state.refused_agents_at(now);
-    config
-        .investigators()
-        .keys()
-        .filter(|name| refused.iter().any(|agent| agent.as_str() == name.as_str()))
-        .cloned()
-        .collect()
-}
-
 /// Applies the common activity selector and preserves each chosen investigator's
 /// team-specific worktree slot. Caller exclusions are never relaxed.
 pub(super) fn select_reviewers(
@@ -228,6 +188,7 @@ pub(super) fn select_reviewers(
     team: &TeamId,
     required: NonZeroUsize,
     excluded: &HashSet<InvestigatorName>,
+    rng: &mut impl rand::Rng,
 ) -> Option<Vec<Reviewer>> {
     let free = free_reviewers(state, config, team);
     let configured = config.investigators().keys().cloned().collect();
@@ -245,7 +206,7 @@ pub(super) fn select_reviewers(
         })
         .collect();
     let excluded: BTreeSet<_> = excluded.iter().cloned().collect();
-    let chosen = choose(&configured, &available, &activities, team, &excluded, required)?;
+    let chosen = choose(&configured, &available, &activities, team, &excluded, required, rng)?;
     let order: std::collections::BTreeMap<_, _> = chosen.into_iter().zip(0_usize..).collect();
     let mut selected: Vec<_> = free
         .into_iter()
@@ -253,23 +214,6 @@ pub(super) fn select_reviewers(
         .collect();
     selected.sort_by_key(|reviewer| order.get(&reviewer.name).copied());
     Some(selected)
-}
-
-/// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
-fn has_pending_review(team: &Team, member: &Member) -> bool {
-    if pending_opinion(team, member.task()).is_some() {
-        return true;
-    }
-    team.items().iter().any(|item| match item.phase() {
-        ItemPhase::InReview { reviews, .. } => reviews
-            .iter()
-            .any(|review| review.task == *member.task() && matches!(review.outcome, ReviewOutcome::Pending)),
-        ItemPhase::Pending
-        | ItemPhase::InProgress { .. }
-        | ItemPhase::Fixing { .. }
-        | ItemPhase::Approved { .. }
-        | ItemPhase::Done { .. } => false,
-    })
 }
 
 #[cfg(test)]
@@ -292,24 +236,4 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
         independent |= item.findings().is_some_and(|ledger| ledger.review_count().is_some());
     }
     independent
-}
-
-/// The pending second opinion owned by a task, while its round is being fixed.
-pub(super) fn pending_opinion<'a>(
-    team: &'a Team,
-    task: &TaskId,
-) -> Option<(
-    agent_core::ids::ItemId,
-    std::num::NonZeroU32,
-    &'a agent_core::state::SecondOpinion,
-)> {
-    team.items()
-        .iter()
-        .filter(|item| matches!(item.phase(), ItemPhase::Fixing { .. }))
-        .find_map(|item| {
-            item.findings()?.opinions().iter().find_map(|(number, opinion)| {
-                matches!(&opinion.stage, agent_core::state::OpinionStage::Assigned { task: owner, .. } if owner == task)
-                    .then_some((item.id(), *number, opinion))
-            })
-        })
 }
