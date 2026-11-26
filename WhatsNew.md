@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.125.0 — 26.11.2026 — PR #299
+
+### Bug fixes
+- [agent] A gate that the busy test lock refused (exit 75, "another tests are running now") no longer counts as a failure of the commit: it did not run the checks, so two refusals no longer make the gate answer "not run again" for a commit that never failed.
+
 ## agent 0.124.0 · agent-core 0.121.0 — 26.11.2026 — PR #297
 
 ### Enhancements

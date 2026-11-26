@@ -1214,7 +1214,7 @@ last gate and the gate command has not changed, a gate that passed there is answ
 there twice in a row is answered with its last failure: the command says the same as that gate did, the new
 `gate-<n>.log` holds that gate's output and ends with a line `gate: not run again: ...` that says why and what to do (for
 a failure: fix the cause and commit, or, when the failure is not caused by the change, say so in the questions file and
-wait for the answer). A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
+wait for the answer). A gate that the busy test lock refused (the command exits with 75 and says "another tests are running now") ran no check and does not count: it is neither a failure nor a pass of the commit, it does not reset the count of the failures before it, and the next gate runs. A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
 answer as `checks_decided` with `outcome` `gate_reused`, the `head`, the `gate` it repeats (`passed`, `failed` or
 `timed_out`) and the `failures` in a row. The daemon remembers the last gates in memory only: after a restart of the
 daemon the first gate of each task runs again. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
