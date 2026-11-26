@@ -2862,6 +2862,7 @@ impl Owner {
                                 self.control_request(&client, Steer::Resume, &request.target).await?
                             }
                         }
+                        Command::Renew(request) => self.renew_request(&client, request)?,
                         Command::Say(request) => self.say_request(&client, request).await?,
                         Command::Remove(request) => self.remove_reply(&client, request).await?,
                         other => self.answer(&other),

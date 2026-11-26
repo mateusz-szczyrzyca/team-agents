@@ -9,7 +9,9 @@ use agent_core::cli::ActivityEvent;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::log::LogEvent;
-use agent_core::protocol::{Client, ControlAction, EventKind, Failure, FailureKind, Reply, SayRequest, Target};
+use agent_core::protocol::{
+    Client, ControlAction, ControlRequest, EventKind, Failure, FailureKind, Reply, SayRequest, Target,
+};
 use agent_core::state::{RunEnd, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{Outgoing, Recipient};
@@ -340,6 +342,31 @@ impl Owner {
         })())
     }
 
+    // ---- renew ----------------------------------------------------------------------------------------------
+
+    /// Starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) fn renew_request(
+        &mut self,
+        _client: &Client,
+        request: ControlRequest,
+    ) -> Result<Result<Reply, Failure>, OwnerError> {
+        let ControlRequest { target } = request;
+        let Target::Task(task) = &target else {
+            return Ok(Err(Failure {
+                kind: FailureKind::Internal,
+                message: "renew is not carried out yet".to_owned(),
+            }));
+        };
+        let status = self.status_of(task)?;
+        Ok(Err(Failure {
+            kind: FailureKind::Internal,
+            message: format!("renew of a task that is {status} is not carried out yet"),
+        }))
+    }
+
     // ---- say ------------------------------------------------------------------------------------------------
 
     /// Puts what the human says on the bus, for the agent of the task or for the team.
@@ -491,5 +518,7 @@ fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, S
     }
 }
 
+#[cfg(test)]
+mod renew_tests;
 #[cfg(test)]
 mod tests;

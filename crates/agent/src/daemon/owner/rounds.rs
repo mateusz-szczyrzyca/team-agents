@@ -877,6 +877,10 @@ mod restart_session_tests;
 mod context_session_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/human_renew.rs"]
+mod human_renew_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/takeover.rs"]
 mod takeover_tests;
 

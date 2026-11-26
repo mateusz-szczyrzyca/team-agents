@@ -72,6 +72,7 @@ use crate::commands::guard::{GuardCommitError, guard_commit};
 use crate::commands::log::{LogError, LogRequest, log_in};
 use crate::commands::pause::pause;
 use crate::commands::remove::remove;
+use crate::commands::renew::renew;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
@@ -392,6 +393,8 @@ enum Steer {
     Resume(TargetArgs),
     /// Says something to a task or a team, through the bus: they read it when they next look at their messages.
     Say(SayArgs),
+    /// Starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages.
+    Renew(TargetArgs),
     /// Takes a team out of the daemon: its unmerged branches are bundled, its open pull requests closed, and its worktrees and branches deleted. `--force` ends its runs first.
     Remove(RemoveArgs),
 }
@@ -906,6 +909,7 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
         Steer::Pause(args) => pause(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Unpause(args) => unpause(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Resume(args) => resume(&mut Connection::connect(&socket).await?, args.target, out).await?,
+        Steer::Renew(args) => renew(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Remove(args) => {
             remove(&mut Connection::connect(&socket).await?, args.team, args.force, out).await?;
         }
