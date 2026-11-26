@@ -1257,7 +1257,10 @@ command or `exists PATH` that shows the result is right — never `reviewer`, ne
 check_refuse`); and `do`, what to do in the requester's words. The bus asks the harness's `agent _delegation-check` at
 the moment of the request, which reads `.agent/plan.md` of the requester's worktree: a request that lacks one of the
 four, names a step the plan does not have or that is done or given up, a path outside the repository, or a refused
-check is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
+check is refused — a check is one command and nothing after it: one that goes on as a sentence (`grep -n x README.md
+shows the line`: a word such as `the`, `and`, `shows`, `gives` or `exits`, a word that ends with a comma, or `…`,
+unquoted after the command's name) is a refused check too, with the word in the cause; a word that belongs to the
+command is quoted (`grep -q 'the' README.md`). Each is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
 `MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. Such a request is also refused at once (`NoFreeWorker`) when every worker
 of the installation pool is running, reserved, awaiting settlement or promised to an earlier request. Legacy teams
 with worker members retain their own admission path. The requester does a refused step itself; a higher tier never serves it. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
