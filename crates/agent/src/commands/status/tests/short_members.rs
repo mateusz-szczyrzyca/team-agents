@@ -242,3 +242,54 @@ fn the_columns_fit_the_tasks_that_are_not_listed_too() {
         "{text}"
     );
 }
+
+/// The sample team of four tasks — the coordinator and the member running, the worker and the reviewer done — whose
+/// reviewer gave its report at 23:35:56.
+fn team_with_a_finished_reviewer() -> TeamSummary {
+    let mut team = TeamSummary::from(&team_state().teams()[0]);
+    for (index, status) in [
+        TaskStatus::Running,
+        TaskStatus::Running,
+        TaskStatus::Done,
+        TaskStatus::Done,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        team.members[index].status = status;
+    }
+    team.activities = vec![review(
+        4,
+        &ActivityOutcome::Finished {
+            at: at(15656),
+            end: ActivityEnd::Reported,
+        },
+    )];
+    team
+}
+
+// Rule: a reviewer whose review is over stays in the short view, with when its review finished, as it is in the full
+// view and in the list of the running teams.
+#[test]
+fn a_reviewer_whose_review_is_over_is_listed_with_when_it_finished() {
+    let line =
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 23:35:56 +00:00";
+    let teams = [team_with_a_finished_reviewer()];
+
+    let tasks = shown(&teams, View::Full, Detail::Tasks);
+    assert!(tasks.lines().any(|text| text == line), "{tasks}");
+    for view in [View::Full, View::Running] {
+        let short = shown(&teams, view, Detail::Short);
+        assert!(short.lines().any(|text| text == line), "{short}");
+    }
+}
+
+// Rule: the count of a team counts the tasks it always counted: listing the finished reviewers changes no word of it.
+#[test]
+fn listing_finished_reviewers_leaves_the_count_line_as_it_was() {
+    let teams = [team_with_a_finished_reviewer()];
+
+    let short = shown(&teams, View::Full, Detail::Short);
+
+    assert_eq!(short.lines().last(), Some("  tasks: 2 running, 2 done"), "{short}");
+}
