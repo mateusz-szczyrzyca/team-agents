@@ -837,6 +837,23 @@ fn file_text(file: &FileChange) -> String {
     }
 }
 
+/// The line of a checkpoint: the step it follows, the holder, the head it keeps and the reference of its snapshot.
+fn checkpoint_line(
+    page: &mut Page,
+    at: Timestamp,
+    (task, cause): (&crate::ids::TaskId, crate::history::CheckpointCause),
+    head: Option<&CommitId>,
+    snapshot: Option<&str>,
+) {
+    let head = head.map_or_else(|| "no head".to_owned(), short);
+    let kept = snapshot.unwrap_or("no snapshot");
+    entry(
+        page,
+        at,
+        &format!("checkpoint after {cause} (task {task}): {head}, {kept}"),
+    );
+}
+
 /// An event: one line with its time, and the texts it carries whole.
 fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) {
     let at = record.at;
@@ -918,7 +935,8 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         } => {
             entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
         }
-        event @ (HistoryEvent::PullOpened { .. }
+        event @ (HistoryEvent::Checkpoint { .. }
+        | HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::PullReady { .. }
         | HistoryEvent::ReviewAsked { .. }
@@ -1060,6 +1078,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::SerenaReminded { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Checkpoint { .. }
         | HistoryEvent::Lost { .. }
         | HistoryEvent::TeamEnded {} => pull_lifecycle_event(page, at, event),
     }
@@ -1068,6 +1087,13 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
 /// An event of a pull request, from its opening to its end; any other event is not told here.
 fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
     match event {
+        HistoryEvent::Checkpoint {
+            task,
+            cause,
+            head,
+            snapshot,
+            ..
+        } => checkpoint_line(page, at, (task, *cause), head.as_ref(), snapshot.as_deref()),
         HistoryEvent::PullOpened {
             number,
             branch,

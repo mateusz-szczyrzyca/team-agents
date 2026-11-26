@@ -198,6 +198,7 @@ impl<S: Store> Noting<S> {
                 | HistoryEvent::Controlled { .. }
                 | HistoryEvent::Notified { .. }
                 | HistoryEvent::SerenaReminded { .. }
+                | HistoryEvent::Checkpoint { .. }
                 | HistoryEvent::RoundClosed { .. }
                 | HistoryEvent::TeamEnded {} => Some((
                     LostKind::Event(e.event.kind()),
