@@ -339,8 +339,9 @@ place in the requester's team crew. A second try after a wrong result goes to an
 Passing an explicit worker to `agent run` is still accepted: that worker is assigned to the team's crew as a legacy team worker and serves requests of that team alone as before, held exclusively by that team for its lifetime.
 
 A queued task that waits longer than `[replacement] busy_after` (300 seconds by default) for its busy agent is handed over to
-a free agent of `[replacement] agents` of the same or a higher place, choosing the candidate whose CLI runs the fewest runs
-at that moment: the same worktree and branch, briefed with the reason `busy`, the bus tells the whole team who holds each item now,
+a free agent of `[replacement] agents` of the same tier — normal for normal and investigator for investigator — choosing
+the candidate whose CLI runs the fewest runs at that moment: the same worktree and branch, briefed with the reason
+`busy`, the bus tells the whole team who holds each item now,
 and `agent status` shows `for claude-1` next to the agent that holds it now and a `runs: <cli> <count>, …` line for the runs
 going per CLI. Team notice obligations survive daemon restarts and transient bus failures, which are retried.
 A notice that the bus permanently refuses, or that cannot be rendered, is logged and dropped; the obligation clears
@@ -488,8 +489,8 @@ task, agent, CLI and model, so they can be monitored independently.
 Every failed team member also wakes its coordinator with the member, item and last words, whether or not it used tools.
 The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
-not in a run, and of the same or a higher place than the agent it replaces (`[replacement] replacements = 1`; `0` takes
-none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
+not in a run, and of the same tier as the agent it replaces — normal for normal and investigator for investigator
+(`[replacement] replacements = 1`; `0` takes none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
 was first given to. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
 gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
 asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is

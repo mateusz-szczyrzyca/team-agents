@@ -335,15 +335,15 @@ and a member are started anew; a worker and a reviewer are not.
 | `rejections` | `5` | the limit of times the lead of a team may return the work of an item to the member, which `agent status` shows against the count (`returned 3 of 5`); `0` is no limit; at most `10`. The count is kept with the item in the state and survives a restart |
 | `limit_retries` | `1` | how many times a task is tried again in the same session after its provider refused a run (rate limit, overload or quota) and the pause ended; `0` changes the agent at the first refusal, as no retry is allowed; at most `10`. The count of refusals in a row is in the state and is cleared by a run that ends any other way |
 | `limit_wait_minutes` | `60` | the longest wait for a quota's named reset, in minutes; a reset further away than this makes the rule answer "change agent" at once, since a retry before the reset would fail; `0` never waits for a reset. Rate limits and overloads name no reset and are not affected |
-| `busy_after` | `300` | seconds a queued task waits for its agent, which runs another task at its `[limits] runs_per_agent` limit, before a free agent of `agents` (of the same or a higher tier) takes it over; `0` never hands a task over for this reason. Only the agents listed in `agents` are candidates: an empty `agents` list means no hand-over for a busy agent, and the task waits on. The moment the wait began is kept in the state, so a restart of the daemon keeps the time waited |
+| `busy_after` | `300` | seconds a queued task waits for its agent, which runs another task at its `[limits] runs_per_agent` limit, before a free agent of `agents` of the same tier (normal for normal, investigator for investigator) takes it over; `0` never hands a task over for this reason. Only the agents listed in `agents` are candidates: an empty `agents` list means no hand-over for a busy agent, and the task waits on. The moment the wait began is kept in the state, so a restart of the daemon keeps the time waited |
 
 A first run of a session that reports `STATUS: FAILED` without calling any tool gets one startup retry for every role.
 This retry is unconditional, including when `new_sessions = 0`, and consumes one of the counted new sessions. With the
 default `new_sessions = 1`, a later hang, missing status or turn limit cannot obtain another ladder session. A second
 qualifying startup failure fails the task and names the agent, CLI and model in the notice.
 
-A busy hand-over uses only the candidates listed in `agents`, the tier rules and the `replacements` count as above: the agent taken must be of the same or a higher
-place than the one it replaces, not in the task's team, not in a run, not with a queued task of its own and not paused for a
+A busy hand-over uses only the candidates listed in `agents`, the tier rules and the `replacements` count as above: the agent taken must be of the same
+tier as the one it replaces — normal for normal, investigator for investigator — not in the task's team, not in a run, not with a queued task of its own and not paused for a
 quota. With an empty `agents` list, or when no agent of `agents` fits, no busy hand-over takes place and the task keeps waiting for its own agent. Of the agents that fit, the one whose CLI runs the fewest runs now is taken, and among equals the first of `agents`.
 The task keeps its worktree and branch, its new holder's first run is briefed with the reason `busy`, the bus tells the team who holds the item now, and the first holder
 is not woken for it. Only a queued task waiting for its busy agent counts: a task that is running, a task that waits for an answer of the human or for a review, a coordinator's task while one of its members runs, a reviewer's task, and a worker's task are never handed over this way.
@@ -355,8 +355,8 @@ you once rather than leaving the part waiting silently. A replacement must meet 
 and the previous holder's tier; a busy eligible agent waits until it is available.
 
 When the new session goes bad too — after its own retries — the task is given to the first agent of `agents` that is not in
-the task's team, not in the middle of a run, and of the same or a higher place than the agent it replaces: an investigator
-above a normal agent, which is above a worker. It works in the same worktree, on the same branch and on the same task, and
+the task's team, not in the middle of a run, and of the same tier as the agent it replaces: normal for normal,
+investigator for investigator. It works in the same worktree, on the same branch and on the same task, and
 its first run is briefed like a new session (see above), with retries of its own; a takeover is not counted among
 `new_sessions`. On the team's bus the task keeps the name of the agent it was first given to: the new agent's runs act
 under that name, so the messages to it, its wake-ups and a lead's rights stay with the task, and its branch keeps that
