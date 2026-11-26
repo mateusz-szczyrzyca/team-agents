@@ -307,3 +307,146 @@ cli = "claude"
     assert!(!free.contains(&"inv-a".parse().unwrap()));
     assert!(free.contains(&"inv-b".parse().unwrap()));
 }
+
+#[test]
+fn an_investigator_with_a_running_task_is_not_free_for_a_request() {
+    use crate::config::Config;
+    use crate::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team};
+    use crate::status::TaskStatus;
+
+    let config = Config::from_toml_str(
+        r#"
+[investigators.inv-a]
+cli = "claude"
+
+[investigators.inv-b]
+cli = "claude"
+"#,
+    )
+    .unwrap();
+
+    let team_id = team(1);
+    let lead = Member::new(
+        "task-20261119-120000-0001".parse().unwrap(),
+        Participant::Normal("claude-1".parse().unwrap()),
+    );
+    let team = Team::new(
+        team_id.clone(),
+        "team-agents".parse().unwrap(),
+        at(1),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\n".into()).unwrap(),
+        Crew::solo(lead).unwrap(),
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+
+    let mut running_member = Member::new(
+        "task-20261119-120000-0002".parse().unwrap(),
+        Participant::Investigator("inv-a".parse().unwrap()),
+    );
+    running_member.transition(TaskStatus::Running).unwrap();
+    state.add_reviewer(&team_id, running_member).unwrap();
+
+    let free = free_for_request(&state, &config, at(10));
+    assert!(
+        !free.contains(&"inv-a".parse().unwrap()),
+        "inv-a is running and should not be free"
+    );
+    assert!(free.contains(&"inv-b".parse().unwrap()));
+}
+
+#[test]
+fn an_investigator_with_a_queued_task_is_not_free_for_a_request() {
+    use crate::config::Config;
+    use crate::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team};
+
+    let config = Config::from_toml_str(
+        r#"
+[investigators.inv-a]
+cli = "claude"
+
+[investigators.inv-b]
+cli = "claude"
+"#,
+    )
+    .unwrap();
+
+    let team_id = team(1);
+    let lead = Member::new(
+        "task-20261119-120000-0001".parse().unwrap(),
+        Participant::Normal("claude-1".parse().unwrap()),
+    );
+    let team = Team::new(
+        team_id.clone(),
+        "team-agents".parse().unwrap(),
+        at(1),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\n".into()).unwrap(),
+        Crew::solo(lead).unwrap(),
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+
+    // A new member starts Queued; adding it as-is exercises the occupied exclusion.
+    let queued_member = Member::new(
+        "task-20261119-120000-0002".parse().unwrap(),
+        Participant::Investigator("inv-a".parse().unwrap()),
+    );
+    state.add_reviewer(&team_id, queued_member).unwrap();
+
+    let free = free_for_request(&state, &config, at(10));
+    assert!(
+        !free.contains(&"inv-a".parse().unwrap()),
+        "inv-a is queued and should not be free"
+    );
+    assert!(free.contains(&"inv-b".parse().unwrap()));
+}
+
+#[test]
+fn an_investigator_refused_by_its_provider_is_not_free_for_a_request() {
+    use crate::config::Config;
+    use crate::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team};
+
+    let config = Config::from_toml_str(
+        r#"
+[investigators.inv-a]
+cli = "claude"
+
+[investigators.inv-b]
+cli = "claude"
+"#,
+    )
+    .unwrap();
+
+    let team_id = team(1);
+    let lead = Member::new(
+        "task-20261119-120000-0001".parse().unwrap(),
+        Participant::Normal("claude-1".parse().unwrap()),
+    );
+    let team = Team::new(
+        team_id.clone(),
+        "team-agents".parse().unwrap(),
+        at(1),
+        MergeMode::Autopilot,
+        TaskListText::new("Brief.\n\n1. Feature\n[ ] 1.1 Item\n".into()).unwrap(),
+        Crew::solo(lead).unwrap(),
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+
+    state.record_refused_until("inv-a".parse().unwrap(), Some(at(30)));
+
+    // Before the return time, inv-a is still refused.
+    let before = free_for_request(&state, &config, at(29));
+    assert!(
+        !before.contains(&"inv-a".parse().unwrap()),
+        "inv-a is refused until 30 and should not be free at 29"
+    );
+    assert!(before.contains(&"inv-b".parse().unwrap()));
+
+    // After the return time, inv-a is free again.
+    let after = free_for_request(&state, &config, at(31));
+    assert!(after.contains(&"inv-a".parse().unwrap()));
+    assert!(after.contains(&"inv-b".parse().unwrap()));
+}
