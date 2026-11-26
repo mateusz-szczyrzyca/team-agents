@@ -157,3 +157,193 @@ async fn a_line_that_names_a_part_that_is_not_open_counts_nothing() {
     let after = returned_by_the_lead(&state, "RETURNED: 1.1a\nSTATUS: SLEEPING\n").await;
     assert_eq!(recorded(&after, "1.1"), 1, "part a is");
 }
+
+/// A team whose current coordinator and member have replaced their original agents.
+fn team_replace_state() -> State {
+    let mut state = state_with(&[(1, 1, 10, 11)], 30);
+    state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(
+            at(31),
+            RunEnd::Reported {
+                outcome: RunOutcome::Sleeping,
+            },
+        )
+        .unwrap();
+    state
+        .hand_over_task(&task(1), crate::fixtures::investigator("inv-new"), at(32))
+        .unwrap();
+    state
+        .hand_over_task(&task(2), crate::fixtures::normal("claude-2"), at(32))
+        .unwrap();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .item_mut(item("1.1"))
+        .unwrap()
+        .reassign("claude-2".parse().unwrap(), "agents/claude-1/item-1".parse().unwrap())
+        .unwrap();
+    state
+        .begin_run(
+            &task(1),
+            NewRun {
+                id: run(51),
+                at: at(40),
+                session: None,
+                rounds: Vec::new(),
+            },
+        )
+        .unwrap();
+    state
+}
+
+/// Installs the roster after both replacements have completed on the real bus.
+async fn team_replace_bus(owner: &super::super::Owner) {
+    use agent_runtime::agentbus::{BusTier, MemberState, NewMember, NewTeam};
+    let members = [
+        ("inv-new", task(1), BusTier::Normal),
+        ("claude-2", task(2), BusTier::Normal),
+    ]
+    .into_iter()
+    .map(|(name, task, tier)| {
+        (
+            name.parse().unwrap(),
+            NewMember {
+                branch: "agents/claude-1/item-1".parse().unwrap(),
+                worktree: owner.parts.store.home().root().to_str().unwrap().parse().unwrap(),
+                task,
+                tier,
+                state: MemberState::Sleeping,
+                provider: None,
+            },
+        )
+    })
+    .collect();
+    owner
+        .parts
+        .bus
+        .team_create(&NewTeam {
+            id: team_id(0),
+            repo: crate::fixtures::repo(),
+            lead: Some("inv-new".parse().unwrap()),
+            members,
+        })
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn team_replace_member_end_notice_reaches_the_replacement_coordinator() {
+    use crate::daemon::team::{BusJob, notice_for};
+    use agent_core::kinds::Role;
+    use agent_runtime::agentbus::Reader;
+    let state = team_replace_state();
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    team_replace_bus(&owner).await;
+    let found = state.find_task(&task(2)).unwrap();
+    let told = notice_for(
+        state.team(&team_id(0)).unwrap(),
+        Role::Member,
+        found.member,
+        &RunEnd::Reported {
+            outcome: RunOutcome::Done,
+        },
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    owner
+        .carry_out(&super::super::teams::Outbound {
+            team: team_id(0),
+            job: BusJob::Tell {
+                to: told.to,
+                notice: told.notice,
+            },
+        })
+        .await
+        .unwrap()
+        .unwrap();
+    let lead = "inv-new".parse().unwrap();
+    let team = team_id(0);
+    let lead_task = task(1);
+    let messages = owner
+        .parts
+        .bus
+        .said_after(
+            Reader {
+                agent: &lead,
+                team: &team,
+                task: &lead_task,
+            },
+            "agentbus",
+            None,
+        )
+        .await
+        .unwrap();
+    assert_eq!(messages.len(), 1);
+    assert!(messages[0].text.contains("claude-2"), "{messages:?}");
+}
+
+#[tokio::test]
+async fn team_replace_return_reason_reads_the_current_lead_and_member_names() {
+    use agent_core::kinds::Role;
+    use agent_runtime::agentbus::{Outgoing, Recipient};
+    let state = team_replace_state();
+    let daemon = Daemon::new(&state, None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    team_replace_bus(&owner).await;
+    let from = "inv-new".parse().unwrap();
+    let to = Recipient::Member {
+        team: team_id(0),
+        agent: "claude-2".parse().unwrap(),
+    };
+    owner
+        .parts
+        .bus
+        .send(
+            &from,
+            &to,
+            &Outgoing::Chat {
+                text: "Earlier message".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    owner.mark_lead_run(&task(1), Role::Coordinator).await;
+    let reason = "Please repair the café entry";
+    owner
+        .parts
+        .bus
+        .send(
+            &from,
+            &to,
+            &Outgoing::Chat {
+                text: reason.to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+    let located = owner.locate(&task(1)).unwrap();
+    owner
+        .read_returns(
+            &task(1),
+            &located,
+            RunOutcome::Sleeping,
+            "RETURNED: 1.1\nSTATUS: SLEEPING\n",
+        )
+        .await
+        .unwrap();
+    let state = &owner.parts.state;
+    let rejections = state
+        .team(&team_id(0))
+        .unwrap()
+        .item(item("1.1"))
+        .unwrap()
+        .rejections()
+        .unwrap();
+    assert_eq!(rejections.len(), 1);
+    assert_eq!(rejections[0].reason(), reason);
+}

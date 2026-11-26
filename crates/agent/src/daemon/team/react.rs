@@ -6,7 +6,7 @@ use agent_core::state::{ItemPhase, Member, RunEnd, Team};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_runtime::agentbus::RequestId;
 
-use super::assign::{agent_name, task_branch};
+use super::assign::{agent_name, member_task_branch};
 use crate::daemon::settle::end_of;
 
 /// A notice for the bus: what happened to a member.
@@ -204,9 +204,9 @@ pub(in crate::daemon) fn notice_for(
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
-    // The coordinator and the member are named as the team's bus knows them: by the agent each task was first given to.
-    let to = agent_name(coordinator.bus_agent())?;
-    let who = agent_name(member.bus_agent())?;
+    // Bus membership follows the current holders after replacement.
+    let to = agent_name(coordinator.agent())?;
+    let who = agent_name(member.agent())?;
     if member.status() != TaskStatus::Failed
         && let Some((item, _branch)) = worked_on(team, member)
         && message.is_some_and(|text| text.lines().any(|line| line.trim() == format!("SPLIT: {item}")))
@@ -234,7 +234,7 @@ pub(in crate::daemon) fn notice_for(
         } => {
             let (item, branch) = match worked_on(team, member) {
                 Some((item, branch)) => (Some(item), branch),
-                None => (None, task_branch(&who, member.task())?),
+                None => (None, member_task_branch(member)?),
             };
             BusNotice::MemberFinished {
                 member: who,
@@ -291,14 +291,14 @@ pub(in crate::daemon) fn lead_takes_work(
     let Some(coordinator) = team.crew().coordinator() else {
         return Ok(None);
     };
-    // The task's own branch and its name on the bus are those of its first agent, whoever holds the task now.
-    let who = agent_name(member.bus_agent())?;
+    // The bus follows the current holder while the task retains its original branch.
+    let who = agent_name(member.agent())?;
     let branch = match worked_on(team, member) {
         Some((_, branch)) => branch,
-        None => task_branch(&who, member.task())?,
+        None => member_task_branch(member)?,
     };
     Ok(Some(Told {
-        to: agent_name(coordinator.bus_agent())?,
+        to: agent_name(coordinator.agent())?,
         notice: BusNotice::LeadTakesWork(LeadWork {
             member: who,
             task: member.task().clone(),

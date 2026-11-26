@@ -441,3 +441,30 @@ async fn assigned_members_and_coordinator_fallbacks_are_told_the_tier_and_reason
         assert_eq!(prompt, expected);
     }
 }
+
+#[tokio::test]
+async fn team_replace_roster_names_the_current_coordinator_and_member() {
+    let texts = texts().await;
+    let mut state = agent_core::state::State::new();
+    let team = crew_of(CHAIN, 1, 0);
+    let id = team.id().clone();
+    state.insert_team(team).unwrap();
+    state
+        .hand_over_task(
+            &task_id(1),
+            crate::fixtures::investigator("inv-new"),
+            crate::fixtures::at(1),
+        )
+        .unwrap();
+    state
+        .hand_over_task(&task_id(2), crate::fixtures::normal("claude-2"), crate::fixtures::at(2))
+        .unwrap();
+    let prompt = shaped(&texts, state.team(&id).unwrap(), 2, None, true);
+    assert!(prompt.contains("inv-new"), "{prompt}");
+    assert!(prompt.contains("claude-2"), "{prompt}");
+    assert!(!prompt.contains("inv-opus"), "{prompt}");
+    assert!(
+        prompt.contains("agents/claude-1/task-20261111-153002-k3x9-1.1"),
+        "{prompt}"
+    );
+}
