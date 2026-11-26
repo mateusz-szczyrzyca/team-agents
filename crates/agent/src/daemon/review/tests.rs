@@ -156,7 +156,7 @@ mod pool {
     use rand::rngs::StdRng;
 
     use super::choose_reviewers;
-    use crate::daemon::review::{Reviewer, Slot, free_reviewers, slot_in};
+    use crate::daemon::review::{Reviewer, Slot, free_reviewers};
     use crate::fixtures::{at, investigator, member, normal, task, team_id};
 
     /// A configuration with a normal agent and four investigators.
@@ -460,17 +460,6 @@ gate = ["true"]
             go(&mut state, 11, &statuses);
             assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-b"));
         }
-    }
-
-    #[test]
-    fn tasks_of_role_investigator_are_ignored_by_slot_in_and_free_reviewers() {
-        let mut state = state();
-        let inv_member = member(5, investigator("inv-c")).with_role(agent_core::kinds::Role::Investigator);
-        state.add_reviewer(&team_id(0), inv_member).unwrap();
-        go(&mut state, 5, &[TaskStatus::Running, TaskStatus::Done]);
-        let team = state.team(&team_id(0)).unwrap();
-        assert_eq!(slot_in(team, &name("inv-c")), Some(Slot::New));
-        assert!(names(&free_reviewers(&state, &config(), &team_id(0))).contains(&"inv-c"));
     }
 
     fn pool(count: usize) -> Vec<Reviewer> {

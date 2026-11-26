@@ -10,11 +10,9 @@ use std::time::Duration;
 use agent_core::config::Secrets;
 use agent_core::history::MaxTextBytes;
 use agent_core::ids::{RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds;
 use agent_core::log::{LogEvent, LogLevel};
 use agent_core::protocol::{Client, Command, Reply, StatusRequest, Target};
 use agent_core::state::{Completion, ItemPhase, MergeMode};
-use agent_core::status;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::history::{
     DEFAULT_QUEUE, History, HistoryDb, HistoryLayer, Problem, Reader, Reporter, Setup, install_panic_hook,
@@ -837,7 +835,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         daemon.clock.advance(time::Duration::seconds(1));
         assert!(std::panic::catch_unwind(|| panic!("synthetic panic for daemon_panicked")).is_err());
 
-        // warn (18)
+        // warn (16)
         for variant in [
             LogEvent::RunNoToolFailed,
             LogEvent::CliOutputUnreadable,
@@ -1473,9 +1471,18 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::item_branch_tests::record_worktree_switch_events(&mut observed).await;
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
-    record_investigation_events(&mut observed).await;
 
-    let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
+    // Part A reserves history names; part B supplies their production causes.
+    let expected: BTreeSet<LogEvent> = LogEvent::ALL
+        .iter()
+        .copied()
+        .filter(|event| {
+            !matches!(
+                event,
+                LogEvent::InvestigationStarted | LogEvent::InvestigationAnswered | LogEvent::InvestigationKindUnknown
+            )
+        })
+        .collect();
     assert_eq!(
         observed, expected,
         "every LogEvent variant must be produced by a real production cause"
@@ -1567,82 +1574,3 @@ async fn record_worker_request_recovery(observed: &mut BTreeSet<LogEvent>) {
     }
 }
 
-/// Runs a full investigation lifecycle (start → answer → done) and inserts the three observation events.
-async fn record_investigation_events(observed: &mut BTreeSet<LogEvent>) {
-    let mut rig = Rig::new(
-        &[
-            normal("claude-lead", "sleep"),
-            normal("claude-1", "inv-add:Log test question,done"),
-            investigator("inv-r1", "inv-done:Here is the answer for log coverage"),
-            investigator("inv-r2", "done"),
-        ],
-        1,
-        true,
-    )
-    .await;
-    rig.start().await;
-
-    let (team, _tasks) = rig
-        .run(
-            &["claude-lead", "claude-1"],
-            ONE,
-            MergeMode::NoMerge,
-            Some("claude-lead"),
-        )
-        .await;
-
-    rig.state_where("investigator task is done", |state| {
-        let Some(team_st) = state.team(&team) else {
-            return false;
-        };
-        team_st.reviewers().iter().any(|m| {
-            m.role() == Some(agent_core::kinds::Role::Investigator)
-                && m.status() == agent_core::status::TaskStatus::Done
-        })
-    })
-    .await;
-
-    // First read the investigation_started and investigation_answered events
-    // while the daemon is still running.
-    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
-
-    for event in [LogEvent::InvestigationStarted, LogEvent::InvestigationAnswered] {
-        let row = logs
-            .iter()
-            .find(|entry| entry.event() == event)
-            .unwrap_or_else(|| panic!("missing {event} in investigation logs"));
-        assert_eq!(row.level(), event.level());
-        observed.insert(event);
-    }
-
-    // InvestigationKindUnknown: write an unknown-kind investigation request to the bus state
-    // while the daemon is still running, then let the daemon see it on its next look.
-    let bus_state_path = rig.home.root().join("bus/state.json");
-    let mut bus_state: serde_json::Value =
-        serde_json::from_str(&std::fs::read_to_string(&bus_state_path).unwrap()).unwrap();
-    bus_state["investigations"]["999"] = serde_json::json!({
-        "id": "999",
-        "kind": "unknown_kind",
-        "question": "unknown log test",
-        "from_agent": "claude-1",
-        "from_task": "task-unknown-test",
-        "repo": "example",
-        "branch": "main",
-        "status": "queued",
-        "tasks_dir": rig.home.tasks_dir().to_str().unwrap(),
-    });
-    std::fs::write(&bus_state_path, serde_json::to_string_pretty(&bus_state).unwrap()).unwrap();
-
-    // Give the daemon time to see the unknown-kind request.
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-
-    let post_unknown_logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
-    let unknown_row = post_unknown_logs
-        .iter()
-        .find(|entry| entry.event() == LogEvent::InvestigationKindUnknown)
-        .unwrap_or_else(|| panic!("missing investigation_kind_unknown in logs"));
-    assert_eq!(unknown_row.level(), LogLevel::Warn);
-    observed.insert(LogEvent::InvestigationKindUnknown);
-
-    rig.stop().await.unwrap();
-}

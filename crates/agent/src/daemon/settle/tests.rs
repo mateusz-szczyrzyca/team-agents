@@ -40,14 +40,6 @@ fn done_finishes_a_solo_task_and_a_review_and_lets_the_rest_of_a_team_wait_for_m
 }
 
 #[test]
-fn done_finishes_an_investigator_task() {
-    assert_eq!(
-        settle(Role::Investigator, &reported(RunOutcome::Done), None, Some("ok")),
-        Settled::Status(TaskStatus::Done)
-    );
-}
-
-#[test]
 fn sleeping_waits_excluded_is_over_and_questions_ask() {
     assert_eq!(
         settle(Role::Member, &reported(RunOutcome::Sleeping), None, None),
