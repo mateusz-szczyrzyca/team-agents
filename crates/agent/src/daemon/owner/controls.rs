@@ -417,8 +417,7 @@ impl Owner {
             | TaskStatus::Paused
             | TaskStatus::Stopped
             | TaskStatus::Failed => match role {
-                Role::Investigator => Some(no_session_to_renew(task)),
-                Role::Worker | Role::Reviewer => {
+                Role::Worker | Role::Reviewer | Role::Investigator => {
                     Some(format!("{task} is a {role}: only a lead or a member can be renewed"))
                 }
                 Role::Solo | Role::Coordinator | Role::Member if found.member.runs().is_empty() => {
