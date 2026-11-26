@@ -499,6 +499,16 @@ a lead given a member's work does, you are asked once, in the task's next questi
 new session; `b`, `ok` and any other answer stop it. Each hand-over is logged as `task_handed_over`, whose `reason` says
 why (`no_status`, `hang`, `turn_limit`, `busy`, `round_overdue`, ...).
 
+**A lead that repeats itself or cannot be reached.** When a task waits for you after "not published", or a lead answers
+`agent say` and `agent resume` with the same run again, `agent renew <task>` is the way out that keeps the team and its pull
+requests: the next run of the task starts in a new session of the same agent, briefed as after a bad session (the plan,
+the commits, the files left in the worktree and the messages of its team it had not read — so say what you want with
+`agent say <task> "..."` first, and it reads that before anything else). The briefing names the reason `human`; the reason
+is also kept in `state.json` and in the history. A renewal you ask for is not counted against `[replacement]
+new_sessions`, however often you use it. It works for a lead or a member, solo or in a team, and does what `agent resume`
+does for the task afterwards. It is refused, with the reason, for a task that is running (stop it first with `agent stop`),
+done, never run, a worker or a reviewer. The notice of a round that waits for your instruction names the command.
+
 **A round that goes on too long.** A solo agent, a member or a coordinator that works on an item for more than
 `[limits] round_minutes` (off by default; the example configuration gives `120`) without its pull request in review is stopped by the daemon, and the task is
 handed over as above at once, without a new session of the same agent first: to the first fitting agent of `[replacement]
@@ -733,6 +743,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
+| `agent renew <task>` | starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages; not counted against `[replacement] new_sessions`; see [When a run goes wrong](#when-a-run-goes-wrong) |
 | `agent remove <team> [--force]` | removes a team after bundling its unmerged work; `--force` first ends its active runs and checks. See the removal details below. |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
 | `agent status` | the short view: every team with its rounds, a line for each of its tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks listed are the team's coordinator, members, workers and reviewers (a solo task too), whatever their status; a reviewer whose review is over is listed with when it finished. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number. When workers are configured, a `pool:` section shows each worker, whom it serves (team or task, step) or that it is free |

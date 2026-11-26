@@ -72,6 +72,7 @@ use crate::commands::guard::{GuardCommitError, guard_commit};
 use crate::commands::log::{LogError, LogRequest, log_in};
 use crate::commands::pause::pause;
 use crate::commands::remove::remove;
+use crate::commands::renew::renew;
 use crate::commands::resume::resume;
 use crate::commands::run::{RunError, RunInput, prepare, start};
 use crate::commands::say::{say, text as say_text};
@@ -392,6 +393,8 @@ enum Steer {
     Resume(TargetArgs),
     /// Says something to a task or a team, through the bus: they read it when they next look at their messages.
     Say(SayArgs),
+    /// Starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages.
+    Renew(RenewArgs),
     /// Takes a team out of the daemon: its unmerged branches are bundled, its open pull requests closed, and its worktrees and branches deleted. `--force` ends its runs first.
     Remove(RemoveArgs),
 }
@@ -405,6 +408,14 @@ struct RemoveArgs {
     /// End the runs going in the team first, instead of refusing while one goes.
     #[arg(long)]
     force: bool,
+}
+
+/// The arguments of `agent renew`.
+#[derive(Debug, Args)]
+struct RenewArgs {
+    /// The task whose next run starts a new session (`task-…`).
+    #[arg(value_parser = parse_task)]
+    task: TaskId,
 }
 
 /// The task or team a command is about.
@@ -906,6 +917,9 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
         Steer::Pause(args) => pause(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Unpause(args) => unpause(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Resume(args) => resume(&mut Connection::connect(&socket).await?, args.target, out).await?,
+        Steer::Renew(RenewArgs { task }) => {
+            renew(&mut Connection::connect(&socket).await?, Target::Task(task), out).await?;
+        }
         Steer::Remove(args) => {
             remove(&mut Connection::connect(&socket).await?, args.team, args.force, out).await?;
         }

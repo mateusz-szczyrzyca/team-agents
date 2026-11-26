@@ -35,6 +35,8 @@ pub use recovery::{
 #[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
+mod human_session_tests;
+#[cfg(test)]
 mod limit_tests;
 mod renewal;
 #[cfg(test)]
@@ -680,6 +682,18 @@ impl State {
                 task: task.clone(),
                 source,
             })
+    }
+
+    /// Starts `task` anew in a new session because the human asked for it with `agent renew`, at `at`: the runs after now
+    /// are the new session's, and no session before it is resumed. No renewal is counted against `[replacement]
+    /// new_sessions`. A worker or a reviewer is refused. Returns whether the task was started anew: `false` for a task
+    /// with no run.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker or a reviewer, or the session does not fit
+    /// its runs.
+    pub fn begin_human_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
+        self.begin_holder_session(task, crate::decide::ladder::Trouble::Human, at)
     }
 
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no

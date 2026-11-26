@@ -11,6 +11,8 @@ You work on task {{task}} again, in a new session. The session before you went b
 - `daemon_down`: the daemon went down while the run was going. The run was cut from outside, not by the agent's fault.
 - `failed`: the last run of the session before reported `STATUS: FAILED` after it used the bus's tools: its agent said
   that it could not finish the work. What it said is at the end of this briefing; read it first.
+- `human`: no run went bad: the human started this new session with `agent renew`. Read the messages at the end of
+  this briefing first: they say what the human wants.
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 

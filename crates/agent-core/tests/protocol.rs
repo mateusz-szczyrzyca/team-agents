@@ -60,6 +60,7 @@ mod protocol_lines {
                 Command::Unpause(_) => "unpause",
                 Command::Resume(_) => "resume",
                 Command::Say(_) => "say",
+                Command::Renew(_) => "renew",
                 Command::Gate(_) => "gate",
                 Command::Subscribe(_) => "subscribe",
                 Command::Remove(_) => "remove",

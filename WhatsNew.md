@@ -9,6 +9,12 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.128.0 · agent-core 0.125.0 — 26.11.2026 — PR #312
+
+### New features
+- [agent] [agent-core] `agent renew <task>` starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages: the way out when a lead repeats itself or cannot be reached, without removing the team. Say what you want with `agent say <task> "..."` first; the new session reads it before anything else. It prints `Renewed <task>: its next run starts a new session`, works for a lead or a member (solo or in a team), and is not counted against `[replacement] new_sessions`. A task that is running, done, never run, a worker or a reviewer is refused with the reason.
+- [agent] The notice of a round that waits for your instruction after "not published" names `agent renew <task>`.
+
 ## agent-core 0.124.0 — 26.11.2026 — PR #311
 
 ### Bug fixes

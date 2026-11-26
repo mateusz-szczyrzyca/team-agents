@@ -41,6 +41,7 @@ fn control(action: ControlAction, target: Target) -> Command {
         ControlAction::Pause => Command::Pause(request),
         ControlAction::Unpause => Command::Unpause(request),
         ControlAction::Resume => Command::Resume(request),
+        ControlAction::Renew => Command::Renew(request),
         ControlAction::Say => panic!("`say` has a request of its own"),
     }
 }

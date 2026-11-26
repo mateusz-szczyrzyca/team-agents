@@ -972,6 +972,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::ContextBound => "context_bound",
         Trouble::Failed => "failed",
         Trouble::RoundOverdue => "round_overdue",
+        Trouble::Human => "human",
     }
 }
 
