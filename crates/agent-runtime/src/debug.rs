@@ -158,24 +158,20 @@ pub fn resolve_debug_target_with_history(
         return Ok(team);
     }
     // For Task targets only, fall back to the history's runs table.
-    let task = match target {
-        DebugTarget::Task(id) => id,
-        _ => {
-            let id = match target {
-                DebugTarget::Team(id) => id.to_string(),
-                DebugTarget::Round(id) => id.to_string(),
-                DebugTarget::Task(id) => id.to_string(),
-            };
-            return Err(DebugRuntimeError::UnknownTarget { id });
-        }
+    let DebugTarget::Task(task) = target else {
+        let id = match target {
+            DebugTarget::Team(id) => id.to_string(),
+            DebugTarget::Round(id) => id.to_string(),
+            DebugTarget::Task(id) => id.to_string(),
+        };
+        return Err(DebugRuntimeError::UnknownTarget { id });
     };
-    let reader = crate::history::Reader::open(history_path)
-        .map_err(|_| {
-            let id = task.to_string();
-            DebugRuntimeError::UnknownTarget { id }
-        })?;
-    let runs = reader.runs_of_task(task).map_err(|_| {
-        let id = task.to_string();
+    let reader = crate::history::Reader::open(history_path).map_err(|_e| {
+        let id: String = task.to_string();
+        DebugRuntimeError::UnknownTarget { id }
+    })?;
+    let runs = reader.runs_of_task(task).map_err(|_e| {
+        let id: String = task.to_string();
         DebugRuntimeError::UnknownTarget { id }
     })?;
     // Find the latest run by its start time to get the team.

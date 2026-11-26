@@ -394,7 +394,7 @@ fn worker_task_resolves_to_team() {
 
     let state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
     // The state does not have the worker task.
-    assert!(resolve_debug_target(&state, &DebugTarget::Task(worker_id.clone())).is_err());
+    resolve_debug_target(&state, &DebugTarget::Task(worker_id.clone())).unwrap_err();
 
     // The history-based resolver finds it.
     let result =

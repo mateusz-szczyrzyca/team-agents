@@ -392,7 +392,11 @@ impl Collection {
     }
 
     /// Observes pool worker tasks that served the team, as recorded in the history.
+    #[expect(clippy::too_many_lines, reason = "worker observation is one logical unit that reads history, collects files and builds summary in sequence")]
     async fn observe_workers(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
+        /// Maximum worker runs to collect per task.
+        const MAX_WORKER_RUNS: usize = 3;
+
         let path = home.history_file();
         // Read team records to find worker runs for this team.
         let records = match tokio::task::spawn_blocking({
@@ -404,7 +408,14 @@ impl Collection {
         .map_err(DebugRuntimeError::Worker)?
         {
             Ok(records) => records,
-            Err(_) => return Ok(()),
+            Err(error) => {
+                self.assessment.unreadable.push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::CollectionFailures,
+                    part: "worker tasks history".to_owned(),
+                    reason: error_chain(&error),
+                });
+                return Ok(());
+            }
         };
 
         // Find all distinct worker tasks with their runs.
@@ -437,13 +448,8 @@ impl Collection {
             return Ok(());
         }
 
-        /// Maximum worker runs to collect per task.
-        const MAX_WORKER_RUNS: usize = 3;
-        /// Size limit for worker task files, matching the member limit.
-        const WORKER_FILE_LIMIT: u64 = 4 * 1024 * 1024;
-
         for (worker_task, mut runs) in worker_tasks {
-            // Sort newest first by run ID (which is time-based) and take at most 3.
+            // Sort newest first by run ID and take at most MAX_WORKER_RUNS.
             runs.sort_by(|a, b| b.cmp(a));
             runs.truncate(MAX_WORKER_RUNS);
 
@@ -519,15 +525,15 @@ impl Collection {
                         }
                     }
                     agent_core::history::Record::RunEnd(end) => {
-                        // Find matching run starts with same run ID
+                        // Find matching run starts with same run ID.
                         for s in &records {
-                            if let agent_core::history::Record::Run(s) = &s.record {
-                                if s.task == worker_task && s.run == end.run {
-                                    if last_ended.is_none() || Some(end.at) > last_ended {
-                                        last_ended = Some(end.at);
-                                        end_detail = format!("{:?}", end.end);
-                                    }
-                                }
+                            if let agent_core::history::Record::Run(s) = &s.record
+                                && s.task == worker_task
+                                && s.run == end.run
+                                && (last_ended.is_none() || Some(end.at) > last_ended)
+                            {
+                                last_ended = Some(end.at);
+                                end_detail = format!("{:?}", end.end);
                             }
                         }
                     }
