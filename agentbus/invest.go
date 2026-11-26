@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -457,7 +458,7 @@ func cmdInvNext(args []string) {
 			return nil
 		}
 		for _, inv := range sortedInv(st) {
-			if inv.Status == InvQueued {
+			if inv.Status == InvQueued && (len(tasks) == 0 || slices.Contains(tasks, inv.FromTask)) {
 				inv.Status = InvStarting
 				return fromStorage(CmdInvNextStorage, printJSON(inv))
 			}
