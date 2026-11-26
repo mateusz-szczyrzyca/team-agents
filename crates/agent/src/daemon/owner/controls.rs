@@ -8,8 +8,11 @@
 use agent_core::cli::ActivityEvent;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
+use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::protocol::{Client, ControlAction, EventKind, Failure, FailureKind, Reply, SayRequest, Target};
+use agent_core::protocol::{
+    Client, ControlAction, ControlRequest, EventKind, Failure, FailureKind, Reply, SayRequest, Target,
+};
 use agent_core::state::{RunEnd, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{Outgoing, Recipient};
@@ -340,6 +343,118 @@ impl Owner {
         })())
     }
 
+    // ---- renew ----------------------------------------------------------------------------------------------
+
+    /// Starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages:
+    /// the task is refused unless it can be resumed and has a session to renew, then the session begins and the task is
+    /// resumed as `agent resume` resumes it.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved or the clock gives no time.
+    pub(super) async fn renew_request(
+        &mut self,
+        client: &Client,
+        request: ControlRequest,
+    ) -> Result<Result<Reply, Failure>, OwnerError> {
+        let ControlRequest { target } = request;
+        let task = match &target {
+            Target::Task(task) => task.clone(),
+            Target::Team(team) => {
+                return Ok(Err(not_a_task(&format!("{team} is a team"))));
+            }
+            Target::Round(round) => {
+                return Ok(Err(not_a_task(&format!("{round} is a round"))));
+            }
+        };
+        let aimed = match self.aim(&target, Reach::CrewAndReviewers) {
+            Ok(aimed) => aimed,
+            Err(failure) => return Ok(Err(failure)),
+        };
+        if let Some(failure) = self.renew_refusal(&task, &target)? {
+            return Ok(Err(failure));
+        }
+        let now = Timestamp::now(&self.parts.clock)?;
+        if !self.parts.state.begin_human_session(&task, now)? {
+            return Ok(Err(renew_conflict(no_session_to_renew(&task))));
+        }
+        self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
+        self.save().await?;
+        self.record_controlled(
+            now,
+            client,
+            ControlAction::Renew,
+            &target,
+            &aimed,
+            std::slice::from_ref(&task),
+        );
+        self.record_control(
+            client,
+            ControlAction::Renew,
+            &target,
+            &aimed,
+            std::slice::from_ref(&task),
+        )
+        .await?;
+        self.resume_request(client, &target).await
+    }
+
+    /// Why `task` cannot be renewed now, if it cannot: a run going, the task done, a worker or a reviewer, no run yet, or
+    /// a status that `agent resume` would refuse as well. Nothing is changed.
+    fn renew_refusal(&self, task: &TaskId, target: &Target) -> Result<Option<Failure>, OwnerError> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let status = found.member.status();
+        let role = found.role;
+        let message = match status {
+            TaskStatus::Running => Some(format!("{task} is running: stop it first with `agent stop {task}`")),
+            TaskStatus::Done => Some(format!("{task} is done: nothing is left to do for it")),
+            TaskStatus::Queued
+            | TaskStatus::Waiting
+            | TaskStatus::Questions
+            | TaskStatus::Paused
+            | TaskStatus::Stopped
+            | TaskStatus::Failed => match role {
+                Role::Worker | Role::Reviewer => {
+                    Some(format!("{task} is a {role}: only a lead or a member can be renewed"))
+                }
+                Role::Solo | Role::Coordinator | Role::Member if found.member.runs().is_empty() => {
+                    Some(no_session_to_renew(task))
+                }
+                Role::Solo | Role::Coordinator | Role::Member => None,
+            },
+        };
+        if let Some(message) = message {
+            return Ok(Some(renew_conflict(message)));
+        }
+        // The task is resumed after its session begins: a status that a resume leaves alone is refused before anything
+        // is recorded, with the words of the resume.
+        Ok(match decide(Steer::Resume, status) {
+            Step::Skip(why) => Some(nothing_done(Steer::Resume, target, &[(task.clone(), status, why)])),
+            Step::Move(_) | Step::Halt(_) => None,
+        })
+    }
+
+    /// What `agent resume` does for `target`: the steps of its team that wait for GitHub or git are tried again, and when
+    /// none did, its tasks are started again.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) async fn resume_request(
+        &mut self,
+        client: &Client,
+        target: &Target,
+    ) -> Result<Result<Reply, Failure>, OwnerError> {
+        if self.resume_waits(target) > 0 {
+            // The resume is for the steps that waited: they are tried at the next look, and no task of the team is
+            // started again for it.
+            return Ok(Ok(Reply::Applied { tasks: Vec::new() }));
+        }
+        self.control_request(client, Steer::Resume, target).await
+    }
+
     // ---- say ------------------------------------------------------------------------------------------------
 
     /// Puts what the human says on the bus, for the agent of the task or for the team.
@@ -468,6 +583,28 @@ fn describe(target: &Target) -> String {
     }
 }
 
+/// The refusal of a renewal aimed at something else than a task: `what` says what it was aimed at.
+fn not_a_task(what: &str) -> Failure {
+    Failure {
+        kind: FailureKind::Invalid,
+        message: format!("{what}: `agent renew` takes one task (`task-…`)"),
+    }
+}
+
+/// The words of the refusal of a renewal of a task that never ran: the one source for the check before the session
+/// begins and for the case where beginning it finds no run.
+fn no_session_to_renew(task: &TaskId) -> String {
+    format!("{task} has no run yet: there is no session to renew")
+}
+
+/// The refusal of a renewal: the task is in a state that cannot be renewed.
+fn renew_conflict(message: String) -> Failure {
+    Failure {
+        kind: FailureKind::Conflict,
+        message,
+    }
+}
+
 /// The refusal of a control that did nothing to any task of `target`: why, for each task.
 fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, Skipped)]) -> Failure {
     let message = match (target, skipped) {
@@ -491,5 +628,7 @@ fn nothing_done(steer: Steer, target: &Target, skipped: &[(TaskId, TaskStatus, S
     }
 }
 
+#[cfg(test)]
+mod renew_tests;
 #[cfg(test)]
 mod tests;

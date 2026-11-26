@@ -100,6 +100,8 @@ pub enum Command {
     Unpause(ControlRequest),
     /// Start a stopped, failed or waiting task or team again.
     Resume(ControlRequest),
+    /// Start the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages.
+    Renew(ControlRequest),
     /// Say something to a task or a team.
     Say(SayRequest),
     /// Run the repository's gate for a task.
