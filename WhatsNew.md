@@ -9,6 +9,12 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.126.0 · agent-core 0.122.0 — 26.11.2026 — PR #303
+
+### Bug fixes
+- [agent-core] The story of a review pass tells the runs of both reviewers together, in the order they were requested, before their reports; a report recorded before the other reviewer's run had begun no longer splits the two runs.
+- [agent] Eight tests that read a state before it was there (the zone, provider wait, renewed session, quota, hand-over, teams rig, daemon and team process tests, and the three delivery restart tests) now wait for it; they failed on a loaded machine, and no behaviour of the daemon changes with them.
+
 ## agent 0.125.0 — 26.11.2026 — PR #300
 
 ### Bug fixes
