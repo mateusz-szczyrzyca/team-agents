@@ -289,37 +289,23 @@ fn decide_table_covers_every_wait_candidate_load_and_non_handed_over_state() {
 
 #[test]
 fn normal_holder_with_investigator_then_normal_free_selects_normal() {
-    let claude_2 = agent("claude-2");
-    let claude_3 = agent("claude-3");
-    let inv_opus = agent("inv-opus");
-
-    // Normal holder (claude_2) with investigator (inv_opus) then normal free (claude_3)
-    // Should select the normal free agent (claude_3)
+    let normal = agent("claude-3");
+    let investigator = agent("inv-opus");
     let offers = [
-        Offer {
-            agent: &inv_opus,
-            ..free(&inv_opus, Tier::Investigator, 0)
-        },
-        free(&claude_2, Tier::Normal, 0), // holder
-        free(&claude_3, Tier::Normal, 0), // free normal
+        free(&investigator, Tier::Investigator, 0),
+        free(&normal, Tier::Normal, 0),
     ];
-    let waiting = waiting(Tier::Normal, 10, 300, &offers);
-    assert_eq!(decide(&waiting), Decision::HandOver(&claude_3));
+
+    assert_eq!(
+        decide(&waiting(Tier::Normal, 10, 300, &offers)),
+        Decision::HandOver(&normal)
+    );
 }
 
 #[test]
 fn with_only_investigator_free_keeps_waiting() {
-    let claude_2 = agent("claude-2");
-    let inv_opus = agent("inv-opus");
+    let investigator = agent("inv-opus");
+    let offers = [free(&investigator, Tier::Investigator, 0)];
 
-    // Normal holder with only investigator free should keep waiting
-    let offers = [
-        Offer {
-            agent: &inv_opus,
-            ..free(&inv_opus, Tier::Investigator, 0)
-        },
-        free(&claude_2, Tier::Normal, 0), // holder only
-    ];
-    let waiting = waiting(Tier::Normal, 10, 300, &offers);
-    assert_eq!(decide(&waiting), Decision::Keep);
+    assert_eq!(decide(&waiting(Tier::Normal, 10, 300, &offers)), Decision::Keep);
 }

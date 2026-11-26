@@ -223,7 +223,7 @@ fn the_places_of_the_tiers_rank_a_worker_below_a_normal_agent_below_an_investiga
 
 #[test]
 fn normal_with_idle_investigator_then_normal_selects_normal() {
-    let [worker, normal, investigator] = names();
+    let [_, normal, investigator] = names();
     let candidates = [idle(&investigator, Tier::Investigator), idle(&normal, Tier::Normal)];
     assert_eq!(
         choose(Role::Member, Tier::Normal, &candidates, ReplacementMode::Auto),
@@ -233,7 +233,7 @@ fn normal_with_idle_investigator_then_normal_selects_normal() {
 
 #[test]
 fn normal_with_only_idle_investigator_falls_back_to_lead_for_member_and_human_for_solo() {
-    let [worker, normal, investigator] = names();
+    let [_, _, investigator] = names();
     let candidates = [idle(&investigator, Tier::Investigator)];
 
     // For Member role, should fall back to Lead
@@ -251,7 +251,7 @@ fn normal_with_only_idle_investigator_falls_back_to_lead_for_member_and_human_fo
 
 #[test]
 fn investigator_with_idle_normal_then_investigator_chooses_investigator() {
-    let [worker, normal, investigator] = names();
+    let [_, normal, investigator] = names();
     let candidates = [idle(&normal, Tier::Normal), idle(&investigator, Tier::Investigator)];
     assert_eq!(
         choose(Role::Member, Tier::Investigator, &candidates, ReplacementMode::Auto),
@@ -261,7 +261,7 @@ fn investigator_with_idle_normal_then_investigator_chooses_investigator() {
 
 #[test]
 fn investigator_with_only_idle_normal_falls_back_to_lead() {
-    let [worker, normal, investigator] = names();
+    let [_, normal, _] = names();
     let candidates = [idle(&normal, Tier::Normal)];
 
     assert_eq!(
