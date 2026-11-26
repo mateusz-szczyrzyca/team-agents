@@ -576,6 +576,12 @@ impl Owner {
             .collect()
     }
 
+    /// Finds the rounds whose items this publication carries and that are still open: a round of an item that closed
+    /// before (the merged part of a split item) has no step left to take a checkpoint of.
+    fn open_publication_rounds(&self, team: &TeamId, items: &[String]) -> Vec<agent_core::ids::RoundId> {
+        self.publication_rounds(team, items)
+    }
+
     /// Retains the pending operation when publication leaves an idle round open.
     fn remember_publication_wait(
         &mut self,
@@ -1567,15 +1573,7 @@ impl Owner {
                     .and_then(|values| values.with("items", items_of(publication).join(", ")))
                     .and_then(|values| values.with("reason", &reason));
                 let items = items_of(publication);
-                let round_ids = self
-                    .parts
-                    .state
-                    .team(team)
-                    .into_iter()
-                    .flat_map(agent_core::state::Team::rounds)
-                    .filter(|round| round.item().is_some_and(|item| items.contains(&item.to_string())))
-                    .map(|round| round.id().clone())
-                    .collect::<Vec<_>>();
+                let round_ids = self.open_publication_rounds(team, &items);
                 let rounds = round_ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
                 let values = values
                     .and_then(|v| v.with("rounds", rounds))
