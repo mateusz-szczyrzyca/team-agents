@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.125.0 — 26.11.2026 — PR #301
+
+### Bug fixes
+- [agent] Answers saved in the questions file while the run that asked was still going (with **ANSWERED** on the last line) are now taken up when that run ends with its questions; before, the task waited for ever for a save that had already happened. An incomplete file tells you what is missing, and `agent answer` for a task that is still running says to save the answers in the file.
+
 ## agent 0.124.0 · agent-core 0.121.0 — 26.11.2026 — PR #297
 
 ### Enhancements
