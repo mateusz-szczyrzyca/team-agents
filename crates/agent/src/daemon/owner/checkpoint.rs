@@ -546,7 +546,7 @@ impl Owner {
         self.flush_checkpoints().await;
     }
 
-    /// Looks at the worktree of `task`, when it has a run going for an open round, at most once a minute, and queues a
+    /// Looks at the worktree of `task`, when it has a run going for an open round, once a minute, and queues a
     /// `commit` checkpoint when its head is not the head of the task's last checkpoint. Several commits in one minute are
     /// one checkpoint; a task with no checkpoint yet is only noted.
     pub(super) async fn look_for_commits(&mut self, task: &TaskId) {
@@ -559,13 +559,15 @@ impl Owner {
         let Ok(now) = Timestamp::now(&self.parts.clock) else {
             return;
         };
-        if self
-            .checkpoints
-            .looked_at
-            .get(task)
-            .is_some_and(|last| (now.as_utc() - last.as_utc()).whole_seconds() < LOOK_SECONDS)
-        {
-            return;
+        match self.checkpoints.looked_at.get(task) {
+            // The first sighting of a task only starts its minute: the checkpoint of its round's opening, or of the start of
+            // the daemon, was taken just before it.
+            None => {
+                self.checkpoints.looked_at.insert(task.clone(), now);
+                return;
+            }
+            Some(last) if (now.as_utc() - last.as_utc()).whole_seconds() < LOOK_SECONDS => return,
+            Some(_) => {}
         }
         self.checkpoints.looked_at.insert(task.clone(), now);
         let head = match self.commit_git(&target) {
