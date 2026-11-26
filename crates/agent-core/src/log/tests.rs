@@ -200,6 +200,17 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Warn,
         ),
         (LogEvent::PublishOffBranch, "publish_off_branch", LogLevel::Warn),
+        (LogEvent::InvestigationStarted, "investigation_started", LogLevel::Info),
+        (
+            LogEvent::InvestigationAnswered,
+            "investigation_answered",
+            LogLevel::Info,
+        ),
+        (
+            LogEvent::InvestigationKindUnknown,
+            "investigation_kind_unknown",
+            LogLevel::Warn,
+        ),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());

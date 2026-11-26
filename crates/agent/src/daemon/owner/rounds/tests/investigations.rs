@@ -185,8 +185,8 @@ async fn a_request_waits_while_no_investigator_is_free() {
             normal("claude-solo", "work"),
             normal("claude-lead", "sleep"),
             normal("claude-1", "inv-add:Help me,sleep"),
-            investigator("inv-r1", "hold-approve,inv-done:Resolved"),
-            investigator("inv-r2", "hold-approve,inv-done:Resolved"),
+            investigator("inv-r1", "hold,inv-done:Resolved"),
+            investigator("inv-r2", "hold,inv-done:Resolved"),
         ],
         1,
         true,
@@ -400,4 +400,111 @@ async fn the_least_recently_used_of_two_investigators_answers() {
 /// Reads the real bus state after a complete atomic save.
 fn bus_state(rig: &Rig) -> serde_json::Value {
     serde_json::from_str(&std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap()).unwrap()
+}
+
+/// Provokes the three investigation events through real queued requests.
+pub(super) async fn record_investigation_events(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::Reader;
+
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Unknown request,sleep"),
+            investigator("inv-r1", "inv-done:Resolved"),
+            investigator("inv-r2", "inv-done:Resolved"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    // Model a newer bus response at the process boundary; persisted bus state stays valid.
+    let wrapper = rig.home.root().join("future-kind-bus");
+    let script = r#"#!/usr/bin/env bash
+set -euo pipefail
+real=REAL_BUS
+if [[ "$1" == inv-next ]]; then
+    output=$("$real" "$@")
+    if [[ "$output" == *'Unknown request'* ]]; then
+        printf '{"kind":"future-kind",%s\n' "${output#\{}"
+    else
+        printf '%s\n' "$output"
+    fi
+else
+    exec "$real" "$@"
+fi
+"#
+    .replace("REAL_BUS", &format!("{:?}", super::super::fixture::agentbus_binary()));
+    std::fs::write(&wrapper, script).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let config = config.replace(
+        &format!(r#"agentbus = "{}""#, super::super::fixture::agentbus_binary().display()),
+        &format!(r#"agentbus = "{}""#, wrapper.display()),
+    );
+    std::fs::write(rig.home.config_file(), config).unwrap();
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.wait_for("unknown kind failed", || {
+        matches!(
+            bus_state(&rig)["investigations"]["1"]["status"].as_str(),
+            Some("failed" | "done")
+        )
+    })
+    .await;
+    assert_eq!(bus_state(&rig)["investigations"]["1"]["status"], "failed");
+    assert_eq!(rig.state().team(&team).unwrap().reviewers().len(), 0);
+    let branch = super::rig::git(&rig.worktree(&tasks[1]), &["symbolic-ref", "--short", "HEAD"]);
+    let output = Command::new(super::super::fixture::agentbus_binary())
+        .args(["inv-add", "--dir"])
+        .arg(rig.home.root().join("bus"))
+        .args([
+            "--from-agent",
+            "claude-1",
+            "--from-task",
+            tasks[1].as_str(),
+            "--repo",
+            "example",
+            "--branch",
+            branch.trim(),
+            "--tasks-dir",
+        ])
+        .arg(rig.home.tasks_dir())
+        .args(["--question", "Known request", "--kind", ""])
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "{output:?}");
+    rig.wait_for("known request answered", || {
+        bus_state(&rig)["investigations"]["2"]["status"] == "done"
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    for (event, level, id) in [
+        (LogEvent::InvestigationKindUnknown, LogLevel::Warn, "1"),
+        (LogEvent::InvestigationStarted, LogLevel::Info, "2"),
+        (LogEvent::InvestigationAnswered, LogLevel::Info, "2"),
+    ] {
+        let rows: Vec<_> = logs.iter().filter(|row| row.event() == event).collect();
+        assert_eq!(rows.len(), 1, "{event:?}: {rows:?}");
+        assert_eq!(rows[0].level(), level);
+        assert_eq!(rows[0].team(), Some(&team));
+        assert_eq!(rows[0].fields()["id"], id);
+        observed.insert(event);
+    }
+}
+
+#[tokio::test]
+async fn an_unknown_kind_is_failed_once_without_starting_an_investigator() {
+    let mut observed = std::collections::BTreeSet::new();
+    record_investigation_events(&mut observed).await;
+    assert_eq!(observed.len(), 3);
 }
