@@ -9,6 +9,15 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.131.0 · agent-core 0.128.0 · agent-runtime 0.117.0 — 26.11.2026 — PR #316
+
+### New features
+- [agent] [agent-core] [agent-runtime] After every step of a round the daemon records a `checkpoint` in the history and keeps a snapshot of the holder's worktree under `refs/agents/snapshots/<round>/<task>/<n>`: each local commit (also one that is never pushed), the pull request opened, pushed, ready, checked, approved, merged or closed, every review, fix pass and answer to a finding, a question and its answer, a merge refused for a conflict, the end of a run, a round cut by `[limits] round_minutes` (before the task is taken over), a hand-over, a renewal or a new session, and the start of the daemon. An agent cut before it pushed can be replaced from its last local commit. A snapshot of an unchanged worktree is reused; the references of a round are removed when it is merged or closed.
+
+### Enhancements
+- [agent-core] [agent-runtime] `history.db` is upgraded to schema 33 at the first start (old records load unchanged): it admits the `checkpoint` record and the `checkpoint_failed` log event.
+- [agent] A checkpoint that cannot be taken (the worktree is gone, git or the disk fails) is logged as `checkpoint_failed` and recorded without a snapshot; the round goes on.
+
 ## agent 0.130.0 · agent-core 0.127.0 · agent-runtime 0.116.0 — 26.11.2026 — PR #313
 
 ### Bug fixes
