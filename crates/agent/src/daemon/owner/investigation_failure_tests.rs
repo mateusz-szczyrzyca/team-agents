@@ -331,3 +331,53 @@ async fn a_complete_answer_preserves_private_attempts_only_in_the_file() {
     assert!(!calls.contains("private résumé"), "{calls}");
     assert!(calls.contains("complete solution"), "{calls}");
 }
+
+#[tokio::test]
+async fn removing_the_requesters_team_fails_its_open_requests_without_messaging() {
+    use agent_core::protocol::{Client, RemoveRequest};
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let checkout = attempt.dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(&checkout)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "--allow-empty", "-qm", "initial"]);
+    for n in [1, 2] {
+        let found = attempt.state.find_task(&task(n)).unwrap();
+        let branch = super::start::work_branch(found.team, found.member).unwrap();
+        let path = daemon.home.worktree_dir(found.team.repo(), &task(n));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(&[
+            "worktree",
+            "add",
+            "-qb",
+            branch.as_str(),
+            path.to_str().unwrap(),
+            "main",
+        ]);
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(owner.parts.state.team(&team_id(0)).is_none());
+    let calls = attempt.calls();
+    assert!(calls.contains("the requester's task ended"), "{calls}");
+    assert!(!calls.contains("send"), "{calls}");
+}
