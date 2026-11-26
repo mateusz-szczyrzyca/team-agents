@@ -82,11 +82,6 @@ pub enum Decision<'a> {
     HandOver(&'a AgentName),
 }
 
-/// The place of a tier as a number, as `decide::replacement::rank` gives it.
-const fn rank(tier: Tier) -> u8 {
-    crate::decide::replacement::rank(tier)
-}
-
 /// Whether the task of `waiting` may be handed over at all: a task that is not waiting for its busy agent, a worker's and
 /// a reviewer's are not, nor a coordinator's while one of its members runs.
 const fn may_be_handed_over(waiting: &Waiting<'_>) -> bool {
@@ -100,7 +95,7 @@ const fn may_be_handed_over(waiting: &Waiting<'_>) -> bool {
     }
 }
 
-/// The waiting task's decision: [`Decision::HandOver`] to the free agent of the same or a higher place than the holder,
+/// The waiting task's decision: [`Decision::HandOver`] to the free agent of the same tier as the holder,
 /// outside its team, whose CLI carries the fewest runs (the first of the list among equals), once the task has waited at
 /// least `busy_after` seconds; otherwise [`Decision::Keep`].
 #[must_use]
@@ -115,9 +110,7 @@ pub fn decide<'a>(waiting: &Waiting<'a>) -> Decision<'a> {
     waiting
         .offers
         .iter()
-        .filter(|offer| {
-            !offer.in_team && offer.availability == Availability::Free && rank(offer.tier) >= rank(waiting.held)
-        })
+        .filter(|offer| !offer.in_team && offer.availability == Availability::Free && offer.tier == waiting.held)
         .min_by_key(|offer| offer.cli_runs)
         .map_or(Decision::Keep, |offer| Decision::HandOver(offer.agent))
 }
