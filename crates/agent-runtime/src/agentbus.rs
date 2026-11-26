@@ -1669,7 +1669,7 @@ impl AgentBus {
         for line in output.lines() {
             let trimmed = line.trim_start();
             if let Some(rest) = trimmed.strip_prefix('#') {
-                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
                 if let Ok(id) = digits.parse::<NonZeroU32>() {
                     ids.push(id);
                 }

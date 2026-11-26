@@ -7,9 +7,10 @@ use agent_core::ids::{AgentName, BranchName, TaskId};
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 /// The kind of an investigation request.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub enum InvestigationKind {
     /// A question from an agent (`""`).
+    #[default]
     Question,
     /// A PR review (`"review"`).
     Review,
@@ -41,12 +42,6 @@ impl Serialize for InvestigationKind {
             Self::Review => serializer.serialize_str("review"),
             Self::Unknown(s) => serializer.serialize_str(s),
         }
-    }
-}
-
-impl Default for InvestigationKind {
-    fn default() -> Self {
-        Self::Question
     }
 }
 
