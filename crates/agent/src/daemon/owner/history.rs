@@ -2,10 +2,12 @@
 //! while a run is going. Each is handed to the history after the state holds it; the history never refuses or delays.
 
 use agent_core::cli::ActivityEvent;
+use agent_core::config::AbsolutePath;
 use agent_core::history::{
     AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
 };
-use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
+use agent_core::ids::{BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
+use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
@@ -331,6 +333,49 @@ impl Owner {
             worktree: plan.job.working_dir.clone(),
             branch,
             session: plan.recorded_session.clone(),
+        })));
+    }
+
+    /// Records the start of a pool worker run that serves a request of `team`, whose requester's current run is
+    /// `asked_by` (`None` when the state has none).
+    ///
+    /// The job's steps land under this run.
+    pub(super) fn record_pool_run_start(
+        &self,
+        task: &TaskId,
+        team: &TeamId,
+        run: &RunId,
+        at: Timestamp,
+        worker_name: &str,
+        tier: Tier,
+        cli: CliKind,
+        model: Option<&agent_core::config::ModelName>,
+        why: RunWhy,
+        prompt: &str,
+        worktree: &AbsolutePath,
+        branch: &BranchName,
+    ) {
+        if self.history.is_disabled() {
+            return;
+        }
+        self.history.record(Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.clone(),
+            task: task.clone(),
+            at,
+            agent: AgentIdentity {
+                name: worker_name.to_owned(),
+                tier,
+                cli,
+                model: model.cloned(),
+            },
+            role: Role::Worker,
+            rounds: Vec::new(),
+            why,
+            prompt: prompt.to_owned(),
+            worktree: worktree.clone(),
+            branch: branch.clone(),
+            session: None,
         })));
     }
 

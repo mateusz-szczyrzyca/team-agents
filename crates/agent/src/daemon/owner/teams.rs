@@ -1681,6 +1681,13 @@ impl Owner {
                 output: setup_output,
             };
 
+            // Query the requester's run before record_pool_run moves requester_task.
+            let asked_by = self
+                .parts
+                .state
+                .find_task(&requester_task)
+                .and_then(|f| f.member.current_run().map(|run| run.id().clone()));
+
             self.record_pool_run(
                 worker_task.clone(),
                 Served {
@@ -1692,6 +1699,22 @@ impl Owner {
                     base: Some(base_commit.to_string()),
                 },
                 team.id().clone(),
+            );
+            // The worker task itself does not appear through find_task, so we re-derive branch here.
+            // The branch was already computed above during workspace preparation.
+            self.record_pool_run_start(
+                &worker_task,
+                team.id(),
+                &job.run,
+                started,
+                worker_name.as_str(),
+                agent_core::kinds::Tier::Worker,
+                job.cli,
+                job.model.as_ref(),
+                agent_core::history::RunWhy::Request { asked_by },
+                &job.prompt,
+                &job.working_dir,
+                &branch,
             );
 
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
@@ -1780,6 +1803,7 @@ impl Owner {
         &mut self,
         task: &TaskId,
         served: &Served,
+        run_id: Option<RunId>,
         outcome: Outcome,
     ) -> Result<(), OwnerError> {
         let team_id = self
@@ -1787,6 +1811,26 @@ impl Owner {
             .state
             .find_task(&served.requester_task)
             .map(|f| f.team.id().clone());
+
+        // Record the run end in the history.
+        if let Some(ref run_id) = run_id {
+            match &outcome {
+                Outcome::Verdict(verdict) => match verdict.as_ref() {
+                    RunVerdict::Finished(run) => {
+                        let now = Timestamp::now(&self.parts.clock)?;
+                        self.record_run_end(
+                            run_id,
+                            now,
+                            &run.classified.end,
+                            run.final_message.as_deref(),
+                        );
+                    }
+                    RunVerdict::Interrupted { .. } => {}
+                },
+                Outcome::Failed(_) => {}
+            }
+        }
+
         let req_outcome = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => {
