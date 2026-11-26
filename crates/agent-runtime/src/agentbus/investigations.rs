@@ -32,6 +32,39 @@ impl<'de> Deserialize<'de> for InvestigationKind {
     }
 }
 
+/// The lifecycle status returned by the bus, retaining future values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InvestigationStatus {
+    /// Waiting for a free investigator.
+    Queued,
+    /// Waiting outside the bounded queue.
+    Waitroom,
+    /// Claimed but not yet assigned a task.
+    Starting,
+    /// Assigned to an investigator task.
+    Running,
+    /// Waiting for a human decision.
+    WaitingHuman,
+    /// Answered successfully.
+    Done,
+    /// Ended without an answer.
+    Failed,
+    /// Refused by the queue.
+    Rejected,
+    /// An absent status or one introduced by another bus version.
+    Unknown(String),
+}
+
+impl<'de> Deserialize<'de> for InvestigationStatus {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(Self::Unknown(raw))
+    }
+}
+
 /// An investigation request from the bus.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Investigation {
