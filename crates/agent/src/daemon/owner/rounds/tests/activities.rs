@@ -269,7 +269,7 @@ async fn three_reviews_rotate_pairs_and_the_next_team_uses_the_oldest_global_pai
                 .unwrap()
                 .activities()
                 .iter()
-                .find(|activity| activity.investigator().as_str() == name)
+                .find(|activity| activity.investigator().as_str() == *name)
                 .unwrap()
                 .task()
         };
