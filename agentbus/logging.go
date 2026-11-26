@@ -38,6 +38,7 @@ import (
 type LogEvent string
 
 const (
+	LogMemberReplaced      LogEvent = "member_replaced"        // a team member was replaced by another agent
 	LogWorkerResultDropped LogEvent = "worker_result_dropped"  // a stale execution or replay could not publish a second result
 	LogServerStarted       LogEvent = "server_started"         // an MCP server started for an agent run
 	LogServerStopping      LogEvent = "server_stopping"        // an MCP server is exiting (signal or stdin closed)

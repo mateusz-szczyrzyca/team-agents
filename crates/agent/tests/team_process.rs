@@ -915,6 +915,21 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         (first, second)
     }
 
+    /// As [`busy_agent_with_a_second_task`], for a configuration that hands the second task over after a second of
+    /// waiting: under load the status may not show the wait before the hand-over, so the wait is the row the daemon
+    /// logs once when it finds the task waiting, which stays.
+    fn busy_agent_with_a_second_task_that_may_be_handed_over(world: &World, agent: &str) -> (String, String) {
+        let first = solo_task(&world.agent(&["run", agent, "First."]));
+        world.status_where("the first run to go", |status| {
+            line_of(status, &first).contains("running")
+        });
+        let second = solo_task(&world.agent(&["run", agent, "Second."]));
+        eventually("the daemon to log that the second task waits for its agent", || {
+            log_rows(world, "task_waits_for_agent", &second) > 0
+        });
+        (first, second)
+    }
+
     /// Stops the daemon, sets the recorded `waiting_since` in `state.json` to an earlier moment so the wait exceeds
     /// `busy_after` without a wall-clock sleep, and starts the daemon again. With a distant `busy_after` (tests 6 and
     /// 12's configuration) the daemon cannot hand the task over before this deliberate expiry.
@@ -967,7 +982,7 @@ team=$(grep -o 'team-[0-9]\\{8\\}-[0-9]\\{6\\}-[a-z0-9]\\{4\\}' .fake-prompt-1 |
         ]));
         configure(&world, "\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
         world.start();
-        let (first, second) = busy_agent_with_a_second_task(&world, "claude-1");
+        let (first, second) = busy_agent_with_a_second_task_that_may_be_handed_over(&world, "claude-1");
 
         let status = world.status_where("the second task to be handed over and done", |status| {
             line_of(status, &second).contains("claude-2") && line_of(status, &second).contains("done")

@@ -1741,7 +1741,9 @@ impl Owner {
         self.commit(task, &located, now, events, notice).await?;
         self.report_reminder(task, &located).await;
         self.report_the_end(task, &located, &end, run.final_message.as_deref(), held)
-            .await
+            .await?;
+        // After the report: the team has been told the task asks, as it is told for every end with questions.
+        self.adopt_answers_saved_during_the_run(task).await
     }
 
     /// Puts `message` on the bus for `recipient` under the harness's own name.

@@ -9,13 +9,33 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-core 0.122.0 — 26.11.2026 — PR pending
+## agent-core 0.124.0 — 26.11.2026 — PR #311
 
 ### Bug fixes
 - [agent-core] Replacement and busy hand-over now select only an agent of the same tier: a normal agent for a normal agent, an investigator for an investigator.
 
 ### Configuration
 - [agent-core] changed: `[replacement] agents` (default `[]`) — only an agent of the same tier as the one it replaces is taken.
+
+## agent 0.127.0 — 26.11.2026 — PR #310
+
+### Bug fixes
+- [agent] Answers saved in the questions file while the run that asked was still going (with **ANSWERED** on the last line) are now taken up when that run ends with its questions; before, the task waited for ever for a save that had already happened. An incomplete file tells you what is missing, and `agent answer` for a task that is still running says to save the answers in the file.
+
+## agent-core 0.123.0 — 26.11.2026 — PR #308
+
+### Bug fixes
+- [agent-core] The story of a review pass tells the runs of both reviewers together, in the order they were requested, before their reports; a report recorded before the other reviewer's run had begun no longer splits the two runs.
+
+## agent 0.126.0 · agent-core 0.122.0 — 26.11.2026 — PR #304
+
+### Bug fixes
+- [agent] [agent-core] A file you refused at the checks before the review no longer stays refused for good after the team changes it again: a commit to the file made after the refusal lifts the refusal, and you are asked about the file again (`allow` starts the review, `refuse` sends the round back once more). A refused file with no later commit is sent back and not asked, as before.
+
+## agentbus — 26.11.2026 — PR #302
+
+### New features
+- [agentbus] `agentbus team-replace --team ID --from OLD --to NEW` moves a member, the board work they claimed and their unread team messages to the replacement, and informs the team.
 
 ## agent 0.125.0 — 26.11.2026 — PR #300
 

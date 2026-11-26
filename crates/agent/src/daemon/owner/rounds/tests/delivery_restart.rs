@@ -15,13 +15,12 @@ use agent_runtime::prompts::PromptLoader;
 use agent_runtime::questions_prompts::QuestionsPrompts;
 use agent_runtime::run::{EngineParts, RunEngine, RunTimings};
 use agent_runtime::settings::Settings;
-use agent_runtime::store::StateStore;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{SeedableRng, rngs::StdRng};
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
-use super::rig::{PARALLEL, Rig, investigator, normal};
+use super::rig::{PARALLEL, Rig, investigator, normal, open_store};
 use crate::daemon::owner::teams::Look;
 use crate::daemon::owner::{MAX_RUNS, Owner, OwnerParts, Pulls};
 use agent_runtime::autopilot_prompts::AutopilotPrompts;
@@ -41,7 +40,7 @@ struct Stepped {
 
 /// Open a production owner without its scheduling loop, so the crash boundary requires no timing race.
 async fn stepped(rig: &Rig) -> Stepped {
-    let store = Arc::new(StateStore::open(rig.home.clone()).await.unwrap());
+    let store = open_store(rig).await;
     let settings = Arc::new(Settings::load(&rig.home).await.unwrap());
     let prompts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../prompts");
     let language = settings.config.language();

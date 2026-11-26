@@ -310,7 +310,7 @@ climb the ladder. A task with no session id has none to leave: it is started in 
 **The takeover** (`daemon/owner/takeover.rs`, `decide::replacement::choose`, `[replacement] agents`, `mode`,
 `replacements`): when the ladder has no step left, the daemon offers the task to the agents of `[replacement] agents`, in
 their order, leaving out the agent that holds it and every agent of its team (crew and reviewers: a place in the team is
-one task). `choose` takes the first that is not in a run and of the same or a higher tier; `State::hand_over_task` gives
+one task). `choose` takes the first that is not in a run and of the same tier; `State::hand_over_task` gives
 it the task and keeps the agent before it in the member's `past_holders`, the items the task works on are reassigned to
 it on their branches, and the new holder's session begins at the same moment (`State::begin_holder_session`, the
 boundary in the member's `renewals` without raising their count), so its first run is briefed like a new session and
