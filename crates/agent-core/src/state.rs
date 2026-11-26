@@ -75,8 +75,8 @@ pub use run::{Run, RunEnd, RunError, RunState};
 pub use team::{
     ActivateSplitError, Activity, ActivityEnd, ActivityOutcome, ActivityRequest, AdvanceItemError, BeginRunError,
     CloseRoundError, CompleteDeliveryError, Crew, CrewError, CrewMut, DeliverRoundError, EndDeliveryError, IdleWatch,
-    MergeMode, NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError, TaskListText, Team, TeamError,
-    TeamMembers, TeamMut,
+    InvestigationRecord, MergeMode, NewRun, OpenRoundError, RecordSplitError, ReviewerProblem, RoundsError,
+    TaskListText, Team, TeamError, TeamMembers, TeamMut,
 };
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;

@@ -17,7 +17,9 @@ use crate::task_list::{AllowLines, ItemMark, ShortDescLines, TaskList, TaskListE
 
 mod activities;
 mod idle;
+mod investigations;
 pub use idle::IdleWatch;
+pub use investigations::InvestigationRecord;
 mod delivery;
 pub use delivery::{CompleteDeliveryError, DeliverRoundError, EndDeliveryError};
 mod legacy;
