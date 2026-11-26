@@ -177,4 +177,49 @@ mod git_snapshot_reuse {
 
         assert_eq!(references(&repo), Vec::<String>::new());
     }
+
+    #[tokio::test]
+    async fn a_reference_of_another_round_is_never_reused_and_the_new_reference_exists() {
+        let (_tmp, repo) = repository();
+        std::fs::write(repo.join("new.txt"), "new\n").expect("an uncommitted file");
+        let first = handle(&repo)
+            .snapshot_unless_unchanged(&round(), &task(), None)
+            .await
+            .expect("a first snapshot");
+        let other = RoundId::from_str("round-20261120-100000-r2r2").expect("a round id");
+
+        let second = handle(&repo)
+            .snapshot_unless_unchanged(&other, &task(), Some(&first.reference))
+            .await
+            .expect("a snapshot of the other round");
+
+        assert_eq!(second.origin, SnapshotOrigin::Taken);
+        assert!(
+            second
+                .reference
+                .starts_with(&format!("refs/agents/snapshots/{other}/{TASK}/"))
+        );
+        let held = references(&repo);
+        assert!(held.contains(&second.reference), "{held:?}");
+        assert!(held.contains(&first.reference), "{held:?}");
+    }
+
+    #[tokio::test]
+    async fn a_reference_of_another_task_is_never_reused() {
+        let (_tmp, repo) = repository();
+        std::fs::write(repo.join("new.txt"), "new\n").expect("an uncommitted file");
+        let first = handle(&repo)
+            .snapshot_unless_unchanged(&round(), &task(), None)
+            .await
+            .expect("a first snapshot");
+        let other = TaskId::from_str("task-20261120-100000-t2t2").expect("a task id");
+
+        let second = handle(&repo)
+            .snapshot_unless_unchanged(&round(), &other, Some(&first.reference))
+            .await
+            .expect("a snapshot of the other task");
+
+        assert_eq!(second.origin, SnapshotOrigin::Taken);
+        assert!(references(&repo).contains(&second.reference));
+    }
 }
