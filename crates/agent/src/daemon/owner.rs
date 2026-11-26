@@ -1145,12 +1145,8 @@ impl Owner {
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
         // The pull request of the task's item and its review are told to a new session only: the others keep their session.
-        let review = match briefing
-            .as_ref()
-            .map(|_| self.briefing_review(&task, why.as_ref()))
-            .transpose()
-        {
-            Ok(review) => review.unwrap_or_default(),
+        let review = match self.briefed_review(&task, why.as_ref(), briefing.is_some()) {
+            Ok(review) => review,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
         let last_message = match self.briefed_last_message(&task, briefing.is_some()).await {

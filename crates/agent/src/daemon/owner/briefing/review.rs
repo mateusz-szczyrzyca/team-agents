@@ -144,6 +144,24 @@ pub(super) fn waits_for_human(sent_back_to_its_limit: bool, why: Option<&Why>) -
 }
 
 impl Owner {
+    /// The review a run is briefed with: that of [`Owner::briefing_review`] when the run starts a new session (`briefed`),
+    /// and none for a run that keeps its session.
+    ///
+    /// # Errors
+    /// [`BriefingProblem`] when the task or its rounds cannot be told.
+    pub(in crate::daemon::owner) fn briefed_review(
+        &self,
+        task: &TaskId,
+        why: Option<&Why>,
+        briefed: bool,
+    ) -> Result<ReviewFacts, BriefingProblem> {
+        if briefed {
+            self.briefing_review(task, why)
+        } else {
+            Ok(ReviewFacts::default())
+        }
+    }
+
     /// The review of the item of the open round `task` works for, for the run that starts for `why`; none when it works for
     /// no round, or the round's item has no pull request yet.
     ///
