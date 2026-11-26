@@ -134,3 +134,6 @@ impl HistoryEvent {
         None
     }
 }
+
+#[cfg(test)]
+mod tests;
