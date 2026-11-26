@@ -433,6 +433,10 @@ async fn an_exhausted_quota_pauses_the_task_until_the_reset_and_it_goes_on_by_it
     let run = &member_one(&state).runs()[0];
     let reset = Timestamp::from_utc(at(0).as_utc() + time::Duration::hours(3)).unwrap();
     assert_eq!(end_of(run), &RunEnd::QuotaExhausted { resets_at: Some(reset) });
+    eventually("the notification of the pause", || {
+        f.notifications().iter().any(|note| note.contains("is paused until"))
+    })
+    .await;
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(notes[0].contains("is paused until 2026-11-11 22:16"), "{}", notes[0]);

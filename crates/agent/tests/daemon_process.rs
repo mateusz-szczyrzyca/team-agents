@@ -249,6 +249,23 @@ mod daemon_process {
         }
     }
 
+    /// Runs `agent status ROUND` in `zone` until the round detail shows `needle`: the run ends after the questions
+    /// notification appears, so a single read could see the round before the end of its run is recorded.
+    fn round_until(home: &Home, round: &str, zone: &str, needle: &str) -> String {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            let text = run_in_zone(home, &["status", round], zone);
+            if text.contains(needle) {
+                return text;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {needle:?} in the detail of the round {round}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
     /// Seeds a team with an open round `round` on item 1.1 in progress for `TASK`, whose run asks a question.
     fn seed_open_round_questions(home: &Home, round: &str) {
         use std::num::NonZeroU32;
@@ -319,7 +336,7 @@ mod daemon_process {
 
         let status_east = run_in_zone(&home, &["status"], CENTRAL_EUROPE);
         let status_west = run_in_zone(&home, &["status"], NEW_YORK);
-        let round_east = run_in_zone(&home, &["status", ROUND], CENTRAL_EUROPE);
+        let round_east = round_until(&home, ROUND, CENTRAL_EUROPE, "  ended ");
         let json_east = run_in_zone(&home, &["status", "--json"], CENTRAL_EUROPE);
         let json_utc = run_in_zone(&home, &["status", "--json"], "UTC0");
         let log_east = log_until(&home, CENTRAL_EUROPE, " info run_ended");
