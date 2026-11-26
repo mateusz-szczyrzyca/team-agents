@@ -6,6 +6,8 @@
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
 mod idle;
+#[cfg(test)]
+mod investigation_tests;
 pub use idle::IdleMinutes;
 mod commit_reminder;
 pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_AFTER, DEFAULT_LINES, DEFAULT_MINUTES};
