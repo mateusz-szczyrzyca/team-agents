@@ -835,7 +835,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         daemon.clock.advance(time::Duration::seconds(1));
         assert!(std::panic::catch_unwind(|| panic!("synthetic panic for daemon_panicked")).is_err());
 
-        // warn (16)
+        // warn (15)
         for variant in [
             LogEvent::RunNoToolFailed,
             LogEvent::CliOutputUnreadable,
@@ -855,7 +855,6 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::RequestRefused,
             LogEvent::WorktreeSwitchRefused,
             LogEvent::PublishOffBranch,
-            LogEvent::InvestigationKindUnknown,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::warn!(
@@ -865,7 +864,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             );
         }
 
-        // info (22)
+        // info (6)
         for variant in [
             LogEvent::WorkerRequestReturned,
             LogEvent::WorkerRequestRequeued,
@@ -887,8 +886,6 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::TaskAgentChanged,
             LogEvent::TaskWaitForFreeAgent,
             LogEvent::WorktreeSwitched,
-            LogEvent::InvestigationStarted,
-            LogEvent::InvestigationAnswered,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1472,17 +1469,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
 
-    // Part A reserves history names; part B supplies their production causes.
-    let expected: BTreeSet<LogEvent> = LogEvent::ALL
-        .iter()
-        .copied()
-        .filter(|event| {
-            !matches!(
-                event,
-                LogEvent::InvestigationStarted | LogEvent::InvestigationAnswered | LogEvent::InvestigationKindUnknown
-            )
-        })
-        .collect();
+    let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
         observed, expected,
         "every LogEvent variant must be produced by a real production cause"
