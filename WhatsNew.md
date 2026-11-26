@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.119.0 — 26.11.2026 — PR #288
+
+### Enhancements
+- [agent] `agent status` and `agent status --running` keep listing a team's reviewers after their review, with when it finished, as they list its workers.
+
 ## agent 0.118.0 · agent-core 0.117.0 · agent-runtime 0.112.0 — 26.11.2026 — PR #284
 
 ### Bug fixes
