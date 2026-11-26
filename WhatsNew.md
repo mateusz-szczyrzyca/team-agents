@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.122.0 · agent-core 0.119.0 — 26.11.2026 — PR #292
+
+### Bug fixes
+- [agent] [agent-core] `[limits] round_minutes` now stops an agent that never commits: before, each cut for an order to commit started the clock of the round again, so the limit never came.
+
 ## agent 0.121.0 · agent-runtime 0.114.0 — 26.11.2026 — PR #289
 
 ### Bug fixes
