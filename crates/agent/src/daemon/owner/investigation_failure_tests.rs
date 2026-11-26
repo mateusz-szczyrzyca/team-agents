@@ -92,7 +92,7 @@ impl Attempt {
     fn new() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let bus = dir.path().join("bus");
-        std::fs::write(&bus, "#!/bin/sh\nset -eu\nroot=$(dirname \"$0\")\ncase \"$1\" in\ninv-list) printf '#1 open\\n';;\ninv-get) cat \"$root/request.json\";;\n*) printf '%s\\n' \"$@\" >> \"$root/calls\";;\nesac\n").unwrap();
+        std::fs::write(&bus, "#!/bin/sh\nset -eu\nroot=$(dirname \"$0\")\ncase \"$1\" in\ninv-list) printf '#1 open\\n';;\nsend) printf '%s\\n' \"$@\" >> \"$root/calls\"; printf '[#1 sent]\\n';;\ninv-get) cat \"$root/request.json\";;\n*) printf '%s\\n' \"$@\" >> \"$root/calls\";;\nesac\n").unwrap();
         std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
         let mut state = pair_state();
         state
