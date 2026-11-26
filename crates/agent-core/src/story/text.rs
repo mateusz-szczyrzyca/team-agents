@@ -1145,10 +1145,10 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::Lost { .. }
-        | HistoryEvent::TeamEnded {} => {}
         // A checkpoint is a recovery point that the history's queries read; the story does not tell it, or it
         // would repeat after every step of the round the step it follows.
-        HistoryEvent::Checkpoint { .. } => {}
+        | HistoryEvent::Checkpoint { .. }
+        | HistoryEvent::TeamEnded {} => {}
     }
 }
 
