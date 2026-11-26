@@ -129,9 +129,44 @@ pub struct CheckpointContent {
 
 impl HistoryEvent {
     /// The checkpoint that follows the record of this event, or `None` for an event after which none is taken.
+    ///
+    /// The `match` names every variant: a new one must be placed here, in a step that leaves a checkpoint or in one that
+    /// does not. The causes without a history record (a round opened, a commit, a run ended, ...) are not here.
     #[must_use]
     pub const fn checkpoint_cause(&self) -> Option<CheckpointCause> {
-        None
+        match self {
+            Self::PullOpened { .. } => Some(CheckpointCause::PullOpened),
+            Self::PullPushed { .. } => Some(CheckpointCause::PullPushed),
+            Self::PullReady { .. } => Some(CheckpointCause::PullReady),
+            Self::Checked { .. } => Some(CheckpointCause::Checked),
+            Self::SplitDecision { .. } => Some(CheckpointCause::SplitDecided),
+            Self::ReviewSubmitted { .. } => Some(CheckpointCause::ReviewSubmitted),
+            Self::FixPassStarted { .. } => Some(CheckpointCause::FixPassStarted),
+            Self::FindingExplained { .. }
+            | Self::FindingAccepted { .. }
+            | Self::FindingRejected { .. }
+            | Self::FindingRaised { .. } => Some(CheckpointCause::FindingAnswered),
+            Self::FindingConfirmed { .. } | Self::FindingNotConfirmed { .. } => Some(CheckpointCause::FindingJudged),
+            Self::QuestionAsked { .. } => Some(CheckpointCause::QuestionAsked),
+            Self::QuestionAnswered { .. } => Some(CheckpointCause::QuestionAnswered),
+            Self::PullApproved { .. } => Some(CheckpointCause::PullApproved),
+            Self::PullMerged { .. } => Some(CheckpointCause::PullMerged),
+            Self::PullHandedOver { .. } => Some(CheckpointCause::PullHandedOver),
+            Self::PullClosed { .. } => Some(CheckpointCause::PullClosed),
+            // No checkpoint: the gate and the asking of a review and of a second opinion are not a step the work can be
+            // resumed from (the review's own record is), and these are no step of the round's work at all.
+            Self::Gate { .. }
+            | Self::ReviewAsked { .. }
+            | Self::SecondOpinionAsked { .. }
+            | Self::SecondOpinionEnded { .. }
+            | Self::Controlled { .. }
+            | Self::SerenaReminded { .. }
+            | Self::Notified { .. }
+            | Self::RoundClosed { .. }
+            | Self::TeamEnded {}
+            | Self::Checkpoint { .. }
+            | Self::Lost { .. } => None,
+        }
     }
 }
 
