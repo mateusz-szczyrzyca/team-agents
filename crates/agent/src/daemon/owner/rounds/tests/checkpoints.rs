@@ -405,7 +405,7 @@ pub(in crate::daemon::owner) async fn record_checkpoint_failed(observed: &mut BT
         .into_iter()
         .filter(|entry| entry.event() == LogEvent::CheckpointFailed)
         .collect();
-    assert!(!failed.is_empty());
+    assert_ne!(failed.len(), 0);
     assert_eq!(failed[0].level(), LogEvent::CheckpointFailed.level());
     let ended = checkpoints(&rig, &team)
         .into_iter()
