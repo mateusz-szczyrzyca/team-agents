@@ -324,9 +324,9 @@ impl Owner {
             task: task.clone(),
             source,
         })?;
-        // The messages are those to the name the task has on its team's bus, whoever holds it now.
-        let reader = (AgentName::from_str(member.bus_agent().name())?, team.id().clone());
+        // The bus retargets unread messages to the replacement before its run starts.
         let git = Git::new(worktree.clone(), CommitIdentity::for_agent(config.git(), &agent));
+        let reader = (agent, team.id().clone());
         // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from; nothing has
         // touched the worktree since.
         let snapshot = match self.cut_snapshots.remove(task) {

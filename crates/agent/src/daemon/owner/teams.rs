@@ -744,15 +744,14 @@ impl Owner {
         Ok(())
     }
 
-    /// The task of the member that the bus of `team` knows as `agent`: the agent its task was first given to, whoever
-    /// holds it now.
+    /// The task held by the current member that the bus of `team` knows as `agent`.
     fn task_on_bus(&self, team: &TeamId, agent: &AgentName) -> Option<TaskId> {
         self.parts.state.team(team).and_then(|found| {
             found
                 .crew()
                 .roster()
                 .into_iter()
-                .find(|(_, member)| member.bus_agent().name() == agent.as_str())
+                .find(|(_, member)| member.agent().name() == agent.as_str())
                 .map(|(_, member)| member.task().clone())
         })
     }

@@ -779,7 +779,7 @@ fn mcp_servers(
         text(binaries.agentbus.as_path())?,
         "serve".to_owned(),
         "--agent".to_owned(),
-        member.bus_agent().name().to_owned(),
+        member.agent().name().to_owned(),
         "--task".to_owned(),
         task.to_string(),
         "--task-dir".to_owned(),
