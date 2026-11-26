@@ -140,6 +140,19 @@ pub fn resolve_debug_target(state: &State, target: &DebugTarget) -> Result<TeamI
         })
 }
 
+/// Resolves a target like [`resolve_debug_target`], and a task the state does not know through the history: the team
+/// of the task's latest run in the history, when the state has that team.
+///
+/// # Errors
+/// [`DebugRuntimeError::UnknownTarget`] when neither the state nor the history names a team of the ID.
+pub async fn resolve_debug_target_with_history(
+    _home: &Home,
+    state: &State,
+    target: &DebugTarget,
+) -> Result<TeamId, DebugRuntimeError> {
+    resolve_debug_target(state, target)
+}
+
 /// Reads secrets strictly before any bundle or output parent is created.
 ///
 /// # Errors

@@ -1,0 +1,10 @@
+{"type":"step_start","timestamp":1763384401000,"sessionID":"ses_example1","part":{"id":"prt_1","type":"step-start"}}
+{"type":"text","timestamp":1763384402000,"sessionID":"ses_example1","part":{"id":"prt_2","type":"text","text":"I will read the file the request names."}}
+{"type":"tool_use","timestamp":1763384403000,"sessionID":"ses_example1","part":{"id":"prt_3","type":"tool","tool":"read","state":{"status":"completed","input":{"filePath":"/tmp/worker-tree/notes.txt"},"output":"token = test-confidential-λ"}}}
+{"type":"step_finish","timestamp":1763384404000,"sessionID":"ses_example1","part":{"id":"prt_4","type":"step-finish","reason":"tool-calls","tokens":{"input":120,"output":18}}}
+{"type":"step_start","timestamp":1763384405000,"sessionID":"ses_example1","part":{"id":"prt_5","type":"step-start"}}
+{"type":"tool_use","timestamp":1763384406000,"sessionID":"ses_example1","part":{"id":"prt_6","type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls /tmp/worker-tree"},"output":"notes.txt"}}}
+{"type":"step_finish","timestamp":1763384407000,"sessionID":"ses_example1","part":{"id":"prt_7","type":"step-finish","reason":"tool-calls","tokens":{"input":160,"output":22}}}
+{"type":"step_start","timestamp":1763384408000,"sessionID":"ses_example1","part":{"id":"prt_8","type":"step-start"}}
+{"type":"text","timestamp":1763384409000,"sessionID":"ses_example1","part":{"id":"prt_9","type":"text","text":"The request is done.\n\nSTATUS: DONE"}}
+{"type":"step_finish","timestamp":1763384410000,"sessionID":"ses_example1","part":{"id":"prt_10","type":"step-finish","reason":"stop","tokens":{"input":200,"output":9}}}
