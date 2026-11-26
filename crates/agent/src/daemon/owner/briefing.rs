@@ -809,6 +809,7 @@ impl BriefingFacts {
                 mismatch: &mismatch,
                 not_done: &not_done,
             },
+            review: agent_runtime::run::compose::BriefingReview::default(),
         };
         Ok(briefing_variables_with(&facts, &notes)?)
     }

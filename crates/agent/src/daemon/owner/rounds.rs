@@ -885,6 +885,10 @@ mod human_renew_tests;
 mod human_renew_notice_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/briefing_review.rs"]
+mod briefing_review_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/takeover.rs"]
 mod takeover_tests;
 
