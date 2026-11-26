@@ -406,38 +406,19 @@ impl Owner {
             });
         }
         if !self.another_item_is_out(&git, lead, branch, &head).await? {
-            // A branch that is no local branch is a part's or a returned delivery's, which exists only on the remote once it
-            // is pushed: it is made of what the worktree has out.
+            // The work that the worktree has out is the item's: the item's branch is out, or the branch is no item's — a part's,
+            // a returned delivery's or the lead's own — and is made of what the worktree has out.
             return Ok(ItemTip {
                 tip: head,
                 checked_out: true,
             });
         }
+        // Another item's work is out: what is committed there is not this item's, so the item's own tip is the one to judge
+        // and push. Without a local branch that is the last tip known on `origin`; when that is unknown too, there is no tip
+        // to name, and the error says so instead of publishing what the worktree has out.
         let tip = match tip {
             Some(tip) => tip,
-            None => match git.rev_parse(&Revision::RemoteBranch(branch.clone())).await {
-                Ok(known) => {
-                    // The lead may have merged the item's work into what it has out: then that is the item's work too.
-                    if git
-                        .is_ancestor(&Revision::Commit(known.clone()), &Revision::Head)
-                        .await?
-                    {
-                        return Ok(ItemTip {
-                            tip: head,
-                            checked_out: true,
-                        });
-                    }
-                    known
-                }
-                // Nothing is known of the branch: it is made of what the worktree has out.
-                Err(GitError::UnknownRevision { .. }) => {
-                    return Ok(ItemTip {
-                        tip: head,
-                        checked_out: true,
-                    });
-                }
-                Err(error) => return Err(error.into()),
-            },
+            None => git.rev_parse(&Revision::RemoteBranch(branch.clone())).await?,
         };
         Ok(ItemTip {
             tip,
@@ -455,13 +436,13 @@ impl Owner {
         head: &CommitId,
     ) -> Result<bool, PublishError> {
         let items = self.item_branches(lead);
-        if let Some(out) = git.current_branch().await? {
-            return Ok(out != *branch && items.contains(&out));
-        }
-        // A branch that is no item's — the lead's own, which integrates the work of the items — may well be made of the tip
-        // of an item.
+        // A branch that is no item's — a part's, a returned delivery's, or the lead's own, which integrates the work of the
+        // items — is made of what the worktree has out, whichever item that is.
         if !items.contains(branch) {
             return Ok(false);
+        }
+        if let Some(out) = git.current_branch().await? {
+            return Ok(out != *branch && items.contains(&out));
         }
         for other in items.into_iter().filter(|other| other != branch) {
             if git.branch_tip(&other).await?.as_ref() == Some(head) {
