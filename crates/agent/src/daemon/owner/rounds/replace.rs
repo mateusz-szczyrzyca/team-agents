@@ -19,7 +19,8 @@ use super::asleep::saved_notice_where;
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
-use crate::daemon::review::{free_reviewers, investigator_of, refused_investigators, select_reviewers};
+use crate::daemon::review::{free_reviewers, investigator_of, select_reviewers};
+use agent_core::decide::investigator::refused_investigators;
 use crate::daemon::settle::limit_of;
 
 /// A review that does not come: its reviewer cannot work.

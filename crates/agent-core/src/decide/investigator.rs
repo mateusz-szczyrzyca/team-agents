@@ -109,15 +109,27 @@ pub fn free_for_request(
     now: Timestamp,
 ) -> BTreeSet<InvestigatorName> {
     let occupied = occupied_investigators(state);
+    let refused = refused_investigators(state, config, now);
+    config
+        .investigators()
+        .keys()
+        .filter(|name| !occupied.contains(*name) && !refused.contains(name) && !has_paused_task(state, name))
+        .cloned()
+        .collect()
+}
+
+/// The investigators of `config` that their provider refused at `now`: they review nothing until their return.
+#[must_use]
+pub fn refused_investigators(
+    state: &crate::state::State,
+    config: &crate::config::Config,
+    now: Timestamp,
+) -> std::collections::HashSet<InvestigatorName> {
     let refused = state.refused_agents_at(now);
     config
         .investigators()
         .keys()
-        .filter(|name| {
-            !occupied.contains(*name)
-                && !refused.iter().any(|agent| agent.as_str() == name.as_str())
-                && !has_paused_task(state, name)
-        })
+        .filter(|name| refused.iter().any(|agent| agent.as_str() == name.as_str()))
         .cloned()
         .collect()
 }

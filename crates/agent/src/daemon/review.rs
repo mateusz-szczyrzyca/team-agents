@@ -10,7 +10,7 @@ use agent_core::config::Config;
 use agent_core::decide::investigator::{Activity, choose};
 use agent_core::ids::{InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::UnknownKeyword;
-use agent_core::state::{ItemPhase, ReviewOutcome, State, Team, Timestamp};
+use agent_core::state::{ItemPhase, ReviewOutcome, State, Team};
 use agent_core::status::{ReviewVerdict, TaskStatus};
 use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
@@ -178,17 +178,6 @@ fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
             | TaskStatus::Done => None,
         },
     }
-}
-
-/// The investigators of `config` that their provider refused at `now`: they review nothing until their return.
-pub(super) fn refused_investigators(state: &State, config: &Config, now: Timestamp) -> HashSet<InvestigatorName> {
-    let refused = state.refused_agents_at(now);
-    config
-        .investigators()
-        .keys()
-        .filter(|name| refused.iter().any(|agent| agent.as_str() == name.as_str()))
-        .cloned()
-        .collect()
 }
 
 /// Applies the common activity selector and preserves each chosen investigator's
