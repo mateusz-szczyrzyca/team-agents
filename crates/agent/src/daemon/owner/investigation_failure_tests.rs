@@ -271,3 +271,29 @@ async fn an_investigators_quota_refusal_does_not_pause_its_task_or_change_its_ag
     assert!(notice.is_none());
     assert_eq!(owner.locate(&task(3)).unwrap().agent, "inv-1");
 }
+
+#[tokio::test]
+async fn a_restart_requeues_an_assignment_whose_task_has_finished() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let mut events = vec![];
+    owner
+        .move_to(
+            &task(3),
+            &team_id(0),
+            agent_core::status::TaskStatus::Running,
+            &mut events,
+        )
+        .unwrap();
+    owner
+        .move_to(
+            &task(3),
+            &team_id(0),
+            agent_core::status::TaskStatus::Failed,
+            &mut events,
+        )
+        .unwrap();
+    owner.reconcile_investigations().await.unwrap();
+    assert!(attempt.calls().contains("queued"), "{}", attempt.calls());
+}
