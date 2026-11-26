@@ -8,6 +8,7 @@
 mod answers;
 mod bound;
 mod briefing;
+mod checkpoint;
 mod commit_reminder;
 mod context_reminder;
 mod controls;
