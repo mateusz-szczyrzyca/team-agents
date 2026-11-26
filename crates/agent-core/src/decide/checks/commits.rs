@@ -153,8 +153,16 @@ pub fn lifted_refusals(
     facts: &RoundFacts,
     refused_paths: &BTreeMap<RepoPath, Option<CommitId>>,
 ) -> Vec<RepoPath> {
-    let _ = (findings, facts, refused_paths);
-    Vec::new()
+    let mut lifted: Vec<RepoPath> = Vec::new();
+    for finding in findings {
+        let Some(Some(head)) = refused_paths.get(&finding.path) else {
+            continue;
+        };
+        if !reaches(facts, head, &finding.commit) && !lifted.contains(&finding.path) {
+            lifted.push(finding.path.clone());
+        }
+    }
+    lifted
 }
 
 /// Whether `head` is `commit` or comes after it in the history of the round.
