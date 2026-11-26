@@ -559,7 +559,15 @@ impl Owner {
         self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
             .await?;
         self.ask_opinions(&pulls, team, look).await?;
-        self.serve_investigations(team).await?;
+        match self.serve_investigations(team).await {
+            Ok(()) => {}
+            Err(OwnerError::Bus { source }) => {
+                // A bus outage must not stop unrelated team scheduling; the next look retries the queue.
+                tracing::warn!(event = agent_core::log::LogEvent::BusDown.as_str(), %team,
+                    error = %error_chain(&source), "cannot serve investigations; the next look will retry");
+            }
+            Err(error) => return Err(error),
+        }
         self.continue_opinions(&pulls, team, look)?;
         // While the merge of an approved pull request waits to read the lead's commit, its item stays as it is: a
         // publication would take the unread commit for a new fix and ask for another review.
