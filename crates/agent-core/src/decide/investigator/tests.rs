@@ -464,3 +464,54 @@ cli = "claude"
     assert!(after.contains(&"inv-a".parse().unwrap()));
     assert!(after.contains(&"inv-b".parse().unwrap()));
 }
+
+#[test]
+fn an_investigator_waiting_with_a_pending_review_is_not_free_for_a_request() {
+    use crate::config::Config;
+    use crate::state::{
+        fixtures, Member, Participant, PhaseKind, ReviewOutcome, State,
+    };
+    use crate::status::TaskStatus;
+
+    let config = Config::from_toml_str(
+        r#"
+[investigators.inv-a]
+cli = "claude"
+
+[investigators.inv-b]
+cli = "claude"
+"#,
+    )
+    .unwrap();
+
+    // Build a team with an item in review and a pending review assigned to
+    // a Waiting investigator.
+    let team_id = fixtures::team_id(1);
+    let mut team = fixtures::team(1);
+    fixtures::drive(&mut team, "1.2", PhaseKind::InReview);
+    // Ask a review of inv-a (task 10) on item 1.2; leave it pending.
+    let mut item_handle = team.item_mut(fixtures::item("1.2")).unwrap();
+    item_handle
+        .ask_reviews(vec![fixtures::review("inv-a", 10, ReviewOutcome::Pending)])
+        .unwrap();
+    drop(item_handle);
+
+    // Add the investigator as a Waiting reviewer of the team.
+    let mut waiting_inv = Member::new(
+        fixtures::task(10),
+        Participant::Investigator("inv-a".parse().unwrap()),
+    );
+    waiting_inv.transition(TaskStatus::Running).unwrap();
+    waiting_inv.transition(TaskStatus::Waiting).unwrap();
+
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
+    state.add_reviewer(&team_id, waiting_inv).unwrap();
+
+    let free = free_for_request(&state, &config, fixtures::at(10));
+    assert!(
+        !free.contains(&"inv-a".parse().unwrap()),
+        "inv-a is waiting with a pending review and should not be free"
+    );
+    assert!(free.contains(&"inv-b".parse().unwrap()));
+}
