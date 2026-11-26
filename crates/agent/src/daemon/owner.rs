@@ -1245,7 +1245,6 @@ impl Owner {
         if let Err(problem) = self.checkout_item_branch(&task).await {
             return self.fail_to_start(&task, error_chain(&problem)).await;
         }
-        self.checkpoint_round_opened(&task).await;
         let briefing = match self.briefing_facts(&task).await {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
@@ -1386,6 +1385,8 @@ impl Owner {
         self.commit(task, &located, now, events, None).await?;
         // The run is in the state: the history is told before the engine can say anything about it.
         self.record_run_start(task, &plan, &rounds, reason, now);
+        // The checkpoint of the opening is taken from the worktree as it is before the engine starts the agent in it.
+        self.checkpoint_round_opened(task).await;
         let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
         let run_span = tracing::error_span!(
             "run",
