@@ -1285,7 +1285,8 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] when the team or the outgoing member does not exist,
-    /// [`FailureClass::InvalidArgument`] when `--from` equals `--to` or the new agent is already a member.
+    /// [`FailureClass::Conflict`] for an existing destination member,
+    /// [`FailureClass::InvalidArgument`] only for identical from/to.
     pub async fn team_replace(&self, team: &TeamId, from: &AgentName, to: &AgentName) -> Result<(), AgentBusError> {
         let command = BusCommand::TeamReplace;
         let output = self

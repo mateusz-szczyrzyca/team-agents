@@ -757,6 +757,7 @@ pub(super) fn keeps_plan(roles: &[Role], role: Role) -> bool {
 /// The MCP servers of the run of `member`'s task: the agentbus, and Serena when the configuration has it. On the bus the
 /// run acts under the name its task has there, the agent it was first given to, with the tier of the agent that runs;
 /// a run of a role that keeps a plan is given the plan file of its worktree.
+/// A team run uses the current holder after bus replacement, while the original holder still determines the Git branch.
 fn mcp_servers(
     ctx: &Context<'_>,
     team: &Team,
