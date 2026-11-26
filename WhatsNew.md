@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.123.0 — 26.11.2026 — PR #308
+
+### Bug fixes
+- [agent-core] The story of a review pass tells the runs of both reviewers together, in the order they were requested, before their reports; a report recorded before the other reviewer's run had begun no longer splits the two runs.
+
 ## agent 0.126.0 · agent-core 0.122.0 — 26.11.2026 — PR #304
 
 ### Bug fixes

@@ -4,7 +4,7 @@ use agent_core::protocol::{Client, Command, Reply, ShowRequest, Target};
 use agent_core::state::MergeMode;
 use agent_core::status::TaskStatus;
 
-use super::rig::{ONE, Rig, investigator, normal};
+use super::rig::{ONE, PATIENCE, Rig, investigator, normal};
 
 /// What the daemon tells of `round`: the line `agent status` shows for what it waits for.
 async fn waiting_of(rig: &Rig, round: agent_core::ids::RoundId) -> Option<String> {
@@ -23,6 +23,22 @@ async fn waiting_of(rig: &Rig, round: agent_core::ids::RoundId) -> Option<String
         panic!("expected the detail of a round: {reply:?}");
     };
     round.waiting
+}
+
+/// What the daemon tells of `round` once it tells anything: a round whose reviewer is paused by its provider is idle,
+/// and so has a line of what it waits for, only when no other member of it still runs.
+async fn waiting_once_set(rig: &Rig, round: agent_core::ids::RoundId) -> String {
+    let deadline = std::time::Instant::now() + PATIENCE;
+    loop {
+        if let Some(waiting) = waiting_of(rig, round.clone()).await {
+            return waiting;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for the round {round} to say what it waits for"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
 }
 
 // Rule (#233): a review whose reviewer was refused by its provider and whose other reviewer has answered waits at the
@@ -60,7 +76,7 @@ async fn a_round_with_a_reviewer_refused_by_its_provider_waits_at_the_provider()
         .await;
     let round = state.team(&team).unwrap().round_of(item).unwrap().id().clone();
 
-    let waiting = waiting_of(&rig, round).await.unwrap();
+    let waiting = waiting_once_set(&rig, round).await;
 
     assert!(waiting.starts_with("the provider of inv-r1 until "), "{waiting}");
     assert!(!waiting.contains("the human"), "{waiting}");

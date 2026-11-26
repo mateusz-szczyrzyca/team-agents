@@ -453,6 +453,21 @@ fn review_run<'a>(item: &Item<'a>, runs: &[RunBlock<'a>]) -> Option<(ReviewGroup
     ))
 }
 
+/// The review pass an item belongs to: a reviewer's run for it, or the report that reviewer submitted for it.
+fn review_pass<'a>(item: &Item<'a>, runs: &[RunBlock<'a>]) -> Option<ReviewGroup<'a>> {
+    let Item::Event(_, event) = item else {
+        return review_run(item, runs).map(|(group, _)| group);
+    };
+    let HistoryEvent::ReviewSubmitted { pr, pass, .. } = &event.event else {
+        return None;
+    };
+    Some(ReviewGroup {
+        team: &event.team,
+        pr: *pr,
+        pass: *pass,
+    })
+}
+
 /// Orders only complete, uninterrupted review groups by their first recorded requests.
 /// Missing requests keep the entire group's chronology; a stable sort keeps repeated runs in order.
 fn order_review_runs<'a>(items: &mut [Item<'a>], runs: &[RunBlock<'a>], records: &[&'a SequencedRecord]) {
@@ -467,6 +482,19 @@ fn order_review_runs<'a>(items: &mut [Item<'a>], runs: &[RunBlock<'a>], records:
                 pass: *pass,
             };
             requested.entry((group, task)).or_insert(order);
+        }
+    }
+    // A reviewer that ran and reported before the other one's run was recorded would put its report between the two
+    // runs; the runs of the pass are told first, in the order of their requests, and the reports after them.
+    for stretch in items
+        .chunk_by_mut(|left, right| review_pass(left, runs).is_some_and(|pass| review_pass(right, runs) == Some(pass)))
+    {
+        let asked = |item: &Item<'a>| review_run(item, runs).and_then(|key| requested.get(&key).copied());
+        let all_asked = stretch
+            .iter()
+            .all(|item| matches!(item, Item::Event(..)) || asked(item).is_some());
+        if all_asked {
+            stretch.sort_by_key(|item| matches!(item, Item::Event(..)));
         }
     }
     for group in items.chunk_by_mut(|left, right| match (review_run(left, runs), review_run(right, runs)) {
