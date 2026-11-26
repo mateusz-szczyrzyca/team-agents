@@ -579,7 +579,14 @@ impl Owner {
     /// Finds the rounds whose items this publication carries and that are still open: a round of an item that closed
     /// before (the merged part of a split item) has no step left to take a checkpoint of.
     fn open_publication_rounds(&self, team: &TeamId, items: &[String]) -> Vec<agent_core::ids::RoundId> {
-        self.publication_rounds(team, items)
+        self.parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::open_rounds)
+            .filter(|round| round.item().is_some_and(|id| items.contains(&id.to_string())))
+            .map(|round| round.id().clone())
+            .collect()
     }
 
     /// Retains the pending operation when publication leaves an idle round open.
@@ -1593,13 +1600,19 @@ impl Owner {
                             );
                         }
                     }
-                    Err(error) => tracing::warn!(
-                        event = LogEvent::CheckpointFailed.as_str(),
-                        team = %team,
-                        cause = %CheckpointCause::WaitsForHuman,
-                        error = %error_chain(&error),
-                        "the clock gives no time for a checkpoint: it is not taken, the round goes on"
-                    ),
+                    Err(error) => {
+                        for round in &round_ids {
+                            tracing::warn!(
+                                event = LogEvent::CheckpointFailed.as_str(),
+                                team = %team,
+                                round = %round,
+                                task = %lead.task,
+                                cause = %CheckpointCause::WaitsForHuman,
+                                error = %error_chain(&error),
+                                "the clock gives no time for a checkpoint: it is not taken, the round goes on"
+                            );
+                        }
+                    }
                 }
             }
             return Ok(());
