@@ -540,9 +540,11 @@ async fn a_round_with_answered_findings_leaves_every_step_with_its_head_and_pass
 
     let taken = checkpoints(&rig, &team);
 
-    // The step, the review pass and the fix pass of the round then, and whether the pull request was a draft.
+    // The step, the review pass and the fix pass of the round then, and whether the pull request was a draft. A commit
+    // is taken at the look of the minute or else at the end of its run, so the `commit` rows are checked below.
     let rows: Vec<_> = taken
         .iter()
+        .filter(|taken| taken.cause != Commit)
         .map(|taken| (taken.cause, taken.review_pass, taken.fix_pass, taken.draft))
         .collect();
     assert_eq!(
@@ -564,7 +566,6 @@ async fn a_round_with_answered_findings_leaves_every_step_with_its_head_and_pass
             (ReviewSubmitted, Some(1), None, false),
             (FixPassStarted, Some(2), Some(2), false),
             (RunEnded, Some(2), Some(2), false),
-            (Commit, Some(2), Some(2), false),
             (RunEnded, Some(2), Some(2), false),
             (PullPushed, Some(2), Some(2), false),
             (ReviewSubmitted, Some(2), None, false),
@@ -574,19 +575,35 @@ async fn a_round_with_answered_findings_leaves_every_step_with_its_head_and_pass
         ],
         "{taken:#?}"
     );
-    // The last fix pass committed once more: that checkpoint has a head of its own and the push after it carries it.
-    let heads: Vec<_> = taken.iter().filter_map(|taken| taken.head.clone()).collect();
-    assert_eq!(heads.len(), taken.len());
-    let commit = taken.iter().position(|taken| taken.cause == Commit).unwrap();
-    assert_ne!(heads[commit], heads[commit - 1]);
-    assert_eq!(heads[commit + 2], heads[commit]);
-    assert_eq!(
-        heads[commit - 1],
-        heads[2],
-        "the earlier steps share the head of the first run"
+    // The last fix pass committed once more: a checkpoint of that pass before the push has the head the push carries, which
+    // is not the head of the first push, and every `commit` row has a head of its own.
+    let pushes: Vec<_> = taken
+        .iter()
+        .enumerate()
+        .filter(|(_, taken)| taken.cause == PullPushed)
+        .collect();
+    let [(_, first), (before_push, last)] = pushes[..] else {
+        panic!("two pushes were expected: {taken:#?}");
+    };
+    assert_ne!(first.head, last.head);
+    assert!(
+        taken[..before_push]
+            .iter()
+            .any(|taken| taken.fix_pass == Some(2) && taken.head == last.head),
+        "{taken:#?}"
     );
+    let commits: Vec<_> = taken
+        .iter()
+        .filter(|taken| taken.cause == Commit)
+        .map(|taken| &taken.head)
+        .collect();
+    let distinct: BTreeSet<_> = commits.iter().collect();
+    assert_eq!(distinct.len(), commits.len(), "{taken:#?}");
     let pull = rig.github.pulls().remove(0);
-    assert_eq!(heads[commit + 2].as_str(), rig.remote_tip(&pull.head).as_str());
+    assert_eq!(
+        last.head.as_ref().map(CommitId::as_str),
+        Some(rig.remote_tip(&pull.head).as_str())
+    );
 }
 
 /// The snapshot references the repository holds, sorted.
