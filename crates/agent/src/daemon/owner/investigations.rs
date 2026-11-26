@@ -9,7 +9,7 @@ use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::state::{Member, Participant, Timestamp};
 use agent_core::status::TaskStatus;
-use agent_runtime::agentbus::{InvTransition, Investigation};
+use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind};
 use agent_runtime::git::Revision;
 
 use super::Owner;
@@ -32,22 +32,13 @@ impl Owner {
         loop {
             let free =
                 agent_core::decide::investigator::free_for_request(&self.parts.state, &self.parts.settings.config, now);
-            eprintln!("DEBUG serve_investigations: free={:?}", free);
             if free.is_empty() {
-                eprintln!("DEBUG serve_investigations: no free investigators, break");
                 break;
             }
             let req = match self.parts.bus.inv_next(queue_max, slots).await {
-                Ok(Some(req)) => {
-                    eprintln!("DEBUG serve_investigations: got req id={} from_task={} status={}", req.id, req.from_task, req.status);
-                    req
-                },
-                Ok(None) => {
-                    eprintln!("DEBUG serve_investigations: inv_next returned None");
-                    break
-                },
+                Ok(Some(req)) => req,
+                Ok(None) => break,
                 Err(error) => {
-                    eprintln!("DEBUG serve_investigations: inv_next error={:?}", error);
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         %team_id,
@@ -58,20 +49,47 @@ impl Owner {
                 }
             };
 
-            let live = self.is_task_live_in_team(team_id, &req.from_task);
-            eprintln!("DEBUG serve_investigations: is_task_live_in_team({}, {}) = {}", team_id, req.from_task, live);
-            if !live {
-                eprintln!("DEBUG serve_investigations: requeuing investigation {}", req.id);
+            // Requests of an unknown kind cannot be served: mark them failed and move on.
+            if matches!(req.kind, InvestigationKind::Unknown(_)) {
+                let kind = match &req.kind {
+                    InvestigationKind::Unknown(s) => s.clone(),
+                    _ => String::new(),
+                };
+                tracing::warn!(
+                    event = LogEvent::InvestigationKindUnknown.as_str(),
+                    id = %req.id,
+                    kind = %kind,
+                );
+                // Continue to the next request; mark this one failed.
+                if let Err(error) = self
+                    .parts
+                    .bus
+                    .inv_set(
+                        req.id,
+                        &InvTransition::Failed {
+                            reason: format!("unknown investigation kind: {kind}"),
+                        },
+                    )
+                    .await
+                {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        %team_id,
+                        error = %error,
+                        "cannot mark unknown-kind investigation failed on bus"
+                    );
+                }
+                continue;
+            }
+
+            if !self.is_task_live_in_team(team_id, &req.from_task) {
                 if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Requeued).await {
-                    eprintln!("DEBUG serve_investigations: requeue FAILED: {:?}", error);
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         %team_id,
                         error = %error,
                         "cannot requeue investigation on bus"
                     );
-                } else {
-                    eprintln!("DEBUG serve_investigations: requeue OK");
                 }
                 break;
             }
