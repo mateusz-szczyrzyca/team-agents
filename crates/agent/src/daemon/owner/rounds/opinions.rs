@@ -5,8 +5,9 @@ use super::reviewers::Prepared;
 use super::verdicts::Asked;
 use super::waiting::WaitingStep;
 use super::{PublishError, Pulls};
-use crate::daemon::review::{pending_opinion, refused_investigators, select_reviewers};
+use crate::daemon::review::{pending_opinion, select_reviewers};
 use crate::daemon::team::Why;
+use agent_core::decide::investigator::refused_investigators;
 use agent_core::decide::opinion::{Next, Tip, after_opinions};
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
@@ -159,6 +160,7 @@ impl Owner {
                     team_id,
                     std::num::NonZeroUsize::MIN,
                     &excluded,
+                    &mut self.parts.rng,
                 )
                 .and_then(|reviewers| reviewers.into_iter().next()) else {
                     continue;

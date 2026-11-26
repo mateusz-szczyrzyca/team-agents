@@ -19,8 +19,9 @@ use super::asleep::saved_notice_where;
 use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
-use crate::daemon::review::{free_reviewers, investigator_of, refused_investigators, select_reviewers};
+use crate::daemon::review::{free_reviewers, investigator_of, select_reviewers};
 use crate::daemon::settle::limit_of;
+use agent_core::decide::investigator::refused_investigators;
 
 /// A review that does not come: its reviewer cannot work.
 pub(super) struct Gone {
@@ -273,6 +274,7 @@ impl Owner {
             team_id,
             std::num::NonZeroUsize::MIN,
             &excluded,
+            &mut self.parts.rng,
         )
         .and_then(|reviewers| reviewers.into_iter().next()) else {
             return Ok(None);

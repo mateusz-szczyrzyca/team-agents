@@ -8,7 +8,7 @@ mod scopes;
 mod agentbus_commands {
     use std::collections::BTreeMap;
     use std::fs::{File, create_dir_all, read_to_string, write};
-    use std::num::{NonZeroU32, NonZeroU64};
+    use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
     use std::path::{Path, PathBuf};
     use std::process::Stdio;
     use std::str::FromStr;
@@ -19,8 +19,9 @@ mod agentbus_commands {
     use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
     use agent_runtime::agentbus::{
         AgentBus, AgentBusError, BoardItemId, BoardLevel, BoardStatus, BusCommand, BusMember, BusTier, CheckpointKey,
-        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, MemberState, NewBoardItem, NewMember,
-        NewTeam, NoticeKind, Outgoing, Recipient, RequestId, TaskRequest, Woken,
+        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, InvTransition, Investigation,
+        InvestigationKind, MemberState, NewBoardItem, NewMember, NewTeam, NoticeKind, Outgoing, Recipient, RequestId,
+        TaskRequest, Woken,
     };
     use agent_runtime::process::CaptureError;
     use rustix::fs::{FlockOperation, flock};
@@ -1301,5 +1302,388 @@ mod agentbus_commands {
                 .count(),
             1
         );
+    }
+
+    async fn add_investigation(
+        fixture: &Fixture,
+        from_agent: &AgentName,
+        from_task: &TaskId,
+        question: &str,
+        kind: &str,
+    ) -> NonZeroU32 {
+        let tasks_dir = fixture.dir.path().join("tasks");
+        create_dir_all(tasks_dir.join(from_task.as_str()).join("investigations")).unwrap();
+        let output = Command::new(agentbus_binary())
+            .arg("inv-add")
+            .arg("--dir")
+            .arg(fixture.bus.bus_dir())
+            .arg("--from-agent")
+            .arg(from_agent.as_str())
+            .arg("--from-task")
+            .arg(from_task.as_str())
+            .arg("--repo")
+            .arg("team-agents")
+            .arg("--branch")
+            .arg("agents/gemini-1/task-1")
+            .arg("--tasks-dir")
+            .arg(tasks_dir)
+            .arg("--question")
+            .arg(question)
+            .arg("--kind")
+            .arg(kind)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "inv-add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let id: u32 = stdout.trim().parse().unwrap();
+        NonZeroU32::new(id).unwrap()
+    }
+
+    #[tokio::test]
+    async fn inv_next_on_an_empty_queue_returns_none() {
+        let fixture = fixture();
+        let next = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap();
+        assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn inv_next_returns_the_request_and_marks_it_starting() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        let next = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap()
+            .expect("a request");
+        assert_eq!(next.id, id);
+        assert_eq!(next.from_agent, agent_name);
+        assert_eq!(next.from_task, task_id);
+        assert_eq!(next.question, "How to fix this?");
+        assert_eq!(next.kind, InvestigationKind::Question);
+
+        let second = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap();
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn inv_set_done_records_the_summary() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        fixture
+            .bus
+            .inv_set(
+                id,
+                &InvTransition::Done {
+                    summary: "Solved by adding wrapper".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(state_path).unwrap();
+        assert!(
+            state_text.contains("Solved by adding wrapper"),
+            "summary should be stored"
+        );
+        assert!(
+            state_text.contains("\"status\":\"done\"") || state_text.contains("\"status\": \"done\""),
+            "status should be done"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_set_running_sets_inv_task_and_status() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        // Take the request so it is not in the queue (inv-set needs a running request).
+        let _next = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap()
+            .expect("a request");
+        fixture
+            .bus
+            .inv_set(id, &InvTransition::Running { task: task("bbb2") })
+            .await
+            .unwrap();
+
+        // Read it back and check the status is reflected in the bus state.
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(state_path).unwrap();
+        assert!(state_text.contains("bbb2"), "inv_task should be set");
+        assert!(
+            state_text.contains("\"status\":\"running\"") || state_text.contains("\"status\": \"running\""),
+            "status should be running"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_set_failed_marks_the_request_failed() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        fixture
+            .bus
+            .inv_set(
+                id,
+                &InvTransition::Failed {
+                    reason: "Not enough context".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(state_path).unwrap();
+        assert!(state_text.contains("Not enough context"), "reason should be stored");
+        assert!(
+            state_text.contains("\"status\":\"failed\"") || state_text.contains("\"status\": \"failed\""),
+            "status should be failed"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_set_requeued_returns_request_to_queued() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        // Take the request first so it is starting, then requeue it.
+        let _next = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap()
+            .expect("a request");
+        fixture.bus.inv_set(id, &InvTransition::Requeued).await.unwrap();
+
+        // It should be available again.
+        let again = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap();
+        assert!(again.is_some(), "requeued request should be available again");
+        assert_eq!(again.unwrap().id, id);
+    }
+
+    #[tokio::test]
+    async fn inv_get_returns_the_request_fields() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "review").await;
+        let inv = fixture.bus.inv_get(id).await.unwrap();
+        assert_eq!(inv.id, id);
+        assert_eq!(inv.from_agent, agent_name);
+        assert_eq!(inv.from_task, task_id);
+        assert_eq!(inv.question, "How to fix this?");
+        assert_eq!(inv.kind, InvestigationKind::Review);
+    }
+
+    #[tokio::test]
+    async fn inv_get_on_a_missing_id_returns_not_found() {
+        let fixture = fixture();
+        let missing = NonZeroU32::new(99999).unwrap();
+        let err = fixture.bus.inv_get(missing).await.unwrap_err();
+        assert_eq!(err.class(), Some(FailureClass::NotFound));
+    }
+
+    #[tokio::test]
+    async fn inv_open_lists_queued_but_not_done_requests() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id1 = add_investigation(&fixture, &agent_name, &task_id, "First", "").await;
+        let id2 = add_investigation(&fixture, &agent_name, &task_id, "Second", "review").await;
+
+        // Both are queued and should appear in open.
+        let open = fixture.bus.inv_open().await.unwrap();
+        let open_ids: Vec<_> = open.iter().map(|i| i.id).collect();
+        assert!(open_ids.contains(&id1), "queued id1 should be open");
+        assert!(open_ids.contains(&id2), "queued id2 should be open");
+        assert_eq!(open.len(), 2);
+
+        // Mark id2 as done and check it is excluded from open.
+        fixture
+            .bus
+            .inv_set(
+                id2,
+                &InvTransition::Done {
+                    summary: "Done".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+        let open_after = fixture.bus.inv_open().await.unwrap();
+        let open_ids_after: Vec<_> = open_after.iter().map(|i| i.id).collect();
+        assert!(open_ids_after.contains(&id1), "queued id1 should still be open");
+        assert!(!open_ids_after.contains(&id2), "done id2 should not be open");
+        assert_eq!(open_after.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn inv_set_done_reads_back_with_inv_get_and_is_excluded_from_open() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        fixture
+            .bus
+            .inv_set(
+                id,
+                &InvTransition::Done {
+                    summary: "Solved by adding wrapper".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        // Read back with inv_get; the returned Investigation carries the correct id.
+        let inv = fixture.bus.inv_get(id).await.unwrap();
+        assert_eq!(inv.id, id, "inv_get should return the correct investigation id");
+
+        // The done request should not appear in inv_open.
+        let open = fixture.bus.inv_open().await.unwrap();
+        let open_ids: Vec<_> = open.iter().map(|i| i.id).collect();
+        assert!(!open_ids.contains(&id), "done request should not be open");
+    }
+
+    #[tokio::test]
+    async fn an_unknown_kind_is_read_as_unknown_not_an_error() {
+        let json = r#"{
+            "id": 42,
+            "from_agent": "gemini-1",
+            "from_task": "task-20261112-134008-aaa1",
+            "branch": "agents/gemini-1/item-1",
+            "question": "What is this kind?",
+            "context": "unknown context",
+            "kind": "split_proposal",
+            "file": "/tmp/inv-42.md"
+        }"#;
+        let inv: Investigation = serde_json::from_str(json).unwrap();
+        assert_eq!(inv.id, NonZeroU32::new(42).unwrap());
+        assert_eq!(inv.kind, InvestigationKind::Unknown("split_proposal".to_string()));
+    }
+
+    #[tokio::test]
+    async fn inv_next_preserves_id_when_request_decode_fails() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "review").await;
+
+        // Corrupt the branch to an empty string: Go reads it fine, but the Rust
+        // BranchName type rejects it.
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(&state_path).unwrap();
+        let corrupted = state_text.replace("\"branch\": \"agents/gemini-1/task-1\"", "\"branch\": \"\"");
+        write(&state_path, corrupted).unwrap();
+
+        let err = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap_err();
+        // The error carries the investigation id so the caller can requeue it.
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&format!("#{id}")),
+            "error {msg:?} should mention investigation id #{id}"
+        );
+        // The error is Unexpected (id decodes, request does not), not Decode.
+        assert!(
+            matches!(&err, AgentBusError::Unexpected { source: Some(_), .. }),
+            "error should be Unexpected with source, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_open_errors_on_inv_list_with_zero_id() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        add_investigation(&fixture, &agent_name, &task_id, "Test", "").await;
+
+        // Corrupt the state to have an investigation with id 0; inv-list formats
+        // it as "#0" which our NonZeroU32 parser rejects.
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(&state_path).unwrap();
+        let corrupted = state_text.replace("\"id\": 1", "\"id\": 0");
+        write(&state_path, corrupted).unwrap();
+
+        let err = fixture.bus.inv_open().await.unwrap_err();
+        assert!(
+            matches!(
+                &err,
+                AgentBusError::Unexpected {
+                    command: BusCommand::InvList,
+                    ..
+                }
+            ),
+            "error should be Unexpected for InvList, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_next_with_non_default_queue_max_and_slots() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        // Add two investigations.
+        let id1 = add_investigation(&fixture, &agent_name, &task_id, "First", "review").await;
+        let id2 = add_investigation(&fixture, &agent_name, &task_id, "Second", "").await;
+
+        // With queue_max=2 and slots=2, both should be retrievable (one per call
+        // since inv-next returns at most one request).
+        let next1 = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap()
+            .expect("first request");
+        let next2 = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap()
+            .expect("second request");
+        // Both ids should appear; order is queue order.
+        assert!(
+            (next1.id == id1 && next2.id == id2) || (next1.id == id2 && next2.id == id1),
+            "expected {id1} and {id2}, got {} and {}",
+            next1.id,
+            next2.id
+        );
+        // A third call returns nothing (both slots are filled).
+        let third = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap();
+        assert!(third.is_none(), "both slots filled, third call should be None");
     }
 }
