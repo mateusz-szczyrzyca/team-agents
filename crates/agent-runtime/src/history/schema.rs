@@ -329,7 +329,8 @@ CREATE TABLE daemon_logs (
         'history_record_incomplete', 'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed',
         'run_started', 'run_ended', 'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated',
         'questions_answered', 'control_used', 'checks_decided', 'reviews_requested', 'review_report_late',
-        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone', 'investigation_started', 'investigation_answered', 'investigation_kind_unknown'
+        'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken', 'outside_call_completed', 'peer_gone',
+        'investigation_started', 'investigation_answered', 'investigation_kind_unknown'
     )),
     team TEXT,
     task TEXT,
@@ -355,7 +356,8 @@ CREATE TABLE daemon_logs (
             'team_changed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
-            'questions_file_opened', 'build_directory_removed', 'investigation_started', 'investigation_answered'
+            'questions_file_opened', 'build_directory_removed',
+            'investigation_started', 'investigation_answered'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )

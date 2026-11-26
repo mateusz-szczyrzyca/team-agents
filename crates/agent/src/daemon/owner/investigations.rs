@@ -49,6 +49,10 @@ impl Owner {
             if free.is_empty() {
                 break;
             }
+            // Avoid polling the global queue when this team has no queued requests.
+            if !self.bus_has_queued_for(team_id).await {
+                break;
+            }
             let req = match self.parts.bus.inv_next(queue_max, slots, &live_tasks).await {
                 Ok(Some(req)) => req,
                 Ok(None) => break,
@@ -124,6 +128,25 @@ impl Owner {
         }
 
         Ok(())
+    }
+
+    /// Returns true when the bus queue holds at least one queued investigation whose
+    /// `from_task` is a live member of `team_id`.
+    async fn bus_has_queued_for(&self, team_id: &TeamId) -> bool {
+        match self.parts.bus.inv_open().await {
+            Ok(open) => open
+                .iter()
+                .any(|inv| inv.status == "queued" && self.is_task_live_in_team(team_id, &inv.from_task)),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    %team_id,
+                    error = %error,
+                    "cannot list investigations from bus"
+                );
+                false
+            }
+        }
     }
 
     /// Returns true if `task` is a live (not stopped/failed/done) member of `team_id`.
