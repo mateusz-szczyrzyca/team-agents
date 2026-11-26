@@ -9,6 +9,15 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.133.0 — 26.11.2026 — PR pending
+
+### Enhancements
+- [agent] [agentbus] Investigation tools are available only to team coordinators and members, including those using investigator-tier agents; other tasks and pool workers cannot call them.
+- [agentbus] `agentbus serve --investigations=off|on` controls investigation access; omitting it preserves compatibility with older daemons.
+
+### Bug fixes
+- [agentbus] Investigation requests now ask agents to wait with `STATUS: SLEEPING`, so an answer message can wake them.
+
 ## agent 0.132.0 · agent-core 0.129.0 · agent-runtime 0.117.0 — 26.11.2026 — PR #316
 
 ### Enhancements

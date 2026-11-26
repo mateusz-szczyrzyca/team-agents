@@ -24,8 +24,9 @@ const AGENT_COMMAND: &str = "agent";
 
 /// The flags of the bus server of a run that depend on the run, each followed by its value: its tier and role on the
 /// bus, which come from the tier alone, investigation access from the task role, and, for a run of a role in
-/// `roles`, the plan file of its worktree and the agent command that checks requests against it. An investigator that coordinates or is a member keeps that role's
-/// plan; one that answers an investigation request has no role of a plan.
+/// `roles`, the plan file of its worktree and the agent command that checks requests against it. An investigator
+/// that coordinates or is a member keeps that role's plan; one that answers an investigation request has no role
+/// of a plan.
 ///
 /// The plan file's path is written as `worktree.display()` writes it: the caller gives a UTF-8 worktree.
 pub(super) fn bus_words(role: Role, roles: &[Role], tier: Tier, worktree: &Path) -> Vec<String> {
