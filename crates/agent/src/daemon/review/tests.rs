@@ -506,7 +506,7 @@ gate = ["true"]
         pool
     }
 
-    /// An existing task (Slot::ExistingTask) does not prevent a reviewer from being drawn — every
+    /// An existing task (`Slot::ExistingTask`) does not prevent a reviewer from being drawn — every
     /// candidate, known or new, can appear when the pool is tied. Across many seeds at least two
     /// of the four appear in some draw, proving that no candidate is permanently excluded.
     #[test]
