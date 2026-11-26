@@ -500,6 +500,9 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `checkpoint` | a point of a round to go on from, taken right after a step of the round or a local commit | `round`, optional `item`, `task` (the holder whose worktree it keeps), `job`, `tier`, `cause`, optional `pull_request`, optional `head` (the branch tip), `draft`, `phase`, optional `review_pass`, optional `fix_pass`, optional `snapshot` (the ref of the worktree's snapshot, `refs/agents/snapshots/<round>/<task>/c<n>`), optional `content` (`meant`, `done`, `left`; absent until checkpoints carry it) | — |
 | `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock, daemon event) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, `capture_event`, ...), `detail`, optional `task` | — |
 
+A `checkpoint` is read through the history's queries (`checkpoints_of_round`) and by the replacement of a holder; the told
+story of a round does not print it, or the step it follows would be told twice after every step of the round.
+
 For `checked`, an `allowed` outcome carries exactly the issues the human allowed, including when other issues in a
 mixed answer were refused and sent back separately. A `review_submitted` is retained even when it arrives after its
 review pass was already decided; it remains linked to that pass and round.
