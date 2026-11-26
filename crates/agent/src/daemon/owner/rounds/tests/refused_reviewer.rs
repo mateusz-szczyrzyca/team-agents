@@ -179,10 +179,7 @@ async fn a_reviewer_refused_once_keeps_its_review_after_a_good_retry() {
         "the retained reviewer's review is posted"
     );
     // An investigator of another provider is not asked because inv-1 keeps its review.
-    let same_provider_names: Vec<_> = reviewer_names(&merged)
-        .into_iter()
-        .filter(|n| n != "inv-1")
-        .collect();
+    let same_provider_names: Vec<_> = reviewer_names(&merged).into_iter().filter(|n| n != "inv-1").collect();
     assert!(
         same_provider_names.iter().all(|n| !n.starts_with("inv-4")),
         "no investigator of another provider is asked"

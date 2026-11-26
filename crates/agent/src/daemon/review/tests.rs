@@ -728,7 +728,11 @@ fn verification_uses_only_available_candidates_and_breaks_ties_by_name() {
     // Never-used investigators tied on (None, None) are drawn at random; any of the
     // three free candidates may appear first.
     assert!(!firsts.is_empty(), "at least one reviewer appears first");
-    assert!(firsts.iter().all(|n| ["inv-free", "inv-other", "inv-third"].contains(&n.as_str())));
+    assert!(
+        firsts
+            .iter()
+            .all(|n| ["inv-free", "inv-other", "inv-third"].contains(&n.as_str()))
+    );
     assert_eq!(
         choose_verifiers(
             Vec::new(),
