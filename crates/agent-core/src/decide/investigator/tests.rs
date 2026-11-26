@@ -262,8 +262,7 @@ fn tied_candidates_larger_than_slots_are_randomised_over_seeds() {
     }
     assert!(
         selections.len() >= 2,
-        "seed 1..=32 should produce at least 2 different selections, got {:?}",
-        selections
+        "seed 1..=32 should produce at least 2 different selections, got {selections:?}"
     );
 }
 
@@ -492,7 +491,7 @@ cli = "claude"
     item_handle
         .ask_reviews(vec![fixtures::review("inv-a", 10, ReviewOutcome::Pending)])
         .unwrap();
-    drop(item_handle);
+    // item_handle borrow ends here; NLL lets us move team after this.
 
     // Add the investigator as a Waiting reviewer of the team.
     let mut waiting_inv = Member::new(fixtures::task(10), Participant::Investigator("inv-a".parse().unwrap()));
