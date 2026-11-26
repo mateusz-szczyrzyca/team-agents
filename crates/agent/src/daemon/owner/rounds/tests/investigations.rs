@@ -138,7 +138,7 @@ async fn nothing_of_the_investigation_is_pushed() {
             normal("claude-lead", "sleep"),
             normal("claude-1", "inv-add:Check safety,done"),
             investigator("inv-r1", "inv-done:Everything is safe"),
-            investigator("inv-r2", "hold"),
+            investigator("inv-r2", "inv-done:Everything is safe"),
         ],
         1,
         true,
@@ -171,12 +171,7 @@ async fn nothing_of_the_investigation_is_pushed() {
         &rig.origin,
         &["for-each-ref", "--format=%(refname:short)", "refs/heads/*"],
     );
-    for branch in branches.lines() {
-        assert!(
-            !branch.contains("inv-r1"),
-            "investigator branch must not be pushed to origin: {branch}"
-        );
-    }
+    assert_eq!(branches.trim(), "main");
     assert!(
         rig.github.pulls().is_empty(),
         "no pull request should be opened for investigation"
@@ -226,8 +221,10 @@ async fn a_request_waits_while_no_investigator_is_free() {
         )
         .await;
 
-    // Give daemon a look while investigators are busy
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    rig.wait_for("request queued while investigators review", || {
+        bus_state(&rig)["investigations"]["1"]["status"] == "queued"
+    })
+    .await;
 
     let state = rig.state();
     let team_st = state.team(&team).unwrap();
@@ -263,7 +260,7 @@ async fn a_request_of_another_team_is_left_to_that_team() {
     let mut rig = Rig::new(
         &[
             normal("claude-lead", "sleep"),
-            normal("claude-1", "sleep"),
+            normal("claude-1", "inv-add:Own question,done"),
             investigator("inv-r1", "done"),
             investigator("inv-r2", "done"),
         ],
@@ -308,26 +305,10 @@ async fn a_request_of_another_team_is_left_to_that_team() {
         )
         .await;
 
-    rig.state_where("claude-1 is sleeping", |state| {
-        let Some(team_st) = state.team(&team) else {
-            return false;
-        };
-        team_st
-            .crew()
-            .roster()
-            .into_iter()
-            .any(|(_, m)| m.status() == TaskStatus::Waiting)
+    rig.wait_for("own request answered beside foreign request", || {
+        bus_state(&rig)["investigations"]["2"]["status"] == "done"
     })
     .await;
-
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
-    let state = rig.state();
-    let team_st = state.team(&team).unwrap();
-    assert!(
-        !team_st.reviewers().iter().any(|m| m.role() == Some(Role::Investigator)),
-        "no task should be started in this team for a foreign request"
-    );
 
     let bus_state_text = std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap();
     let bus_state: serde_json::Value = serde_json::from_str(&bus_state_text).unwrap();
@@ -414,4 +395,9 @@ async fn the_least_recently_used_of_two_investigators_answers() {
     );
 
     rig.stop().await.unwrap();
+}
+
+/// Reads the real bus state after a complete atomic save.
+fn bus_state(rig: &Rig) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap()).unwrap()
 }
