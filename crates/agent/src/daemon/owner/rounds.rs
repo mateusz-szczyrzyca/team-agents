@@ -156,6 +156,10 @@ pub(super) struct PullWatch {
     delivered: Box<delivered::ToldWorks>,
     /// How many times in a row each lead was sent back because the gate had not passed at the tip of its branch.
     gate_sent_back: HashMap<TaskId, u32>,
+    /// The leads that ended again after their last correction: the gate still does not pass, and the human was told that
+    /// they wait. Unlike the count of send-backs, which reaches its limit when the last correction is released, it holds
+    /// only once that correction has failed.
+    gate_held: HashSet<TaskId>,
     /// How many times in a row each coordinator ended a run with a `SPLIT:` line the harness refused: it is told as often
     /// as a proposal is corrected, and then its own status decides. A restart counts again from none.
     pub(in crate::daemon::owner) split_refusals: HashMap<TaskId, u32>,

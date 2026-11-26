@@ -454,6 +454,13 @@ impl Owner {
             .is_some_and(|sent| *sent >= GATE_SEND_BACKS)
     }
 
+    /// Whether the lead `task` ended again after its last correction, so that the human was told it waits for them; a
+    /// restart of the daemon counts again from none. Unlike [`Owner::sent_back_to_its_limit`] it is false while the last
+    /// correction is still to be run.
+    pub(in crate::daemon::owner) fn held_for_the_human(&self, task: &TaskId) -> bool {
+        self.watch.gate_held.contains(task)
+    }
+
     /// The pending operation, including gates which do not run a model task.
     pub(in crate::daemon::owner) fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
         if round.delivered_by().is_some() {

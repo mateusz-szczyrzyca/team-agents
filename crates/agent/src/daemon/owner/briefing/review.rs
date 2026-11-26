@@ -135,12 +135,11 @@ fn pull_request_of(pr: &PullRequest, zone: &Zone) -> PullRequestFacts {
     }
 }
 
-/// Whether the review says the lead waits for the human: it was sent back as often as it is, and the run that starts is
-/// not the last correction itself. The third send-back raises the counter to its limit when it releases that
-/// correction, so the counter alone cannot tell the lead that still has a run to fix the branch from the one the human
-/// was told about.
-pub(super) fn waits_for_human(sent_back_to_its_limit: bool, why: Option<&Why>) -> bool {
-    sent_back_to_its_limit && !matches!(why, Some(Why::Gate(_)))
+/// Whether the review says the lead waits for the human: its last correction ended and the human was told
+/// (`held_for_the_human`), and the run that starts is not a correction itself. The counter of send-backs reaches its limit
+/// when the last correction is released, before it ran, so only the lead the human was told about waits.
+pub(super) fn waits_for_human(held_for_the_human: bool, why: Option<&Why>) -> bool {
+    held_for_the_human && !matches!(why, Some(Why::Gate(_)))
 }
 
 impl Owner {
@@ -188,7 +187,7 @@ impl Owner {
         let setting = ReviewSetting {
             limit: self.parts.settings.config.review().fix_passes,
             zone: &self.parts.zone,
-            waits_for_human: waits_for_human(self.sent_back_to_its_limit(task), why),
+            waits_for_human: waits_for_human(self.held_for_the_human(task), why),
         };
         Ok(ReviewFacts::of(item, setting))
     }
