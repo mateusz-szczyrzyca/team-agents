@@ -508,3 +508,78 @@ async fn an_unknown_kind_is_failed_once_without_starting_an_investigator() {
     record_investigation_events(&mut observed).await;
     assert_eq!(observed.len(), 3);
 }
+
+#[tokio::test]
+async fn the_whole_unicode_answer_is_delivered_once_with_a_200_character_summary() {
+    let first_line = "é".repeat(201);
+    let scenario = r"inv-done:\n\nééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééééé\nRun git status\nKeep all details";
+    let answer = format!("\n\n{first_line}\nRun git status\nKeep all details\nSTATUS: DONE");
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Give exact commands,done"),
+            investigator("inv-r1", scenario),
+            investigator("inv-r2", scenario),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.state_where("the completed answer has been delivered", |state| {
+        state.team(&team).is_some_and(|team| {
+            team.reviewers()
+                .iter()
+                .any(|member| member.role() == Some(Role::Investigator) && member.status() == TaskStatus::Done)
+        })
+    })
+    .await;
+    rig.wait_for("the answer wakes the member", || rig.runs(&tasks[1]) == 2)
+        .await;
+    rig.stop().await.unwrap();
+
+    let bus = bus_state(&rig);
+    let request = &bus["investigations"]["1"];
+    assert_eq!(request["status"], "done");
+    assert_eq!(request["summary"], "é".repeat(200));
+    let file = request["file"].as_str().unwrap();
+    let record = std::fs::read_to_string(file).unwrap();
+    let (recorded_answer, audit) = record.rsplit_once("\n- ").unwrap();
+    assert_eq!(recorded_answer, answer);
+    assert_eq!(audit.lines().count(), 1);
+    assert_eq!(audit.get(19..), Some(": status → done\n"));
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    let direct: Vec<serde_json::Value> = messages
+        .lines()
+        .map(|line| serde_json::from_str::<serde_json::Value>(line).unwrap())
+        .filter(|message| message["kind"] == "chat" && message["task"] == tasks[1].as_str())
+        .collect();
+    assert_eq!(direct.len(), 1);
+    let sent = &direct[0];
+    let state = rig.state();
+    let investigator = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.role() == Some(Role::Investigator))
+        .unwrap();
+    let name = investigator.agent().name();
+    assert_eq!(sent["from"], name);
+    assert_eq!(sent["to"], "claude-1");
+    assert_eq!(sent["team"], team.as_str());
+    assert_eq!(
+        sent["text"],
+        format!(
+            "# INVESTIGATION ANSWER (1)\n\nInvestigator {name} answered your investigation request:\n\n{answer}\n\nThe full answer is in `{file}`."
+        )
+    );
+}
