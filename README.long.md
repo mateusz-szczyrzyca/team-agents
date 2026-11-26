@@ -1377,6 +1377,15 @@ session the messages of the agent's other teams or tasks. Messages to `team` and
 Messages written before 0.30.0 name no team or task and are read as before. A reservation belongs to the agent's task
 that took it: the agent's run in another team cannot release it, and it is freed when the run that holds it ends.
 
+### `agentbus team-replace`
+
+`agentbus team-replace [--dir D] --team ID --from OLD --to NEW` replaces one team member with another in
+one atomic operation: the membership moves from `--from` to `--to`, the board item `--from` claimed becomes
+`--to`'s, and the unread messages of `--from`'s team session move to `--to`. Messages already read stay read.
+The team reads a `member_replaced` event naming `from` and `to`; the command prints `REPLACED from to` on
+stdout. It is one of the agentbus subcommands the daemon calls; as item 1.1, it is the standalone command
+alone — the daemon does not integrate or retry it yet.
+
 ## Development and tests
 
 [`AGENTS.md`](AGENTS.md) holds the rules for whoever changes this repository, human or agent.
