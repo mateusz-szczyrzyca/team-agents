@@ -1630,8 +1630,8 @@ impl AgentBus {
             serde_json::from_str(&output).map_err(|source| AgentBusError::Decode { command, source })?;
         let id = raw
             .get("id")
-            .and_then(|v| v.as_u64())
-            .and_then(|n| NonZeroU32::new(n as u32));
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok().and_then(NonZeroU32::new));
         serde_json::from_value(raw).map(Some).map_err(|source| {
             // `inv-next` already marked the request `starting`; return the id so the caller can
             // requeue or fail the request.
@@ -1691,9 +1691,9 @@ impl AgentBus {
             let trimmed = line.trim_start();
             if let Some(rest) = trimmed.strip_prefix('#') {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                let id = digits
-                    .parse::<NonZeroU32>()
-                    .map_err(|_| unexpected(BusCommand::InvList, &output))?;
+                let Ok(id) = digits.parse::<NonZeroU32>() else {
+                    return Err(unexpected(BusCommand::InvList, &output));
+                };
                 ids.push(id);
             }
         }
