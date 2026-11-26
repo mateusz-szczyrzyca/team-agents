@@ -44,6 +44,18 @@ empty):
 
 {{commits}}
 
+## The pull request and its review
+
+{{pull_request}}
+
+Where the review stands: {{review_state}}
+
+The findings of the reviews of this pull request, by their permanent number (none when the list is empty). `open`:
+a verifier has not accepted its fix yet, and it is yours to fix; `resolved`: every verifier accepted its fix, so do
+not touch it again; `not confirmed`: an independent opinion did not confirm it, so leave it alone:
+
+{{findings}}
+
 ## What is uncommitted
 
 Everything the worktree held when the session before yours ended is kept as a snapshot, {{snapshot}}. The worktree
@@ -82,8 +94,11 @@ The messages of your team that no run of this task read, oldest first (none when
 ## What to do now
 
 1. Read the messages of your team first, if you have the tools of the bus (`read_messages`).
-2. Find the real state first: the commits above, the uncommitted files listed above, and the gate of the task. Trust
+2. If a pull request is listed above, it is yours: go on in it, on its branch. Do not open another pull request and do
+   not start the item again. In a fix pass, fix every `open` finding, then answer for each one as the task's prompt
+   says.
+3. Find the real state first: the commits above, the uncommitted files listed above, and the gate of the task. Trust
    the steps listed as confirmed, check the declared ones, and repair the mismatched ones before anything else.
-3. Go on with what is left of the task, in the same worktree, the same branch and the same task; follow the rules of
+4. Go on with what is left of the task, in the same worktree, the same branch and the same task; follow the rules of
    the task's prompt and do only the work of this task.
-4. End your turn with a `STATUS:` line, as the task's prompt says.
+5. End your turn with a `STATUS:` line, as the task's prompt says.
