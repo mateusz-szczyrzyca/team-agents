@@ -371,9 +371,6 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `notification_sent` | `info` | A notification for the human is delivered, with the `file` it was written to. |
 | `questions_file_opened` | `info` | A new questions file is opened in the editor, or is not because the editor is not there, with `outcome`. |
 | `build_directory_removed` | `info` | A build directory of a worktree was removed to release disk space, with `task` and `bytes`. |
-| `investigation_started` | `info` | A queued request starts a new investigator task: `id`, `investigator`, `task`, `from_task`. |
-| `investigation_answered` | `info` | A completed answer is saved and delivered: `id`, `investigator`, `chars`. |
-| `investigation_kind_unknown` | `warn` | An unsupported request kind is failed without starting a task, once per request: `id`, `kind`. |
 | `decision_taken` | `debug` | A pure decision of `agent_core::decide` takes action, with `decision`, `input`, and `result`. A run cut by the daemon going down that goes on in a new session is `decision` `restart`, with the task as `input` and `NewSession` as `result`. The ladder of a task whose run went bad is `decision` `ladder`: `input` names the trouble (`NoStatus`, `Hang`, `TurnLimit`), the count, the role and the new sessions used and allowed; `result` is `SameSession`, `NewSession` or `GiveUp`. A run refused by its provider is `decision` `limit`: `refusals` in a row for the task, the `agent`, `return_at` when it is free again, and `result` is `pause` (tried again after the pause) or `change_agent` (its retries are used up or its reset is too far away; not acted on before a later change). |
 | `outside_call_completed` | `debug` | An outside call (`git`, `agentbus`, GitHub API, model CLI) completes, with `tool`, `operation`, `duration_ms`, `outcome`, and, when available, `exit_code`. |
 | `peer_gone` | `debug` | The other end of an answer (a client of the socket, or a task of the daemon) was gone before the answer. |
@@ -395,6 +392,9 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `worktree_switched` | `info` | Before a run, the task's worktree had another branch (or a detached HEAD) out and a clean tree, and the daemon switched it to the branch of the item the run works on; with `task`, `from` (the branch that was out, or `a detached HEAD`) and `to`. Stored in daemon history from schema 30. |
 | `worktree_switch_refused` | `warn` | Before a run, the worktree was not put on the branch of the item: it has uncommitted changes to tracked files, or `git switch` failed. The run starts anyway, and its prompt tells the lead to commit and switch; with `task`, `from`, `to` and, when the switch failed, `error`. Stored in daemon history from schema 30. |
 | `publish_off_branch` | `warn` | The harness was to publish an item's branch, but the task's worktree had another branch out and no gate had passed at the tip of the item's branch: nothing was pushed, and the lead was sent back to switch to the branch and run the gate. Fields: `team`, `task`, `branch`, `checked_out`. |
+| `investigation_started` | `info` | A queued request starts a new investigator task: `id`, `investigator`, `task`, `from_task`. |
+| `investigation_answered` | `info` | A completed answer is saved and delivered: `id`, `investigator`, `chars`. |
+| `investigation_kind_unknown` | `warn` | An unsupported request kind is failed without starting a task, once per request: `id`, `kind`. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and
