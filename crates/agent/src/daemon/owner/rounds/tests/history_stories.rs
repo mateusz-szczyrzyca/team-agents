@@ -363,8 +363,8 @@ fn time_length(text: &str) -> Option<usize> {
     (bytes.get(length) == Some(&b'Z')).then_some(length + 1)
 }
 
-/// The length of a time of a person that `agent log` writes in a zone: `YYYY-MM-DD HH:MM:SS` and then the offset, such as
-/// `+01:00`, or `UTC` when the machine's zone cannot be found. The zone is the machine's, so the whole time is one placeholder.
+/// The length of a time of a person that `agent log` writes in a zone: `YYYY-MM-DD HH:MM:SS`, followed by ` UTC` only
+/// when the machine's zone cannot be found. The zone is the machine's, so the whole time is one placeholder.
 fn zone_time_length(text: &str) -> Option<usize> {
     let bytes = text.as_bytes();
     let digits = |from: usize, count: usize| {
@@ -382,16 +382,12 @@ fn zone_time_length(text: &str) -> Option<usize> {
         && bytes.get(13) == Some(&b':')
         && digits(14, 2)
         && bytes.get(16) == Some(&b':')
-        && digits(17, 2)
-        && bytes.get(19) == Some(&b' ');
+        && digits(17, 2);
     if !shape {
         return None;
     }
-    let offset = match bytes.get(20) {
-        Some(b'+' | b'-') => (digits(21, 2) && bytes.get(23) == Some(&b':') && digits(24, 2)).then_some(26),
-        _ => None,
-    };
-    offset.or_else(|| (text.get(20..23) == Some("UTC")).then_some(23))
+    // A time that cannot be shown locally is the UTC time with ` UTC` after it.
+    Some(if text.get(19..23) == Some(" UTC") { 23 } else { 19 })
 }
 
 /// The length of a minute-precision local time `text` starts with: `YYYY-MM-DD HH:MM`.
@@ -414,13 +410,8 @@ fn minute_time_length(text: &str) -> Option<usize> {
     if !shape {
         return None;
     }
-    // A minute time of a notification or a status line carries the offset of its zone after a space: `+01:00`.
-    let offset_shaped = bytes.get(16) == Some(&b' ')
-        && matches!(bytes.get(17), Some(b'+' | b'-'))
-        && digits(18, 2)
-        && bytes.get(20) == Some(&b':')
-        && digits(21, 2);
-    Some(if offset_shaped { 23 } else { 16 })
+    // A minute time that cannot be shown locally is the UTC time with ` UTC` after it.
+    Some(if text.get(16..20) == Some(" UTC") { 20 } else { 16 })
 }
 
 /// `line` with every UUID replaced.

@@ -1549,7 +1549,7 @@ fn a_round_in_full_writes_the_time_it_was_opened_in_the_zone_given() {
     let text = render_round_in(&detail(&state), zone);
 
     assert!(text.contains("  opened 2026-11-11 20:15:"), "{text}");
-    assert!(text.contains(" +01:00\n"), "{text}");
+    assert!(!text.contains("+01:00"), "{text}");
 }
 
 #[test]

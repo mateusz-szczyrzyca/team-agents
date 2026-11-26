@@ -1167,6 +1167,6 @@ mod tests {
             .find_map(|line| line.strip_prefix("Debug summary: "))
             .expect("debug prints the summary path");
         let summary = std::fs::read_to_string(summary_path).unwrap();
-        assert!(summary.contains(" +01:00\n"), "{summary}");
+        assert!(!summary.contains("+01:00"), "{summary}");
     }
 }

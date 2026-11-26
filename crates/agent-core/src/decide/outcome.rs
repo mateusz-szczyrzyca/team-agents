@@ -1859,7 +1859,7 @@ mod tests {
         let class = failed(None, &format!("{REJECTED_WINDOW}\n{RESULT_TEXT}"));
         let evidence = class.pause.unwrap().evidence;
         assert!(evidence.starts_with("a quota: rejected"), "{evidence}");
-        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12 13:00:00"), "{evidence}");
     }
 
     // Rule: a rejected window's resetsAt is the JSON field of the window, whatever the spacing of its line.
@@ -1886,7 +1886,7 @@ mod tests {
         let class = failed(None, &format!("{REJECTED_WINDOW}\n{quota_text}"));
         assert_eq!(class.end, quota(Some("2026-11-12T12:00:00Z")));
         let evidence = class.pause.unwrap().evidence;
-        assert!(evidence.ends_with(" · resets 2026-11-12T13:00:00+01:00"), "{evidence}");
+        assert!(evidence.ends_with(" · resets 2026-11-12 13:00:00"), "{evidence}");
     }
 
     // Rule: a quota whose reset the CLI gives and a rate limit that has none show the same reasons as their texts.

@@ -348,10 +348,9 @@ mod daemon_process {
             log_east.contains(&format!("{ended_stamp} info run_ended")),
             "log={log_east}\nround={round_east}"
         );
-        let (date_time, zone) = ended_stamp.rsplit_once(' ').expect("stamp has zone");
-        let minute = date_time.get(..16).expect("minute prefix");
+        let minute = ended_stamp.get(..16).expect("minute prefix");
         assert!(
-            notice.contains(&format!("\nTime: {minute} {zone}\n")),
+            notice.contains(&format!("\nTime: {minute}\n")),
             "notice={notice}\nended_stamp={ended_stamp}"
         );
     }
@@ -404,11 +403,11 @@ mod daemon_process {
             .find_map(|line| line.strip_prefix("Debug summary: "))
             .expect("debug prints the summary path");
         let summary = std::fs::read_to_string(summary_path).unwrap();
-        assert!(summary.contains(" +01:00\n"), "{summary}");
+        assert!(!summary.contains("+01:00"), "{summary}");
         let collected = summary
             .lines()
             .find(|line| line.starts_with("Collected at: "))
             .expect("summary has a Collected at line");
-        assert!(collected.ends_with(" +01:00"), "{collected}");
+        assert!(!collected.contains("+01:00"), "{collected}");
     }
 }

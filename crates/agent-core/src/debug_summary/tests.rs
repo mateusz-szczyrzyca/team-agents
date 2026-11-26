@@ -413,8 +413,8 @@ fn format_time_handles_offset_seconds_and_extreme_timestamp_fallback() {
 
     let summary = render_summary(&input, Zone::Fixed(offset_seconds)).expect("mandatory summary facts fit");
     assert!(
-        summary.contains("+02:30:15"),
-        "offset string must include seconds when non-zero"
+        summary.contains("2026-11-17 22:30:15") && !summary.contains("+02:30:15"),
+        "the local time is shown with the offset's seconds applied and no offset after it"
     );
 
     // Extreme timestamps: year 0000 with negative offset underflows
@@ -833,7 +833,7 @@ fn redacted_diagnostic_paths_are_plain_and_unread_history_is_named_in_its_sectio
         "{history}"
     );
     assert!(!history.contains("No history recorded"));
-    assert!(summary.contains("+02:00"));
+    assert!(!summary.contains("+02:00"), "{summary}");
 }
 
 #[test]

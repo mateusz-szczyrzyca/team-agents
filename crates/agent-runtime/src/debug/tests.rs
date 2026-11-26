@@ -390,7 +390,7 @@ fn command_summary_uses_supplied_machine_offset() {
         .unwrap();
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
     assert!(
-        summary
+        !summary
             .lines()
             .find(|line| line.starts_with("Collected at:"))
             .unwrap()
