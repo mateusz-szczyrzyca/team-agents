@@ -279,3 +279,33 @@ async fn a_task_without_runs_has_no_span() {
 
     assert_eq!(span_of(&home, &WORKER_TASK.parse().unwrap()).await, Span::default());
 }
+
+// Rule: a run of one day in a local zone is written as one date and two clocks, with no offset after them.
+#[test]
+fn a_run_of_one_day_in_a_local_zone_writes_one_date_and_two_clocks_without_an_offset() {
+    let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    assert_eq!(
+        shown(&done(Some(HelperVerdict::Used)), same_day(), east),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 09:57–09:59"
+    );
+    assert_eq!(
+        shown(
+            &done(Some(HelperVerdict::Used)),
+            span(Some("2026-11-25T22:58:00Z"), Some("2026-11-25T23:03:00Z")),
+            east
+        ),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 23:58 – 2026-11-26 00:03"
+    );
+}
+
+// Rule: a run of one day in a zone that cannot be found says UTC once, after the clocks.
+#[test]
+fn a_run_of_one_day_in_a_zone_that_cannot_be_found_says_utc_once() {
+    fn unknown(_at: time::OffsetDateTime) -> Option<UtcOffset> {
+        None
+    }
+    assert_eq!(
+        shown(&done(Some(HelperVerdict::Used)), same_day(), Zone::Lookup(unknown)),
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59 UTC"
+    );
+}
