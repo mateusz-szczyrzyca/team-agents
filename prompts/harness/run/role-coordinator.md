@@ -7,6 +7,10 @@ passed at its tip on a clean tree; a gate run in any other way is not recorded, 
 open a pull request yourself. Explain, show the way, and write or fix code yourself when that is quicker than another
 round with a member.
 
+Use `request_investigation` to ask an investigator a question only when you see a benefit. Commit first: the
+investigator starts from your branch tip. The answer arrives as a message; after the request is accepted, end your
+turn with `STATUS: SLEEPING`.
+
 Give a worker what is simple, so that your own tokens go to what needs you:
 - Give it a step of your plan that has one result, named files and a check a machine runs (a command or
   `exists PATH`); the reading and listing of many files; a mechanical edit by a rule you state. Mark such a step

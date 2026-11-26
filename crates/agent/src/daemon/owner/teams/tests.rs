@@ -3577,3 +3577,38 @@ async fn a_connection_made_before_the_daemon_listens_waits_for_it() {
 }
 
 pub(in crate::daemon::owner) mod worker_wait;
+
+#[tokio::test]
+async fn a_pool_worker_run_gets_investigations_off() {
+    let mut f = Fixture::new(&[
+        investigator("inv-opus", "sleep"),
+        investigator("inv-codex", "sleep"),
+        investigator("inv-gemini", "sleep"),
+        normal("claude-1", "sleep"),
+        worker("glm-1", "hold"),
+    ]);
+    f.start().await;
+    let (team, tasks) = f.start_team(&["inv-opus", "claude-1"], PLAIN).await;
+    for task in &tasks {
+        f.status_is(task, TaskStatus::Waiting).await;
+    }
+    let pair = Pair {
+        team,
+        tasks: vec![tasks[1].clone()],
+        requester: "claude-1",
+        other: "inv-opus",
+        worker: "glm-1",
+    };
+    let request = f.delegate(&pair, "Count the files.").await;
+    let running = f.request_with(request, DelegationStatus::Running).await;
+    let task = running.helper_task.expect("pool worker task");
+    let run = first_run(&f, &task).await;
+    let text = wait_for_file(run.join("mcp.json")).await;
+    let mcp: serde_json::Value = serde_json::from_str(&text).unwrap();
+    f.stop().await.unwrap();
+    let args = mcp["mcpServers"]["agentbus"]["args"].as_array().unwrap();
+    assert!(
+        args.windows(2).any(|pair| pair == ["--investigations", "off"]),
+        "{args:?}"
+    );
+}

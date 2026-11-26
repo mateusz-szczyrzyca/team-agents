@@ -476,22 +476,23 @@ func fmtMsg(m Message) string {
 
 // Server is one `agentbus serve` instance — the MCP server of a single agent run.
 type Server struct {
-	taskDir  string        // the agent's task directory (--task-dir): a long-run mark there asks it to end its run
-	bus      *Bus          // shared state
-	me       string        // this agent's name
-	info     Presence      // presence template (task, repo, branch, worktree)
-	peers    []string      // configured agent names (shown as inactive when not running)
-	out      *json.Encoder // JSON-RPC output (stdout)
-	role     Role          // regular agent or investigator
-	queueMax int           // investigation queue limit (waiting requests)
-	tasksDir string        // tasks directory (investigation records live under it)
-	team     string        // team ID when running in team mode, else ""
-	tier     Tier          // normal or worker (a cheap model: cannot coordinate or delegate)
-	agentCmd string        // path to the `agent` script (to spawn helper dispatch)
-	home     string        // AGENTS_HOME (passed to spawned processes)
-	remote   string        // the node a remote team member works on ("" = a local agent); its tools run here
-	plan     string        // the path of the requester's plan file (--plan): only a run whose role keeps a plan has one
-	workers  []string      // configured pool workers (--workers): used for free worker checks when a team has no workers or for a solo requester
+	investigations investigationTools // investigation access granted by the daemon for this task role
+	taskDir        string             // the agent's task directory (--task-dir): a long-run mark there asks it to end its run
+	bus            *Bus               // shared state
+	me             string             // this agent's name
+	info           Presence           // presence template (task, repo, branch, worktree)
+	peers          []string           // configured agent names (shown as inactive when not running)
+	out            *json.Encoder      // JSON-RPC output (stdout)
+	role           Role               // regular agent or investigator
+	queueMax       int                // investigation queue limit (waiting requests)
+	tasksDir       string             // tasks directory (investigation records live under it)
+	team           string             // team ID when running in team mode, else ""
+	tier           Tier               // normal or worker (a cheap model: cannot coordinate or delegate)
+	agentCmd       string             // path to the `agent` script (to spawn helper dispatch)
+	home           string             // AGENTS_HOME (passed to spawned processes)
+	remote         string             // the node a remote team member works on ("" = a local agent); its tools run here
+	plan           string             // the path of the requester's plan file (--plan): only a run whose role keeps a plan has one
+	workers        []string           // configured pool workers (--workers): used for free worker checks when a team has no workers or for a solo requester
 }
 
 // touch (re)registers this agent's presence and updates LastSeen.
@@ -975,6 +976,12 @@ func (s *Server) longRunNote() string {
 
 // callTool runs the handler of one MCP tool.
 func (s *Server) callTool(name string, raw map[string]any) (string, error) {
+	if s.investigations == investigationsOff {
+		switch name {
+		case "request_investigation", "investigation_status", "record_decision":
+			return toolResult("", opErr(RequestInvestigationNotAllowed, "%s", investigationNotAllowedMessage))
+		}
+	}
 	if err := validateArgs(name, raw); err != nil {
 		return toolResult("", err)
 	}
@@ -1146,7 +1153,14 @@ func (s *Server) fail(id json.RawMessage, code int, msg string) {
 // Every tool result gets an unread-messages footer so agents notice new messages.
 // tools are the tool definitions this run gets: by its role, team, tier and whether it is a remote member.
 func (s *Server) tools() []map[string]any {
-	tools := append(toolDefs(), invToolDefs(s.role)...)
+	tools := toolDefs()
+	if s.investigations != investigationsOff {
+		role := s.role // absent flags preserve the legacy tier-based restriction
+		if s.investigations == investigationsOn {
+			role = RoleAgent
+		}
+		tools = append(tools, invToolDefs(role)...)
+	}
 	tools = append(tools, teamToolDefs(s.team != "")...)
 	// An investigator sees nothing of the board or the quiz, but it may hand a mechanical step to a worker.
 	if s.role != RoleInvestigator {
@@ -1161,8 +1175,8 @@ func (s *Server) tools() []map[string]any {
 	return tools
 }
 
-// instructions is the initialize text: who the run is and how to start; it names only the tools the run has (an
-// investigator has no request_investigation, a remote member no reserve or release).
+// instructions is the initialize text: who the run is and how to start; it names only the tools the run has (a
+// run with investigations off has no request_investigation, a remote member no reserve or release).
 func (s *Server) instructions() string {
 	has := map[string]bool{}
 	for _, t := range s.tools() {
@@ -1256,30 +1270,34 @@ func (s *Server) handle(line []byte) {
 // serve: runs the MCP server on stdio for one agent run until stdin closes or a signal arrives.
 // serveFlags are the flags of serve, as defineServeFlags defined them on a flag set.
 type serveFlags struct {
-	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string // where the bus is, and who the run is
-	tasksDir, team, tier, agentCmd, plan, home                     *string // its team, its tier and its harness
-	relay, member, source, workers                                 *string // a remote member's relay to its lead, or configured workers
-	queueMax, slots                                                *int    // the limits of the investigations
+	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string             // where the bus is, and who the run is
+	tasksDir, team, tier, agentCmd, plan, home                     *string             // its team, its tier and its harness
+	relay, member, source, workers                                 *string             // a remote member's relay to its lead, or configured workers
+	investigations                                                 *investigationTools // access to investigation MCP tools
+	queueMax, slots                                                *int                // the limits of the investigations
 }
 
 // defineServeFlags defines the flags of serve on fs.
 func defineServeFlags(fs *flag.FlagSet) serveFlags {
+	access := investigationsLegacy // old daemons retain investigation tools
+	fs.Var(&access, "investigations", "investigation tools: off | on (default on)")
 	return serveFlags{
-		dir:      fs.String("dir", defaultDir(), "state directory"),
-		agent:    fs.String("agent", "", "this agent's name (required)"),
-		task:     fs.String("task", "", "task ID"),
-		taskDir:  fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run"),
-		repo:     fs.String("repo", "", "repository name"),
-		branch:   fs.String("branch", "", "agent's branch"),
-		worktree: fs.String("worktree", "", "path to the agent's worktree"),
-		peers:    fs.String("peers", "", "configured agents, comma-separated"),
-		role:     fs.String("role", "worker", "worker | investigator"),
-		queueMax: fs.Int("queue-max", 3, "investigation queue limit"),
-		slots:    fs.Int("inv-slots", 1, "number of investigators"),
-		tasksDir: fs.String("tasks-dir", "", "tasks directory (for investigation files)"),
-		team:     fs.String("team", "", "team ID (team mode)"),
-		tier:     fs.String("tier", "normal", "normal | worker"),
-		agentCmd: fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
+		investigations: &access,
+		dir:            fs.String("dir", defaultDir(), "state directory"),
+		agent:          fs.String("agent", "", "this agent's name (required)"),
+		task:           fs.String("task", "", "task ID"),
+		taskDir:        fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run"),
+		repo:           fs.String("repo", "", "repository name"),
+		branch:         fs.String("branch", "", "agent's branch"),
+		worktree:       fs.String("worktree", "", "path to the agent's worktree"),
+		peers:          fs.String("peers", "", "configured agents, comma-separated"),
+		role:           fs.String("role", "worker", "worker | investigator"),
+		queueMax:       fs.Int("queue-max", 3, "investigation queue limit"),
+		slots:          fs.Int("inv-slots", 1, "number of investigators"),
+		tasksDir:       fs.String("tasks-dir", "", "tasks directory (for investigation files)"),
+		team:           fs.String("team", "", "team ID (team mode)"),
+		tier:           fs.String("tier", "normal", "normal | worker"),
+		agentCmd:       fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
 		plan: fs.String("plan", "", "path to the requester's plan file: a run whose role keeps a plan, whose "+
 			"delegate requests must name a step"),
 		home:    fs.String("home", agentsHome(), "AGENTS_HOME"),
@@ -1293,8 +1311,9 @@ func defineServeFlags(fs *flag.FlagSet) serveFlags {
 // server is the MCP server of the run the flags describe, with its role and tier already parsed, writing to out.
 func (f serveFlags) server(r Role, tr Tier, out *json.Encoder) *Server {
 	s := &Server{
-		taskDir: *f.taskDir,
-		bus:     &Bus{dir: *f.dir}, me: *f.agent, out: out,
+		investigations: *f.investigations,
+		taskDir:        *f.taskDir,
+		bus:            &Bus{dir: *f.dir}, me: *f.agent, out: out,
 		info:  Presence{Agent: *f.agent, Task: *f.task, Repo: *f.repo, Branch: *f.branch, Worktree: *f.worktree},
 		peers: strings.Split(*f.peers, ","),
 		role:  r, queueMax: *f.queueMax, tasksDir: *f.tasksDir, team: *f.team,

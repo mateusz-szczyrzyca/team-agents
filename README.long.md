@@ -1284,12 +1284,22 @@ an empty task set retains the unfiltered behavior of `inv_next`.
 | `reserve`, `release`, `list_reservations` | shared resources |
 | `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
 | `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
-| `request_investigation`, `investigation_status`, `record_decision` | investigators (not for investigators themselves) |
+| `request_investigation`, `investigation_status`, `record_decision` | investigation requests, results and decisions (team coordinators and members only) |
 | `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` matches against pool worker capabilities |
 | `team_status`, `claim_lead`, `handover_lead` | teams |
 | `quiz_start`, `quiz_answer`, `quiz_results`, `team_exclude` | the qualification quiz |
 | `board_add`, `board_list`, `board_claim`, `board_progress`, `board_done`, `board_release` | the team board (`board_add` with `for=<member>`: only that member may claim the item; `board_progress` records how far the claimed item got) |
 | `consult_start`, `consult_reply`, `consult_results` | ask the other normal members with a time limit (e.g. for recommendations); silence is shown as NO ANSWER |
+
+The daemon gives investigation tools only to coordinator and member tasks, including those run by an
+investigator-tier agent. Solo tasks, workers, reviewers, investigator tasks and pool worker runs do not see these
+three tools; calls to them are refused. `agentbus serve --investigations=off|on` controls this access. Omitting the
+option defaults to `on` with the legacy role checks, so an older daemon with a newer bus keeps its previous behavior.
+Explicit `on` grants the tools to a team task regardless of its agent tier.
+
+Use `request_investigation` only when an investigator would help. Commit first: the investigator starts from your
+branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with `STATUS: SLEEPING`;
+the answer arrives as a message, which wakes the requester.
 
 ### Requests to workers
 
