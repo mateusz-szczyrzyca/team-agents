@@ -197,3 +197,63 @@ fn a_command_check_is_read_as_a_step_reads_it() {
 
     assert_eq!(accepted.check, Check::Command("cargo test -p guide".to_owned()));
 }
+
+/// The rejection of a complete request whose check is `check`, or `None` when it is accepted.
+fn with_check(check: &str) -> Option<Rejection> {
+    let mut request = complete();
+    request.named.check = check.to_owned();
+    decide(&plan(), &request).err()
+}
+
+#[test]
+fn a_check_that_goes_on_as_a_sentence_is_refused_at_its_first_word_of_prose() {
+    // The checks of issue #290, as the requester wrote them: a command, then words that say what it shows.
+    let rows = [
+        (
+            "grep -n 'worker' docs/guide.md shows the line in the agent debug section",
+            "shows",
+        ),
+        (
+            "wc -l docs/guide.md gives 10, and jq -c . docs/guide.json exits 0",
+            "gives",
+        ),
+        ("test -s docs/guide.md, then the guide is written", "docs/guide.md,"),
+        ("jq -c . … docs/guide.json", "…"),
+        ("grep -q walkthrough docs/guide.md and README.md", "and"),
+    ];
+    for (check, word) in rows {
+        assert_eq!(
+            with_check(check),
+            Some(Rejection::SentenceCheck {
+                check: check.to_owned(),
+                word: word.to_owned(),
+            }),
+            "{check}"
+        );
+    }
+}
+
+#[test]
+fn a_command_whose_words_are_quoted_options_or_paths_is_not_a_sentence() {
+    for check in [
+        "grep -q \"shows the line\" docs/guide.md",
+        "grep -q 'and' docs/guide.md && test -s README.md",
+        "grep -rq walkthrough crates docs prompts",
+        "cut -d, -f1 docs/guide.md",
+        "find docs -name '*.md' -and -newer README.md",
+        "cargo test -p agent-core delegation",
+        "grep -q the\\ guide docs/guide.md",
+    ] {
+        assert_eq!(with_check(check), None, "{check}");
+    }
+}
+
+#[test]
+fn the_refusal_of_a_sentence_says_a_check_is_one_command_and_how_to_keep_a_word() {
+    let rejection = with_check("grep -n worker docs/guide.md shows the line").expect("refused");
+
+    let text = rejection.to_string();
+    assert!(text.contains("\"shows\""), "{text}");
+    assert!(text.contains("one command"), "{text}");
+    assert!(text.contains("quote"), "{text}");
+}

@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.123.0 · agent-core 0.120.0 — 26.11.2026 — PR #294
+
+### Bug fixes
+- [agent] [agent-core] A request to a worker whose check goes on as a sentence (`grep -n x README.md shows the line`) is refused at once, with the word that starts the sentence, instead of going to two workers whose results then fail that check.
+
 ## agent 0.122.0 · agent-core 0.119.0 — 26.11.2026 — PR #292
 
 ### Bug fixes
