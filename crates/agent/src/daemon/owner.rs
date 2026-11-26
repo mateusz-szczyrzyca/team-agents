@@ -2048,10 +2048,12 @@ impl Owner {
             }
         ) {
             let answer = message.unwrap_or_default();
-            tokio::fs::write(&inv.file, answer).await.map_err(|source| OwnerError::WriteRecord {
-                path: inv.file.clone(),
-                source,
-            })?;
+            tokio::fs::write(&inv.file, answer)
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: inv.file.clone(),
+                    source,
+                })?;
             let summary: String = answer
                 .lines()
                 .map(str::trim)
@@ -2075,10 +2077,7 @@ impl Owner {
                 .with("investigator", located.agent.as_str())?
                 .with("file", inv.file.display().to_string())?
                 .with("answer", answer)?;
-            let text = self
-                .parts
-                .team_texts
-                .render(TeamPrompt::InvestigationAnswer, &values)?;
+            let text = self.parts.team_texts.render(TeamPrompt::InvestigationAnswer, &values)?;
             self.parts
                 .bus
                 .send(&from, &to, &Outgoing::Chat { text })

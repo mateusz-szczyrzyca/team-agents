@@ -20,14 +20,8 @@ impl Owner {
     /// Serves open investigation requests with free investigators for `team_id`.
     pub(super) async fn serve_investigations(&mut self, team_id: &TeamId) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
-        let configured_keys: BTreeSet<InvestigatorName> = self
-            .parts
-            .settings
-            .config
-            .investigators()
-            .keys()
-            .cloned()
-            .collect();
+        let configured_keys: BTreeSet<InvestigatorName> =
+            self.parts.settings.config.investigators().keys().cloned().collect();
         let Some(slots) = NonZeroUsize::new(configured_keys.len()) else {
             return Ok(());
         };
@@ -36,11 +30,8 @@ impl Owner {
         };
 
         loop {
-            let free = agent_core::decide::investigator::free_for_request(
-                &self.parts.state,
-                &self.parts.settings.config,
-                now,
-            );
+            let free =
+                agent_core::decide::investigator::free_for_request(&self.parts.state, &self.parts.settings.config, now);
             if free.is_empty() {
                 break;
             }
@@ -84,12 +75,8 @@ impl Owner {
             .state
             .team(team_id)
             .and_then(|team| {
-                team.find(task).map(|(_, m)| {
-                    !matches!(
-                        m.status(),
-                        TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
-                    )
-                })
+                team.find(task)
+                    .map(|(_, m)| !matches!(m.status(), TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done))
             })
             .unwrap_or(false)
     }
@@ -168,8 +155,7 @@ impl Owner {
             .await
             .map_err(|e| OwnerError::Publish(e.to_string()))?;
 
-        let member = Member::new(task.clone(), Participant::Investigator(chosen.clone()))
-            .with_role(Role::Investigator);
+        let member = Member::new(task.clone(), Participant::Investigator(chosen.clone())).with_role(Role::Investigator);
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
             .map_err(|e| OwnerError::Publish(e.to_string()))?;

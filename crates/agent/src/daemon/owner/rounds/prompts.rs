@@ -238,10 +238,7 @@ async fn round_sections_for(
 }
 
 /// Renders the prompt section for an investigator task.
-async fn investigator_section(
-    ctx: &Context<'_>,
-    found: &TaskRef<'_>,
-) -> Result<Option<Addition>, SectionError> {
+async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<Addition>, SectionError> {
     let home_str = ctx.home.root().to_str().ok_or_else(|| SectionError::Path {
         path: ctx.home.root().to_path_buf(),
         source: None,
@@ -250,12 +247,12 @@ async fn investigator_section(
         path: ctx.home.root().to_path_buf(),
         source: Some(source),
     })?;
-    let bus = agent_runtime::agentbus::AgentBus::new(
-        ctx.settings.config.binaries().agentbus.clone(),
-        home,
-    );
+    let bus = agent_runtime::agentbus::AgentBus::new(ctx.settings.config.binaries().agentbus.clone(), home);
     let open = bus.inv_open().await?;
-    if let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(found.member.task())) {
+    if let Some(inv) = open
+        .into_iter()
+        .find(|i| i.inv_task.as_ref() == Some(found.member.task()))
+    {
         let values = Variables::new()
             .with("investigation_id", inv.id.to_string())?
             .with("from_agent", inv.from_agent.as_str())?

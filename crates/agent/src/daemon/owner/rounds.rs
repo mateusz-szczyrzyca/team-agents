@@ -589,7 +589,12 @@ impl Owner {
     }
 
     /// Git in the worktree of `task` of a team on `repo`, committing as `agent`.
-    pub(in crate::daemon::owner) fn worktree_git(&self, repo: &RepoName, task: &TaskId, agent: &AgentName) -> Result<Git, PublishError> {
+    pub(in crate::daemon::owner) fn worktree_git(
+        &self,
+        repo: &RepoName,
+        task: &TaskId,
+        agent: &AgentName,
+    ) -> Result<Git, PublishError> {
         let path = self.parts.store.home().worktree_dir(repo, task);
         let text = path.to_str().ok_or_else(|| PublishError::Path {
             path: path.clone(),
