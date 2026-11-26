@@ -256,6 +256,6 @@ async fn a_snapshot_that_fails_is_recorded_without_a_reference_and_the_round_goe
         .into_iter()
         .filter(|entry| entry.event() == LogEvent::CheckpointFailed)
         .collect();
-    assert!(!failed.is_empty());
+    assert_ne!(failed.len(), 0);
     assert!(!worktree.join(".git").exists());
 }
