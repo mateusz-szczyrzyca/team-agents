@@ -2152,13 +2152,17 @@ async fn a_refused_file_that_a_later_commit_changes_is_asked_again_and_allowing_
 
     assert!(asked.asked.as_ref().unwrap().subjects.contains(&existing()));
     assert!(!asked.refused_of(&item).contains(&existing()));
-    assert_eq!(file.entries().len(), 1);
+    // One question for the file and one for the new commit alone: the commit the refusal covered is not asked again.
+    let bodies: Vec<&str> = file.entries().iter().map(|entry| entry.body()).collect();
+    assert_eq!(bodies.len(), 2, "{bodies:?}");
+    assert!(bodies[0].contains("`tests/existing.txt`"), "{}", bodies[0]);
     assert!(
-        file.entries()[0].body().contains("`tests/existing.txt`"),
+        bodies[1].contains("\"Tidy the test again\"") && !bodies[1].contains("\"Tidy the test\""),
         "{}",
-        file.entries()[0].body()
+        bodies[1]
     );
 
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
     answer_every(&rig, &tasks[0], 2, "allow").await;
     reviews_asked(&rig).await;
     rig.stop().await.unwrap();
@@ -2188,6 +2192,7 @@ async fn a_file_refused_again_after_a_later_commit_goes_back_to_the_team_and_is_
         second_question_recorded(&rig, &tasks[0])
     })
     .await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
     answer_every(&rig, &tasks[0], 2, "refuse").await;
     // The team makes no change in its next pass; the checks look again and send it back once more.
     let back = rig.prompt(&tasks[0], 8).await;
