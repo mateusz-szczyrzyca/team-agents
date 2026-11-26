@@ -1490,3 +1490,92 @@ async fn a_gate_answered_with_its_second_failure_without_running_is_logged_with_
         Some(2)
     );
 }
+
+// ---- a gate refused by the busy test lock -------------------------------------------------------------------------
+
+/// A gate script that counts its runs in `count` and exits with the code of its turn: `codes[n - 1]` on its n-th run,
+/// and 0 after the last of them.
+fn exiting_in_turn(count: &Path, codes: &[i32]) -> String {
+    let arms: String = codes
+        .iter()
+        .enumerate()
+        .map(|(index, code)| format!("{}) exit {code};; ", index + 1))
+        .collect();
+    counted(
+        count,
+        &format!("n=$(grep -c run {count:?}); case \"$n\" in {arms}*) exit 0;; esac"),
+    )
+}
+
+#[tokio::test]
+async fn gates_refused_by_the_busy_lock_twice_do_not_stop_the_third_from_running_and_passing() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = exiting_in_turn(&count, &[75, 75]);
+
+    let first = recorded(rig.ask(1, &script, LONG)).await;
+    recorded(rig.ask(1, &script, LONG)).await;
+    let third = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert!(matches!(first.result.outcome, GateOutcome::Failed { .. }), "{first:?}");
+    assert_eq!(runs(&count), 3, "every gate must run");
+    assert_eq!(third.result.outcome, GateOutcome::Passed);
+    assert_eq!(rig.saved_record(1), third);
+}
+
+#[tokio::test]
+async fn gates_refused_by_the_busy_lock_three_times_on_a_commit_all_run() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = exiting_in_turn(&count, &[75, 75, 75]);
+
+    let mut answers = Vec::new();
+    for _ in 0..3 {
+        answers.push(recorded(rig.ask(1, &script, LONG)).await);
+    }
+
+    assert_eq!(runs(&count), 3, "no gate may be answered without running");
+    for answer in &answers {
+        assert_eq!(
+            answer.result.outcome,
+            GateOutcome::Failed {
+                exit_code: NonZeroI32::new(75).unwrap()
+            }
+        );
+        assert!(!told(answer).contains("not run again"), "{}", told(answer));
+    }
+    assert_eq!(rig.saved_record(1), answers[2]);
+}
+
+#[tokio::test]
+async fn a_refusal_by_the_busy_lock_between_two_failures_does_not_reset_or_add_to_their_count() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let count = rig.home.root().join("count");
+    let script = exiting_in_turn(&count, &[1, 75, 1]);
+
+    recorded(rig.ask(1, &script, LONG)).await;
+    recorded(rig.ask(1, &script, LONG)).await;
+    let third = recorded(rig.ask(1, &script, LONG)).await;
+    let fourth = recorded(rig.ask(1, &script, LONG)).await;
+
+    assert_eq!(runs(&count), 3, "the fourth gate must not run");
+    assert_eq!(
+        third.result.outcome,
+        GateOutcome::Failed {
+            exit_code: NonZeroI32::new(1).unwrap()
+        }
+    );
+    assert!(!told(&third).contains("not run again"), "{}", told(&third));
+    let note = told(&fourth);
+    assert!(
+        note.lines().last().unwrap().contains("failed 2 times in a row"),
+        "the third gate was the second failure: {note}"
+    );
+    assert_eq!(fourth.result.finished_at, third.result.finished_at);
+}
