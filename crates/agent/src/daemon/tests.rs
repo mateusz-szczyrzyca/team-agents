@@ -435,11 +435,7 @@ async fn an_exhausted_quota_pauses_the_task_until_the_reset_and_it_goes_on_by_it
     assert_eq!(end_of(run), &RunEnd::QuotaExhausted { resets_at: Some(reset) });
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(
-        notes[0].contains("is paused until 2026-11-11 22:16"),
-        "{}",
-        notes[0]
-    );
+    assert!(notes[0].contains("is paused until 2026-11-11 22:16"), "{}", notes[0]);
     // Time passes, and the provider lets the agent go on.
     f.worktree(1, "done");
     f.clock.advance(time::Duration::hours(4));

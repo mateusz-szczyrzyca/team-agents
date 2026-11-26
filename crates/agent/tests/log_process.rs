@@ -221,10 +221,7 @@ mod log_zone {
         );
 
         assert_eq!(local, with_zone);
-        assert!(
-            local.contains("2026-11-11 20:31:44 step 1 of the run"),
-            "{local}"
-        );
+        assert!(local.contains("2026-11-11 20:31:44 step 1 of the run"), "{local}");
         assert!(!local.contains("run-20261111-193001-r7q2"), "{local}");
         assert_eq!(as_utc_zone, "");
         assert!(

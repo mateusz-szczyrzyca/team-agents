@@ -336,10 +336,7 @@ mod daemon_process {
 
         assert!(status_east.contains("started 2026-11-11 20:15"), "{status_east}");
         assert!(status_west.contains("started 2026-11-11 14:15"), "{status_west}");
-        assert!(
-            round_east.contains("  opened 2026-11-11 20:15:00\n"),
-            "{round_east}"
-        );
+        assert!(round_east.contains("  opened 2026-11-11 20:15:00\n"), "{round_east}");
         assert_eq!(json_east, json_utc);
         assert!(json_east.contains("\"2026-11-11T19:15:00Z\""), "{json_east}");
 

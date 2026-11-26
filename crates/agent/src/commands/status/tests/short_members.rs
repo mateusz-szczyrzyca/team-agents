@@ -279,8 +279,7 @@ fn team_with_a_finished_reviewer() -> TeamSummary {
 // view and in the list of the running teams.
 #[test]
 fn a_reviewer_whose_review_is_over_is_listed_with_when_it_finished() {
-    let line =
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 23:35:56";
+    let line = "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 23:35:56";
     let teams = [team_with_a_finished_reviewer()];
 
     let tasks = shown(&teams, View::Full, Detail::Tasks);

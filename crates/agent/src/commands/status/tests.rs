@@ -421,10 +421,7 @@ fn the_last_activity_is_told_as_the_local_time_of_day() {
     let at = SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_794_694_211);
     let warsaw = UtcOffset::from_hms(1, 0, 0).unwrap();
 
-    assert_eq!(
-        clock_time(at, Zone::Fixed(UtcOffset::UTC)),
-        "2026-11-14 22:10:11"
-    );
+    assert_eq!(clock_time(at, Zone::Fixed(UtcOffset::UTC)), "2026-11-14 22:10:11");
     assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11");
 }
 
@@ -600,10 +597,7 @@ fn a_closed_round_says_when_and_how_it_ended_and_an_item_in_review_shows_its_pul
 
     let text = render_round(&detail(&state));
 
-    assert!(
-        text.contains("  closed 2026-11-11 19:15:50, abandoned\n"),
-        "{text}"
-    );
+    assert!(text.contains("  closed 2026-11-11 19:15:50, abandoned\n"), "{text}");
     assert!(
         text.contains("  pull request #7 on agents/codex-1/item-1-2\n"),
         "{text}"
@@ -1582,14 +1576,9 @@ fn a_round_is_shown_with_its_times_in_the_zone_given() {
     let text = super::render_round_in(&detail(&state), zone);
 
     assert!(text.contains("  opened 2026-11-11 20:15:20\n"), "{text}");
+    assert!(text.contains("  closed 2026-11-11 20:15:50, abandoned\n"), "{text}");
     assert!(
-        text.contains("  closed 2026-11-11 20:15:50, abandoned\n"),
-        "{text}"
-    );
-    assert!(
-        text.contains(
-            "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21  ended 2026-11-11 20:15:30\n"
-        ),
+        text.contains("    run-20261111-153001-r7q2  started 2026-11-11 20:15:21  ended 2026-11-11 20:15:30\n"),
         "{text}"
     );
 }

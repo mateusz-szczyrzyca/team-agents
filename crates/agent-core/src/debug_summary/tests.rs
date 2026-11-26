@@ -1137,10 +1137,7 @@ fn format_time_and_render_summary_write_single_zoned_local_timestamps() {
         "2026-11-17 13:00:00"
     );
     let rendered = render_summary(&input, east).expect("render summary");
-    assert!(
-        rendered.contains("\nCollected at: 2026-11-17 21:00:00\n"),
-        "{rendered}"
-    );
+    assert!(rendered.contains("\nCollected at: 2026-11-17 21:00:00\n"), "{rendered}");
 }
 
 #[test]
