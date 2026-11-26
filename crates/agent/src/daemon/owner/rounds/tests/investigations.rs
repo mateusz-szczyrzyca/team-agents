@@ -296,7 +296,7 @@ async fn a_request_of_another_team_is_left_to_that_team() {
         .unwrap();
     assert!(status.success());
 
-    let (team, _) = rig
+    let (_team, _) = rig
         .run(
             &["claude-lead", "claude-1"],
             ONE,
