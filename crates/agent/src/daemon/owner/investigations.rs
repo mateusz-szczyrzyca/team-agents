@@ -32,13 +32,22 @@ impl Owner {
         loop {
             let free =
                 agent_core::decide::investigator::free_for_request(&self.parts.state, &self.parts.settings.config, now);
+            eprintln!("DEBUG serve_investigations: free={:?}", free);
             if free.is_empty() {
+                eprintln!("DEBUG serve_investigations: no free investigators, break");
                 break;
             }
             let req = match self.parts.bus.inv_next(queue_max, slots).await {
-                Ok(Some(req)) => req,
-                Ok(None) => break,
+                Ok(Some(req)) => {
+                    eprintln!("DEBUG serve_investigations: got req id={} from_task={} status={}", req.id, req.from_task, req.status);
+                    req
+                },
+                Ok(None) => {
+                    eprintln!("DEBUG serve_investigations: inv_next returned None");
+                    break
+                },
                 Err(error) => {
+                    eprintln!("DEBUG serve_investigations: inv_next error={:?}", error);
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         %team_id,
@@ -49,14 +58,20 @@ impl Owner {
                 }
             };
 
-            if !self.is_task_live_in_team(team_id, &req.from_task) {
+            let live = self.is_task_live_in_team(team_id, &req.from_task);
+            eprintln!("DEBUG serve_investigations: is_task_live_in_team({}, {}) = {}", team_id, req.from_task, live);
+            if !live {
+                eprintln!("DEBUG serve_investigations: requeuing investigation {}", req.id);
                 if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Requeued).await {
+                    eprintln!("DEBUG serve_investigations: requeue FAILED: {:?}", error);
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         %team_id,
                         error = %error,
                         "cannot requeue investigation on bus"
                     );
+                } else {
+                    eprintln!("DEBUG serve_investigations: requeue OK");
                 }
                 break;
             }
@@ -188,11 +203,11 @@ impl Owner {
         self.parts.state = next;
 
         tracing::info!(
+            event = LogEvent::InvestigationStarted.as_str(),
             id = %req.id,
             investigator = %chosen,
             task = %task,
             from_task = %req.from_task,
-            "investigation started"
         );
         self.look_at(team_id);
         Ok(())
