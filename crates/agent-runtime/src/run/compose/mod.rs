@@ -262,7 +262,7 @@ const fn role_prompt(role: Role) -> HarnessPrompt {
         Role::Coordinator => HarnessPrompt::RoleCoordinator,
         Role::Member => HarnessPrompt::RoleMember,
         Role::Worker => HarnessPrompt::RoleWorker,
-        Role::Reviewer => HarnessPrompt::RoleReviewer,
+        Role::Reviewer | Role::Investigator => HarnessPrompt::RoleReviewer,
     }
 }
 
@@ -270,6 +270,7 @@ const fn role_prompt(role: Role) -> HarnessPrompt {
 const fn rules_prompt(role: Role, tier: Tier) -> PromptId {
     match (role, tier) {
         (Role::Reviewer, _) => PromptId::InvestigatorCodeReview,
+        (Role::Investigator, _) => PromptId::InvestigatorRustDeveloper,
         (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, Tier::Normal) => PromptId::AgentRustDeveloper,
         (Role::Solo | Role::Coordinator | Role::Member | Role::Worker, Tier::Worker) => {
             PromptId::WorkerAgentRustDeveloper

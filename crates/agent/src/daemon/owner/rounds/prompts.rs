@@ -9,7 +9,7 @@ use agent_core::ids::{BranchName, InvalidName};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
-use agent_core::prompt::{AutopilotPrompt, Variables, VariablesError};
+use agent_core::prompt::{AutopilotPrompt, HarnessPrompt, Variables, VariablesError};
 use agent_core::state::{
     CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, PullRequest, QuestionState, Review,
     ReviewOutcome, TaskRef, Timestamp,
@@ -45,6 +45,12 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
+    /// A text of the harness cannot be rendered.
+    #[error("cannot render a text of the harness")]
+    Harness(#[from] agent_runtime::harness_prompts::RenderTextError),
+    /// The bus could not be queried.
+    #[error("cannot read from the bus")]
+    Bus(#[from] agent_runtime::agentbus::AgentBusError),
     /// A variable name of the program is not valid.
     #[error("a variable of a text is not valid")]
     Variable(#[from] VariablesError),
@@ -227,6 +233,39 @@ async fn round_sections_for(
         (Role::Member | Role::Worker, _) => Ok(fix_pass(ctx, texts, found, working, matches!(why, Some(Why::Woken)))
             .await?
             .map(Addition::Append)),
+        (Role::Investigator, _) => investigator_section(ctx, found).await,
+    }
+}
+
+/// Renders the prompt section for an investigator task.
+async fn investigator_section(
+    ctx: &Context<'_>,
+    found: &TaskRef<'_>,
+) -> Result<Option<Addition>, SectionError> {
+    let home_str = ctx.home.root().to_str().ok_or_else(|| SectionError::Path {
+        path: ctx.home.root().to_path_buf(),
+        source: None,
+    })?;
+    let home = AbsolutePath::from_str(home_str).map_err(|source| SectionError::Path {
+        path: ctx.home.root().to_path_buf(),
+        source: Some(source),
+    })?;
+    let bus = agent_runtime::agentbus::AgentBus::new(
+        ctx.settings.config.binaries().agentbus.clone(),
+        home,
+    );
+    let open = bus.inv_open().await?;
+    if let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(found.member.task())) {
+        let values = Variables::new()
+            .with("investigation_id", inv.id.to_string())?
+            .with("from_agent", inv.from_agent.as_str())?
+            .with("branch", inv.branch.as_str())?
+            .with("question", &inv.question)?
+            .with("context", &inv.context)?;
+        let text = ctx.texts.render(HarnessPrompt::InvestigationRequest, &values)?;
+        Ok(Some(Addition::Replace(text.trim_end().to_owned())))
+    } else {
+        Ok(None)
     }
 }
 

@@ -256,7 +256,7 @@ fn with_tier(texts: &TeamPrompts, run: &TeamRun<'_>, prompt: String) -> Result<S
             .with("tier", member.agent().tier().as_str())?;
         let text = match role {
             Role::Coordinator => TeamPrompt::TierCoordinator,
-            Role::Solo | Role::Member | Role::Worker | Role::Reviewer => TeamPrompt::TierMember,
+            Role::Solo | Role::Member | Role::Worker | Role::Reviewer | Role::Investigator => TeamPrompt::TierMember,
         };
         return Ok(join_sections(&prompt, &texts.render(text, &values)?));
     }

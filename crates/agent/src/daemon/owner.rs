@@ -17,6 +17,7 @@ mod fixture;
 mod gate;
 mod history;
 mod idle;
+mod investigations;
 mod item_branch;
 mod last_step;
 #[cfg(test)]
@@ -65,6 +66,7 @@ use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, T
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
+use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
@@ -75,7 +77,7 @@ use agent_core::state::{
     SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
-use agent_runtime::agentbus::{AgentBus, AgentBusError, Outgoing, Recipient};
+use agent_runtime::agentbus::{AgentBus, AgentBusError, InvTransition, Outgoing, Recipient};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
@@ -415,6 +417,23 @@ pub(crate) enum OwnerError {
     /// Existing step judgements in `history.db` could not be read.
     #[error(transparent)]
     PlanJudgementsRead(#[from] plan::PlanJudgementsError),
+    /// A reviewer worktree could not be made.
+    #[error("a reviewer worktree could not be made: {0}")]
+    Publish(String),
+    /// A record file could not be written.
+    #[error("the record file {path} cannot be written")]
+    WriteRecord {
+        /// The path.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// A team prompt could not be rendered.
+    #[error("cannot render a team prompt")]
+    TeamText(#[from] agent_runtime::team_prompts::RenderTeamTextError),
+    /// A variable of a template is not valid.
+    #[error("a variable of a template is not valid")]
+    Variable(#[from] VariablesError),
     /// The bus refused a message of the harness.
     #[error("the bus refused a message of the harness")]
     Bus {
@@ -1993,6 +2012,9 @@ impl Owner {
         {
             self.review_ended(task, located, message).await?;
         }
+        if located.role == Role::Investigator {
+            self.investigation_ended(task, located, end, message).await?;
+        }
         self.retry_unanswered_opinion(task, located, end).await?;
         if held == plan::PlanHeld::Yes {
             // The run said DONE but goes back for its plan, or waits for the human: nobody is told it is done.
@@ -2000,6 +2022,84 @@ impl Owner {
             return Ok(());
         }
         self.after_run(task, located, end, message)
+    }
+
+    /// Handles the end of an investigator run: records the answer, updates bus status, sends message to requester.
+    async fn investigation_ended(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        message: Option<&str>,
+    ) -> Result<(), OwnerError> {
+        let open = self
+            .parts
+            .bus
+            .inv_open()
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(task)) else {
+            return Ok(());
+        };
+        if matches!(
+            end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        ) {
+            let answer = message.unwrap_or_default();
+            tokio::fs::write(&inv.file, answer).await.map_err(|source| OwnerError::WriteRecord {
+                path: inv.file.clone(),
+                source,
+            })?;
+            let summary: String = answer
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
+            self.parts
+                .bus
+                .inv_set(inv.id, &InvTransition::Done { summary })
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            let from: AgentName = located.agent.parse()?;
+            let to = Recipient::Task {
+                agent: inv.from_agent.clone(),
+                task: inv.from_task.clone(),
+            };
+            let values = Variables::new()
+                .with("investigation_id", inv.id.to_string())?
+                .with("investigator", located.agent.as_str())?
+                .with("file", inv.file.display().to_string())?
+                .with("answer", answer)?;
+            let text = self
+                .parts
+                .team_texts
+                .render(TeamPrompt::InvestigationAnswer, &values)?;
+            self.parts
+                .bus
+                .send(&from, &to, &Outgoing::Chat { text })
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            tracing::info!(
+                event = LogEvent::InvestigationAnswered.as_str(),
+                id = %inv.id,
+                investigator = %located.agent,
+                chars = answer.chars().count(),
+                "investigation answered"
+            );
+        } else {
+            self.parts
+                .bus
+                .inv_set(inv.id, &InvTransition::Requeued)
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+        }
+        self.look_at(&located.team);
+        Ok(())
     }
 
     /// Replaces a failed opinion while preserving ordinary task settlement.
@@ -3522,7 +3622,7 @@ enum NoticeItem {
 /// items) or when the list does not have it.
 fn item_line_of_task(team: &agent_core::state::Team, role: Role, member: &agent_core::state::Member) -> Option<String> {
     match role {
-        Role::Coordinator => None,
+        Role::Coordinator | Role::Investigator => None,
         Role::Solo | Role::Member | Role::Worker | Role::Reviewer => {
             let rounds = member.runs().last()?.rounds();
             let round = rounds
