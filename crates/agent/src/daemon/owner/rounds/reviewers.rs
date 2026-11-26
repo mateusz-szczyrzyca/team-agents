@@ -269,7 +269,7 @@ impl Owner {
     }
 
     /// Makes the worktree of a new reviewer at `head`, on a branch of its own.
-    pub(in crate::daemon::owner) async fn make_worktree(
+    pub(super) async fn make_worktree(
         &self,
         git: &Git,
         lead: &Lead,

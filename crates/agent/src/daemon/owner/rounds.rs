@@ -295,7 +295,7 @@ pub(super) enum Announcement {
 
 /// Why a branch could not be published: what the human is told, and what is logged.
 #[derive(Debug, thiserror::Error)]
-pub(in crate::daemon::owner) enum PublishError {
+enum PublishError {
     /// A findings text cannot be rendered.
     #[error("cannot render findings")]
     Findings(#[from] findings::TextError),
@@ -410,15 +410,15 @@ impl From<super::OwnerError> for PublishError {
 }
 
 /// The facts about the lead of a team that a look at its pull requests needs.
-pub(in crate::daemon::owner) struct Lead {
+struct Lead {
     /// The team's repository.
-    pub(in crate::daemon::owner) repo: RepoName,
+    repo: RepoName,
     /// The lead's task.
-    pub(in crate::daemon::owner) task: TaskId,
+    task: TaskId,
     /// The lead's agent.
-    pub(in crate::daemon::owner) agent: AgentName,
+    agent: AgentName,
     /// Whether the lead's last run ended with `STATUS: DONE`: it says its work is finished, not that it waits for its team.
-    pub(in crate::daemon::owner) done: bool,
+    done: bool,
 }
 
 /// The autopilot notifications sent to the human.
@@ -548,7 +548,6 @@ impl Owner {
         self.replace_silent_opinions(&pulls, team, Timestamp::now(&self.parts.clock)?)
             .await?;
         self.ask_opinions(&pulls, team, look).await?;
-        self.serve_investigations(team).await?;
         self.continue_opinions(&pulls, team, look)?;
         // While the merge of an approved pull request waits to read the lead's commit, its item stays as it is: a
         // publication would take the unread commit for a new fix and ask for another review.
@@ -566,7 +565,7 @@ impl Owner {
     }
 
     /// The lead of `team`: the coordinator, or the solo agent.
-    pub(in crate::daemon::owner) fn lead_of(&self, team: &TeamId) -> Result<Lead, OwnerError> {
+    fn lead_of(&self, team: &TeamId) -> Result<Lead, OwnerError> {
         let found = self
             .parts
             .state
@@ -593,12 +592,7 @@ impl Owner {
     }
 
     /// Git in the worktree of `task` of a team on `repo`, committing as `agent`.
-    pub(in crate::daemon::owner) fn worktree_git(
-        &self,
-        repo: &RepoName,
-        task: &TaskId,
-        agent: &AgentName,
-    ) -> Result<Git, PublishError> {
+    fn worktree_git(&self, repo: &RepoName, task: &TaskId, agent: &AgentName) -> Result<Git, PublishError> {
         let path = self.parts.store.home().worktree_dir(repo, task);
         let text = path.to_str().ok_or_else(|| PublishError::Path {
             path: path.clone(),
@@ -825,9 +819,6 @@ mod history_sessions_tests;
 #[cfg(test)]
 #[path = "rounds/tests/history_stories.rs"]
 mod history_stories_tests;
-#[cfg(test)]
-#[path = "rounds/tests/investigations.rs"]
-mod investigations_tests;
 #[cfg(test)]
 #[path = "rounds/tests/merge_conflict.rs"]
 mod merge_conflict_tests;
