@@ -982,6 +982,7 @@ impl Owner {
         if self.shutdown.is_cancelled() {
             return Ok(());
         }
+        self.try_pending_team_replaces().await?;
         let waiting: Vec<Queued> = self
             .parts
             .state
@@ -990,6 +991,12 @@ impl Owner {
             .filter(|item| {
                 !(self.in_flight.contains(&item.task)
                     || self.pending_removals.contains(&item.task)
+                    || self
+                        .parts
+                        .state
+                        .pending_team_replaces()
+                        .iter()
+                        .any(|pending| pending.team == item.team && pending.to == item.agent)
                     || self.request_recovery == owned_request::RequestRecovery::Pending
                         && item.tier == agent_core::kinds::Tier::Worker)
             })
@@ -1034,6 +1041,9 @@ impl Owner {
                     continue;
                 }
             }
+            if !self.try_pending_team_replace_for(&task).await? {
+                continue;
+            }
             self.agent_waits.remove(&task);
             Box::pin(self.start(task)).await?;
         }
@@ -1046,45 +1056,20 @@ impl Owner {
         self.serving.insert(task, served);
     }
 
-    /// Tries every team-replace call recorded in the state but not yet told to the bus.
-    async fn try_pending_team_replaces(&mut self) {
-        let pending: Vec<agent_core::state::PendingTeamReplace> =
-            self.parts.state.pending_team_replaces().iter().cloned().collect();
-        for pending_replace in &pending {
-            let team = &pending_replace.team;
-            let from = &pending_replace.from;
-            let to = &pending_replace.to;
-            match self.parts.bus.team_replace(team, from, to).await {
-                Ok(())
-                | Err(AgentBusError::Failed {
-                    class: agent_runtime::agentbus::FailureClass::NotFound,
-                    ..
-                }) => {
-                    self.parts.state.remove_pending_team_replace(team, from, to);
-                }
-                Err(error) => {
-                    tracing::warn!(
-                        event = LogEvent::BusDown.as_str(),
-                        team = %team,
-                        from = from.as_str(),
-                        to = to.as_str(),
-                        operation = "team_replace",
-                        error = %error_chain(&error),
-                        "the bus could not be told of a team member replacement"
-                    );
-                }
-            }
-        }
+    /// Retries persisted replacements before planning any new runs.
+    async fn try_pending_team_replaces(&mut self) -> Result<(), OwnerError> {
+        let pending = self.parts.state.pending_team_replaces().iter().cloned().collect();
+        self.try_team_replaces(pending).await
     }
 
-    /// Tells the bus of a team member replacement recorded for `task`; returns whether the task may start its run.
+    /// Completes a fresh busy hand-over before its replacement run starts.
     async fn try_pending_team_replace_for(&mut self, task: &TaskId) -> Result<bool, OwnerError> {
         let Some(found) = self.parts.state.find_task(task) else {
             return Ok(true);
         };
         let team = found.team.id().clone();
         let agent = found.member.agent().agent_name();
-        let pending: Vec<agent_core::state::PendingTeamReplace> = self
+        let pending = self
             .parts
             .state
             .pending_team_replaces()
@@ -1092,6 +1077,24 @@ impl Owner {
             .filter(|pending| pending.team == team && pending.to == agent)
             .cloned()
             .collect();
+        self.try_team_replaces(pending).await?;
+        Ok(!self
+            .parts
+            .state
+            .pending_team_replaces()
+            .iter()
+            .any(|pending| pending.team == team && pending.to == agent))
+    }
+
+    /// Persists intent before calling the bus and completion before permitting a run.
+    async fn try_team_replaces(
+        &mut self,
+        pending: Vec<agent_core::state::PendingTeamReplace>,
+    ) -> Result<(), OwnerError> {
+        if pending.is_empty() {
+            return Ok(());
+        }
+        self.save().await?;
         for pending_replace in &pending {
             let team = &pending_replace.team;
             let from = &pending_replace.from;
@@ -1114,11 +1117,10 @@ impl Owner {
                         error = %error_chain(&error),
                         "the bus could not be told of a team member replacement"
                     );
-                    return Ok(false);
                 }
             }
         }
-        Ok(true)
+        self.save().await
     }
 
     /// Active team and request-owned runs, with legacy team workers counted once.
