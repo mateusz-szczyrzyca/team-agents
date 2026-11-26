@@ -9,13 +9,13 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.118.0 · agent-core 0.117.0 · agent-runtime 0.112.0 — 26.11.2026 — PR pending
+## agent 0.118.0 · agent-core 0.117.0 · agent-runtime 0.112.0 — 26.11.2026 — PR #287
 
 ### New features
-- [agent-runtime] The bus library adds commands to read the investigation queue, transition investigation requests, and list open requests.
+- [agent-runtime] The bus library adds typed wrappers for `inv-next`, `inv-set`, `inv-get` and `inv-list`.
 
 ### Enhancements
-- [agent] [agent-core] The daemon picks randomly among investigators tied on oldest activity, and avoids assigning requests to investigators whose tasks are paused.
+- [agent] [agent-core] The daemon picks randomly among investigators tied on oldest activity.
 
 ## agent 0.117.0 · agent-core 0.116.0 · agent-runtime 0.111.0 — 25.11.2026 — PR #283
 
