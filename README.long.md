@@ -490,8 +490,11 @@ Every failed team member also wakes its coordinator with the member, item and la
 The coordinator may wait for the human or take the work only when its role permits it. When the new session goes bad too, the task is given — with
 its worktree, its branch, its items and a briefing — to the first agent of `[replacement] agents` that is not in its team,
 not in a run, and of the same tier as the agent it replaces — normal for normal and investigator for investigator
-(`[replacement] replacements = 1`; `0` takes none over; a takeover is not counted among the new sessions). On the team's bus the task keeps the name of the agent it
-was first given to. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
+(`[replacement] replacements = 1`; `0` takes none over; a takeover is not counted among the new sessions). Before the replacement's first run, the daemon moves the old agent's membership on the team bus to the new agent;
+the lead receives a message about the change. This also applies to a busy hand-over and to the coordinator.
+If the bus is unavailable, the daemon saves the pending change and retries it on a later pass; the replacement
+waits until the bus accepts it. An already-moved member is treated as complete. Solo tasks make no bus membership
+change. With no such agent — also when no `agents` are listed — a member's task stops and the team's lead
 gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
 asks for that at once). With `mode = "off"`, and for a solo task or a coordinator's with nobody to take it, the task is
 marked failed and the coordinator or you are notified, as before. When the agent that took a task over goes bad too, or

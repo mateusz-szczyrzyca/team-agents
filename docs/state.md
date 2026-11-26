@@ -166,6 +166,14 @@ Version 8 before bounded assignments is preserved in
 Migration to version 9 retains active fix passes, their protocol markers, FIXED answers and completed opinions.
 The migrated round uses the current opinion protocol without incrementing its fix-pass count.
 
+The optional top-level `pending_team_replaces` list records bus membership changes that must finish before a
+replacement run starts. Each entry has `team`, `from` and `to` IDs. The daemon saves the entry before calling
+`agentbus team-replace`, retries failures on later passes, and saves removal after success or a not-found response.
+An absent list loads as empty; an empty list is omitted when saving. The schema version stays 15. The fixture
+[`state-before-team-replaces.json`](../crates/agent-core/tests/fixtures/state-before-team-replaces.json) verifies
+loading the previous format. Older binaries reject this field; before downgrading, finish pending replacements
+with the newer daemon and remove the field from a saved backup if it remains.
+
 The optional top-level `wake_deliveries` map (added in 0.17.0, schema version unchanged) keeps the wake-up budget of each
 task that the bus woke for an unread message, by task ID. Each value is `{"state": "pending", "message": 12, "count": 1}` (the
 number of wake-ups spent for the newest unread message, with its number on the bus; `message` is null when no message
