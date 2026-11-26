@@ -260,6 +260,10 @@ pub enum LogEvent {
     InvestigationAnswered,
     /// An investigation with an unsupported kind is failed without starting a task.
     InvestigationKindUnknown,
+    /// An unfinished investigation is queued for a different investigator.
+    InvestigationRequeued,
+    /// An investigation ends without an answer.
+    InvestigationFailed,
 }
 
 impl Keyword for LogEvent {
@@ -346,6 +350,8 @@ impl LogEvent {
             | Self::TaskAgentChanged
             | Self::InvestigationStarted
             | Self::InvestigationAnswered
+            | Self::InvestigationRequeued
+            | Self::InvestigationFailed
             | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
