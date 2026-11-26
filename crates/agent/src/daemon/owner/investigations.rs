@@ -22,6 +22,7 @@ const QUEUE_MAX: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 impl Owner {
     /// Serves open investigation requests with free investigators for `team_id`.
     pub(super) async fn serve_investigations(&mut self, team_id: &TeamId) -> Result<(), OwnerError> {
+        self.reconcile_investigations().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let configured_keys: BTreeSet<InvestigatorName> =
             self.parts.settings.config.investigators().keys().cloned().collect();
@@ -147,6 +148,14 @@ impl Owner {
             excluded.insert(inv.clone());
         }
 
+        if let Some(record) = self
+            .parts
+            .state
+            .team(team_id)
+            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id))
+        {
+            excluded.extend(record.failed_with.iter().cloned());
+        }
         let activities: Vec<_> = self
             .parts
             .state
@@ -206,13 +215,27 @@ impl Owner {
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
             .map_err(OwnerError::InvestigationMember)?;
+        let failed_with = next
+            .team(team_id)
+            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id))
+            .map(|record| record.failed_with.clone())
+            .unwrap_or_default();
+        next.team_mut(team_id)
+            .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?
+            .record_investigation(InvestigationRecord {
+                id: req.id,
+                task: task.clone(),
+                started: now,
+                failed_with,
+            });
+        self.parts.state = next;
+        self.save().await?;
         self.parts
             .bus
             .inv_set(req.id, &InvTransition::Running { task: task.clone() })
             .await
             .map_err(|source| OwnerError::Bus { source })?;
-        next.record_activities(now);
-        self.parts.state = next;
+        self.parts.state.record_activities(now);
 
         tracing::info!(
             event = LogEvent::InvestigationStarted.as_str(),
@@ -275,11 +298,20 @@ impl Owner {
             .cloned()
             .unwrap_or_else(|| InvestigationRecord {
                 id: req.id,
-                task: req.from_task.clone(),
+                task: req.inv_task.clone().unwrap_or_else(|| req.from_task.clone()),
                 started: now,
                 failed_with: Vec::new(),
             });
+        if matches!(end, RunEnd::Stopped) {
+            return self
+                .fail_investigation(req, "stopped by the human", Some(located))
+                .await;
+        }
+        if !record.failed_with.is_empty() {
+            return self.fail_investigation(req, &format!("{end:?}"), Some(located)).await;
+        }
         record.failed_with.push(located.agent.parse()?);
+        let task = record.task.clone();
         self.parts
             .state
             .team_mut(&located.team)
@@ -287,6 +319,7 @@ impl Owner {
                 team: located.team.clone(),
             })?
             .record_investigation(record);
+        self.close_investigation_task(&task).await?;
         self.save().await?;
         self.parts
             .bus
@@ -298,8 +331,134 @@ impl Owner {
 }
 
 impl Owner {
+    /// Whether an investigation still has a live requester in a team.
+    pub(super) fn is_investigation_requester_live(&self, req: &Investigation) -> bool {
+        self.parts.state.find_task(&req.from_task).is_some_and(|found| {
+            !matches!(
+                found.member.status(),
+                TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped
+            )
+        })
+    }
+
+    /// Closes an attempt without letting a provider refusal enter the general retry ladder.
+    async fn close_investigation_task(&mut self, task: &TaskId) -> Result<(), OwnerError> {
+        let Some(found) = self.parts.state.find_task(task) else {
+            return Ok(());
+        };
+        let status = found.member.status();
+        let located = self.locate(task)?;
+        if self.cancels.contains_key(task) {
+            self.halt(task, super::Halt::Stop);
+        }
+        if !matches!(status, TaskStatus::Done | TaskStatus::Failed | TaskStatus::Stopped) {
+            let mut events = Vec::new();
+            let closed = if status == TaskStatus::Running {
+                TaskStatus::Failed
+            } else {
+                TaskStatus::Stopped
+            };
+            self.move_to(task, &located.team, closed, &mut events)?;
+            let now = Timestamp::now(&self.parts.clock)?;
+            self.commit(task, &located, now, events, None).await?;
+        }
+        Ok(())
+    }
+
+    /// Ends a request and optionally tells its live requester what to do next.
+    pub(super) async fn fail_investigation(
+        &mut self,
+        req: &Investigation,
+        reason: &str,
+        located: Option<&super::Located>,
+    ) -> Result<(), OwnerError> {
+        self.parts
+            .bus
+            .inv_set(
+                req.id,
+                &InvTransition::Failed {
+                    reason: reason.to_owned(),
+                },
+            )
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        if let Some(task) = &req.inv_task {
+            self.close_investigation_task(task).await?;
+        }
+        if self.is_investigation_requester_live(req)
+            && let Some(located) = located
+        {
+            let values = super::Variables::new()
+                .with("investigation_id", req.id.to_string())?
+                .with("reason", reason)?;
+            let text = self
+                .parts
+                .team_texts
+                .render(agent_core::prompt::TeamPrompt::InvestigationFailed, &values)?;
+            let from = located.agent.parse()?;
+            let to = super::Recipient::Task {
+                agent: req.from_agent.clone(),
+                task: req.from_task.clone(),
+            };
+            self.parts
+                .bus
+                .send(&from, &to, &super::Outgoing::Chat { text })
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+        }
+        Ok(())
+    }
+
     /// Recovers open requests after restart and enforces their active answer deadline.
     pub(super) async fn reconcile_investigations(&mut self) -> Result<(), OwnerError> {
+        let open = self
+            .parts
+            .bus
+            .inv_open()
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        let now = Timestamp::now(&self.parts.clock)?;
+        for req in open {
+            if !self.is_investigation_requester_live(&req) {
+                self.fail_investigation(&req, "the requester's task ended", None)
+                    .await?;
+                continue;
+            }
+            if !matches!(
+                req.status,
+                Some(InvestigationStatus::Starting | InvestigationStatus::Running)
+            ) {
+                continue;
+            }
+            let found = req.inv_task.as_ref().and_then(|task| self.parts.state.find_task(task));
+            let Some(found) = found else {
+                self.parts
+                    .bus
+                    .inv_set(req.id, &InvTransition::Requeued)
+                    .await
+                    .map_err(|source| OwnerError::Bus { source })?;
+                continue;
+            };
+            let task = found.member.task().clone();
+            let located = self.locate(&task)?;
+            if found.member.status() == TaskStatus::Stopped {
+                self.fail_investigation(&req, "stopped by the human", Some(&located))
+                    .await?;
+                continue;
+            }
+            let record = self
+                .parts
+                .state
+                .team(&located.team)
+                .and_then(|team| team.investigations().iter().find(|record| record.id == req.id));
+            if let Some(record) = record {
+                let minutes = self.parts.settings.config.investigations().answer_minutes();
+                if now.as_utc() - record.started.as_utc() >= time::Duration::minutes(i64::from(minutes)) {
+                    self.fail_investigation(&req, &format!("no answer in {minutes} minutes"), Some(&located))
+                        .await?;
+                }
+            }
+        }
         Ok(())
     }
 }

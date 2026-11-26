@@ -1644,6 +1644,10 @@ impl Owner {
                 None,
                 &mut events,
             )?;
+            if located.role == Role::Investigator {
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+                return self.commit(task, &located, now, events, None).await;
+            }
             // The stop is the daemon's own cut: a new session begins before the endings without a status are counted, so
             // the cut is no retry of the session it ends.
             self.begin_session_after_stop(task, &located)?;
@@ -1676,6 +1680,9 @@ impl Owner {
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
+        if located.role == Role::Investigator {
+            return self.investigation_ended(task, &located, &RunEnd::Stopped, None).await;
+        }
         self.after_run(task, &located, &RunEnd::Stopped, None)
     }
 
@@ -1808,10 +1815,11 @@ impl Owner {
         // notice of a pause that nobody waits for.
         let halt = self.halts.remove(task);
         let overruled = halt.filter(|_| {
-            matches!(
-                settled,
-                Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
-            )
+            located.role == Role::Investigator
+                || matches!(
+                    settled,
+                    Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
+                )
         });
         let end = if overruled.is_some() {
             RunEnd::Stopped
@@ -2133,7 +2141,7 @@ impl Owner {
             self.review_ended(task, located, message).await?;
         }
         if located.role == Role::Investigator {
-            self.investigation_ended(task, located, end, message).await?;
+            return self.investigation_ended(task, located, end, message).await;
         }
         self.retry_unanswered_opinion(task, located, end).await?;
         if held == plan::PlanHeld::Yes {
@@ -2161,6 +2169,9 @@ impl Owner {
         let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(task)) else {
             return Ok(());
         };
+        if !self.is_investigation_requester_live(&inv) {
+            return self.fail_investigation(&inv, "the requester's task ended", None).await;
+        }
         if matches!(
             end,
             RunEnd::Reported {
@@ -2288,6 +2299,20 @@ impl Owner {
             end,
             used_tool,
         } = ended;
+        if located.role == Role::Investigator {
+            self.hangs.remove(task);
+            let status = if matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            ) {
+                TaskStatus::Done
+            } else {
+                TaskStatus::Failed
+            };
+            return Ok((status, None));
+        }
         // The troubles of the ladder: a task whose last step went bad with one may be asked about instead of failing.
         let trouble = match settled {
             Settled::NoStatus { .. } => Some(Trouble::NoStatus),
@@ -2978,6 +3003,7 @@ impl Owner {
 
     /// Queues the paused tasks whose time has come.
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
+        self.reconcile_investigations().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {
@@ -2996,7 +3022,7 @@ impl Owner {
                 && let Some(agent_core::state::RunState::Ended { at, end }) =
                     found.member.runs().last().map(agent_core::state::Run::state)
                 && let Some(limit) = limit_of(end, *at)
-                && located.role != Role::Reviewer
+                && !matches!(located.role, Role::Reviewer | Role::Investigator)
                 && decide(&self.refusal_facts(limit, self.parts.state.limit_refusals(&task).max(1)))
                     == Decision::ChangeAgent
                 && let Some(handled) = self.handle_change_agent(&task, &located, &agent, until, now)?

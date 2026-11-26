@@ -237,7 +237,7 @@ impl Owner {
     }
 
     /// Has the run of `task` stopped; the end of the run sets the status of the task.
-    fn halt(&mut self, task: &TaskId, halt: Halt) {
+    pub(super) fn halt(&mut self, task: &TaskId, halt: Halt) {
         self.halts.insert(task.clone(), halt);
         self.stop_gates(task);
         if let Some(cancel) = self.cancels.get(task) {
