@@ -506,3 +506,133 @@ async fn only_the_runs_of_the_lead_end_in_a_checkpoint_and_the_pull_request_and_
         assert_eq!((held.pull_request, held.draft), (Some(number), false), "{held:#?}");
     }
 }
+
+#[tokio::test]
+async fn a_round_with_answered_findings_leaves_every_step_with_its_head_and_passes() {
+    let mut rig = Rig::new(
+        &[
+            normal(
+                "claude-1",
+                "work,done:FINDING 1: EXPLAINED — explicit units,done:FINDING 1: EXPLAINED — try again,fix-work:1",
+            ),
+            investigator(
+                "inv-r1",
+                "done:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TYP-3 work-1.txt:1 — units → newtype\\n   CHECK: read signature,done:VERDICT: REQUEST_CHANGES\\nFINDING 1: REJECTED — parameters can be swapped,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED",
+            ),
+            investigator(
+                "inv-r2",
+                "done:VERDICT: APPROVE,done:VERDICT: APPROVE\\nFINDING 1: ACCEPTED — clear names,done:VERDICT: APPROVE\\nFINDING 1: RESOLVED",
+            ),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let taken = checkpoints(&rig, &team);
+
+    use CheckpointCause::{
+        Commit, FindingAnswered, FixPassStarted, PullApproved, PullMerged, PullOpened, PullPushed, PullReady,
+        ReviewSubmitted, RoundOpened, RunEnded,
+    };
+    // The step, the review pass and the fix pass of the round then, and whether the pull request was a draft.
+    let rows: Vec<_> = taken
+        .iter()
+        .map(|taken| (taken.cause, taken.review_pass, taken.fix_pass, taken.draft))
+        .collect();
+    assert_eq!(
+        rows,
+        [
+            (RoundOpened, None, None, false),
+            (RunEnded, None, None, false),
+            (PullOpened, None, None, true),
+            (PullReady, None, None, false),
+            (ReviewSubmitted, Some(0), None, false),
+            (ReviewSubmitted, Some(0), None, false),
+            (FixPassStarted, Some(1), Some(1), false),
+            (RunEnded, Some(1), Some(1), false),
+            (FindingAnswered, Some(1), Some(1), false),
+            (PullPushed, Some(1), Some(1), false),
+            (FindingAnswered, Some(1), None, false),
+            (ReviewSubmitted, Some(1), None, false),
+            (FindingAnswered, Some(1), None, false),
+            (ReviewSubmitted, Some(1), None, false),
+            (FixPassStarted, Some(2), Some(2), false),
+            (RunEnded, Some(2), Some(2), false),
+            (Commit, Some(2), Some(2), false),
+            (RunEnded, Some(2), Some(2), false),
+            (PullPushed, Some(2), Some(2), false),
+            (ReviewSubmitted, Some(2), None, false),
+            (ReviewSubmitted, Some(2), None, false),
+            (PullApproved, Some(2), None, false),
+            (PullMerged, Some(2), None, false),
+        ],
+        "{taken:#?}"
+    );
+    // The last fix pass committed once more: that checkpoint has a head of its own and the push after it carries it.
+    let heads: Vec<_> = taken.iter().filter_map(|taken| taken.head.clone()).collect();
+    assert_eq!(heads.len(), taken.len());
+    let commit = taken.iter().position(|taken| taken.cause == Commit).unwrap();
+    assert_ne!(heads[commit], heads[commit - 1]);
+    assert_eq!(heads[commit + 2], heads[commit]);
+    assert_eq!(
+        heads[commit - 1],
+        heads[2],
+        "the earlier steps share the head of the first run"
+    );
+    let pull = rig.github.pulls().remove(0);
+    assert_eq!(heads[commit + 2].as_str(), rig.remote_tip(&pull.head).as_str());
+}
+
+/// The snapshot references the repository holds, sorted.
+fn held_references(repository: &Path) -> Vec<String> {
+    let mut held: Vec<String> = git(
+        repository,
+        &["for-each-ref", "--format=%(refname)", "refs/agents/snapshots"],
+    )
+    .lines()
+    .map(str::to_owned)
+    .collect();
+    held.sort();
+    held
+}
+
+#[tokio::test]
+async fn an_open_round_keeps_every_snapshot_reference_of_its_checkpoints_and_a_merged_round_has_none() {
+    let mut rig = Rig::new(&committing(), 5, false).await;
+    let signals = commit_script(&rig, "commits");
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("two commits", || signals.join("two").exists()).await;
+    std::fs::write(signals.join("third"), "").unwrap();
+    rig.wait_for("the third commit", || signals.join("three").exists())
+        .await;
+    let three = git(&worktree, &["rev-parse", "HEAD"]);
+    rig.wait_for("the checkpoint of the third commit", || {
+        heads_of(&rig, &team, CheckpointCause::Commit)
+            .iter()
+            .any(|head| head.as_str() == three)
+    })
+    .await;
+
+    let mut recorded: Vec<String> = checkpoints(&rig, &team)
+        .into_iter()
+        .filter_map(|taken| taken.snapshot)
+        .collect();
+    recorded.sort();
+    recorded.dedup();
+
+    assert!(recorded.len() >= 2, "{recorded:?}");
+    assert_eq!(held_references(&rig.repo), recorded);
+    std::fs::write(signals.join("finish"), "").unwrap();
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    assert_eq!(held_references(&rig.repo), Vec::<String>::new());
+}

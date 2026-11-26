@@ -654,6 +654,8 @@ impl Owner {
             (GateStep::SendBack(hold), _) => return Ok(Attempt::SentBack { tip, hold }),
         };
         let ready = Ready { git, tip, record };
+        // The checkpoints of the steps so far are in the history before the branch is pushed.
+        self.flush_checkpoints().await;
         match &publication.publish {
             Publish::Open { items } => {
                 self.open_pull_request(site, &publication.head_branch, items, &ready, now)
