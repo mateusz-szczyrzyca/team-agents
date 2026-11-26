@@ -15,6 +15,8 @@
 #   flood                 prints three lines of 6 MB that are not JSON, then ends like `done`
 #   questions PATH        writes a questions file to PATH, ends with STATUS: QUESTIONS
 #   questions-nofile      ends with STATUS: QUESTIONS without writing the file
+#   questions-hold PATH   writes a questions file to PATH, waits for .fake-continue to appear and ends with STATUS: QUESTIONS:
+#                         the human answers the file while the run still goes
 #   busy                  says something every 0.2 s until it is stopped: a run that is going and not hung
 #   hang                  prints its first line and then nothing; leaves a child behind (pid in .fake-child)
 #   hang-slow-stop        hangs; when it is told to stop it writes .fake-term and takes two seconds to end
@@ -236,6 +238,14 @@ case $scenario in
     result false 'I need answers.\nSTATUS: QUESTIONS'
     ;;
   questions-nofile) init; result false 'I need answers.\nSTATUS: QUESTIONS' ;;
+  questions-hold\ *)
+    init
+    path=${scenario#questions-hold }
+    mkdir -p "$(dirname "$path")"
+    printf '# Questions — fake\n\n## 1. Which store?\na) memory\nb) disk\n\n**Recommended:** a) — simpler (fake)\n\n**Verdict:**\n' > "$path"
+    hold_until .fake-continue
+    result false 'I need answers.\nSTATUS: QUESTIONS'
+    ;;
   busy)
     init
     while true; do
