@@ -100,6 +100,49 @@ async fn a_renewed_task_in_a_fix_pass_is_told_its_pull_request_and_which_finding
     );
 }
 
+// Rule: the third send-back raises the counter to its limit when it releases the last correction, before the human was
+// told: a lead whose last correction asks a question and is renewed is told to fix the branch, not that it waits.
+#[tokio::test]
+async fn a_task_renewed_after_its_last_correction_before_the_human_was_told_is_told_to_fix_the_branch() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work,fix-done,fix-done,fix-done,sleep"),
+            investigator("inv-r1", TWO_FINDINGS),
+            investigator("inv-r2", PARTLY),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    // The first run, the fix of pass 1, the fix of pass 2 that commits nothing, its three send-backs: the sixth run is the
+    // last correction, and it sleeps.
+    rig.wait_for("the last correction to start", || rig.runs(&task) >= 6)
+        .await;
+    rig.status_is(&task, TaskStatus::Waiting).await;
+    let runs_before = rig.runs(&task);
+
+    let renewed = ask(
+        &rig,
+        Command::Renew(ControlRequest {
+            target: Target::Task(task.clone()),
+        }),
+    )
+    .await;
+
+    assert!(matches!(&renewed, Ok(Reply::Applied { .. })), "{renewed:?}");
+    let briefing = rig.prompt(&task, runs_before + 1).await;
+    rig.stop().await.unwrap();
+    assert!(
+        briefing
+            .contains("Where the review stands: fix pass 2 of 5: fix the open findings below, in this pull request.\n"),
+        "{briefing}"
+    );
+    assert!(!briefing.contains("it waits for the human"), "{briefing}");
+}
+
 // Rule: the briefing is the briefing's, whoever starts the new session: a task in a fix pass whose agent is busy in another
 // team is handed over to a free agent, and the prompt of the new holder tells the pull request, the fix pass and the open
 // findings, as it does after `agent renew`.
