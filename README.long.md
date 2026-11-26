@@ -494,8 +494,9 @@ not in a run, and of the same tier as the agent it replaces — normal for norma
 (`[replacement] replacements = 1`; `0` takes none over; a takeover is not counted among the new sessions). Before the replacement's first run, the daemon moves the old agent's membership on the team bus to the new agent;
 the lead receives a message about the change. This also applies to a busy hand-over and to the coordinator.
 If the bus is unavailable, the daemon saves the pending change and retries it on a later pass; the replacement
-waits until the bus accepts it. A missing old member on an open team is treated as complete; a missing or closed
-team keeps the change pending. On upgrading, the daemon also queues hand-overs saved by earlier versions, so their
+waits until the bus accepts it. A missing old member on an open team is treated as complete only when the
+replacement is already a member; otherwise the change stays pending. A missing or closed team also keeps the
+change pending. On upgrading, the daemon also queues hand-overs saved by earlier versions, so their
 current holders join the bus before starting another run. Solo tasks make no bus membership change. With no such
 agent — also when no `agents` are listed — a member's task stops and the team's lead
 gets its work in a message on the bus, with a briefing of what the member's runs left (`[replacement] mode = "lead"`
