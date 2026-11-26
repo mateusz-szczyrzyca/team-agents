@@ -22,9 +22,12 @@ impl<'de> Deserialize<'de> for InvestigationKind {
     where
         D: Deserializer<'de>,
     {
-        let _unused = String::deserialize(deserializer)?;
-        // STUB: return Question for everything
-        Ok(Self::Question)
+        let s = String::deserialize(deserializer)?;
+        Ok(match s.as_str() {
+            "" => Self::Question,
+            "review" => Self::Review,
+            _ => Self::Unknown(s),
+        })
     }
 }
 

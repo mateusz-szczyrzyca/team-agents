@@ -1617,9 +1617,15 @@ impl AgentBus {
         queue_max: usize,
         slots: usize,
     ) -> Result<Option<Investigation>, AgentBusError> {
-        let _ = (queue_max, slots);
-        // STUB: always return None
-        Ok(None)
+        let command = BusCommand::InvNext;
+        let args = Args::new()
+            .flag("--queue-max", queue_max.to_string())
+            .flag("--inv-slots", slots.to_string());
+        let output = self.run(command, args, None).await?;
+        if output.trim().is_empty() {
+            return Ok(None);
+        }
+        decode_json(command, &output).map(Some)
     }
 
     /// Sets the status of an investigation request.
@@ -1631,9 +1637,22 @@ impl AgentBus {
         id: NonZeroU32,
         transition: &InvTransition,
     ) -> Result<(), AgentBusError> {
-        let _ = (id, transition);
-        // STUB: do nothing
-        Ok(())
+        let mut args = Args::new().flag("--id", id.to_string());
+        match transition {
+            InvTransition::Running { task } => {
+                args = args.flag("--status", "running").flag("--inv-task", task.as_str());
+            }
+            InvTransition::Done { summary } => {
+                args = args.flag("--status", "done").flag("--summary", summary);
+            }
+            InvTransition::Failed { reason } => {
+                args = args.flag("--status", "failed").flag("--summary", reason);
+            }
+            InvTransition::Requeued => {
+                args = args.flag("--status", "queued");
+            }
+        }
+        self.run(BusCommand::InvSet, args, None).await.map(drop)
     }
 
     /// Reads an investigation by ID.
@@ -1641,14 +1660,10 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] if no such investigation exists.
     pub async fn inv_get(&self, id: NonZeroU32) -> Result<Investigation, AgentBusError> {
-        let _ = id;
-        // STUB: return NotFound
-        Err(AgentBusError::Failed {
-            command: BusCommand::InvGet,
-            exit_code: 3,
-            class: FailureClass::NotFound,
-            message: "no such investigation".to_string(),
-        })
+        let command = BusCommand::InvGet;
+        let args = Args::new().flag("--id", id.to_string());
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
     }
 
     /// Lists open investigations (pending in queue or waiting room).
@@ -1656,8 +1671,23 @@ impl AgentBus {
     /// # Errors
     /// [`AgentBusError`].
     pub async fn inv_open(&self) -> Result<Vec<Investigation>, AgentBusError> {
-        // STUB: return empty
-        Ok(Vec::new())
+        let command = BusCommand::InvList;
+        let output = self.run(command, Args::new(), None).await?;
+        let mut ids = Vec::new();
+        for line in output.lines() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix('#') {
+                let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+                if let Ok(id) = digits.parse::<NonZeroU32>() {
+                    ids.push(id);
+                }
+            }
+        }
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            items.push(self.inv_get(id).await?);
+        }
+        Ok(items)
     }
 
     /// Runs `command` with `args` against this bus and returns what it printed. The bus is named with `--dir`, which
