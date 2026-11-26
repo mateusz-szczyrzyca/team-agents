@@ -2,6 +2,7 @@
 
 #[cfg(test)]
 mod tests;
+mod workers;
 use std::ffi::OsString;
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
@@ -778,6 +779,7 @@ impl Collection {
                 self.summary.history_tail = Some(text.clone());
                 self.enrich_last_run_details(&records, team);
                 self.enrich_run_tools(home, team).await?;
+                self.workers(home, &records, team.id()).await;
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",

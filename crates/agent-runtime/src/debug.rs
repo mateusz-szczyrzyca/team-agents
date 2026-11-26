@@ -122,8 +122,8 @@ pub enum DebugRuntimeError {
     History {
         /// The task that was looked up.
         id: String,
-        /// Why the history could not be read.
-        source: HistoryCollectionError,
+        /// Why the history could not be read; boxed to keep the error small.
+        source: Box<HistoryCollectionError>,
     },
     /// A worker performing blocking I/O failed.
     #[error("diagnostic I/O worker failed")]
@@ -176,7 +176,7 @@ pub async fn resolve_debug_target_with_history(
         .map_err(DebugRuntimeError::Worker)?
         .map_err(|source| DebugRuntimeError::History {
             id: task.to_string(),
-            source,
+            source: Box::new(source),
         })?;
     match team {
         Some(team) if state.team(&team).is_some() => Ok(team),
