@@ -345,9 +345,17 @@ impl Owner {
     }
 
     /// Records the end of the run of a pool worker, whose task is no member of a team, from how its job `outcome`
-    /// ended; a run that was interrupted or failed ended with no status and no exit code.
-    pub(super) fn record_pool_run_end(&self, run: &RunId, outcome: &Outcome) -> Result<(), OwnerError> {
-        let at = Timestamp::now(&self.parts.clock)?;
+    /// ended; a run that was interrupted or failed ended with no status and no exit code, and a failed one has no
+    /// final message of the agent (the engine's error is not what the agent said). A clock that was set back during
+    /// the run must not end it before it `started`, when the request is still known.
+    pub(super) fn record_pool_run_end(
+        &self,
+        run: &RunId,
+        started: Option<Timestamp>,
+        outcome: &Outcome,
+    ) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let at = started.map_or(now, |started| now.max(started));
         match outcome {
             Outcome::Verdict(verdict) => match verdict.as_ref() {
                 RunVerdict::Finished(finished) => {
@@ -357,8 +365,8 @@ impl Owner {
                     self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, None);
                 }
             },
-            Outcome::Failed(reason) => {
-                self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, Some(reason));
+            Outcome::Failed(_) => {
+                self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, None);
             }
         }
         Ok(())

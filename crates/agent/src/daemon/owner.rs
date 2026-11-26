@@ -1377,7 +1377,8 @@ impl Owner {
         let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
             if self.parts.state.find_task(&task).is_none() {
-                self.record_pool_run_end(&run_id, &outcome)?;
+                let started = self.serving.get(&task).map(|served| served.started);
+                self.record_pool_run_end(&run_id, started, &outcome)?;
             }
             owned = self.settle_owned_run(&task, &run_id, &outcome).await?;
         }

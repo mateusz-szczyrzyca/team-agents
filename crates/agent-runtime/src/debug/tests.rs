@@ -995,3 +995,52 @@ fn only_last_three_worker_runs() {
     let expected: Vec<String> = (3..=5).map(|number| worker_run(number).to_string()).collect();
     assert_eq!(kept, expected);
 }
+
+/// A worker that is a member of the team records `role = worker` in the history too; its files are collected once,
+/// with the team's members, and the workers list leaves it out.
+#[test]
+fn in_team_worker_is_collected_once() {
+    use crate::history::Store;
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    let (_dir, home, args) = fixture();
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let member: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+    std::fs::create_dir_all(home.task_dir(&member)).unwrap();
+    std::fs::write(home.task_dir(&member).join("context.json"), r#"{"context":1}"#).unwrap();
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[Record::Run(Box::new(RunStart {
+            run: worker_run(1),
+            team: fixture_team(),
+            task: member.clone(),
+            at: "2026-11-17T13:00:01Z".parse().unwrap(),
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Worker,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Worker,
+            rounds: vec![],
+            why: RunWhy::Request { asked_by: None },
+            prompt: "Do the request.".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/worker-tree".to_owned()).unwrap(),
+            branch: "worker-branch".parse().unwrap(),
+            session: None,
+        }))])
+        .unwrap();
+    let result = run_debug(&home, args);
+    let copied = result
+        .bundle_dir
+        .join("tasks")
+        .join(member.as_str())
+        .join("context.json");
+    assert_eq!(std::fs::read_to_string(copied).unwrap(), r#"{"context":1}"#);
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(!summary.contains("workers:\n"), "{summary}");
+}

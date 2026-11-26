@@ -1,12 +1,13 @@
 //! The pool workers of a team in a diagnostic bundle. A worker's task is no member of the team, so the history names
 //! it: every run of it has a row with the team of the requester and the role `worker`.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use agent_core::history::{Record, RunWhy, SequencedRecord};
 use agent_core::ids::{RunId, TaskId, TeamId};
 use agent_core::kinds::Role;
-use agent_core::state::{RunState, Timestamp};
+use agent_core::state::{Member, RunState, Team, Timestamp};
 
 use super::{Collection, escaped_path, run_detail_at};
 use crate::run::context::CONTEXT_FILE;
@@ -41,14 +42,19 @@ struct WorkerTask {
     runs: Vec<WorkerRun>,
 }
 
-/// The worker tasks of `team` that `records` name, in the order of their first run.
-fn worker_tasks(records: &[SequencedRecord], team: &TeamId) -> Vec<WorkerTask> {
+/// The worker tasks of `team` that `records` name, in the order of their first run. A task that is a member of the
+/// team in the state (`members`) is left out: the member's own files are collected with the team's members, and the
+/// bundle holds each file once.
+fn worker_tasks(records: &[SequencedRecord], team: &TeamId, members: &HashSet<&TaskId>) -> Vec<WorkerTask> {
     let mut tasks: Vec<WorkerTask> = Vec::new();
+    // Where a task and a run sit in `tasks` (and in its `runs`), so that each record is placed without a scan.
+    let mut task_index: HashMap<TaskId, usize> = HashMap::new();
+    let mut run_index: HashMap<RunId, (usize, usize)> = HashMap::new();
     for stored in records {
         let Record::Run(start) = &stored.record else {
             continue;
         };
-        if start.role != Role::Worker || start.team != *team {
+        if start.role != Role::Worker || start.team != *team || members.contains(&start.task) {
             continue;
         }
         let run = WorkerRun {
@@ -60,26 +66,27 @@ fn worker_tasks(records: &[SequencedRecord], team: &TeamId) -> Vec<WorkerTask> {
             },
             state: RunState::Running,
         };
-        match tasks.iter_mut().find(|worker| worker.task == start.task) {
-            Some(worker) => {
-                worker.agent.clone_from(&start.agent.name);
-                worker.runs.push(run);
-            }
-            None => tasks.push(WorkerTask {
+        let position = *task_index.entry(start.task.clone()).or_insert_with(|| {
+            tasks.push(WorkerTask {
                 task: start.task.clone(),
                 agent: start.agent.name.clone(),
-                runs: vec![run],
-            }),
+                runs: Vec::new(),
+            });
+            tasks.len().saturating_sub(1)
+        });
+        if let Some(worker) = tasks.get_mut(position) {
+            worker.agent.clone_from(&start.agent.name);
+            run_index.insert(run.run.clone(), (position, worker.runs.len()));
+            worker.runs.push(run);
         }
     }
     for stored in records {
         let Record::RunEnd(end) = &stored.record else {
             continue;
         };
-        let ended = tasks
-            .iter_mut()
-            .flat_map(|worker| worker.runs.iter_mut())
-            .find(|run| run.run == end.run);
+        let ended = run_index
+            .get(&end.run)
+            .and_then(|&(task, run)| tasks.get_mut(task).and_then(|worker| worker.runs.get_mut(run)));
         if let Some(run) = ended {
             run.state = RunState::Ended {
                 at: end.at,
@@ -111,9 +118,17 @@ fn workers_text(tasks: &[WorkerTask], zone: agent_core::local_time::Zone) -> Str
 }
 
 impl Collection {
-    /// Adds the files of the worker tasks of `team` that `records` name, and lists them in the summary.
-    pub(super) async fn workers(&mut self, home: &Home, records: &[SequencedRecord], team: &TeamId) {
-        let tasks = worker_tasks(records, team);
+    /// Adds the files of the worker tasks of `team` that `records` name and that are no member of it, and lists them
+    /// in the summary.
+    pub(super) async fn workers(&mut self, home: &Home, records: &[SequencedRecord], team: &Team) {
+        let members: HashSet<&TaskId> = team
+            .crew()
+            .roster()
+            .into_iter()
+            .map(|(_, member)| member.task())
+            .chain(team.reviewers().iter().map(Member::task))
+            .collect();
+        let tasks = worker_tasks(records, team.id(), &members);
         if tasks.is_empty() {
             return;
         }

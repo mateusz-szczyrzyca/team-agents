@@ -779,7 +779,7 @@ impl Collection {
                 self.summary.history_tail = Some(text.clone());
                 self.enrich_last_run_details(&records, team);
                 self.enrich_run_tools(home, team).await?;
-                self.workers(home, &records, team.id()).await;
+                self.workers(home, &records, team).await;
                 self.add("history.txt", text.into_bytes());
                 self.add(
                     "history.jsonl",
