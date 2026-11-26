@@ -1567,21 +1567,42 @@ impl Owner {
                     .and_then(|values| values.with("items", items_of(publication).join(", ")))
                     .and_then(|values| values.with("reason", &reason));
                 let items = items_of(publication);
-                let rounds = self
+                let round_ids = self
                     .parts
                     .state
                     .team(team)
                     .into_iter()
                     .flat_map(agent_core::state::Team::rounds)
                     .filter(|round| round.item().is_some_and(|item| items.contains(&item.to_string())))
-                    .map(|round| round.id().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                    .map(|round| round.id().clone())
+                    .collect::<Vec<_>>();
+                let rounds = round_ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
                 let values = values
                     .and_then(|v| v.with("rounds", rounds))
                     .and_then(|v| v.with("task", lead.task.as_str()));
                 self.tell_human(pulls, AutopilotNotice::HandoverHeld, values, lead, now);
-                self.queue_for_task(&lead.task, CheckpointCause::WaitsForHuman);
+                // Every round of a joint publication waits for the human, not only the lead's newest one.
+                match Timestamp::now(&self.parts.clock) {
+                    Ok(at) => {
+                        for round in &round_ids {
+                            self.queue_checkpoint(
+                                at,
+                                team,
+                                round,
+                                CheckpointCause::WaitsForHuman,
+                                Some(&lead.task),
+                                None,
+                            );
+                        }
+                    }
+                    Err(error) => tracing::warn!(
+                        event = LogEvent::CheckpointFailed.as_str(),
+                        team = %team,
+                        cause = %CheckpointCause::WaitsForHuman,
+                        error = %error_chain(&error),
+                        "the clock gives no time for a checkpoint: it is not taken, the round goes on"
+                    ),
+                }
             }
             return Ok(());
         }

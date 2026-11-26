@@ -1387,6 +1387,9 @@ impl Owner {
         self.record_run_start(task, &plan, &rounds, reason, now);
         // The checkpoint of the opening is taken from the worktree as it is before the engine starts the agent in it.
         self.checkpoint_round_opened(task).await;
+        // What the history queued before the run started (the start of a fix pass, an answer to a finding) is taken and
+        // durable before the agent can change the worktree.
+        self.flush_checkpoints().await;
         let rounds_field = rounds.iter().map(RoundId::as_str).collect::<Vec<_>>().join(",");
         let run_span = tracing::error_span!(
             "run",
