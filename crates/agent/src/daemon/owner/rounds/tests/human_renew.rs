@@ -76,6 +76,7 @@ async fn a_task_that_waits_for_the_human_is_renewed_and_its_next_run_reads_what_
     let next = runs_before + 1;
     let briefing = rig.prompt(&task, next).await;
     let args = std::fs::read_to_string(rig.worktree(&task).join(format!(".fake-args-{next}"))).unwrap();
+    let state = rig.state();
     rig.stop().await.unwrap();
     assert!(briefing.starts_with(BRIEFING), "{briefing}");
     assert!(
@@ -84,7 +85,6 @@ async fn a_task_that_waits_for_the_human_is_renewed_and_its_next_run_reads_what_
     );
     assert!(briefing.contains(SAID), "{briefing}");
     assert!(!args.contains("--resume"), "the old session was resumed: {args}");
-    let state = rig.state();
     let member = state.find_task(&task).unwrap().member;
     assert_eq!(member.renewals().map(Renewals::reason), Some(Trouble::Human));
     assert_eq!(member.renewals().map(Renewals::used), Some(0), "not counted");
