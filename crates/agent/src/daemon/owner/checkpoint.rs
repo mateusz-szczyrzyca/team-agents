@@ -136,6 +136,9 @@ pub(super) struct Step {
     pull_request: Option<PrNumber>,
     /// The round the record closes, when it closes one.
     closed: Option<RoundId>,
+    /// Whether the snapshot references of the round's checkpoints are removed after the record: the pull request was
+    /// merged or closed, or the round ended with no pull request left for the human.
+    prunes: bool,
 }
 
 impl Step {
@@ -149,6 +152,7 @@ impl Step {
             } else {
                 None
             },
+            prunes: false,
         }
     }
 }

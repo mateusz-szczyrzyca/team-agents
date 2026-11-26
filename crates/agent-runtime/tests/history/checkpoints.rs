@@ -54,3 +54,44 @@ fn a_version_32_history_keeps_its_rows_and_accepts_a_checkpoint_and_its_failure(
     );
     assert_eq!(logs.len(), 5);
 }
+
+#[test]
+fn a_checkpoint_of_an_upgraded_history_is_read_with_its_pull_request_and_draft() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("history.db");
+    let raw = Connection::open(&path).unwrap();
+    raw.execute_batch(include_str!("../fixtures/history-before-checkpoints.sql"))
+        .unwrap();
+    drop(raw);
+    drop(HistoryDb::open(&path, roomy()).unwrap());
+    let round = "round-20261126-100000-r0r0";
+    let payload = format!(
+        r#"{{"event":"checkpoint","round":"{round}","task":"task-20261126-100000-t0t0","job":"item","tier":"normal","cause":"pull_opened","pull_request":7,"head":"0123456789abcdef0123456789abcdef01234567","draft":true,"phase":"in_progress","snapshot":"refs/agents/snapshots/{round}/task-20261126-100000-t0t0/c1"}}"#
+    );
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "INSERT INTO history_records (kind, key, at, team, payload, cut) VALUES ('checkpoint', NULL, '2026-11-26T09:01:00Z', 'team-20261126-100000-t0t0', ?1, '')",
+        [&payload],
+    )
+    .unwrap();
+    let sequence = raw.last_insert_rowid();
+    raw.execute(
+        "INSERT INTO history_record_rounds (sequence, position, round) VALUES (?1, 1, ?2)",
+        rusqlite::params![sequence, round],
+    )
+    .unwrap();
+    drop(raw);
+
+    let kept = Reader::open(&path)
+        .unwrap()
+        .checkpoints_of_round(&round.parse().unwrap())
+        .unwrap();
+
+    assert_eq!(kept.len(), 1);
+    assert_eq!(kept[0].pull_request.map(|number| number.get().get()), Some(7));
+    assert!(kept[0].draft);
+    assert_eq!(
+        kept[0].snapshot.as_deref(),
+        Some("refs/agents/snapshots/round-20261126-100000-r0r0/task-20261126-100000-t0t0/c1")
+    );
+}

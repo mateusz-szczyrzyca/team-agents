@@ -243,4 +243,33 @@ mod checkpoint_process {
         std::fs::write(signals.join("release"), "").unwrap();
         world.end(Signal::TERM);
     }
+
+    #[test]
+    fn a_daemon_that_starts_again_with_the_worktree_gone_records_a_checkpoint_with_no_snapshot() {
+        let mut world = World::new();
+        world.start();
+        let output = world.agent(&["run", "claude-1", "Fix the typo in the README."]);
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let signals = world.signals.clone();
+        eventually("the commit of the run", || signals.join("first").exists());
+        let worktree = std::fs::read_dir(world.home.join("worktrees/example"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        world.end(Signal::KILL);
+        std::fs::remove_dir_all(&worktree).unwrap();
+
+        world.start();
+
+        eventually("a daemon_started checkpoint with no head", || {
+            world
+                .checkpoints()
+                .iter()
+                .any(|(cause, kept)| *cause == CheckpointCause::DaemonStarted && kept.is_none())
+        });
+        std::fs::write(signals.join("release"), "").unwrap();
+        world.end(Signal::TERM);
+    }
 }

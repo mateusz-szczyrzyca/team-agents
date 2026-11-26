@@ -423,3 +423,86 @@ async fn a_snapshot_that_fails_is_recorded_without_a_reference_and_logged_and_th
     record_checkpoint_failed(&mut observed).await;
     assert_eq!(observed, BTreeSet::from([LogEvent::CheckpointFailed]));
 }
+
+/// What a checkpoint says of its holder and of the pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Held {
+    /// The step it follows.
+    cause: CheckpointCause,
+    /// The holder whose worktree it keeps.
+    task: agent_core::ids::TaskId,
+    /// The number of the pull request, when it had one.
+    pull_request: Option<u32>,
+    /// Whether the pull request was a draft.
+    draft: bool,
+}
+
+/// The holder and the pull request of every checkpoint of `team`, oldest first.
+fn holders(rig: &Rig, team: &TeamId) -> Vec<Held> {
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    let mut held = Vec::new();
+    for stored in reader.team_records(team).unwrap() {
+        if let Record::Event(event) = stored.record
+            && let HistoryEvent::Checkpoint {
+                cause,
+                task,
+                pull_request,
+                draft,
+                ..
+            } = event.event
+        {
+            held.push(Held {
+                cause,
+                task,
+                pull_request: pull_request.map(|number| number.get().get()),
+                draft,
+            });
+        }
+    }
+    held
+}
+
+#[tokio::test]
+async fn only_the_runs_of_the_lead_end_in_a_checkpoint_and_the_pull_request_and_its_draft_are_kept_from_its_opening() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+
+    let held = holders(&rig, &team);
+
+    let ended: Vec<_> = held
+        .iter()
+        .filter(|held| held.cause == CheckpointCause::RunEnded)
+        .collect();
+    assert!(!ended.is_empty(), "{held:#?}");
+    // The reviewers' runs end too, and leave nothing: one checkpoint for each run of the lead.
+    assert_eq!(ended.len(), usize::try_from(rig.runs(&tasks[0])).unwrap(), "{held:#?}");
+    assert!(held.iter().all(|held| held.task == tasks[0]), "{held:#?}");
+    let number = rig.github.pulls().remove(0).number;
+    let opened = held
+        .iter()
+        .position(|held| held.cause == CheckpointCause::PullOpened)
+        .unwrap();
+    let ready = held
+        .iter()
+        .position(|held| held.cause == CheckpointCause::PullReady)
+        .unwrap();
+    for held in &held[opened..ready] {
+        assert_eq!((held.pull_request, held.draft), (Some(number), true), "{held:#?}");
+    }
+    for held in &held[ready..] {
+        assert_eq!((held.pull_request, held.draft), (Some(number), false), "{held:#?}");
+    }
+}

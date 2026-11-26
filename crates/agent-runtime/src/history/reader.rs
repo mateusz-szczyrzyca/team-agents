@@ -61,6 +61,10 @@ pub struct RoundCheckpoint {
     pub head: Option<agent_core::state::CommitId>,
     /// The reference of the snapshot; `None` when it could not be taken.
     pub snapshot: Option<String>,
+    /// The pull request of the round at the checkpoint, when there was one.
+    pub pull_request: Option<agent_core::state::PrNumber>,
+    /// Whether that pull request was a draft.
+    pub draft: bool,
 }
 
 /// The newest runs of a task and whether older ones were left out.
@@ -674,7 +678,13 @@ impl Reader {
                     task, head, snapshot, ..
                 } = event.event
             {
-                found.push(RoundCheckpoint { task, head, snapshot });
+                found.push(RoundCheckpoint {
+                    task,
+                    head,
+                    snapshot,
+                    pull_request: None,
+                    draft: false,
+                });
             }
         }
         Ok(found)
