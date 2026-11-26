@@ -624,7 +624,7 @@ async fn the_lead_that_gets_a_members_work_is_briefed_on_it() {
     );
 }
 
-// Rule: a member taken over is woken for each new message to the name its task has on the bus, as before the takeover;
+// Rule: a member taken over is woken for each new message to its replacement name on the bus;
 // the wake-ups of one message do not hold back the next.
 #[tokio::test]
 async fn a_member_taken_over_is_woken_for_each_new_message_to_its_name_on_the_bus() {
@@ -665,7 +665,7 @@ async fn a_member_taken_over_is_woken_for_each_new_message_to_its_name_on_the_bu
         bus.send(
             &"inv-lead".parse().unwrap(),
             &agent_runtime::agentbus::Recipient::Member {
-                agent: "claude-1".parse().unwrap(),
+                agent: "claude-3".parse().unwrap(),
                 team: team.clone(),
             },
             &agent_runtime::agentbus::Outgoing::Chat {
