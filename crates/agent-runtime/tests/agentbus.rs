@@ -8,7 +8,7 @@ mod scopes;
 mod agentbus_commands {
     use std::collections::BTreeMap;
     use std::fs::{File, create_dir_all, read_to_string, write};
-    use std::num::{NonZeroU32, NonZeroU64};
+    use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
     use std::path::{Path, PathBuf};
     use std::process::Stdio;
     use std::str::FromStr;
@@ -1347,7 +1347,14 @@ mod agentbus_commands {
     #[tokio::test]
     async fn inv_next_on_an_empty_queue_returns_none() {
         let fixture = fixture();
-        let next = fixture.bus.inv_next(3, 1).await.unwrap();
+        let next = fixture
+            .bus
+            .inv_next(
+                NonZeroUsize::new(3).unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .await
+            .unwrap();
         assert!(next.is_none());
     }
 
@@ -1357,14 +1364,29 @@ mod agentbus_commands {
         let agent_name = agent("gemini-1");
         let task_id = task("aaa1");
         let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
-        let next = fixture.bus.inv_next(3, 1).await.unwrap().expect("a request");
+        let next = fixture
+            .bus
+            .inv_next(
+                NonZeroUsize::new(3).unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .await
+            .unwrap()
+            .expect("a request");
         assert_eq!(next.id, id);
         assert_eq!(next.from_agent, agent_name);
         assert_eq!(next.from_task, task_id);
         assert_eq!(next.question, "How to fix this?");
         assert_eq!(next.kind, InvestigationKind::Question);
 
-        let second = fixture.bus.inv_next(3, 1).await.unwrap();
+        let second = fixture
+            .bus
+            .inv_next(
+                NonZeroUsize::new(3).unwrap(),
+                NonZeroUsize::new(1).unwrap(),
+            )
+            .await
+            .unwrap();
         assert!(second.is_none());
     }
 

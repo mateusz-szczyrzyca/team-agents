@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
@@ -1612,7 +1612,7 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`].
-    pub async fn inv_next(&self, queue_max: usize, slots: usize) -> Result<Option<Investigation>, AgentBusError> {
+    pub async fn inv_next(&self, queue_max: NonZeroUsize, slots: NonZeroUsize) -> Result<Option<Investigation>, AgentBusError> {
         let command = BusCommand::InvNext;
         let args = Args::new()
             .flag("--queue-max", queue_max.to_string())
@@ -1621,7 +1621,24 @@ impl AgentBus {
         if output.trim().is_empty() {
             return Ok(None);
         }
-        decode_json(command, &output).map(Some)
+        // Decode the raw value first so the id is recoverable if the typed decode fails.
+        let raw: serde_json::Value =
+            serde_json::from_str(&output).map_err(|source| AgentBusError::Decode { command, source })?;
+        let id = raw
+            .get("id")
+            .and_then(|v| v.as_u64())
+            .and_then(|n| NonZeroU32::new(n as u32));
+        serde_json::from_value(raw).map(Some).map_err(|source| {
+            // `inv-next` already marked the request `starting`; return the id so the caller can
+            // requeue or fail the request.
+            match id {
+                Some(id) => AgentBusError::Unexpected {
+                    command,
+                    output: format!("could not decode request #{id}"),
+                },
+                None => AgentBusError::Decode { command, source },
+            }
+        })
     }
 
     /// Sets the status of an investigation request.
@@ -1670,9 +1687,10 @@ impl AgentBus {
             let trimmed = line.trim_start();
             if let Some(rest) = trimmed.strip_prefix('#') {
                 let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
-                if let Ok(id) = digits.parse::<NonZeroU32>() {
-                    ids.push(id);
-                }
+                let id = digits
+                    .parse::<NonZeroU32>()
+                    .map_err(|_| unexpected(BusCommand::InvList, &output))?;
+                ids.push(id);
             }
         }
         let mut items = Vec::with_capacity(ids.len());
