@@ -140,7 +140,7 @@ fn pull_request_of(pr: &PullRequest, zone: &Zone) -> PullRequestFacts {
 /// correction, so the counter alone cannot tell the lead that still has a run to fix the branch from the one the human
 /// was told about.
 pub(super) fn waits_for_human(sent_back_to_its_limit: bool, why: Option<&Why>) -> bool {
-    sent_back_to_its_limit
+    sent_back_to_its_limit && !matches!(why, Some(Why::Gate(_)))
 }
 
 impl Owner {

@@ -190,7 +190,11 @@ fn a_lead_sent_back_to_its_limit_whose_run_starts_for_another_reason_waits_for_t
 
 #[test]
 fn a_lead_not_sent_back_to_its_limit_never_waits_for_the_human() {
-    for why in [None, Some(Why::Woken), Some(Why::Gate("The gate has not passed.".to_owned()))] {
+    for why in [
+        None,
+        Some(Why::Woken),
+        Some(Why::Gate("The gate has not passed.".to_owned())),
+    ] {
         assert!(!waits_for_human(false, why.as_ref()), "{why:?}");
     }
 }
