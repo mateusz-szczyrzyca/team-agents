@@ -2091,10 +2091,10 @@ impl Owner {
                 );
             }
             tracing::info!(
+                event = LogEvent::InvestigationAnswered.as_str(),
                 id = %inv.id,
                 investigator = %located.agent,
                 chars = answer.chars().count(),
-                "investigation answered"
             );
         } else if let Err(error) = self.parts.bus.inv_set(inv.id, &InvTransition::Requeued).await {
             tracing::warn!(

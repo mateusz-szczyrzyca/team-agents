@@ -9,7 +9,7 @@ use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::state::{Member, Participant, Timestamp};
 use agent_core::status::TaskStatus;
-use agent_runtime::agentbus::{InvTransition, Investigation};
+use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind};
 use agent_runtime::git::Revision;
 
 use super::Owner;
@@ -48,6 +48,29 @@ impl Owner {
                     break;
                 }
             };
+
+            if matches!(req.kind, InvestigationKind::Unknown(_)) {
+                tracing::warn!(
+                    event = LogEvent::InvestigationKindUnknown.as_str(),
+                    id = %req.id,
+                    kind = ?req.kind,
+                );
+                let reason = format!("unknown investigation kind: {:?}", req.kind);
+                if let Err(error) = self
+                    .parts
+                    .bus
+                    .inv_set(req.id, &InvTransition::Failed { reason })
+                    .await
+                {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        %team_id,
+                        error = %error,
+                        "cannot mark investigation failed on bus"
+                    );
+                }
+                continue;
+            }
 
             if !self.is_task_live_in_team(team_id, &req.from_task) {
                 if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Requeued).await {
@@ -188,11 +211,11 @@ impl Owner {
         self.parts.state = next;
 
         tracing::info!(
+            event = LogEvent::InvestigationStarted.as_str(),
             id = %req.id,
             investigator = %chosen,
             task = %task,
             from_task = %req.from_task,
-            "investigation started"
         );
         self.look_at(team_id);
         Ok(())
