@@ -758,7 +758,11 @@ fn write_worker_history(home: &Home, team: &TeamId, runs: u32, last_ended: bool)
     use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunEndRecord, RunStart, RunWhy, TeamStart};
     use agent_core::kinds::{CliKind, Role, Tier};
     // The summary leaves out the history of a home whose configuration cannot be read.
-    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
     let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
     let at = |second: u32| -> Timestamp { format!("2026-11-17T13:00:{second:02}Z").parse().unwrap() };
     let mut records = vec![Record::Team(Box::new(TeamStart {
@@ -896,15 +900,16 @@ fn team_bundle_has_worker_files() {
         );
     }
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
-    let line = summary
-        .lines()
-        .find(|line| line.contains(task.as_str()))
-        .unwrap_or_else(|| panic!("the summary names the worker task: {summary}"));
     assert!(summary.contains("workers:"), "{summary}");
-    assert!(line.contains("opencode-1"), "{line}");
-    assert!(line.contains(ASKING_RUN), "{line}");
-    assert!(line.contains(worker_run(2).as_str()), "{line}");
-    assert!(line.contains("running"), "{line}");
+    // The history's own lines tell the same runs, so the line of the workers list is the one that has all of its facts.
+    let listed = summary.lines().any(|line| {
+        line.contains(task.as_str())
+            && line.contains("opencode-1")
+            && line.contains(ASKING_RUN)
+            && line.contains(worker_run(2).as_str())
+            && line.contains("running")
+    });
+    assert!(listed, "{summary}");
 }
 
 #[test]
@@ -914,12 +919,10 @@ fn ended_worker_run_is_told_in_the_summary() {
     write_worker_files(&home, 1, "{}\n");
     let result = run_debug(&home, args);
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
-    let line = summary
-        .lines()
-        .find(|line| line.contains("opencode-1") && line.contains(ASKING_RUN))
-        .unwrap_or_else(|| panic!("the summary lists the worker: {summary}"));
-    assert!(line.contains("DONE"), "{line}");
-    assert!(!line.contains("running"), "{line}");
+    let listed = summary.lines().any(|line| {
+        line.contains("opencode-1") && line.contains(ASKING_RUN) && line.contains("DONE") && !line.contains("running")
+    });
+    assert!(listed, "{summary}");
 }
 
 #[test]
