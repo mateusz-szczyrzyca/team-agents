@@ -1658,7 +1658,7 @@ impl AgentBus {
         decode_json(command, &output)
     }
 
-    /// Lists open investigations (pending in queue or waiting room).
+    /// Lists open investigations (pending or in progress).
     ///
     /// # Errors
     /// [`AgentBusError`].

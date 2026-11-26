@@ -4,7 +4,7 @@ use std::num::NonZeroU32;
 use std::path::PathBuf;
 
 use agent_core::ids::{AgentName, BranchName, TaskId};
-use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde::{Deserialize, Deserializer};
 
 /// The kind of an investigation request.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -32,21 +32,8 @@ impl<'de> Deserialize<'de> for InvestigationKind {
     }
 }
 
-impl Serialize for InvestigationKind {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        match self {
-            Self::Question => serializer.serialize_str(""),
-            Self::Review => serializer.serialize_str("review"),
-            Self::Unknown(s) => serializer.serialize_str(s),
-        }
-    }
-}
-
 /// An investigation request from the bus.
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct Investigation {
     /// The sequential number of the request on the bus.
     pub id: NonZeroU32,
