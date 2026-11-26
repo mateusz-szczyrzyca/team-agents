@@ -16,7 +16,7 @@ use agent_core::protocol::{EventKind, Failure, Reply};
 use agent_core::state::{CommitId, Completion, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
-use agent_runtime::git::{Git, GitError, Revision};
+use agent_runtime::git::{Git, Revision};
 use agent_runtime::github::{NewPullRequest, PullRequestUpdate, Readiness, RemotePullRequest, RepoSlug};
 use agent_runtime::history::log_decision;
 use agent_runtime::process::error_chain;
