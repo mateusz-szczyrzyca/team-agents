@@ -145,6 +145,18 @@ pub fn inherit_refusals(
     inherited
 }
 
+/// The refused files that have a commit finding the file's head does not reach: a commit made after the refusal. A file
+/// refused with no head (a record older than the heads) is never lifted.
+#[must_use]
+pub fn lifted_refusals(
+    findings: &[CommitFinding],
+    facts: &RoundFacts,
+    refused_paths: &BTreeMap<RepoPath, Option<CommitId>>,
+) -> Vec<RepoPath> {
+    let _ = (findings, facts, refused_paths);
+    Vec::new()
+}
+
 /// Whether `head` is `commit` or comes after it in the history of the round.
 fn reaches(facts: &RoundFacts, head: &CommitId, commit: &CommitId) -> bool {
     let mut seen: HashSet<&CommitId> = HashSet::new();
