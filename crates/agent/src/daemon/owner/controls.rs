@@ -375,9 +375,7 @@ impl Owner {
         }
         let now = Timestamp::now(&self.parts.clock)?;
         if !self.parts.state.begin_human_session(&task, now)? {
-            return Ok(Err(renew_conflict(format!(
-                "{task} has no run yet: there is no session to renew"
-            ))));
+            return Ok(Err(renew_conflict(no_session_to_renew(&task))));
         }
         self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
@@ -423,7 +421,7 @@ impl Owner {
                     Some(format!("{task} is a {role}: only a lead or a member can be renewed"))
                 }
                 Role::Solo | Role::Coordinator | Role::Member if found.member.runs().is_empty() => {
-                    Some(format!("{task} has no run yet: there is no session to renew"))
+                    Some(no_session_to_renew(task))
                 }
                 Role::Solo | Role::Coordinator | Role::Member => None,
             },
@@ -591,6 +589,12 @@ fn not_a_task(what: &str) -> Failure {
         kind: FailureKind::Invalid,
         message: format!("{what}: `agent renew` takes one task (`task-…`)"),
     }
+}
+
+/// The words of the refusal of a renewal of a task that never ran: the one source for the check before the session
+/// begins and for the case where beginning it finds no run.
+fn no_session_to_renew(task: &TaskId) -> String {
+    format!("{task} has no run yet: there is no session to renew")
 }
 
 /// The refusal of a renewal: the task is in a state that cannot be renewed.
