@@ -889,6 +889,8 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::WorktreeSwitched,
             LogEvent::InvestigationStarted,
             LogEvent::InvestigationAnswered,
+            LogEvent::InvestigationRequeued,
+            LogEvent::InvestigationFailed,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
