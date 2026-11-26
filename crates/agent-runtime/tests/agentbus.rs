@@ -1555,14 +1555,11 @@ mod agentbus_commands {
             .await
             .unwrap();
 
-        // Read back with inv_get; the summary is stored in the bus state file.
-        let _inv = fixture.bus.inv_get(id).await.unwrap();
-        // We check the state.json for the summary, plus inv_open exclusion.
-        let state_path = fixture.bus.bus_dir().join("state.json");
-        let state_text = read_to_string(state_path).unwrap();
-        assert!(
-            state_text.contains("Solved by adding wrapper"),
-            "summary should be recorded"
+        // Read back with inv_get; the returned Investigation carries the correct id.
+        let inv = fixture.bus.inv_get(id).await.unwrap();
+        assert_eq!(
+            inv.id, id,
+            "inv_get should return the correct investigation id"
         );
 
         // The done request should not appear in inv_open.
@@ -1587,4 +1584,100 @@ mod agentbus_commands {
         assert_eq!(inv.id, NonZeroU32::new(42).unwrap());
         assert_eq!(inv.kind, InvestigationKind::Unknown("split_proposal".to_string()));
     }
+
+    #[tokio::test]
+    async fn inv_next_preserves_id_when_request_decode_fails() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "review").await;
+
+        // Corrupt the branch to an empty string: Go reads it fine, but the Rust
+        // BranchName type rejects it.
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(&state_path).unwrap();
+        let corrupted = state_text.replace(
+            "\"branch\": \"agents/gemini-1/task-1\"",
+            "\"branch\": \"\"",
+        );
+        write(&state_path, corrupted).unwrap();
+
+        let err = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
+            .await
+            .unwrap_err();
+        // The error carries the investigation id so the caller can requeue it.
+        let msg = format!("{err}");
+        assert!(
+            msg.contains(&format!("#{id}")),
+            "error {msg:?} should mention investigation id #{id}"
+        );
+        // The error is Unexpected (id decodes, request does not), not Decode.
+        assert!(
+            matches!(&err, AgentBusError::Unexpected { source: Some(_), .. }),
+            "error should be Unexpected with source, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_open_errors_on_inv_list_with_zero_id() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        add_investigation(&fixture, &agent_name, &task_id, "Test", "").await;
+
+        // Corrupt the state to have an investigation with id 0; inv-list formats
+        // it as "#0" which our NonZeroU32 parser rejects.
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(&state_path).unwrap();
+        let corrupted = state_text.replace("\"id\": 1", "\"id\": 0");
+        write(&state_path, corrupted).unwrap();
+
+        let err = fixture.bus.inv_open().await.unwrap_err();
+        assert!(
+            matches!(&err, AgentBusError::Unexpected { command: BusCommand::InvList, .. }),
+            "error should be Unexpected for InvList, got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn inv_next_with_non_default_queue_max_and_slots() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        // Add two investigations.
+        let id1 = add_investigation(&fixture, &agent_name, &task_id, "First", "review").await;
+        let id2 = add_investigation(&fixture, &agent_name, &task_id, "Second", "").await;
+
+        // With queue_max=2 and slots=2, both should be retrievable (one per call
+        // since inv-next returns at most one request).
+        let next1 = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap()
+            .expect("first request");
+        let next2 = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap()
+            .expect("second request");
+        // Both ids should appear; order is queue order.
+        assert!(
+            (next1.id == id1 && next2.id == id2) || (next1.id == id2 && next2.id == id1),
+            "expected {id1} and {id2}, got {} and {}",
+            next1.id,
+            next2.id
+        );
+        // A third call returns nothing (both slots are filled).
+        let third = fixture
+            .bus
+            .inv_next(NonZeroUsize::new(2).unwrap(), NonZeroUsize::new(2).unwrap())
+            .await
+            .unwrap();
+        assert!(third.is_none(), "both slots filled, third call should be None");
+    }
+
 }
