@@ -121,8 +121,7 @@ pub fn occupied_investigators(state: &crate::state::State) -> BTreeSet<Investiga
                             member.status(),
                             crate::status::TaskStatus::Queued | crate::status::TaskStatus::Running
                         )
-                        || (member.status() == crate::status::TaskStatus::Waiting
-                            && has_pending_review(team, member))
+                        || (member.status() == crate::status::TaskStatus::Waiting && has_pending_review(team, member))
                 })
                 .filter_map(investigator_of)
                 .cloned()
@@ -147,8 +146,7 @@ pub fn has_pending_review(team: &crate::state::Team, member: &crate::state::Memb
     }
     team.items().iter().any(|item| match item.phase() {
         crate::state::ItemPhase::InReview { reviews, .. } => reviews.iter().any(|review| {
-            review.task == *member.task()
-                && matches!(review.outcome, crate::state::ReviewOutcome::Pending)
+            review.task == *member.task() && matches!(review.outcome, crate::state::ReviewOutcome::Pending)
         }),
         crate::state::ItemPhase::Pending
         | crate::state::ItemPhase::InProgress { .. }
@@ -186,10 +184,7 @@ fn has_paused_task(state: &crate::state::State, name: &InvestigatorName) -> bool
             .into_iter()
             .map(|(_, member)| member)
             .chain(team.reviewers().iter())
-            .any(|member| {
-                investigator_of(member) == Some(name)
-                    && member.status() == crate::status::TaskStatus::Paused
-            })
+            .any(|member| investigator_of(member) == Some(name) && member.status() == crate::status::TaskStatus::Paused)
     })
 }
 

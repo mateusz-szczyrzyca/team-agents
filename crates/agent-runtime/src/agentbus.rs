@@ -36,7 +36,7 @@ mod investigations;
 mod latest;
 mod unread;
 
-pub use investigations::{Investigation, InvestigationKind, InvTransition};
+pub use investigations::{InvTransition, Investigation, InvestigationKind};
 pub use latest::{LatestMessageError, MessageNote};
 pub use unread::{
     Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, Said, UnreadMessage, UnreadMessages, UnreadMessagesError,
@@ -1612,11 +1612,7 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`].
-    pub async fn inv_next(
-        &self,
-        queue_max: usize,
-        slots: usize,
-    ) -> Result<Option<Investigation>, AgentBusError> {
+    pub async fn inv_next(&self, queue_max: usize, slots: usize) -> Result<Option<Investigation>, AgentBusError> {
         let command = BusCommand::InvNext;
         let args = Args::new()
             .flag("--queue-max", queue_max.to_string())
@@ -1632,11 +1628,7 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`]; [`FailureClass::NotFound`] for an investigation that does not exist.
-    pub async fn inv_set(
-        &self,
-        id: NonZeroU32,
-        transition: &InvTransition,
-    ) -> Result<(), AgentBusError> {
+    pub async fn inv_set(&self, id: NonZeroU32, transition: &InvTransition) -> Result<(), AgentBusError> {
         let mut args = Args::new().flag("--id", id.to_string());
         match transition {
             InvTransition::Running { task } => {

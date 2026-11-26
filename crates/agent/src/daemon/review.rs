@@ -155,9 +155,7 @@ fn in_crew(team: &Team, name: &InvestigatorName) -> bool {
         .any(|(_, member)| investigator_of(member).is_some_and(|crewing| crewing == name))
 }
 
-pub(super) use agent_core::decide::investigator::{
-    investigator_of, occupied_investigators, pending_opinion,
-};
+pub(super) use agent_core::decide::investigator::{investigator_of, occupied_investigators, pending_opinion};
 
 /// Where the investigator `name` reviews for `team`: its review task of the team when it waits, a new one when it has
 /// none, nowhere when its task of the team is over (the team has one task for an investigator, and it does not end its
@@ -181,8 +179,6 @@ fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
         },
     }
 }
-
-
 
 /// The investigators of `config` that their provider refused at `now`: they review nothing until their return.
 pub(super) fn refused_investigators(state: &State, config: &Config, now: Timestamp) -> HashSet<InvestigatorName> {
@@ -231,8 +227,6 @@ pub(super) fn select_reviewers(
     Some(selected)
 }
 
-
-
 #[cfg(test)]
 mod tests;
 
@@ -254,5 +248,3 @@ pub(super) fn independent_first_review(team: &Team, task: &TaskId) -> bool {
     }
     independent
 }
-
-
