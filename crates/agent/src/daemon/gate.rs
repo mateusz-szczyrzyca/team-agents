@@ -266,7 +266,7 @@ fn outcome_name(outcome: GateOutcome) -> &'static str {
 }
 
 /// Whether `outcome` is the refusal of the busy test lock: the command exited with [`LOCK_BUSY_EXIT`].
-fn refused_by_busy_lock(outcome: &GateOutcome) -> bool {
+fn refused_by_busy_lock(outcome: GateOutcome) -> bool {
     matches!(outcome, GateOutcome::Failed { exit_code } if exit_code.get() == LOCK_BUSY_EXIT)
 }
 
@@ -462,7 +462,7 @@ impl Service {
     /// clean, or the busy test lock refused it with [`LOCK_BUSY_EXIT`]) tells nothing about the commit, and the gate
     /// before it is kept.
     fn remember(&mut self, job: &GateJob, record: &GateRecord) {
-        if record.tree != GateTree::Clean || refused_by_busy_lock(&record.result.outcome) {
+        if record.tree != GateTree::Clean || refused_by_busy_lock(record.result.outcome) {
             return;
         }
         let failures = match record.result.outcome {
