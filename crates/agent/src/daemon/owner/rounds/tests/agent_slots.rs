@@ -339,7 +339,7 @@ async fn a_review_of_another_members_item_does_not_block_a_busy_hand_over() {
 
     let (state, _team, task) = state_with_another_item_in_review();
     let daemon = Daemon::new(&state, None);
-    daemon.configure("\n[replacement]\nagents = [\"inv-1\"]\nbusy_after = 1\n");
+    daemon.configure("\n[replacement]\nagents = [\"claude-2\"]\nbusy_after = 1\n");
     daemon.clock.advance(time::Duration::seconds(2));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
@@ -348,7 +348,7 @@ async fn a_review_of_another_members_item_does_not_block_a_busy_hand_over() {
     assert!(changed, "another item's review does not stop the hand-over");
     assert_eq!(
         owner.parts.state.find_task(&task).unwrap().member.agent().name(),
-        "inv-1"
+        "claude-2"
     );
 }
 
