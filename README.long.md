@@ -627,7 +627,7 @@ Task files and git output are bounded to 4 MiB each; task files together to 64 M
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
 History is read from a temporary copy of the database and its WAL/SHM files, including committed events while
 the daemon holds the home. Each source file is bounded to 64 GiB; up to three snapshot attempts accommodate
-source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS +HH:MM`, or `UTC` when the zone cannot be found), as `agent log` does.
+source changes before they are reported as unreadable. SQLite creates no files beside the original database. Summary timestamps use the machine's local time zone at each moment (`YYYY-MM-DD HH:MM:SS`, or with `UTC` after it when the zone cannot be found), as `agent log` does.
 Each task shows its latest run's reason, final message and steps, and how many tool calls that run made, Serena's and
 the shell's among them (`tools: 214 (serena 12, shell 160, other 42)`, or `tools: none recorded` when its steps name
 no tool): the count comes from the steps the run recorded in the history, so it tells whether the agents reach Serena
@@ -827,7 +827,7 @@ Every view of `agent status` prints the same state for a part of a split, whethe
 is next, and `waiting for 1.1a` (and the other parts it depends on) until they are over. A part whose round was closed
 without a merge is not `done`. In `agent status --running`, an item whose every part merged shows no part line.
 
-`agent status` ends the line of a task that runs with `last activity YYYY-MM-DD HH:MM:SS +HH:MM`: the local time the output of its run last
+`agent status` ends the line of a task that runs with `last activity YYYY-MM-DD HH:MM:SS`: the local time the output of its run last
 changed (the file `tasks/<task>/runs/<run>/out.jsonl`), which is how to tell a task that works from one that hangs. Every time `agent status` prints is in the zone of this machine, as `agent log` writes it, without the offset after it; `agent status --json` stays in UTC.
 
 The line of a reviewer says what it did or does, from the record of the team's investigators, instead of the one word of
@@ -835,7 +835,7 @@ its status (a reviewer that waits between its reviews said only `waiting`):
 
 | Says | Means |
 |---|---|
-| `working`, with `last activity YYYY-MM-DD HH:MM:SS +HH:MM` while its run writes | a review goes, or one is queued for it |
+| `working`, with `last activity YYYY-MM-DD HH:MM:SS` while its run writes | a review goes, or one is queued for it |
 | `done, 1st review finished 2026-11-19 12:08:17` | it gave the report the harness asked for; the ordinal counts the reviews it gave for the round (the first review, the verifications and the second opinions alike; a review that ended without its report is not counted) |
 | `stopped at 2026-11-19 12:10:00, reason: the run showed no activity for too long` | the task was stopped or failed; the reason is the one the daemon knows (`the human stopped it`, `the run ended without a status`, and so on) |
 
@@ -855,7 +855,7 @@ task-20261119-094408-mhdx  task-allocator  inv-kimi-deepinfra  for team-20261119
 inv-opus  free, no activity in an open team
 ```
 
-The line of a round ends with when the round started, in local time (`started YYYY-MM-DD HH:MM +HH:MM`), and for a round that
+The line of a round ends with when the round started, in local time (`started YYYY-MM-DD HH:MM`), and for a round that
 is closed with how long it took (`took 3h 01m`). A round that goes on also says where its work is, after `open`:
 
 | Says | Means |

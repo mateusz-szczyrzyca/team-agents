@@ -1398,7 +1398,7 @@ Every notification sent to the human follows a standardized layout rendered thro
   ```text
   Repo: <repo>
   Agent: <agent> (<cli>, <model>)
-  Time: <YYYY-MM-DD HH:MM> <zone>
+  Time: <YYYY-MM-DD HH:MM>
   Task: <task>
   Team: <team>
   Status: <icon> <label>
