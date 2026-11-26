@@ -164,6 +164,7 @@ fn slot_in(team: &Team, name: &InvestigatorName) -> Option<Slot> {
     let own = team
         .reviewers()
         .iter()
+        .filter(|member| member.role() != Some(agent_core::kinds::Role::Investigator))
         .find(|member| investigator_of(member).is_some_and(|reviewing| reviewing == name));
     match own {
         None => Some(Slot::New),

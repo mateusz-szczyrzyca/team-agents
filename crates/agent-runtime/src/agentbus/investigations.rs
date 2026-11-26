@@ -61,7 +61,17 @@ impl<'de> Deserialize<'de> for InvestigationStatus {
         D: Deserializer<'de>,
     {
         let raw = String::deserialize(deserializer)?;
-        Ok(Self::Unknown(raw))
+        Ok(match raw.as_str() {
+            "queued" => Self::Queued,
+            "waitroom" => Self::Waitroom,
+            "starting" => Self::Starting,
+            "running" => Self::Running,
+            "waiting_human" => Self::WaitingHuman,
+            "done" => Self::Done,
+            "failed" => Self::Failed,
+            "rejected" => Self::Rejected,
+            _ => Self::Unknown(raw),
+        })
     }
 }
 
@@ -84,6 +94,12 @@ pub struct Investigation {
     /// The kind of investigation.
     #[serde(default)]
     pub kind: InvestigationKind,
+    /// Bus lifecycle status, including queued and running requests returned by `inv_open`.
+    #[serde(default)]
+    pub status: Option<InvestigationStatus>,
+    /// Investigator task assigned by the daemon, absent before assignment.
+    #[serde(default)]
+    pub inv_task: Option<TaskId>,
     /// Path to the markdown record file.
     pub file: PathBuf,
 }
