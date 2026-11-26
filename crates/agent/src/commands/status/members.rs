@@ -1,11 +1,10 @@
-//! The line of a task under its team, and which tasks the short view lists: the team's coordinator, members and workers
-//! always, a reviewer only while its review is not over.
+//! The line of a task under its team, and which tasks the short view lists: every task of the team — its coordinator,
+//! members, workers and reviewers — whatever its status.
 
 use agent_core::ids::TaskId;
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::protocol::{MemberSummary, TeamSummary};
-use agent_core::state::{Activity, ActivityEnd, ActivityOutcome};
 use agent_core::status::TaskStatus;
 
 use super::reviewer;
@@ -102,44 +101,18 @@ pub(super) fn line(
     )
 }
 
-/// Whether the short view lists the task of `member`, whose team recorded `activities`.
-pub(super) fn listed(member: &MemberSummary, activities: &[Activity]) -> bool {
-    alive(member.role, member.status, reviewer::outcome(member, activities))
+/// Whether the short view lists the task of `member`.
+pub(super) const fn listed(member: &MemberSummary) -> bool {
+    alive(member.role)
 }
 
-/// Whether the short view lists a task of `role` in `status`; `review` is the outcome of the newest activity the team
-/// recorded of it, `None` when it recorded none.
+/// Whether the short view lists a task of `role`.
 ///
-/// The team's own tasks — a solo task, the coordinator, a member, a worker — are always listed: the human wants to see
-/// the team, also the one that stopped, failed or is done. A reviewer is listed while its review is not over: always
-/// while its task runs, never once its task is done or stopped, and otherwise unless the record says the review ended
-/// for good — with its report, stopped by the human, or as a second opinion that was abandoned. A review that failed
-/// is still listed: its task can be resumed.
-pub(super) const fn alive(role: Role, status: TaskStatus, review: Option<&ActivityOutcome>) -> bool {
+/// Every task of a team is listed, whatever its status and, for a reviewer, whatever its review's outcome: the human
+/// wants to see who is in the team and who reviewed, also once the work is done, stopped or failed.
+pub(super) const fn alive(role: Role) -> bool {
     match role {
-        Role::Solo | Role::Coordinator | Role::Member | Role::Worker => true,
-        Role::Reviewer => match status {
-            TaskStatus::Running => true,
-            TaskStatus::Done | TaskStatus::Stopped => false,
-            TaskStatus::Waiting
-            | TaskStatus::Questions
-            | TaskStatus::Queued
-            | TaskStatus::Paused
-            | TaskStatus::Failed => match review {
-                None
-                | Some(
-                    ActivityOutcome::Working
-                    | ActivityOutcome::Finished {
-                        end: ActivityEnd::Failed { .. },
-                        ..
-                    },
-                ) => true,
-                Some(ActivityOutcome::Finished {
-                    end: ActivityEnd::Reported | ActivityEnd::Stopped | ActivityEnd::OpinionFailed { .. },
-                    ..
-                }) => false,
-            },
-        },
+        Role::Solo | Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer => true,
     }
 }
 

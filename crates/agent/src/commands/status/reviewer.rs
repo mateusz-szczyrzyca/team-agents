@@ -26,12 +26,6 @@ pub(crate) fn status(member: &MemberSummary, activities: &[Activity], zone: Zone
     })
 }
 
-/// The outcome of the newest activity the team recorded of the reviewer `member`, `None` when it recorded none: what
-/// [`status`] writes the reviewer's line from.
-pub(super) fn outcome<'a>(member: &MemberSummary, activities: &'a [Activity]) -> Option<&'a ActivityOutcome> {
-    newest(member, activities).map(|(_, newest)| newest.outcome())
-}
-
 /// What an activity that ended at `at` without its report says: when, and why in the words the human reads.
 pub(super) fn stopped(at: Timestamp, end: &ActivityEnd, zone: Zone) -> String {
     format!("stopped at {}, reason: {}", clock_of(at, zone), ending(end))

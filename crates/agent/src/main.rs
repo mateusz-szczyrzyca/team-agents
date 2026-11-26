@@ -459,8 +459,8 @@ struct StatusArgs {
     #[arg(long, conflicts_with = "target")]
     running: bool,
     /// With the teams, the lines of all their tasks with their plans, and the parts of a split, as `agent status`
-    /// printed them before the short view. Without it a team lists its coordinator, members, workers and the reviewers
-    /// whose review is not over, each with what it does, and a count of its tasks. With `--json` it changes nothing:
+    /// printed them before the short view. Without it a team lists its coordinator, members, workers and reviewers, each
+    /// with what it does, and a count of its tasks. With `--json` it changes nothing:
     /// the JSON array already carries every task.
     #[arg(long, conflicts_with_all = ["target", "investigators"])]
     task: bool,
