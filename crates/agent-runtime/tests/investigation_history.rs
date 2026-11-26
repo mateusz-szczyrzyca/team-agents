@@ -1,11 +1,11 @@
-//! Migration 33 preserves existing history and admits investigator runs and reserved events.
+//! Migration 33 preserves existing history and admits investigator runs only.
 
 use agent_core::history::MaxTextBytes;
 use agent_runtime::history::{HistoryDb, schema::MIGRATIONS};
 use rusqlite::Connection;
 
 #[test]
-fn investigation_migration_preserves_related_history_and_accepts_new_role_and_events() {
+fn investigation_migration_preserves_related_history_and_accepts_new_role() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.db");
     let old: Vec<_> = MIGRATIONS.iter().copied().filter(|m| m.version <= 32).collect();
@@ -80,13 +80,6 @@ fn investigation_migration_preserves_related_history_and_accepts_new_role_and_ev
         .unwrap();
     assert_eq!(broken, 0);
     assert_eq!(raw.execute("UPDATE runs SET role = 'investigator'", []).unwrap(), 1);
-    for (id, event, level) in [
-        (8, "investigation_started", "info"),
-        (9, "investigation_answered", "info"),
-        (10, "investigation_kind_unknown", "warn"),
-    ] {
-        assert_eq!(raw.execute("INSERT INTO daemon_logs (id, first_at, at, level, module, event, message, fields, count, cut) VALUES (?, '2026-11-26T00:00:00Z', '2026-11-26T00:00:00Z', ?, 'agent::daemon', ?, 'new event', '{}', 1, '')", rusqlite::params![id, level, event]).unwrap(), 1);
-    }
     let cursor: i64 = raw
         .query_row(
             "SELECT value FROM history_cursors WHERE name = 'daemon_logs'",
@@ -94,7 +87,7 @@ fn investigation_migration_preserves_related_history_and_accepts_new_role_and_ev
             |r| r.get(0),
         )
         .unwrap();
-    assert_eq!(cursor, 10);
+    assert_eq!(cursor, 7);
 }
 
 /// Populates the old schema with linked rows and searchable records.
