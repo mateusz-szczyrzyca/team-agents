@@ -23,12 +23,19 @@ async fn a_members_request_is_answered_by_the_free_investigator_and_the_member_i
     .await;
     rig.start().await;
     let (team, tasks) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
         .await;
 
     // Wait until investigator task is Done
     rig.state_where("investigator task is Done", |state| {
-        let Some(team_st) = state.team(&team) else { return false; };
+        let Some(team_st) = state.team(&team) else {
+            return false;
+        };
         team_st
             .reviewers()
             .iter()
@@ -37,10 +44,8 @@ async fn a_members_request_is_answered_by_the_free_investigator_and_the_member_i
     .await;
 
     // Wait until member is woken and finishes (run 2)
-    rig.wait_for("member ran again after being woken", || {
-        rig.runs(&tasks[1]) >= 2
-    })
-    .await;
+    rig.wait_for("member ran again after being woken", || rig.runs(&tasks[1]) >= 2)
+        .await;
 
     rig.stop().await.unwrap();
 
@@ -59,7 +64,10 @@ async fn a_members_request_is_answered_by_the_free_investigator_and_the_member_i
 
     let inv_file_path = bus_state["investigations"]["1"]["file"].as_str().unwrap();
     let file_content = std::fs::read_to_string(inv_file_path).unwrap();
-    assert!(file_content.contains("Here is the solution to your issue"), "{file_content}");
+    assert!(
+        file_content.contains("Here is the solution to your issue"),
+        "{file_content}"
+    );
 
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
     assert!(messages.contains("Here is the solution to your issue"), "{messages}");
@@ -80,12 +88,19 @@ async fn the_investigators_worktree_is_detached_at_the_requesters_tip() {
     .await;
     rig.start().await;
     let (team, tasks) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
         .await;
 
     let inv_task = rig
         .state_where("investigator task is running", |state| {
-            let Some(team_st) = state.team(&team) else { return false; };
+            let Some(team_st) = state.team(&team) else {
+                return false;
+            };
             team_st
                 .reviewers()
                 .iter()
@@ -131,11 +146,18 @@ async fn nothing_of_the_investigation_is_pushed() {
     .await;
     rig.start().await;
     let (team, _) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
         .await;
 
     rig.state_where("investigator task is Done", |state| {
-        let Some(team_st) = state.team(&team) else { return false; };
+        let Some(team_st) = state.team(&team) else {
+            return false;
+        };
         team_st
             .reviewers()
             .iter()
@@ -145,14 +167,20 @@ async fn nothing_of_the_investigation_is_pushed() {
 
     rig.stop().await.unwrap();
 
-    let branches = super::rig::git(&rig.origin, &["for-each-ref", "--format=%(refname:short)", "refs/heads/*"]);
+    let branches = super::rig::git(
+        &rig.origin,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads/*"],
+    );
     for branch in branches.lines() {
         assert!(
             !branch.contains("inv-r1"),
             "investigator branch must not be pushed to origin: {branch}"
         );
     }
-    assert!(rig.github.pulls().is_empty(), "no pull request should be opened for investigation");
+    assert!(
+        rig.github.pulls().is_empty(),
+        "no pull request should be opened for investigation"
+    );
 }
 
 #[tokio::test]
@@ -176,7 +204,9 @@ async fn a_request_waits_while_no_investigator_is_free() {
 
     // Wait until both reviewers are running in review_team
     rig.state_where("both reviewers are running", |state| {
-        let Some(team_st) = state.team(&review_team) else { return false; };
+        let Some(team_st) = state.team(&review_team) else {
+            return false;
+        };
         let running_count = team_st
             .reviewers()
             .iter()
@@ -188,7 +218,12 @@ async fn a_request_waits_while_no_investigator_is_free() {
 
     // Now start team with claude-lead and claude-1 which asks for an investigation
     let (team, _) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::NoMerge, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
         .await;
 
     // Give daemon a look while investigators are busy
@@ -213,7 +248,9 @@ async fn a_request_waits_while_no_investigator_is_free() {
 
     // After review finishes, an investigator becomes free and investigation request is served
     rig.state_where("investigation task is created after reviewer is free", |state| {
-        let Some(team_st) = state.team(&team) else { return false; };
+        let Some(team_st) = state.team(&team) else {
+            return false;
+        };
         team_st.reviewers().iter().any(|m| m.role() == Some(Role::Investigator))
     })
     .await;
@@ -263,11 +300,18 @@ async fn a_request_of_another_team_is_left_to_that_team() {
     assert!(status.success());
 
     let (team, _) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::NoMerge, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
         .await;
 
     rig.state_where("claude-1 is sleeping", |state| {
-        let Some(team_st) = state.team(&team) else { return false; };
+        let Some(team_st) = state.team(&team) else {
+            return false;
+        };
         team_st
             .crew()
             .roster()
@@ -308,13 +352,20 @@ async fn the_least_recently_used_of_two_investigators_answers() {
     rig.start().await;
 
     let (team, tasks) = rig
-        .run(&["claude-lead", "claude-1"], ONE, MergeMode::NoMerge, Some("claude-lead"))
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
         .await;
 
     // First investigation served and done
     let first_investigator = rig
         .state_where("first investigator done", |state| {
-            let Some(team_st) = state.team(&team) else { return false; };
+            let Some(team_st) = state.team(&team) else {
+                return false;
+            };
             team_st
                 .reviewers()
                 .iter()
@@ -331,15 +382,15 @@ async fn the_least_recently_used_of_two_investigators_answers() {
         .clone();
 
     // Member wakes up for run 2, asks second question, and sleeps
-    rig.wait_for("member asks second question", || {
-        rig.runs(&tasks[1]) >= 2
-    })
-    .await;
+    rig.wait_for("member asks second question", || rig.runs(&tasks[1]) >= 2)
+        .await;
 
     // Second investigation assigned: must be the other (least recently used) investigator
     let second_investigator = rig
         .state_where("second investigator assigned", |state| {
-            let Some(team_st) = state.team(&team) else { return false; };
+            let Some(team_st) = state.team(&team) else {
+                return false;
+            };
             team_st
                 .reviewers()
                 .iter()
