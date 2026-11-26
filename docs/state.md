@@ -277,6 +277,12 @@ removes its task from the map. `refused_agents` maps an agent to the time its pr
 refused strictly before that time; an entry whose time has passed no longer refuses it. Both are optional maps: a state without
 them loads with none, and a version that does not know them refuses a state that has them.
 
+**Commit cuts (optional, absent in a state written before agent 0.122.0).** `commit_cuts` maps a task to the IDs of its
+runs that the daemon cut for an order to commit (`[commit_reminder] cut_after`) and resumed in their session; the clock
+of `[limits] round_minutes` does not start again after such a run. Written only when not empty; removing a team removes
+the entries of its tasks. A state without it loads with none; a version that does not know it refuses a state that has
+it.
+
 **A solo task is a team of one.** Every unit of work is a `Team`; the solo agent is its only member, with the role
 `solo`. One code path serves both.
 

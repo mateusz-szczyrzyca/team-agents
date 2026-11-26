@@ -504,8 +504,10 @@ handed over as above at once, without a new session of the same agent first: to 
 agents`, which is briefed in a new session on the same worktree and branch; to the team's lead; or, with nobody to take it
 (`mode = "off"`, a solo task with no agent listed), the task fails and you are notified with the round, the item and the
 minutes. You need no `agent swap` for it. The clock starts at the latest of: the opening of the round, the hand-over of the
-task to the agent that holds it now, and the first run after a run that ended stopped — a task you stopped and resumed,
-or one the daemon cut to commit its work, starts its clock again. A round in review, approved or being fixed after a review
+task to the agent that holds it now, and the first run after a run that ended stopped — a task you stopped and resumed
+starts its clock again. The daemon's cut of a run that did not commit (`[commit_reminder] cut_after`) resumes it in its
+session and does not start the clock again, so an agent that keeps its work uncommitted is still stopped at the limit.
+A round in review, approved or being fixed after a review
 is never stopped by this limit, nor a worker or a reviewer. The cut counts as no retry, turn or rejection. Each cut is the
 debug decision `round_overdue` in the history, and its hand-over the log event `task_handed_over` with
 `reason = "round_overdue"`. `round_minutes = 0`, the default, turns it off.
@@ -1255,7 +1257,10 @@ command or `exists PATH` that shows the result is right — never `reviewer`, ne
 check_refuse`); and `do`, what to do in the requester's words. The bus asks the harness's `agent _delegation-check` at
 the moment of the request, which reads `.agent/plan.md` of the requester's worktree: a request that lacks one of the
 four, names a step the plan does not have or that is done or given up, a path outside the repository, or a refused
-check is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
+check is refused — a check is one command and nothing after it: one that goes on as a sentence (`grep -n x README.md
+shows the line`: a word such as `the`, `and`, `shows`, `gives` or `exits`, a word that ends with a comma, or `…`,
+unquoted after the command's name) is a refused check too, with the word in the cause; a word that belongs to the
+command is quoted (`grep -q 'the' README.md`). Each is refused with a cause of its own (`NoSuchStep`, `StepClosed`, `PathOutside`, `CheckRefused`, `PlanUnreadable`,
 `MissingFor`, `MissingFiles`, `MissingCheck`, `MissingDo`, `CheckFailed`), nothing is queued and no worker starts. Such a request is also refused at once (`NoFreeWorker`) when every worker
 of the installation pool is running, reserved, awaiting settlement or promised to an earlier request. Legacy teams
 with worker members retain their own admission path. The requester does a refused step itself; a higher tier never serves it. The worker's request then quotes the step in full, then `Request files:`, `Request check:`
