@@ -1573,4 +1573,3 @@ async fn record_worker_request_recovery(observed: &mut BTreeSet<LogEvent>) {
         observed.insert(event);
     }
 }
-
