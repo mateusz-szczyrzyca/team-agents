@@ -110,7 +110,8 @@ func TestTeamReplaceMovesMemberClaimsAndOnlyUnreadTeamMessages(t *testing.T) {
 		t.Fatalf("lead read = %q", got)
 	}
 	chk(t).ok(toolResult(lead.send("N", "new member")))
-	failsWith(t, SendMessageNotInYourTeam)(lead.send("M", "old member"))
+	_, _, refusal := bindSend(st, "L", "M", "", "T")
+	failsWith(t, CmdSendNoSuchMember)("", refusal)
 	count := 0
 	for _, r := range records(t, logs) {
 		if r["event"] == "member_replaced" {
