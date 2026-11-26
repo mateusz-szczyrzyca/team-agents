@@ -250,6 +250,24 @@ fn two_never_used_investigators_are_both_chosen_over_seeds() {
 }
 
 #[test]
+fn tied_candidates_larger_than_slots_are_randomised_over_seeds() {
+    use std::collections::BTreeSet;
+    // Three never-used investigators are tied; count 2 should show variety across seeds.
+    let mut selections = BTreeSet::new();
+    for seed in 1..=32 {
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let chosen = select_with_rng(&[], &["a", "b", "c"], &[], 2, &mut rng).unwrap();
+        assert_eq!(chosen.len(), 2, "seed {seed}: expected 2 distinct names");
+        selections.insert((chosen[0].clone(), chosen[1].clone()));
+    }
+    assert!(
+        selections.len() >= 2,
+        "seed 1..=32 should produce at least 2 different selections, got {:?}",
+        selections
+    );
+}
+
+#[test]
 fn an_investigator_never_used_is_chosen_before_one_used() {
     let records = vec![("b", 1, ActivityKind::Reviewer, 10)];
     for seed in 1..=32 {
