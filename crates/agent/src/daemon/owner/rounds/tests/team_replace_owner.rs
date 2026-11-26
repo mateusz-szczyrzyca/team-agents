@@ -184,8 +184,8 @@ async fn not_found_settles_the_pending_operation() {
     state
         .hand_over_task(&task, crate::fixtures::normal("claude-2"), at(1))
         .unwrap();
-    let from = "claude-1".parse().unwrap();
-    let to = "claude-2".parse().unwrap();
+    let from: agent_core::ids::AgentName = "claude-1".parse().unwrap();
+    let to: agent_core::ids::AgentName = "claude-2".parse().unwrap();
     state.record_pending_team_replace(team.clone(), from.clone(), to.clone());
     std::fs::write(rig.home.state_file(), state.to_json().unwrap()).unwrap();
     let bus = AgentBus::new(
