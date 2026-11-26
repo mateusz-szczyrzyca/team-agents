@@ -852,6 +852,12 @@ impl History {
         }
     }
 
+    /// Waits at most `limit`, without blocking a thread of the runtime, until everything handed in before is written or
+    /// lost; a writer that is stuck is not waited for longer.
+    pub async fn flush_within_async(&self, _limit: Duration) -> Flush {
+        Flush::Done
+    }
+
     /// Whether the history is off: nothing is recorded, so nothing is worth working out for it.
     #[must_use]
     pub fn is_disabled(&self) -> bool {

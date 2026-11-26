@@ -151,4 +151,68 @@ mod history_flush_within {
         release.send(()).expect("the store is released");
         started.writer.close().expect("the writer closes");
     }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_async_flush_times_out_while_the_writer_is_stuck_and_leaves_the_runtime_free_meanwhile() {
+        let Fixture {
+            started,
+            entered,
+            release,
+            written,
+        } = start(64);
+        started.history.record(step(&run(), 1));
+        entered.recv().expect("the writer is in its first write");
+
+        let first = tokio::select! {
+            biased;
+            () = tokio::time::sleep(Duration::from_millis(20)) => "the runtime ran another task",
+            _ = started.history.flush_within_async(Duration::from_millis(400)) => "the flush came back first",
+        };
+        let outcome = started.history.flush_within_async(Duration::from_millis(50)).await;
+
+        assert_eq!(first, "the runtime ran another task");
+        assert_eq!(outcome, Flush::TimedOut);
+        release.send(()).expect("the store is released");
+        started.writer.close().expect("the writer closes");
+        assert_eq!(written.lock().expect("a lock").len(), 1);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_async_flush_is_done_when_the_writer_has_written_everything() {
+        let Fixture {
+            started,
+            entered,
+            release,
+            written,
+        } = start(64);
+        started.history.record(step(&run(), 1));
+        entered.recv().expect("the writer is in its first write");
+        release.send(()).expect("the store is released");
+
+        let outcome = started.history.flush_within_async(Duration::from_secs(30)).await;
+
+        assert_eq!(outcome, Flush::Done);
+        assert_eq!(written.lock().expect("a lock").len(), 1);
+        started.writer.close().expect("the writer closes");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_async_flush_times_out_when_the_queue_has_no_room_for_the_question() {
+        let Fixture {
+            started,
+            entered,
+            release,
+            written: _written,
+        } = start(2);
+        started.history.record(step(&run(), 1));
+        entered.recv().expect("the writer is in its first write");
+        started.history.record(step(&run(), 2));
+        started.history.record(step(&run(), 3));
+
+        let outcome = started.history.flush_within_async(Duration::from_secs(30)).await;
+
+        assert_eq!(outcome, Flush::TimedOut);
+        release.send(()).expect("the store is released");
+        started.writer.close().expect("the writer closes");
+    }
 }
