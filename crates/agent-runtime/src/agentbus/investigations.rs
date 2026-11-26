@@ -53,12 +53,6 @@ pub struct Investigation {
     pub kind: InvestigationKind,
     /// Path to the markdown record file.
     pub file: PathBuf,
-    /// Task ID of the investigator run if assigned.
-    #[serde(default)]
-    pub inv_task: Option<TaskId>,
-    /// Lifecycle state of the investigation on the bus.
-    #[serde(default)]
-    pub status: String,
 }
 
 /// A transition of an investigation request's state on the bus.
