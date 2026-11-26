@@ -33,6 +33,23 @@ struct WaitingQuestions {
     path: std::path::PathBuf,
 }
 
+/// Why `task`, which is `status`, does not wait for answers; for a task that is running it says how to answer.
+fn not_waiting_message(task: &TaskId, status: TaskStatus) -> String {
+    let refusal = format!("task {task} is {status}, not waiting for answers");
+    match status {
+        TaskStatus::Running => format!(
+            "{refusal}. Save the answers in its questions file with **ANSWERED** on the last line; they are taken up when the run ends."
+        ),
+        TaskStatus::Queued
+        | TaskStatus::Waiting
+        | TaskStatus::Questions
+        | TaskStatus::Paused
+        | TaskStatus::Stopped
+        | TaskStatus::Failed
+        | TaskStatus::Done => refusal,
+    }
+}
+
 impl Owner {
     // ---- the file of new questions --------------------------------------------------------------------------
 
@@ -150,9 +167,29 @@ impl Owner {
             .collect();
         for saved in open {
             self.watch_task(&saved.task);
-            self.file_saved(saved).await?;
+            self.adopt_saved_file(saved).await?;
         }
         Ok(())
+    }
+
+    /// Takes up what the human saved in the questions file of `task` while its run still went: a save of a file whose run
+    /// has not ended is not noticed (nothing is watched yet), so it is read once the run has ended with questions.
+    ///
+    /// A task that does not wait for answers is left alone. The watch starts also for a file that is already marked
+    /// answered, so that a save that completes an incomplete one is noticed.
+    ///
+    /// # Errors
+    /// [`OwnerError`] when the state cannot be saved.
+    pub(super) async fn adopt_answers_saved_during_the_run(&mut self, task: &TaskId) -> Result<(), OwnerError> {
+        let Ok(open) = self.waiting_questions(task) else {
+            return Ok(());
+        };
+        self.watch_task(task);
+        self.adopt_saved_file(Saved {
+            task: task.clone(),
+            number: open.number,
+        })
+        .await
     }
 
     // ---- the answers ----------------------------------------------------------------------------------------
@@ -222,7 +259,7 @@ impl Owner {
         let Some(question) = found.member.open_question().filter(|_| waiting) else {
             return Err(Failure {
                 kind: FailureKind::Conflict,
-                message: format!("task {task} is {}, not waiting for answers", found.member.status()),
+                message: not_waiting_message(task, found.member.status()),
             });
         };
         Ok(WaitingQuestions {
@@ -242,7 +279,7 @@ impl Owner {
     /// [`OwnerError`] when the state cannot be saved.
     pub(super) async fn reported(&mut self, report: Report) -> Result<(), OwnerError> {
         match report {
-            Report::Saved(saved) => self.file_saved(saved).await,
+            Report::Saved(saved) => self.adopt_saved_file(saved).await,
             Report::Rescan => self.adopt_open_questions().await,
         }
     }
@@ -252,7 +289,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`OwnerError`] when the state cannot be saved.
-    pub(super) async fn file_saved(&mut self, saved: Saved) -> Result<(), OwnerError> {
+    pub(super) async fn adopt_saved_file(&mut self, saved: Saved) -> Result<(), OwnerError> {
         let Ok(open) = self.waiting_questions(&saved.task) else {
             // A task that does not wait for answers: the save is the file's own change or a late one.
             return Ok(());
