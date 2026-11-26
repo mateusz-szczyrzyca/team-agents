@@ -19,8 +19,8 @@ mod agentbus_commands {
     use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
     use agent_runtime::agentbus::{
         AgentBus, AgentBusError, BoardItemId, BoardLevel, BoardStatus, BusCommand, BusMember, BusTier, CheckpointKey,
-        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, Investigation, InvestigationKind,
-        InvTransition, MemberState, NewBoardItem, NewMember, NewTeam, NoticeKind, Outgoing, Recipient, RequestId,
+        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, InvTransition, Investigation,
+        InvestigationKind, MemberState, NewBoardItem, NewMember, NewTeam, NoticeKind, Outgoing, Recipient, RequestId,
         TaskRequest, Woken,
     };
     use agent_runtime::process::CaptureError;

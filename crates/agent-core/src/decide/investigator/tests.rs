@@ -195,7 +195,10 @@ fn the_pair_of_the_latest_request_comes_back_only_after_the_others_and_in_order(
 #[test]
 fn two_investigators_tied_on_oldest_activity_are_both_chosen_over_seeds() {
     use std::collections::BTreeSet;
-    let records = vec![("a", 1, ActivityKind::Reviewer, 10), ("b", 1, ActivityKind::Reviewer, 10)];
+    let records = vec![
+        ("a", 1, ActivityKind::Reviewer, 10),
+        ("b", 1, ActivityKind::Reviewer, 10),
+    ];
     let mut chosen_names = BTreeSet::new();
     for seed in 1..=32 {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
@@ -209,7 +212,10 @@ fn two_investigators_tied_on_oldest_activity_are_both_chosen_over_seeds() {
 
 #[test]
 fn the_least_recently_used_investigator_is_chosen_whatever_the_seed() {
-    let records = vec![("a", 1, ActivityKind::Reviewer, 10), ("b", 1, ActivityKind::Reviewer, 20)];
+    let records = vec![
+        ("a", 1, ActivityKind::Reviewer, 10),
+        ("b", 1, ActivityKind::Reviewer, 20),
+    ];
     for seed in 1..=32 {
         let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
         let chosen = select_with_rng(&records, &["a", "b"], &[], 1, &mut rng).unwrap();
@@ -271,4 +277,3 @@ cli = "claude"
     assert!(!free.contains(&"inv-a".parse().unwrap()));
     assert!(free.contains(&"inv-b".parse().unwrap()));
 }
-
