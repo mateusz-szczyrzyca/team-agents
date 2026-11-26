@@ -8,7 +8,7 @@ use strum::VariantArray;
 use super::{CheckpointCause, CheckpointContent, CheckpointJob};
 use crate::history::{CheckOutcome, HistoryEvent, LostCause, LostKind, RecordKind, SplitDecision};
 use crate::ids::{InvestigatorName, RoundId, TaskId};
-use crate::kinds::Tier;
+use crate::kinds::{Tier, UnknownKeyword};
 use crate::state::{CommitId, PhaseKind, PrNumber, RoundEnd};
 use crate::status::ReviewVerdict;
 
@@ -146,11 +146,20 @@ fn every_cause_reads_back_from_its_snake_case_keyword_and_from_its_json() {
 
 #[test]
 fn an_unknown_cause_or_job_is_refused() {
-    assert!(CheckpointCause::from_str("pull-opened").is_err());
-    assert!(CheckpointCause::from_str("whenever").is_err());
-    assert!(serde_json::from_str::<CheckpointCause>("\"whenever\"").is_err());
-    assert!(CheckpointJob::from_str("review_pass").is_err());
-    assert!(serde_json::from_str::<CheckpointJob>("\"chat\"").is_err());
+    for text in ["pull-opened", "whenever"] {
+        assert_eq!(
+            CheckpointCause::from_str(text).unwrap_err(),
+            UnknownKeyword::of::<CheckpointCause>(text)
+        );
+    }
+    assert_eq!(
+        CheckpointJob::from_str("review_pass").unwrap_err(),
+        UnknownKeyword::of::<CheckpointJob>("review_pass")
+    );
+    let cause = serde_json::from_str::<CheckpointCause>("\"whenever\"").unwrap_err();
+    assert!(cause.is_data(), "{cause}");
+    let job = serde_json::from_str::<CheckpointJob>("\"chat\"").unwrap_err();
+    assert!(job.is_data(), "{job}");
 }
 
 #[test]
@@ -210,7 +219,8 @@ fn a_checkpoint_written_without_its_optional_fields_reads_with_them_absent() {
 #[test]
 fn a_checkpoint_with_an_unknown_cause_is_refused() {
     let json = r#"{"event":"checkpoint","round":"round-20261126-180909-vet6","task":"task-20261126-180909-yiy0","job":"item","tier":"normal","cause":"whenever","draft":false,"phase":"pending"}"#;
-    assert!(serde_json::from_str::<HistoryEvent>(json).is_err());
+    let refusal = serde_json::from_str::<HistoryEvent>(json).unwrap_err();
+    assert!(refusal.is_data(), "{refusal}");
 }
 
 fn assert_cause(event: &HistoryEvent, cause: Option<CheckpointCause>) {
