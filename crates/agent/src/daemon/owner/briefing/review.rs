@@ -10,6 +10,7 @@ use agent_runtime::run::compose::{BriefingFindings, BriefingPullRequest, Briefin
 
 use super::BriefingProblem;
 use crate::daemon::owner::Owner;
+use crate::daemon::team::Why;
 
 /// What the owner knows of the review besides the item: the rules and the clock of the installation.
 #[derive(Debug, Clone, Copy)]
@@ -134,13 +135,25 @@ fn pull_request_of(pr: &PullRequest, zone: &Zone) -> PullRequestFacts {
     }
 }
 
+/// Whether the review says the lead waits for the human: it was sent back as often as it is, and the run that starts is
+/// not the last correction itself. The third send-back raises the counter to its limit when it releases that
+/// correction, so the counter alone cannot tell the lead that still has a run to fix the branch from the one the human
+/// was told about.
+pub(super) fn waits_for_human(sent_back_to_its_limit: bool, why: Option<&Why>) -> bool {
+    sent_back_to_its_limit
+}
+
 impl Owner {
-    /// The review of the item of the open round `task` works for; none when it works for no round, or the round's item has
-    /// no pull request yet.
+    /// The review of the item of the open round `task` works for, for the run that starts for `why`; none when it works for
+    /// no round, or the round's item has no pull request yet.
     ///
     /// # Errors
     /// [`BriefingProblem`] when the task or its rounds cannot be told.
-    pub(in crate::daemon::owner) fn briefing_review(&self, task: &TaskId) -> Result<ReviewFacts, BriefingProblem> {
+    pub(in crate::daemon::owner) fn briefing_review(
+        &self,
+        task: &TaskId,
+        why: Option<&Why>,
+    ) -> Result<ReviewFacts, BriefingProblem> {
         let Some(round) = self.open_round_of(task)? else {
             return Ok(ReviewFacts::default());
         };
@@ -157,7 +170,7 @@ impl Owner {
         let setting = ReviewSetting {
             limit: self.parts.settings.config.review().fix_passes,
             zone: &self.parts.zone,
-            waits_for_human: self.sent_back_to_its_limit(task),
+            waits_for_human: waits_for_human(self.sent_back_to_its_limit(task), why),
         };
         Ok(ReviewFacts::of(item, setting))
     }

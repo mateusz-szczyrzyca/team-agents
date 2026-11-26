@@ -171,3 +171,26 @@ fn a_pull_request_of_a_review_that_kept_no_ledger_points_to_its_comments() {
         }
     );
 }
+
+// Rule: the third send-back raises the counter to its limit and releases the last correction; the lead that is given it
+// is told to fix the branch, and only a lead the human was told about, whose run starts for another reason, is told that
+// it waits.
+#[test]
+fn the_run_of_the_last_correction_is_not_told_that_the_lead_waits_for_the_human() {
+    let correction = Why::Gate("The gate has not passed.".to_owned());
+    assert!(!waits_for_human(true, Some(&correction)));
+}
+
+#[test]
+fn a_lead_sent_back_to_its_limit_whose_run_starts_for_another_reason_waits_for_the_human() {
+    for why in [None, Some(Why::Woken), Some(Why::FixPass), Some(Why::NoStatus)] {
+        assert!(waits_for_human(true, why.as_ref()), "{why:?}");
+    }
+}
+
+#[test]
+fn a_lead_not_sent_back_to_its_limit_never_waits_for_the_human() {
+    for why in [None, Some(Why::Woken), Some(Why::Gate("The gate has not passed.".to_owned()))] {
+        assert!(!waits_for_human(false, why.as_ref()), "{why:?}");
+    }
+}
