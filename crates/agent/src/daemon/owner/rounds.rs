@@ -1057,3 +1057,7 @@ mod whole_records_tests;
 #[cfg(test)]
 #[path = "rounds/tests/serena_delivery.rs"]
 mod serena_delivery_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/team_replace_owner.rs"]
+mod team_replace_owner_tests;
