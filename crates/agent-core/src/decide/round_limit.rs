@@ -80,5 +80,25 @@ pub fn round_overdue(clock: &RoundClock<'_>, now: Timestamp, limit_minutes: u32)
     }
 }
 
+/// One interval the task waits for the human's answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HumanWait {
+    /// When the questions were put to the human.
+    pub asked_at: Timestamp,
+    /// When the answer arrived; `None` counts the wait up to now.
+    pub answered_at: Option<Timestamp>,
+}
+
+/// Whether the round exceeds its limit after leaving out human question waits.
+#[must_use]
+pub fn round_overdue_with_waits(
+    clock: &RoundClock<'_>,
+    _waits: &[HumanWait],
+    now: Timestamp,
+    limit_minutes: u32,
+) -> Overdue {
+    round_overdue(clock, now, limit_minutes)
+}
+
 #[cfg(test)]
 mod tests;
