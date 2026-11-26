@@ -153,18 +153,44 @@ pub fn resolve_debug_target_with_history(
     target: &DebugTarget,
     history_path: &std::path::Path,
 ) -> Result<TeamId, DebugRuntimeError> {
-    let _ = history_path;
     // First try state lookup.
     if let Ok(team) = resolve_debug_target(state, target) {
         return Ok(team);
     }
-    // Stub: always fail for RED commit.
-    let id = match target {
-        DebugTarget::Team(id) => id.to_string(),
-        DebugTarget::Round(id) => id.to_string(),
-        DebugTarget::Task(id) => id.to_string(),
+    // For Task targets only, fall back to the history's runs table.
+    let task = match target {
+        DebugTarget::Task(id) => id,
+        _ => {
+            let id = match target {
+                DebugTarget::Team(id) => id.to_string(),
+                DebugTarget::Round(id) => id.to_string(),
+                DebugTarget::Task(id) => id.to_string(),
+            };
+            return Err(DebugRuntimeError::UnknownTarget { id });
+        }
     };
-    Err(DebugRuntimeError::UnknownTarget { id })
+    let reader = crate::history::Reader::open(history_path)
+        .map_err(|_| {
+            let id = task.to_string();
+            DebugRuntimeError::UnknownTarget { id }
+        })?;
+    let runs = reader.runs_of_task(task).map_err(|_| {
+        let id = task.to_string();
+        DebugRuntimeError::UnknownTarget { id }
+    })?;
+    // Find the latest run by its start time to get the team.
+    let latest = runs
+        .into_iter()
+        .max_by_key(|row| row.start.value.at);
+    let team_id = latest
+        .map(|row| row.start.value.team);
+    // Verify the team still exists in the state.
+    match team_id {
+        Some(id) if state.team(&id).is_some() => Ok(id),
+        _ => Err(DebugRuntimeError::UnknownTarget {
+            id: task.to_string(),
+        }),
+    }
 }
 
 /// Reads secrets strictly before any bundle or output parent is created.
