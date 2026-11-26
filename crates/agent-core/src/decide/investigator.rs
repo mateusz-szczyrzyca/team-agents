@@ -69,11 +69,7 @@ pub fn choose(
 
     let req = required.get();
     let boundary_key = candidates.get(req.saturating_sub(1)).map(|(k, _)| *k)?;
-    let oldest_activity_key = candidates
-        .iter()
-        .map(|(k, _)| *k)
-        .filter(|k| k.0.is_some() || k.1.is_some())
-        .min();
+    let oldest_activity_key = candidates.iter().map(|(k, _)| *k).min();
     // Tie-breaking applies when multiple candidates share the same oldest last activity.
     if Some(boundary_key) == oldest_activity_key {
         let start = candidates.iter().position(|(k, _)| *k == boundary_key).unwrap_or(0);
