@@ -337,3 +337,78 @@ fn rfc3339_writes_the_moment_with_the_offset_of_its_zone() {
     assert_eq!(fixed.rfc3339(at), "2026-11-21T17:29:53+01:00");
     assert_eq!(Zone::Utc.rfc3339(at), "2026-11-21T16:29:53Z");
 }
+
+/// The moment of the examples of the item: `2026-11-21T16:29:53Z`.
+fn example_moment() -> Timestamp {
+    stamp("2026-11-21T16:29:53Z")
+}
+
+#[test]
+fn a_fixed_zone_east_of_utc_writes_no_offset_after_the_time() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(zone.stamp(example_moment()), "2026-11-21 17:29:53");
+    assert_eq!(zone.stamp_minute(example_moment()), "2026-11-21 17:29");
+}
+
+#[test]
+fn a_fixed_zone_west_of_utc_with_minutes_writes_no_offset_after_the_time() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(-5, -30, 0).expect("valid"));
+
+    assert_eq!(zone.stamp(example_moment()), "2026-11-21 10:59:53");
+    assert_eq!(zone.stamp_minute(example_moment()), "2026-11-21 10:59");
+}
+
+#[test]
+fn an_offset_with_seconds_is_not_written_either() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(0, 20, 30).expect("valid"));
+
+    assert_eq!(zone.stamp(example_moment()), "2026-11-21 16:50:23");
+}
+
+#[test]
+fn a_lookup_that_gives_no_offset_writes_the_utc_time_with_utc_after_it() {
+    let zone = Zone::Lookup(unknown);
+
+    assert_eq!(zone.stamp(example_moment()), "2026-11-21 16:29:53 UTC");
+    assert_eq!(zone.stamp_minute(example_moment()), "2026-11-21 16:29 UTC");
+}
+
+#[test]
+fn a_moment_whose_local_year_would_be_10000_writes_the_utc_time_with_utc_after_it() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+    let at = stamp("9999-12-31T23:30:00Z");
+
+    assert_eq!(zone.stamp(at), "9999-12-31 23:30:00 UTC");
+    assert_eq!(zone.stamp_minute(at), "9999-12-31 23:30 UTC");
+}
+
+#[test]
+fn the_utc_zone_keeps_the_rfc3339_text_with_z() {
+    assert_eq!(Zone::Utc.stamp(example_moment()), "2026-11-21T16:29:53Z");
+    assert_eq!(Zone::Utc.stamp_minute(example_moment()), "2026-11-21T16:29:53Z");
+}
+
+#[test]
+fn a_waiting_line_ends_with_the_retry_minute_without_an_offset() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(
+        zone.stamp_waiting("GitHub: refresh, tried 4 times, next try 2026-11-21T16:29:53Z"),
+        "GitHub: refresh, tried 4 times, next try 2026-11-21 17:29"
+    );
+}
+
+#[test]
+fn a_typed_time_with_an_offset_is_still_read_as_the_same_moment() {
+    let zone = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
+
+    assert_eq!(
+        zone.parse_typed("2026-11-21T17:29:00+01:00"),
+        Ok(stamp("2026-11-21T16:29:00Z"))
+    );
+    assert_eq!(
+        zone.parse_typed("2026-11-21T16:29:00Z"),
+        Ok(stamp("2026-11-21T16:29:00Z"))
+    );
+}

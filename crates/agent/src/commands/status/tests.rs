@@ -2128,3 +2128,37 @@ fn the_lines_of_the_workers_share_the_columns_of_the_tasks() {
         "{text}"
     );
 }
+
+// Rule: a time shown to a person has no offset after it: the last activity of a running task ends with the local time.
+#[tokio::test]
+async fn the_last_activity_of_a_running_task_ends_with_the_local_time_and_no_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = Home::new(&AbsolutePath::from_str(dir.path().to_str().unwrap()).unwrap());
+    let activity = Activity::new(home, Zone::Fixed(UtcOffset::from_hms(1, 0, 0).unwrap()));
+    let run_dir = dir
+        .path()
+        .join("tasks/task-20261111-153002-k3x9/runs/run-20261111-153005-k3x9");
+    std::fs::create_dir_all(&run_dir).unwrap();
+    let output = std::fs::File::create(run_dir.join("out.jsonl")).unwrap();
+    // 2026-11-24T22:29:39Z, which is 23:29:39 at +01:00.
+    output
+        .set_modified(SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_795_559_379))
+        .unwrap();
+    let mut teams = sample();
+    teams[0].members[1].status = TaskStatus::Running;
+    let listed = teams.clone();
+    let daemon = FakeDaemon::serve(&socket(&dir), move |request| {
+        let reply = Reply::Teams { teams: listed.clone() };
+        Answer::Lines(vec![
+            Frame::Response(Response::ok(request.id, reply)).to_line().unwrap(),
+        ])
+    });
+    let mut connection = Connection::connect(daemon.socket()).await.unwrap();
+    let mut out = Vec::new();
+
+    status_active(&mut connection, None, &activity, &mut out).await.unwrap();
+
+    let text = String::from_utf8(out).unwrap();
+    assert!(text.contains("running, last activity 2026-11-24 23:29:39\n"), "{text}");
+    assert!(!text.contains("+01:00"), "{text}");
+}
