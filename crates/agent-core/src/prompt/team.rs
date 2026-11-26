@@ -57,6 +57,8 @@ pub enum TeamPrompt {
     TierCoordinator,
     /// What a member whose sleep a message ended is told.
     Wake,
+    /// The answer of an investigation delivered to the requester on the bus.
+    InvestigationAnswer,
     /// What a worker is told when it is given a request of a member.
     Delegation,
     /// What a worker is told, after the delegation, when the request was given to another worker before and that result was
@@ -165,6 +167,7 @@ impl TeamPrompt {
         Self::TierMember,
         Self::TierCoordinator,
         Self::Wake,
+        Self::InvestigationAnswer,
         Self::Delegation,
         Self::DelegationAgain,
         Self::MemberFinished,
@@ -275,6 +278,11 @@ impl TeamPrompt {
             Self::TierMember => tier_spec("harness/team/tier-member.md"),
             Self::TierCoordinator => tier_spec("harness/team/tier-coordinator.md"),
             Self::Wake => PromptSpec::new("harness/team/wake.md", Audience::Model, &["team"]),
+            Self::InvestigationAnswer => PromptSpec::new(
+                "harness/team/investigation-answer.md",
+                Audience::Model,
+                &["investigation_id", "investigator", "file", "answer"],
+            ),
             Self::Delegation => delegation_spec(),
             Self::MemberFinished => PromptSpec::new(
                 "harness/team/bus-member-finished.md",

@@ -390,6 +390,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `worktree_switched` | `info` | Before a run, the task's worktree had another branch (or a detached HEAD) out and a clean tree, and the daemon switched it to the branch of the item the run works on; with `task`, `from` (the branch that was out, or `a detached HEAD`) and `to`. Stored in daemon history from schema 30. |
 | `worktree_switch_refused` | `warn` | Before a run, the worktree was not put on the branch of the item: it has uncommitted changes to tracked files, or `git switch` failed. The run starts anyway, and its prompt tells the lead to commit and switch; with `task`, `from`, `to` and, when the switch failed, `error`. Stored in daemon history from schema 30. |
 | `publish_off_branch` | `warn` | The harness was to publish an item's branch, but the task's worktree had another branch out and no gate had passed at the tip of the item's branch: nothing was pushed, and the lead was sent back to switch to the branch and run the gate. Fields: `team`, `task`, `branch`, `checked_out`. |
+| `investigation_started` | `info` | An investigator task was started to answer an investigation request. Fields: `id`, `investigator`, `task`, `from_task`. |
+| `investigation_answered` | `info` | An investigator task ended and delivered its answer to the requester. Fields: `id`, `investigator`, `chars`. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and
