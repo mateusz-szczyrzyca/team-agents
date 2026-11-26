@@ -1557,10 +1557,7 @@ mod agentbus_commands {
 
         // Read back with inv_get; the returned Investigation carries the correct id.
         let inv = fixture.bus.inv_get(id).await.unwrap();
-        assert_eq!(
-            inv.id, id,
-            "inv_get should return the correct investigation id"
-        );
+        assert_eq!(inv.id, id, "inv_get should return the correct investigation id");
 
         // The done request should not appear in inv_open.
         let open = fixture.bus.inv_open().await.unwrap();
@@ -1596,10 +1593,7 @@ mod agentbus_commands {
         // BranchName type rejects it.
         let state_path = fixture.bus.bus_dir().join("state.json");
         let state_text = read_to_string(&state_path).unwrap();
-        let corrupted = state_text.replace(
-            "\"branch\": \"agents/gemini-1/task-1\"",
-            "\"branch\": \"\"",
-        );
+        let corrupted = state_text.replace("\"branch\": \"agents/gemini-1/task-1\"", "\"branch\": \"\"");
         write(&state_path, corrupted).unwrap();
 
         let err = fixture
@@ -1636,7 +1630,13 @@ mod agentbus_commands {
 
         let err = fixture.bus.inv_open().await.unwrap_err();
         assert!(
-            matches!(&err, AgentBusError::Unexpected { command: BusCommand::InvList, .. }),
+            matches!(
+                &err,
+                AgentBusError::Unexpected {
+                    command: BusCommand::InvList,
+                    ..
+                }
+            ),
             "error should be Unexpected for InvList, got {err:?}"
         );
     }
@@ -1679,5 +1679,4 @@ mod agentbus_commands {
             .unwrap();
         assert!(third.is_none(), "both slots filled, third call should be None");
     }
-
 }

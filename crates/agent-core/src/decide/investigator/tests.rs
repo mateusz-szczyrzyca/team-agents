@@ -468,9 +468,7 @@ cli = "claude"
 #[test]
 fn an_investigator_waiting_with_a_pending_review_is_not_free_for_a_request() {
     use crate::config::Config;
-    use crate::state::{
-        fixtures, Member, Participant, PhaseKind, ReviewOutcome, State,
-    };
+    use crate::state::{Member, Participant, PhaseKind, ReviewOutcome, State, fixtures};
     use crate::status::TaskStatus;
 
     let config = Config::from_toml_str(
@@ -497,10 +495,7 @@ cli = "claude"
     drop(item_handle);
 
     // Add the investigator as a Waiting reviewer of the team.
-    let mut waiting_inv = Member::new(
-        fixtures::task(10),
-        Participant::Investigator("inv-a".parse().unwrap()),
-    );
+    let mut waiting_inv = Member::new(fixtures::task(10), Participant::Investigator("inv-a".parse().unwrap()));
     waiting_inv.transition(TaskStatus::Running).unwrap();
     waiting_inv.transition(TaskStatus::Waiting).unwrap();
 
