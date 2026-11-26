@@ -101,6 +101,7 @@ Write the walkthrough of the guide.
             std::fs::create_dir(&home).unwrap();
             let mut config = String::new();
             let agents = [
+                ("inv-opus", "investigator", "sleep"),
                 ("claude-1", "agent", "ask-worker-after:member,sleep"),
                 ("glm-1", "worker", "sleep,done:Result: done."),
             ];
@@ -334,15 +335,16 @@ Write the walkthrough of the guide.
     }
 
     /// Starts a team of a member that asks for worker step 1.1 once the test says so, and a worker
-    /// whose first run is `worker_scenario`; returns the world and the tasks.
+    /// whose second run is `worker_scenario` (the first one is `sleep` to settle on the bus);
+    /// returns the world and the tasks.
     fn answered_request(world: &mut World, worker_scenario: &str, request: &str) -> Vec<(String, String)> {
-        // Override the worker's scenario.
+        // Override the worker's scenario: keep the first-action `sleep`, replace the second.
         let config = std::fs::read_to_string(world.home.join("agents.toml")).unwrap();
-        let updated = config.replace("sleep,done:Result: done.", worker_scenario);
+        let updated = config.replace("sleep,done:Result: done.", &format!("sleep,{worker_scenario}"));
         std::fs::write(world.home.join("agents.toml"), updated).unwrap();
         world.asks("member", Some(MEMBER_PLAN), &[request]);
         world.start();
-        let tasks = world.run(&["claude-1", "glm-1"]);
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
         world.ended(task(&tasks, "glm-1"), 1);
         world.sleeps_on_the_bus("glm-1");
         tasks
@@ -379,8 +381,13 @@ Write the walkthrough of the guide.
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
 
-        assert_eq!(runs.len(), 1, "expected one run for the pool worker, got {runs:?}");
-        let run = &runs[0];
+        // The worker runs at least twice: the initial sleep run and the request-serving run.
+        assert!(
+            runs.len() >= 2,
+            "expected at least 2 runs for the pool worker (sleep + request), got {runs:?}"
+        );
+        // The last run is the request-serving run.
+        let run = runs.last().unwrap();
         let start = &run.start.value;
         assert_eq!(start.task.as_str(), worker);
         assert_eq!(start.role, agent_core::kinds::Role::Worker);
@@ -418,8 +425,8 @@ Write the walkthrough of the guide.
         let reader = open_reader(&world);
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
-        assert_eq!(runs.len(), 1, "expected one run for the pool worker");
-        let run_id = &runs[0].start.value.run;
+        assert!(runs.len() >= 2, "expected at least 2 runs for the pool worker");
+        let run_id = &runs.last().unwrap().start.value.run;
         let steps = reader.steps(run_id).unwrap();
 
         // Should have at least 2 tool steps. There might also be a final message step.
@@ -469,7 +476,7 @@ Write the walkthrough of the guide.
         let reader = open_reader(&world);
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
-        let run_id = runs[0].start.value.run.to_string();
+        let run_id = runs.last().unwrap().start.value.run.to_string();
         let output_run = world.agent(&["log", "--run", &run_id]);
         assert!(
             output_run.status.success(),
@@ -523,7 +530,7 @@ Write the walkthrough of the guide.
         // Start the daemon and the team.
         world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
         world.start();
-        let tasks = world.run(&["claude-1", "glm-1"]);
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
         let (member, worker) = (task(&tasks, "claude-1").to_owned(), task(&tasks, "glm-1").to_owned());
 
         // Let the first runs end and the worker sleep on the bus.
