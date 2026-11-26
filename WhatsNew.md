@@ -14,7 +14,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Enhancements
 - [agent] [agent-core] Team state and activity history can retain investigator tasks separately from reviews; older state still loads.
 - [agent-core] Investigation request and answer prompts are available for the upcoming investigator workflow.
-- [agent-runtime] History accepts investigator runs and reserves investigation events while preserving existing records.
+- [agent-runtime] History accepts investigator runs while preserving existing records.
 - [agent-runtime] [agentbus] `agentbus inv-next --task TASK` can select requests from specific tasks without claiming another team's requests; repeat the option for more tasks.
 
 ## agent 0.131.0 · agent-core 0.128.0 — 26.11.2026 — PR pending

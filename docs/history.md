@@ -567,9 +567,9 @@ of a run that started before — and counts them.
 
 ## Versions and migrations
 
-Migration `33` admits the `investigator` run role and reserves `investigation_started`, `investigation_answered`
-and `investigation_kind_unknown` log events. It preserves existing runs, related records, log IDs, round links,
-search entries and cursors. The daemon workflow that emits those events is a separate follow-up.
+Migration `33` admits the `investigator` run role and preserves existing runs, related records,
+log IDs, round links, search entries and cursors. Investigation log events arrive with their daemon
+emitters in a separate follow-up migration.
 
 `PRAGMA user_version` is the number of the last migration applied. The schema is the result of the migrations of
 `schema.rs` applied in order to an empty database — a new database and an old one end up the same. A migration is never
