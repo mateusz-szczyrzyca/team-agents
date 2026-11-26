@@ -169,6 +169,8 @@ One row for each run: what the owner decided when it made the run ready. Its pro
 | `session` | TEXT | the session the run begins with, when it is known before the CLI starts (a resumed one; a Claude Code session the harness names) |
 | `cut` | TEXT | the fields that were cut |
 
+A pool worker's run has `role = 'worker'`, `why = 'request'` and the requester's team.
+
 ### `run_sessions`
 
 Sessions learned from CLI output are appended immediately, including notifications that have no activity event.

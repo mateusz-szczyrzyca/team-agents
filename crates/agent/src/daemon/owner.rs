@@ -1376,6 +1376,10 @@ impl Owner {
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
+            if self.parts.state.find_task(&task).is_none() {
+                let started = self.serving.get(&task).map(|served| served.started);
+                self.record_pool_run_end(&run_id, started, &outcome)?;
+            }
             owned = self.settle_owned_run(&task, &run_id, &outcome).await?;
         }
         self.in_flight.remove(&task);

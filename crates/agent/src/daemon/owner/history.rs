@@ -12,8 +12,8 @@ use agent_core::state::{ItemPhase, RunState, Timestamp};
 use agent_runtime::history::CaptureKind;
 use agent_runtime::process::error_chain;
 
-use super::Owner;
 use super::start::{Plan, work_branch};
+use super::{Outcome, Owner, OwnerError, RunEnd, RunVerdict};
 use crate::daemon::history::{round_opening, team_start};
 
 /// Why the daemon could not build the event that starts a fix pass.
@@ -334,6 +334,33 @@ impl Owner {
         })));
     }
 
+    /// Records the start of a pool worker run.
+    ///
+    /// The job's steps land under this run.
+    pub(super) fn record_pool_run_start(&self, run: RunStart) {
+        if self.history.is_disabled() {
+            return;
+        }
+        self.history.record(Record::Run(Box::new(run)));
+    }
+
+    /// Records the end of the run of a pool worker, whose task is no member of a team, from how its job `outcome`
+    /// ended; a run that was interrupted or failed ended with no status and no exit code, and a failed one has no
+    /// final message of the agent (the engine's error is not what the agent said). A clock that was set back during
+    /// the run must not end it before it `started`, when the request is still known.
+    pub(super) fn record_pool_run_end(
+        &self,
+        run: &RunId,
+        started: Option<Timestamp>,
+        outcome: &Outcome,
+    ) -> Result<(), OwnerError> {
+        let now = Timestamp::now(&self.parts.clock)?;
+        let at = pool_run_end_time(now, started);
+        let (end, final_message) = pool_run_end(outcome);
+        self.record_run_end(run, at, &end, final_message);
+        Ok(())
+    }
+
     /// Records how `run` ended at `at`, with the agent's `final_message`, and forgets the numbering of its steps.
     pub(super) fn record_run_end(
         &self,
@@ -378,3 +405,25 @@ impl Owner {
         }
     }
 }
+
+/// The time a pool worker's run ended: `now`, and never before the `started` time of its request when that is known,
+/// because a clock set back during the run would end the run before it began.
+fn pool_run_end_time(now: Timestamp, started: Option<Timestamp>) -> Timestamp {
+    started.map_or(now, |started| now.max(started))
+}
+
+/// How a pool worker's run ended, from its job's `outcome`, and the agent's final message to record with it. A run
+/// that was interrupted or failed ended with no status and no exit code, and a failed one has no final message: the
+/// engine's error is not what the agent said.
+fn pool_run_end(outcome: &Outcome) -> (RunEnd, Option<&str>) {
+    match outcome {
+        Outcome::Verdict(verdict) => match verdict.as_ref() {
+            RunVerdict::Finished(finished) => (finished.classified.end.clone(), finished.final_message.as_deref()),
+            RunVerdict::Interrupted { .. } => (RunEnd::NoStatus { exit_code: None }, None),
+        },
+        Outcome::Failed(_) => (RunEnd::NoStatus { exit_code: None }, None),
+    }
+}
+
+#[cfg(test)]
+mod tests;

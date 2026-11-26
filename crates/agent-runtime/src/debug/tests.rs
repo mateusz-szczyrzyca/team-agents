@@ -735,3 +735,312 @@ async fn secret_in_process_command_line_is_in_no_file_of_bundle() {
     let summary = std::fs::read_to_string(&result.summary_path).unwrap();
     assert!(!summary.contains(secret), "summary must not contain secret: {summary}");
 }
+
+/// The ID of the requesting run that the worker history names.
+const ASKING_RUN: &str = "run-20261117-120500-a1b2";
+
+fn worker_task() -> TaskId {
+    "task-20261117-130000-w0rk".parse().unwrap()
+}
+
+fn worker_run(number: u32) -> agent_core::ids::RunId {
+    format!("run-20261117-1300{number:02}-w0rk").parse().unwrap()
+}
+
+fn fixture_team() -> TeamId {
+    "team-20261117-120000-a1b2".parse().unwrap()
+}
+
+/// Writes the history of `team` with `runs` runs of the worker task; every run but the last has ended, and the last
+/// one has ended only when `last_ended`.
+fn write_worker_history(home: &Home, team: &TeamId, runs: u32, last_ended: bool) {
+    use crate::history::Store;
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunEndRecord, RunStart, RunWhy, TeamStart};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    // The summary leaves out the history of a home whose configuration cannot be read.
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    let at = |second: u32| -> Timestamp { format!("2026-11-17T13:00:{second:02}Z").parse().unwrap() };
+    let mut records = vec![Record::Team(Box::new(TeamStart {
+        team: team.clone(),
+        at: at(0),
+        repo: "example".to_owned(),
+        base_branch: "main".parse().unwrap(),
+        merge: MergeMode::Autopilot,
+        task_list: "Build.".to_owned(),
+        plan: Vec::new(),
+    }))];
+    for number in 1..=runs {
+        records.push(Record::Run(Box::new(RunStart {
+            run: worker_run(number),
+            team: team.clone(),
+            task: worker_task(),
+            at: at(number),
+            agent: AgentIdentity {
+                name: "opencode-1".to_owned(),
+                tier: Tier::Worker,
+                cli: CliKind::Opencode,
+                model: None,
+            },
+            role: Role::Worker,
+            rounds: vec![],
+            why: RunWhy::Request {
+                asked_by: Some(ASKING_RUN.parse().unwrap()),
+            },
+            prompt: "Do the request.".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/worker-tree".to_owned()).unwrap(),
+            branch: "worker-branch".parse().unwrap(),
+            session: None,
+        })));
+        if number < runs || last_ended {
+            records.push(Record::RunEnd(Box::new(RunEndRecord {
+                run: worker_run(number),
+                at: at(number.saturating_add(30)),
+                end: agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                },
+                final_message: Some("Finished.\nSTATUS: DONE".to_owned()),
+            })));
+        }
+    }
+    database.write(&records).unwrap();
+}
+
+/// Writes the files a worker task leaves on disk: its context file and the output of each of its runs.
+fn write_worker_files(home: &Home, runs: u32, output: &str) {
+    let task = worker_task();
+    std::fs::create_dir_all(home.task_dir(&task)).unwrap();
+    std::fs::write(
+        home.task_dir(&task).join("context.json"),
+        r#"{"run":"run-20261117-130001-w0rk","session":null,"context":1234}"#,
+    )
+    .unwrap();
+    for number in 1..=runs {
+        let dir = home.run_dir(&task, &worker_run(number));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("out.jsonl"), output).unwrap();
+        std::fs::write(dir.join("err.log"), format!("error of run {number}\n")).unwrap();
+    }
+}
+
+fn run_debug(home: &Home, args: DebugArgs) -> DebugResult {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(execute_debug(home, args, None, &mut Vec::new()))
+        .unwrap()
+}
+
+fn resolve_with_history(home: &Home, target: &DebugTarget) -> Result<TeamId, DebugRuntimeError> {
+    let state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(resolve_debug_target_with_history(home, &state, target))
+}
+
+#[test]
+fn worker_task_resolves_to_team() {
+    let (_dir, home, _args) = fixture();
+    write_worker_history(&home, &fixture_team(), 2, true);
+    let resolved = resolve_with_history(&home, &DebugTarget::Task(worker_task())).unwrap();
+    assert_eq!(resolved, fixture_team());
+}
+
+#[test]
+fn unknown_task_still_fails() {
+    let (_dir, home, _args) = fixture();
+    write_worker_history(&home, &fixture_team(), 1, true);
+    let other: TaskId = "task-20261117-140000-zzzz".parse().unwrap();
+    let result = resolve_with_history(&home, &DebugTarget::Task(other.clone()));
+    assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id }) if id == other.as_str()));
+}
+
+#[test]
+fn worker_task_of_a_team_missing_from_the_state_is_unknown() {
+    let (_dir, home, _args) = fixture();
+    let gone: TeamId = "team-20261117-110000-gone".parse().unwrap();
+    write_worker_history(&home, &gone, 1, true);
+    let result = resolve_with_history(&home, &DebugTarget::Task(worker_task()));
+    assert!(matches!(result, Err(DebugRuntimeError::UnknownTarget { id }) if id == worker_task().as_str()));
+}
+
+#[test]
+fn member_task_resolves_without_a_history() {
+    let (_dir, home, _args) = fixture();
+    let member: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+    let resolved = resolve_with_history(&home, &DebugTarget::Task(member)).unwrap();
+    assert_eq!(resolved, fixture_team());
+}
+
+#[test]
+fn team_bundle_has_worker_files() {
+    let (_dir, home, args) = fixture();
+    write_worker_history(&home, &fixture_team(), 2, false);
+    write_worker_files(&home, 2, "{\"type\":\"step_start\"}\n");
+    let result = run_debug(&home, args);
+    let task = worker_task();
+    let worker_dir = result.bundle_dir.join("tasks").join(task.as_str());
+    assert!(worker_dir.join("context.json").is_file());
+    for number in 1..=2 {
+        let run_dir = worker_dir.join("runs").join(worker_run(number).as_str());
+        assert_eq!(
+            std::fs::read_to_string(run_dir.join("out.jsonl")).unwrap(),
+            "{\"type\":\"step_start\"}\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(run_dir.join("err.log")).unwrap(),
+            format!("error of run {number}\n")
+        );
+    }
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains("workers:"), "{summary}");
+    // The history's own lines tell the same runs, so the line of the workers list is the one that has all of its facts.
+    let listed = summary.lines().any(|line| {
+        line.contains(task.as_str())
+            && line.contains("opencode-1")
+            && line.contains(ASKING_RUN)
+            && line.contains(worker_run(2).as_str())
+            && line.contains("running")
+    });
+    assert!(listed, "{summary}");
+}
+
+#[test]
+fn ended_worker_run_is_told_in_the_summary() {
+    let (_dir, home, args) = fixture();
+    write_worker_history(&home, &fixture_team(), 1, true);
+    write_worker_files(&home, 1, "{}\n");
+    let result = run_debug(&home, args);
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    let listed = summary.lines().any(|line| {
+        line.contains("opencode-1") && line.contains(ASKING_RUN) && line.contains("DONE") && !line.contains("running")
+    });
+    assert!(listed, "{summary}");
+}
+
+#[test]
+fn bundle_of_a_worker_task_is_the_bundle_of_its_team() {
+    let (_dir, home, mut args) = fixture();
+    write_worker_history(&home, &fixture_team(), 1, true);
+    write_worker_files(&home, 1, "{}\n");
+    args.target = DebugTarget::Task(worker_task());
+    let result = run_debug(&home, args);
+    assert!(
+        result
+            .bundle_dir
+            .join("tasks")
+            .join(worker_task().as_str())
+            .join("context.json")
+            .is_file()
+    );
+    assert!(result.bundle_dir.join("team.json").is_file());
+}
+
+#[test]
+fn worker_output_is_redacted() {
+    let (_dir, home, args) = fixture();
+    write_worker_history(&home, &fixture_team(), 1, true);
+    let output = include_str!("testdata/worker-out.jsonl");
+    assert!(output.contains("test-confidential-λ"));
+    write_worker_files(&home, 1, output);
+    let result = run_debug(&home, args);
+    let copied = std::fs::read_to_string(
+        result
+            .bundle_dir
+            .join("tasks")
+            .join(worker_task().as_str())
+            .join("runs")
+            .join(worker_run(1).as_str())
+            .join("out.jsonl"),
+    )
+    .unwrap();
+    assert!(!copied.contains("test-confidential-λ"), "{copied}");
+    assert!(copied.contains("<cut>"), "{copied}");
+    assert_eq!(copied.lines().count(), 10);
+}
+
+#[test]
+fn missing_worker_dir_is_noted() {
+    let (_dir, home, args) = fixture();
+    write_worker_history(&home, &fixture_team(), 1, true);
+    let result = run_debug(&home, args);
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains(&format!("worker task {}", worker_task())), "{summary}");
+    assert!(!result.bundle_dir.join("tasks").join(worker_task().as_str()).exists());
+}
+
+#[test]
+fn only_last_three_worker_runs() {
+    let (_dir, home, args) = fixture();
+    write_worker_history(&home, &fixture_team(), 5, true);
+    write_worker_files(&home, 5, "{}\n");
+    let result = run_debug(&home, args);
+    let runs = result
+        .bundle_dir
+        .join("tasks")
+        .join(worker_task().as_str())
+        .join("runs");
+    let mut kept: Vec<String> = std::fs::read_dir(runs)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+        .collect();
+    kept.sort();
+    let expected: Vec<String> = (3..=5).map(|number| worker_run(number).to_string()).collect();
+    assert_eq!(kept, expected);
+}
+
+/// A worker that is a member of the team records `role = worker` in the history too; its files are collected once,
+/// with the team's members, and the workers list leaves it out.
+#[test]
+fn in_team_worker_is_collected_once() {
+    use crate::history::Store;
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy};
+    use agent_core::kinds::{CliKind, Role, Tier};
+    let (_dir, home, args) = fixture();
+    std::fs::write(
+        home.config_file(),
+        "[repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    )
+    .unwrap();
+    let member: TaskId = "task-20261117-120000-a1b2".parse().unwrap();
+    std::fs::create_dir_all(home.task_dir(&member)).unwrap();
+    std::fs::write(home.task_dir(&member).join("context.json"), r#"{"context":1}"#).unwrap();
+    let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[Record::Run(Box::new(RunStart {
+            run: worker_run(1),
+            team: fixture_team(),
+            task: member.clone(),
+            at: "2026-11-17T13:00:01Z".parse().unwrap(),
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Worker,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: Role::Worker,
+            rounds: vec![],
+            why: RunWhy::Request { asked_by: None },
+            prompt: "Do the request.".to_owned(),
+            worktree: AbsolutePath::try_from("/tmp/worker-tree".to_owned()).unwrap(),
+            branch: "worker-branch".parse().unwrap(),
+            session: None,
+        }))])
+        .unwrap();
+    let result = run_debug(&home, args);
+    let copied = result
+        .bundle_dir
+        .join("tasks")
+        .join(member.as_str())
+        .join("context.json");
+    assert_eq!(std::fs::read_to_string(copied).unwrap(), r#"{"context":1}"#);
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(!summary.contains("workers:\n"), "{summary}");
+}

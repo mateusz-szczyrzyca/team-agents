@@ -634,6 +634,10 @@ runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
 An unpublished member branch is expected; the coordinator's origin ref is still checked.
+The bundle of a team (`--team`, `--round` or `--task`) also includes the team's pool worker tasks, taken from the
+history: for each worker task its `context.json` and the `out.jsonl` and `err.log` of its last three runs, bounded and
+cut of secrets like member files, and a `workers` list in the summary; and `--task` also accepts a worker task and
+writes the bundle of the team that requested it.
 
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
 artifacts. Summary redaction precedes truncation and byte budgeting, including daemon logs and process command lines.
@@ -669,7 +673,8 @@ as JSON lines. In text, adjacent reviewer run blocks of the same team, pull requ
 review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
 are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. `agent log` reads a history of an older schema without changing it; the daemon migrates it
-when it opens it for writing.
+when it opens it for writing. Worker tasks are shown like member tasks: `agent log --task task-…-e8j7`
+prints the runs and steps of a pool worker.
 
 Bare `agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
 select rows instead of its story, or add a row filter: `--task`, `--run`, `--agent`, `--level`, `--event`,

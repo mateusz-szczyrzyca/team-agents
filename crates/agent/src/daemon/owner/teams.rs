@@ -19,7 +19,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
 };
-use agent_core::history::HistoryEvent;
+use agent_core::history::{AgentIdentity, HistoryEvent, RunStart, RunWhy};
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
@@ -1681,6 +1681,13 @@ impl Owner {
                 output: setup_output,
             };
 
+            // Query the requester's run before record_pool_run moves requester_task.
+            let asked_by = self
+                .parts
+                .state
+                .find_task(&requester_task)
+                .and_then(|f| f.member.current_run().map(|run| run.id().clone()));
+
             self.record_pool_run(
                 worker_task.clone(),
                 Served {
@@ -1693,6 +1700,27 @@ impl Owner {
                 },
                 team.id().clone(),
             );
+            let agent_identity = AgentIdentity {
+                name: worker_name.to_string(),
+                tier: Tier::Worker,
+                cli: job.cli,
+                model: job.model.clone(),
+            };
+            let start = RunStart {
+                run: job.run.clone(),
+                team: team.id().clone(),
+                task: worker_task.clone(),
+                at: started,
+                agent: agent_identity,
+                role: Role::Worker,
+                rounds: Vec::new(),
+                why: RunWhy::Request { asked_by },
+                prompt: job.prompt.clone(),
+                worktree: job.working_dir.clone(),
+                branch: branch.clone(),
+                session: None,
+            };
+            self.record_pool_run_start(start);
 
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
             self.spawn_job(worker_task.clone(), job, run_span);
@@ -1787,6 +1815,7 @@ impl Owner {
             .state
             .find_task(&served.requester_task)
             .map(|f| f.team.id().clone());
+
         let req_outcome = match outcome {
             Outcome::Verdict(verdict) => match *verdict {
                 RunVerdict::Finished(run) => {
