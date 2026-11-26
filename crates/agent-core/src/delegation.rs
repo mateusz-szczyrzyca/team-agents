@@ -10,6 +10,7 @@
 //! a step the plan does not have                               NoSuchStep
 //! a step that is done, or given up                            StepClosed
 //! the check `reviewer`, or `agent gate`                       CheckRefused
+//! a check followed by words: `grep x f.md shows the line`     SentenceCheck
 //! ```
 
 use crate::ids::{InvalidItemId, ItemId};
@@ -101,6 +102,16 @@ pub enum Rejection {
         /// Why a plan would not read it as a step's `Check:` line.
         #[source]
         source: PlanError,
+    },
+    /// The check is a command followed by words that say what it shows: run as a command, it fails in every worktree.
+    #[error(
+        "the request's check {check:?} goes on as a sentence at {word:?}: a check is one command and nothing after it; say what it shows in do, and quote a word that belongs to the command"
+    )]
+    SentenceCheck {
+        /// The check as the requester wrote it.
+        check: String,
+        /// The first word that reads as prose rather than part of the command.
+        word: String,
     },
     /// The requirement says nothing to do.
     #[error("the request says nothing to do: add do, what the worker is to do")]
@@ -194,6 +205,14 @@ fn name_check(text: &str, refused: &[String]) -> Result<Check, Rejection> {
         check: text.to_owned(),
         source,
     })?;
+    if let Check::Command(command) = &check
+        && let Some(word) = sentence_word(command)
+    {
+        return Err(Rejection::SentenceCheck {
+            check: text.to_owned(),
+            word,
+        });
+    }
     let refused_kind = match &check {
         Check::Command(command) => refuse_command(command, refused),
         Check::Exists(_) | Check::Reviewer => false,
@@ -202,6 +221,77 @@ fn name_check(text: &str, refused: &[String]) -> Result<Check, Rejection> {
         return Err(Rejection::CheckRefused { check: text.to_owned() });
     }
     Ok(check)
+}
+
+/// Words that end a command and start a sentence about what it shows. A word of a command that is one of them is quoted.
+const PROSE_WORDS: [&str; 14] = [
+    "the", "and", "shows", "gives", "returns", "prints", "exits", "should", "must", "contains", "succeeds", "passes",
+    "fails", "outputs",
+];
+
+/// The first word of `command`, after the command's name, that reads as prose: one of [`PROSE_WORDS`], a word that ends
+/// with a comma, or an ellipsis. Quoted or escaped words and options are part of the command and never prose; `None`
+/// when every word can be the command's.
+fn sentence_word(command: &str) -> Option<String> {
+    shell_words(command)
+        .into_iter()
+        .skip(1)
+        .filter(|word| !word.quoted && !word.text.starts_with('-'))
+        .map(|word| word.text)
+        .find(|word| {
+            let bare = word.trim_end_matches([',', '.']);
+            word.contains('…') || (word.len() > 1 && word.ends_with(',')) || PROSE_WORDS.contains(&bare)
+        })
+}
+
+/// A word of a command line, as a shell splits it.
+struct ShellWord {
+    /// The word with its quotes and escapes as written.
+    text: String,
+    /// Whether any part of it is quoted or escaped.
+    quoted: bool,
+}
+
+/// The words of `command`, split at whitespace outside quotes; a quote that is not closed runs to the end.
+fn shell_words(command: &str) -> Vec<ShellWord> {
+    let mut words = Vec::new();
+    let mut text = String::new();
+    let mut quoted = false;
+    let mut quote: Option<char> = None;
+    let mut chars = command.chars();
+    while let Some(c) = chars.next() {
+        match (quote, c) {
+            (Some(open), _) if c == open => quote = None,
+            (None, '\\') => {
+                quoted = true;
+                text.push(c);
+                if let Some(next) = chars.next() {
+                    text.push(next);
+                }
+                continue;
+            }
+            (None, '\'' | '"') => {
+                quote = Some(c);
+                quoted = true;
+            }
+            (None, _) if c.is_whitespace() => {
+                if !text.is_empty() {
+                    words.push(ShellWord {
+                        text: std::mem::take(&mut text),
+                        quoted,
+                    });
+                }
+                quoted = false;
+                continue;
+            }
+            _ => {}
+        }
+        text.push(c);
+    }
+    if !text.is_empty() {
+        words.push(ShellWord { text, quoted });
+    }
+    words
 }
 
 /// The steps of `plan` as a request may name them.

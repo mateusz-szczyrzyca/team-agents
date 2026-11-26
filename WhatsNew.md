@@ -9,7 +9,18 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.122.0 · agent-core 0.119.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #293
+## agent 0.123.0 · agent-core 0.120.0 — 26.11.2026 — PR #294
+
+### Bug fixes
+- [agent] [agent-core] A request to a worker whose check goes on as a sentence (`grep -n x README.md shows the line`) is refused at once, with the word that starts the sentence, instead of going to two workers whose results then fail that check.
+
+## agent 0.122.0 · agent-core 0.119.0 — 26.11.2026 — PR #292
+
+### Bug fixes
+- [agent] [agent-core] `[limits] round_minutes` now stops an agent that never commits: before, each cut for an order to commit started the clock of the round again, so the limit never came.
+
+
+## agent 0.124.0 · agent-core 0.121.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #295
 
 ### New features
 - [agent] [agent-core] [agent-runtime] The daemon serves investigation requests from the bus with free investigators, running each in a detached worktree at the requester's branch tip and sending the answer back to the requester when done.

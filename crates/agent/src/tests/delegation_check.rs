@@ -212,3 +212,21 @@ fn a_refusal_says_the_cause_of_what_does_not_read() {
         "{plan_cause:?} is not in {unreadable:?}"
     );
 }
+
+#[test]
+fn a_check_that_goes_on_as_a_sentence_is_refused_before_any_worker_runs() {
+    let (_dir, plan) = home_with_plan();
+
+    let (code, out) = check(
+        &plan,
+        "1.2",
+        "docs/guide.md",
+        "grep -n 'worker' docs/guide.md shows the line in the agent debug section",
+        "x",
+    );
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let mut lines = out.lines();
+    assert_eq!(lines.next(), Some("REFUSED CHECK-REFUSED"), "{out}");
+    assert!(lines.next().is_some_and(|line| line.contains("\"shows\"")), "{out}");
+}

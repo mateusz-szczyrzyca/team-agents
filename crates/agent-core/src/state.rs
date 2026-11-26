@@ -33,6 +33,8 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+mod commit_cut_tests;
+#[cfg(test)]
 mod limit_tests;
 mod renewal;
 #[cfg(test)]
@@ -77,7 +79,7 @@ pub use team::{
 pub use values::{CommitId, InvalidCommitId, InvalidTimestamp, PrNumber, SessionId, Timestamp};
 pub use wake_delivery::WakeDelivery;
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
@@ -131,6 +133,9 @@ pub struct State {
     /// Until when an agent refused by its provider is kept out of new tasks, reviews and takeovers; an agent without an
     /// entry is not refused.
     refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
+    /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
+    commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
 }
 
 /// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
@@ -155,6 +160,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no agent is refused.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     refused_agents: &'a BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// See [`State`]; omitted when no run was cut for an order to commit.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
 }
 
 impl Serialize for State {
@@ -173,6 +181,7 @@ impl Serialize for State {
             queued,
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
+            commit_cuts: &self.commit_cuts,
         }
         .serialize(serializer)
     }
@@ -186,6 +195,7 @@ impl PartialEq for State {
             && self.wake_deliveries == other.wake_deliveries
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
+            && self.commit_cuts == other.commit_cuts
             && self.effective_queued() == other.effective_queued()
     }
 }
@@ -213,6 +223,9 @@ struct StateWire {
     /// Optional in state written before provider refusals were persisted.
     #[serde(default)]
     refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// Optional in state written before commit cuts were persisted.
+    #[serde(default)]
+    commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -368,6 +381,18 @@ impl State {
         }
     }
 
+    /// Whether the daemon cut `run` of `task` for an order to commit and resumed it in its session: such a cut does not
+    /// start the clock of a round again, as a stop of the human does.
+    #[must_use]
+    pub fn commit_cut(&self, task: &TaskId, run: &crate::ids::RunId) -> bool {
+        self.commit_cuts.get(task).is_some_and(|runs| runs.contains(run))
+    }
+
+    /// Records that the daemon cut `run` of `task` for an order to commit.
+    pub fn record_commit_cut(&mut self, task: TaskId, run: crate::ids::RunId) {
+        self.commit_cuts.entry(task).or_default().insert(run);
+    }
+
     /// Until when the agent is refused by its provider, `None` when it is not refused at all.
     #[must_use]
     pub fn refused_until(&self, agent: &crate::ids::AgentName) -> Option<Timestamp> {
@@ -451,6 +476,7 @@ impl State {
             recoveries: Vec::new(),
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
+            commit_cuts: BTreeMap::new(),
         }
     }
 
@@ -942,6 +968,7 @@ impl State {
         let tasks: HashSet<TaskId> = team_members(&team).map(|member| member.task().clone()).collect();
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
         self.limit_refusals.retain(|task, _| !tasks.contains(task));
+        self.commit_cuts.retain(|task, _| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
     }
@@ -1106,6 +1133,7 @@ impl TryFrom<StateWire> for State {
             recoveries: wire.recoveries,
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
+            commit_cuts: wire.commit_cuts,
         };
         state.sync_queued();
         Ok(state)

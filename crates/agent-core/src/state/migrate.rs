@@ -54,6 +54,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         recoveries: Vec::new(),
         limit_refusals: std::collections::BTreeMap::new(),
         refused_agents: std::collections::BTreeMap::new(),
+        commit_cuts: std::collections::BTreeMap::new(),
     })?)
 }
 

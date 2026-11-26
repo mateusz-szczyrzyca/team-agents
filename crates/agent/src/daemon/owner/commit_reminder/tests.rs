@@ -683,3 +683,24 @@ pub(in crate::daemon::owner) async fn record_commit_cut(observed: &mut BTreeSet<
     );
     observed.insert(LogEvent::CommitCut);
 }
+
+#[tokio::test]
+async fn the_cut_run_is_recorded_as_a_commit_cut_and_the_resumed_run_is_not() {
+    let (mut daemon, worktree) = daemon_for(
+        "dirty-hold-commit",
+        "[commit_reminder]\nlines = 300\nminutes = 1\ncut_after = 1\n",
+    );
+    daemon.start().await;
+    until("the stand-in to leave its work", || worktree.join("dirty.txt").exists()).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+    until("the reminder on the bus", || chats(&daemon).len() == 1).await;
+    daemon.clock.advance(time::Duration::minutes(2));
+
+    let state = daemon.status_is(1, TaskStatus::Waiting).await;
+    daemon.stop().await.unwrap();
+
+    let runs = state.find_task(&task(1)).unwrap().member.runs();
+    assert_eq!(runs.len(), 2);
+    assert!(state.commit_cut(&task(1), runs[0].id()), "the cut run");
+    assert!(!state.commit_cut(&task(1), runs[1].id()), "the resumed run");
+}
