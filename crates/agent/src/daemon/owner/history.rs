@@ -334,6 +334,16 @@ impl Owner {
         })));
     }
 
+    /// Records the start of a pool worker run.
+    ///
+    /// The job's steps land under this run.
+    pub(super) fn record_pool_run_start(&self, run: RunStart) {
+        if self.history.is_disabled() {
+            return;
+        }
+        self.history.record(Record::Run(Box::new(run)));
+    }
+
     /// Records how `run` ended at `at`, with the agent's `final_message`, and forgets the numbering of its steps.
     pub(super) fn record_run_end(
         &self,

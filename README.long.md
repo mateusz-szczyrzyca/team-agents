@@ -673,7 +673,8 @@ as JSON lines. In text, adjacent reviewer run blocks of the same team, pull requ
 review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
 are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. `agent log` reads a history of an older schema without changing it; the daemon migrates it
-when it opens it for writing.
+when it opens it for writing. Worker tasks are shown like member tasks: `agent log --task task-…-e8j7`
+prints the runs and steps of a pool worker.
 
 Bare `agent log` prints the newest `100` daemon log rows. Use `--show log` with a round or team to
 select rows instead of its story, or add a row filter: `--task`, `--run`, `--agent`, `--level`, `--event`,
