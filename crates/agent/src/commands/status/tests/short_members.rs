@@ -121,19 +121,21 @@ fn crew_short() -> String {
          task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers\n  \
          task-20261111-153003-k3x9  worker       glm-1      done\n  \
          task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 23:10:11\n  \
+         task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00\n  \
          task-20261111-153006-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the run \
          showed no activity for too long\n  \
+         task-20261111-153007-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it\n  \
          task-20261111-153008-k3x9  reviewer     inv-codex  queued\n  \
+         task-20261111-153009-k3x9  reviewer     inv-codex  done\n  \
          tasks: 2 running, 1 waiting, 1 with questions, 1 queued, 1 stopped, 1 failed, 2 done; questions number 2 wait \
          for answers (claude-1, task-20261111-153002-k3x9)\n"
     )
 }
 
-// Rule: under the rounds of a team the short view writes a line for each of its tasks that is alive — the coordinator,
-// the member and the worker whatever they do, the reviewers whose review is not over — and then the count of all its
-// tasks, which also counts the reviewers that are not listed.
+// Rule: under the rounds of a team the short view writes a line for each of its tasks — the coordinator, the member and
+// the worker whatever they do, every reviewer whatever its review's outcome — and then the count of all its tasks.
 #[test]
-fn the_short_view_lists_the_crew_and_the_reviewers_at_work_and_ends_with_the_count() {
+fn the_short_view_lists_the_crew_and_every_reviewer_and_ends_with_the_count() {
     assert_eq!(shown(&[crew()], View::Full, Detail::Short), crew_short());
 }
 
@@ -156,7 +158,7 @@ fn a_line_of_the_short_view_is_the_line_of_the_full_view() {
     let full = shown(&teams, View::Full, Detail::Tasks);
 
     let listed: Vec<&str> = short.lines().filter(|line| line.starts_with("  task-")).collect();
-    assert_eq!(listed.len(), 6, "{short}");
+    assert_eq!(listed.len(), 9, "{short}");
     assert_eq!(
         listed[0],
         "  task-20261111-153001-k3x9  coordinator  inv-opus   running, in a new session, for claude-2, last activity \
@@ -226,21 +228,26 @@ fn a_solo_task_is_listed_also_when_it_is_done_or_stopped() {
     }
 }
 
-// Rule: the columns are as wide as the longest role and agent of every task of the list, listed or not, so the lines
-// of the short view are those of the full view.
+// Rule: the columns are as wide as the longest role and agent of the tasks of the list, so the lines of the short view
+// are those of the full view.
 #[test]
-fn the_columns_fit_the_tasks_that_are_not_listed_too() {
+fn the_columns_fit_the_longest_agent_name_of_the_listed_tasks() {
     let mut team = crew();
-    // The reviewer of task 9 is done and not listed; its agent has the longest name.
+    // The reviewer of task 9 is listed; its agent has the longest name.
     team.members[8].agent = crate::fixtures::investigator("inv-longest-name");
 
-    let text = shown(&[team], View::Full, Detail::Short);
+    for detail in [Detail::Short, Detail::Tasks] {
+        let text = shown(&[team.clone()], View::Full, detail);
 
-    assert!(!text.contains("inv-longest-name"), "{text}");
-    assert!(
-        text.contains("  task-20261111-153003-k3x9  worker       glm-1             done\n"),
-        "{text}"
-    );
+        assert!(
+            text.contains("  task-20261111-153009-k3x9  reviewer     inv-longest-name  done\n"),
+            "{text}"
+        );
+        assert!(
+            text.contains("  task-20261111-153003-k3x9  worker       glm-1             done\n"),
+            "{text}"
+        );
+    }
 }
 
 /// The sample team of four tasks — the coordinator and the member running, the worker and the reviewer done — whose
