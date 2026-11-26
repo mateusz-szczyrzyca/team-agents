@@ -81,7 +81,7 @@ pub fn choose(
 }
 
 /// The investigators of `config` that may take a new investigation request: configured,
-/// not occupied anywhere, with no task currently [`TaskStatus::Paused`], and not refused at `now`.
+/// not occupied anywhere, with no task currently [`crate::status::TaskStatus::Paused`], and not refused at `now`.
 #[must_use]
 pub fn free_for_request(
     state: &crate::state::State,
