@@ -835,7 +835,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
         daemon.clock.advance(time::Duration::seconds(1));
         assert!(std::panic::catch_unwind(|| panic!("synthetic panic for daemon_panicked")).is_err());
 
-        // warn (15)
+        // warn (16)
         for variant in [
             LogEvent::RunNoToolFailed,
             LogEvent::CliOutputUnreadable,
@@ -855,6 +855,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::RequestRefused,
             LogEvent::WorktreeSwitchRefused,
             LogEvent::PublishOffBranch,
+            LogEvent::InvestigationKindUnknown,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::warn!(
@@ -886,6 +887,8 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::TaskAgentChanged,
             LogEvent::TaskWaitForFreeAgent,
             LogEvent::WorktreeSwitched,
+            LogEvent::InvestigationStarted,
+            LogEvent::InvestigationAnswered,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1468,6 +1471,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::item_branch_tests::record_worktree_switch_events(&mut observed).await;
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
+    record_investigation_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
@@ -1515,6 +1519,83 @@ async fn record_no_tool_startup_events(observed: &mut BTreeSet<LogEvent>) {
         assert_eq!(row.rounds(), std::slice::from_ref(round));
         assert_eq!(row.task(), Some(&tasks[1]));
         assert_eq!(row.run(), Some(run.id()));
+        observed.insert(event);
+    }
+}
+
+/// Emits investigation log events with the right level and scope.
+async fn record_investigation_events(observed: &mut BTreeSet<LogEvent>) {
+    let daemon = Daemon::new(&solo_state(), None);
+    let scratch = tempfile::tempdir().unwrap();
+    let path = scratch.path().join("history.db");
+    let started = History::start(
+        HistoryDb::open(&path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(SilentReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    let layer = HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(daemon.clock.clone()),
+        Secrets::default(),
+        Some(started.history.clone()),
+    );
+    let dispatch: tracing::Dispatch = tracing_subscriber::registry().with(layer).into();
+
+    let team = team_id(1);
+    let task = task(1);
+    let run: RunId = "run-20261126-000000-demo".parse().unwrap();
+    let round: RoundId = "round-20261126-000000-demo".parse().unwrap();
+
+    async {
+        let span = tracing::error_span!(
+            "run",
+            team = %team,
+            rounds = %round,
+            task = %task,
+            run = %run,
+        );
+        let _enter = span.enter();
+        tracing::info!(
+            event = LogEvent::InvestigationStarted.as_str(),
+            id = 1u32,
+            investigator = "inv-demo",
+            task = %task,
+            from_task = %task,
+        );
+        tracing::info!(
+            event = LogEvent::InvestigationAnswered.as_str(),
+            id = 1u32,
+            investigator = "inv-demo",
+            chars = 42usize,
+        );
+        tracing::warn!(
+            event = LogEvent::InvestigationKindUnknown.as_str(),
+            id = 1u32,
+            kind = "unknown-kind",
+        );
+    }
+    .with_subscriber(dispatch)
+    .await;
+    started.writer.close().unwrap();
+
+    let rows = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    for event in [
+        LogEvent::InvestigationStarted,
+        LogEvent::InvestigationAnswered,
+        LogEvent::InvestigationKindUnknown,
+    ] {
+        let row = rows
+            .iter()
+            .find(|entry| entry.event() == event)
+            .unwrap_or_else(|| panic!("{event:?} must be recorded in daemon_logs"));
+        assert_eq!(row.level(), event.level());
+        assert_eq!(row.team(), Some(&team));
+        assert_eq!(row.rounds(), std::slice::from_ref(&round));
+        assert_eq!(row.task(), Some(&task));
+        assert_eq!(row.run(), Some(&run));
         observed.insert(event);
     }
 }
