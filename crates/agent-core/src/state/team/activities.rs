@@ -279,32 +279,8 @@ impl Team {
     }
 
     /// Investigation assignments for reviewer tasks with role Investigator.
-    fn investigation_activities(&self, at: Timestamp) -> Vec<Activity> {
-        let mut found = Vec::new();
-        for reviewer in &self.reviewers {
-            let Participant::Investigator(investigator) = reviewer.agent() else {
-                continue;
-            };
-            if reviewer.role() != Some(crate::kinds::Role::Investigator) {
-                continue;
-            }
-            let existing_asked_at = self
-                .activities
-                .iter()
-                .find(|a| a.task == *reviewer.task() && a.request == ActivityRequest::Investigation)
-                .map(|a| a.asked_at);
-            let asked_at = existing_asked_at
-                .unwrap_or_else(|| reviewer.runs().first().map_or(at, super::super::run::Run::started_at));
-            found.push(Activity {
-                investigator: investigator.clone(),
-                task: reviewer.task().clone(),
-                rounds: Vec::new(),
-                request: ActivityRequest::Investigation,
-                asked_at,
-                outcome: ActivityOutcome::Working,
-            });
-        }
-        found
+    fn investigation_activities(&self, _at: Timestamp) -> Vec<Activity> {
+        Vec::new()
     }
 
     /// Retains assignments and outcomes currently known by the team, without changing reviewer selection.
