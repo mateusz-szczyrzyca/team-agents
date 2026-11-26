@@ -972,4 +972,4 @@ END;
 PRAGMA user_version = 32;
 INSERT INTO daemon_logs (id, first_at, at, level, module, event, team, task, run, message, fields, count, cut) VALUES (10, '2026-11-26T09:00:10Z', '2026-11-26T09:00:10Z', 'warn', 'agent::daemon', 'publish_off_branch', NULL, NULL, NULL, 'a branch was not published', '{}', 1, '');
 INSERT INTO history_records (sequence, kind, key, at, team, payload, cut) VALUES (1, 'notified', NULL, '2026-11-26T09:00:10Z', 'team-20261126-100000-t0t0', '{"event":"notified","task":null,"title":"before","body":"a note before the upgrade"}', '');
-INSERT INTO history_records (sequence, kind, key, at, team, payload, cut) VALUES (2, 'pull_ready', 'pr-7', '2026-11-26T09:00:11Z', 'team-20261126-100000-t0t0', '{"event":"pull_ready","pr":7}', '');
+INSERT INTO history_records (sequence, kind, key, at, team, payload, cut) VALUES (2, 'pull_ready', 'pr 7', '2026-11-26T09:00:11Z', 'team-20261126-100000-t0t0', '{"event":"pull_ready","pr":7}', '');
