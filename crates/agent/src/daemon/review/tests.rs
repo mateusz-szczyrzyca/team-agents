@@ -763,7 +763,7 @@ fn opinions_exclude_reporter_and_entire_answered_pass_over_many_seeds() {
         selected.insert(chosen.name);
     }
     // Never-used investigators tied on (None, None) are drawn at random.
-    assert!(selected.len() >= 1, "at least one free investigator is drawn");
+    assert!(!selected.is_empty(), "at least one free investigator is drawn");
     assert!(
         selected.iter().all(|n| n.as_str().starts_with("inv-free-")),
         "only free investigators are drawn, not excluded ones"
