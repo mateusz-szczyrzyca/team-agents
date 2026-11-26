@@ -17,7 +17,7 @@ use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::repo_path::RepoPath;
-use agent_core::state::{CommitId, ItemPhase, Timestamp};
+use agent_core::state::{CommitId, ItemPhase, ItemProgress, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
 use agent_runtime::history::log_decision;
@@ -209,7 +209,7 @@ impl Owner {
         if holders.is_empty() {
             return Ok(());
         }
-        let (lead_git, tip, gate_passed) = match self.lead_gate(&lead).await {
+        let (lead_git, tip, gate_passed) = match self.lead_gate(team_id, &lead).await {
             Ok(found) => found,
             Err(error) => {
                 // The round keeps waiting, as before this step existed; the next look reads the gate again.
@@ -301,10 +301,21 @@ impl Owner {
         Ok(())
     }
 
-    /// The lead's git handle, the tip of its branch, and whether its gate passed on a clean tree there.
-    async fn lead_gate(&self, lead: &Lead) -> Result<(Git, CommitId, bool), PublishError> {
+    /// The lead's git handle, the tip of the branch of the item it works on (what its worktree has out when it has no such
+    /// item), and whether its gate passed on a clean tree there.
+    async fn lead_gate(&self, team_id: &TeamId, lead: &Lead) -> Result<(Git, CommitId, bool), PublishError> {
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let tip = git.rev_parse(&Revision::Head).await?;
+        let branch = self.parts.state.team(team_id).and_then(|team| {
+            crate::daemon::owner::item_branch::target_branch(
+                team.items().iter().map(ItemProgress::phase),
+                lead.agent.as_str(),
+            )
+            .cloned()
+        });
+        let tip = match branch {
+            Some(branch) => self.item_tip(lead, &branch).await?.tip,
+            None => git.rev_parse(&Revision::Head).await?,
+        };
         let record = self.parts.store.load_gate_record(&lead.task).await?;
         let passed = record.is_some_and(|record| record.result.head == tip && record.counts_as_pass());
         Ok((git, tip, passed))

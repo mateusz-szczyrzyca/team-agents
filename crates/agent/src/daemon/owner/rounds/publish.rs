@@ -13,7 +13,7 @@ use agent_core::ids::{AgentName, BranchName, ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{AutopilotPrompt, Variables};
 use agent_core::protocol::{EventKind, Failure, Reply};
-use agent_core::state::{CommitId, GateRecord, ItemPhase, PullRequest, Timestamp};
+use agent_core::state::{CommitId, Completion, GateRecord, ItemPhase, PullRequest, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{DelegationStatus, TaskRequest};
 use agent_runtime::git::{Git, Revision};
@@ -109,6 +109,14 @@ pub(super) struct Site<'a> {
     pub(super) lead: &'a Lead,
 }
 
+/// The tip of the branch of an item, and whether the lead's worktree has that tip out.
+pub(super) struct ItemTip {
+    /// The commit the branch of the item points at.
+    pub(super) tip: CommitId,
+    /// Whether the worktree's `HEAD` is that commit: only then does a gate that runs in the worktree see the item's work.
+    pub(super) checked_out: bool,
+}
+
 /// A branch whose gate passed at its tip.
 pub(super) struct Ready {
     /// Git in the lead's worktree.
@@ -141,6 +149,16 @@ pub(super) enum Attempt {
         /// Catalog-rendered reason for the human notice.
         reason: String,
     },
+    /// The lead is done, but the gate has not passed at `tip` of the item's branch and its worktree has another branch out,
+    /// where the gate of the harness would not see `tip`: nothing is pushed, and the lead is sent back to the branch.
+    OffBranch {
+        /// The tip of the item's branch.
+        tip: CommitId,
+        /// The item's branch.
+        branch: BranchName,
+        /// What the worktree has out, as the lead is told it.
+        checked_out: String,
+    },
     /// The lead is done and the gate passed, but no finished branch was joined.
     NotJoined {
         /// The tip of its branch.
@@ -150,8 +168,19 @@ pub(super) enum Attempt {
     },
 }
 
+/// Whether the text a lead is sent back with says how many times it was sent back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Count {
+    /// The text names `sent` and `limit`.
+    Told,
+    /// The text names neither.
+    Silent,
+}
+
 /// What a lead that is done is sent back to its branch with.
 struct Back {
+    /// Whether its text names how often the lead was sent back.
+    count: Count,
     /// The text it is given.
     prompt: AutopilotPrompt,
     /// The variable of that text that says what is wrong, beside the branch and the count: its name and its value.
@@ -342,7 +371,99 @@ pub(crate) enum PublishQuestionError {
     },
 }
 
+/// The branch of the item in `phase`, when it has one.
+fn phase_branch(phase: &ItemPhase) -> Option<&BranchName> {
+    match phase {
+        ItemPhase::Pending => None,
+        ItemPhase::InProgress { branch, .. } | ItemPhase::Fixing { branch, .. } => Some(branch),
+        ItemPhase::InReview { pr, .. } | ItemPhase::Approved { pr, .. } => Some(&pr.branch),
+        ItemPhase::Done { completion } => match completion {
+            Completion::Listed => None,
+            Completion::Merged { pr, .. } => Some(&pr.branch),
+        },
+    }
+}
+
 impl Owner {
+    /// The tip of `branch`, the branch of an item in the worktree of `lead`, and whether the worktree has it out.
+    ///
+    /// The tip is the tip of `branch` when the worktree has the work of another item of the team out — its branch, or a
+    /// detached `HEAD` at that branch's tip: what is committed there is not the work of this item. Otherwise the work is what
+    /// the worktree has out — also a detached `HEAD` or a branch of the lead's own that goes on from the item — and its `HEAD`
+    /// is the tip.
+    ///
+    /// # Errors
+    /// [`PublishError`] when the worktree's git cannot be opened or cannot name a commit, or when another item is out and
+    /// neither `branch` nor its last known tip on `origin` exists.
+    pub(super) async fn item_tip(&self, lead: &Lead, branch: &BranchName) -> Result<ItemTip, PublishError> {
+        let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
+        let head = git.rev_parse(&Revision::Head).await?;
+        let tip = git.branch_tip(branch).await?;
+        if tip.as_ref() == Some(&head) {
+            return Ok(ItemTip {
+                tip: head,
+                checked_out: true,
+            });
+        }
+        if !self.another_item_is_out(&git, lead, branch, &head).await? {
+            // The work that the worktree has out is the item's: the item's branch is out, or the branch is no item's — a part's,
+            // a returned delivery's or the lead's own — and is made of what the worktree has out.
+            return Ok(ItemTip {
+                tip: head,
+                checked_out: true,
+            });
+        }
+        // Another item's work is out: what is committed there is not this item's, so the item's own tip is the one to judge
+        // and push. Without a local branch that is the last tip known on `origin`; when that is unknown too, there is no tip
+        // to name, and the error says so instead of publishing what the worktree has out.
+        let tip = match tip {
+            Some(tip) => tip,
+            None => git.rev_parse(&Revision::RemoteBranch(branch.clone())).await?,
+        };
+        Ok(ItemTip {
+            tip,
+            checked_out: false,
+        })
+    }
+
+    /// Whether the worktree of `lead`, which has `head` out, has the work of an item of its team other than the one on
+    /// `branch`: the branch of such an item is out, or `HEAD` is detached at the tip of one.
+    async fn another_item_is_out(
+        &self,
+        git: &Git,
+        lead: &Lead,
+        branch: &BranchName,
+        head: &CommitId,
+    ) -> Result<bool, PublishError> {
+        let items = self.item_branches(lead);
+        // A branch that is no item's — a part's, a returned delivery's, or the lead's own, which integrates the work of the
+        // items — is made of what the worktree has out, whichever item that is.
+        if !items.contains(branch) {
+            return Ok(false);
+        }
+        if let Some(out) = git.current_branch().await? {
+            return Ok(out != *branch && items.contains(&out));
+        }
+        for other in items.into_iter().filter(|other| other != branch) {
+            if git.branch_tip(&other).await?.as_ref() == Some(head) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// The branches of the items of the team of `lead`, in any phase.
+    fn item_branches(&self, lead: &Lead) -> Vec<BranchName> {
+        self.parts.state.find_task(&lead.task).map_or_else(Vec::new, |found| {
+            found
+                .team
+                .items()
+                .iter()
+                .filter_map(|item| phase_branch(item.phase()).cloned())
+                .collect()
+        })
+    }
+
     /// Publishes the branches of `team_id` that are ready: its pull requests are opened or updated, and its items go in
     /// review.
     pub(super) async fn publish_branches(
@@ -415,6 +536,7 @@ impl Owner {
                 }
                 Ok(Attempt::Uncommitted { tip, reason }) => {
                     let back = Back {
+                        count: Count::Told,
                         prompt: AutopilotPrompt::ReviewFixNoCommit,
                         variable: ("tip", tip.to_string()),
                         outcome: "fix_without_commit",
@@ -422,6 +544,14 @@ impl Owner {
                         undone: include_str!("../../../../../../prompts/harness/review/fix-no-commit-undone.md"),
                     };
                     self.send_lead_back(site, &publication, &tip, &back, now, look).await?;
+                }
+                Ok(Attempt::OffBranch {
+                    tip,
+                    branch,
+                    checked_out,
+                }) => {
+                    self.send_back_to_branch(site, &publication, (&tip, &branch, &checked_out), now, look)
+                        .await?;
                 }
                 Ok(Attempt::NotJoined { tip, missing }) => {
                     self.send_back_to_join(site, &publication, (&tip, &missing), now, look)
@@ -457,6 +587,7 @@ impl Owner {
             Ok(
                 Attempt::Held(super::checks::Held::WakeLead)
                 | Attempt::SentBack { .. }
+                | Attempt::OffBranch { .. }
                 | Attempt::Uncommitted { .. }
                 | Attempt::NotJoined { .. },
             ) => Some(Obligation::LeadCorrection),
@@ -479,7 +610,7 @@ impl Owner {
     ) -> Result<Attempt, PublishError> {
         let lead = site.lead;
         let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent)?;
-        let tip = git.rev_parse(&Revision::Head).await?;
+        let ItemTip { tip, checked_out } = self.item_tip(lead, &publication.head_branch).await?;
         // A gate of the harness that still runs decides nothing yet; the record is read after it, so that it is not older.
         let own = self.own_gate_state(&lead.task, &tip);
         if own == Own::Running {
@@ -502,6 +633,15 @@ impl Owner {
         let record = match (gate_step(&waiting), record) {
             (GateStep::Publish, Some(record)) => record,
             (GateStep::Publish | GateStep::Wait, _) => return Ok(Attempt::Nothing),
+            // The gate of the harness runs in the worktree: it sees the tip of the item's branch only when the worktree has it out.
+            (GateStep::Run | GateStep::Retry, _) if !checked_out => {
+                let checked_out = super::super::item_branch::named(git.current_branch().await?.as_ref());
+                return Ok(Attempt::OffBranch {
+                    tip,
+                    branch: publication.head_branch.clone(),
+                    checked_out,
+                });
+            }
             (GateStep::Run, _) => {
                 self.start_own_gate(&lead.task, &tip, false);
                 return Ok(Attempt::Nothing);
@@ -1312,6 +1452,7 @@ impl Owner {
         look: &mut Look,
     ) -> Result<(), OwnerError> {
         let back = Back {
+            count: Count::Told,
             prompt: AutopilotPrompt::GateNotPassed,
             variable: ("reason", hold.to_string()),
             outcome: "gate_sent_back",
@@ -1320,6 +1461,39 @@ impl Owner {
                 publication.head_branch
             ),
             undone: "a gate that passes",
+        };
+        self.send_lead_back(site, publication, tip, &back, now, look).await
+    }
+
+    /// The lead is done and no gate has passed at the tip of the item's `branch`, while its worktree has `checked_out` out:
+    /// the harness pushes nothing and the lead is sent back to switch to the branch and run the gate there, and after
+    /// [`GATE_SEND_BACKS`] times the human is told.
+    async fn send_back_to_branch(
+        &mut self,
+        site: Site<'_>,
+        publication: &Publication,
+        (tip, branch, checked_out): (&CommitId, &BranchName, &str),
+        now: Timestamp,
+        look: &mut Look,
+    ) -> Result<(), OwnerError> {
+        tracing::warn!(
+            event = LogEvent::PublishOffBranch.as_str(),
+            team = %site.team,
+            task = %site.lead.task,
+            branch = %branch,
+            checked_out,
+            tip = %tip,
+            "the branch of the item has no gate at its tip and the worktree has another branch out: nothing is pushed"
+        );
+        let back = Back {
+            count: Count::Silent,
+            prompt: AutopilotPrompt::ReviewOffBranch,
+            variable: ("checked_out", checked_out.to_owned()),
+            outcome: "off_branch",
+            told: format!(
+                "the worktree has {checked_out} out, and no gate has passed at the tip of the branch {branch}."
+            ),
+            undone: "its worktree on the branch and a gate that passes there",
         };
         self.send_lead_back(site, publication, tip, &back, now, look).await
     }
@@ -1343,6 +1517,7 @@ impl Owner {
             .map(|joining| format!("item {}: {}", joining.item, joining.branch))
             .collect();
         let back = Back {
+            count: Count::Told,
             prompt: AutopilotPrompt::BranchNotJoined,
             variable: ("missing", lines.join("\n")),
             outcome: "not_joined_sent_back",
@@ -1406,8 +1581,12 @@ impl Owner {
         let text = Variables::new()
             .with("branch", publication.head_branch.as_str())
             .and_then(|values| values.with(back.variable.0, back.variable.1.as_str()))
-            .and_then(|values| values.with("sent", sent.to_string()))
-            .and_then(|values| values.with("limit", GATE_SEND_BACKS.to_string()))
+            .and_then(|values| match back.count {
+                Count::Told => values
+                    .with("sent", sent.to_string())
+                    .and_then(|values| values.with("limit", GATE_SEND_BACKS.to_string())),
+                Count::Silent => Ok(values),
+            })
             .map_err(PublishError::from)
             .and_then(|values| Ok(pulls.texts.render(back.prompt, &values)?));
         let text = match text {
