@@ -912,7 +912,13 @@ fn partial_section_failure_preserves_collected_machine_facts() {
         reason: "permission denied".into(),
     });
     let summary = render_summary(&partial, Zone::Fixed(UtcOffset::UTC)).unwrap();
-    let facts = baseline.split("## Machine and Resources\n\n").nth(1).unwrap();
+    let facts = baseline
+        .split("## Machine and Resources\n\n")
+        .nth(1)
+        .unwrap()
+        .split("\n\n##")
+        .next()
+        .unwrap();
     assert!(summary.contains(facts.trim()), "{summary}");
     assert!(summary.contains("Could not read swap: permission denied"));
 }

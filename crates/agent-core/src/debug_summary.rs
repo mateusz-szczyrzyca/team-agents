@@ -49,13 +49,15 @@ pub enum SummarySection {
     Notifications,
     /// 12. The machine.
     Machine,
-    /// Collection failures without a dedicated section, listed below machine facts.
+    /// 13. Worker tasks that served the team.
+    WorkerTable,
+    /// Collection failures without a dedicated section, listed below worker tasks.
     CollectionFailures,
 }
 
 impl SummarySection {
-    /// All 12 summary sections in strict specification order.
-    pub const ALL: [Self; 12] = [
+    /// All 13 summary sections in strict specification order.
+    pub const ALL: [Self; 13] = [
         Self::Anomalies,
         Self::DaemonAndVersions,
         Self::TeamItemsRounds,
@@ -68,6 +70,7 @@ impl SummarySection {
         Self::Bus,
         Self::Notifications,
         Self::Machine,
+        Self::WorkerTable,
     ];
 
     /// The markdown heading text for this section.
@@ -86,6 +89,7 @@ impl SummarySection {
             Self::Bus => "## Bus Messages",
             Self::Notifications => "## Notifications",
             Self::Machine => "## Machine and Resources",
+            Self::WorkerTable => "## Workers",
             Self::CollectionFailures => "### Unreadable Parts",
         }
     }
@@ -712,6 +716,33 @@ fn reminder_text(reminder: Option<ReminderFacts>) -> String {
     }
 }
 
+/// Renders the worker tasks table.
+fn render_workers(workers: &[WorkerSummaryFacts], out: &mut SummaryWriter) {
+    if workers.is_empty() {
+        write_line(out, "No worker tasks served this team.");
+        return;
+    }
+    write_line(out, "| Task | Agent | Asked By | Started | Ended |");
+    write_line(out, "|---|---|---|---|---|");
+    for w in workers {
+        let asked_by = w
+            .why_asked_by
+            .as_ref()
+            .map_or_else(|| "-".to_owned(), |r| r.as_str().to_owned());
+        let started = w
+            .last_run_started
+            .map_or_else(|| "-".to_owned(), |s| format!("{s:?}"));
+        let ended = w.last_run_end_detail.clone();
+        write_line(
+            out,
+            &format!(
+                "| {} | {} | {} | {} | {} |",
+                w.task, w.agent, asked_by, started, ended
+            ),
+        );
+    }
+}
+
 fn render_task_details(tasks: &[TaskSummaryFacts], out: &mut SummaryWriter) {
     for t in tasks {
         write_line(out, &format!("### Task `{}` (`{}`)", t.id, t.agent));
@@ -1094,6 +1125,7 @@ fn render_with_redaction(
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
             SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
+            SummarySection::WorkerTable => render_workers(&input.workers, &mut out),
             SummarySection::CollectionFailures => render_unreadable(&input.unreadable_parts, &mut out),
         }
 

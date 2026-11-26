@@ -11,7 +11,7 @@ use agent_core::cli::ActivityEvent;
 use agent_core::debug_summary::{
     GitCommitSummaryFacts, GitWorktreeSummary, ItemSummaryFacts, MachineSummary, QuestionsSummaryFacts, ReminderFacts,
     RoundSummaryFacts, RunToolCalls, SummaryInput, SummarySection, TaskGateSummary, TaskSummaryFacts, TeamSummaryFacts,
-    ToolCalls,
+    ToolCalls, WorkerSummaryFacts,
 };
 use agent_core::diagnostic_assessment::{Assessment, Branch, LeadGit, Origin, ReadFailure, Task};
 use agent_core::history::Step;
@@ -385,8 +385,166 @@ impl Collection {
         for (role, member) in roster {
             self.task(home, member, role).await?;
         }
+        self.observe_workers(home, team).await?;
         self.git(home, team).await;
         self.history(home, team).await?;
+        Ok(())
+    }
+
+    /// Observes pool worker tasks that served the team, as recorded in the history.
+    async fn observe_workers(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
+        let path = home.history_file();
+        // Read team records to find worker runs for this team.
+        let records = match tokio::task::spawn_blocking({
+            let path = path.clone();
+            let team_id = team.id().clone();
+            move || super::history::read_live_team_history(&path, &team_id)
+        })
+        .await
+        .map_err(DebugRuntimeError::Worker)?
+        {
+            Ok(records) => records,
+            Err(_) => return Ok(()),
+        };
+
+        // Find all distinct worker tasks with their runs.
+        let mut worker_tasks: std::collections::BTreeMap<TaskId, Vec<agent_core::ids::RunId>> =
+            std::collections::BTreeMap::new();
+        let mut worker_agents: std::collections::BTreeMap<TaskId, String> = std::collections::BTreeMap::new();
+        let mut worker_asked_bys: std::collections::BTreeMap<TaskId, Option<agent_core::ids::RunId>> =
+            std::collections::BTreeMap::new();
+
+        for stored in &records {
+            let agent_core::history::Record::Run(start) = &stored.record else {
+                continue;
+            };
+            if start.role != Role::Worker {
+                continue;
+            }
+            let runs = worker_tasks.entry(start.task.clone()).or_default();
+            if !runs.contains(&start.run) {
+                runs.push(start.run.clone());
+            }
+            worker_agents
+                .entry(start.task.clone())
+                .or_insert_with(|| start.agent.name.clone());
+            if let agent_core::history::RunWhy::Request { asked_by } = &start.why {
+                worker_asked_bys.entry(start.task.clone()).or_insert(asked_by.clone());
+            }
+        }
+
+        if worker_tasks.is_empty() {
+            return Ok(());
+        }
+
+        /// Maximum worker runs to collect per task.
+        const MAX_WORKER_RUNS: usize = 3;
+        /// Size limit for worker task files, matching the member limit.
+        const WORKER_FILE_LIMIT: u64 = 4 * 1024 * 1024;
+
+        for (worker_task, mut runs) in worker_tasks {
+            // Sort newest first by run ID (which is time-based) and take at most 3.
+            runs.sort_by(|a, b| b.cmp(a));
+            runs.truncate(MAX_WORKER_RUNS);
+
+            let task_dir = home.task_dir(&worker_task);
+            let dest_prefix = PathBuf::from("tasks").join(worker_task.as_str());
+
+            // Collect context.json if it exists.
+            let context_path = task_dir.join("context.json");
+            if context_path.exists() {
+                match bounded_bytes(&context_path).await {
+                    Ok(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        let redacted = self.cut.redact_text(&text);
+                        self.add(dest_prefix.join("context.json"), redacted.into_bytes());
+                    }
+                    Err(error) => self.task_failed(
+                        format!("worker task artifact {}", escaped_path(&context_path)),
+                        error_chain(&error),
+                    ),
+                }
+            }
+
+            // Collect out.jsonl and err.log for each run.
+            for run in &runs {
+                let run_dir = home.run_dir(&worker_task, run);
+                let dest_run = dest_prefix.join("runs").join(run.as_str());
+
+                for file_name in ["out.jsonl", "err.log"] {
+                    let source = run_dir.join(file_name);
+                    if source.is_file() {
+                        match bounded_bytes(&source).await {
+                            Ok(bytes) => {
+                                let text = String::from_utf8_lossy(&bytes);
+                                let redacted = self.cut.redact_text(&text);
+                                self.add(dest_run.join(file_name), redacted.into_bytes());
+                            }
+                            Err(error) => self.task_failed(
+                                format!("worker run artifact {}", escaped_path(&source)),
+                                error_chain(&error),
+                            ),
+                        }
+                    }
+                }
+            }
+
+            // If the task directory doesn't exist, add a task_failed note.
+            if !task_dir.exists() {
+                self.task_failed(
+                    format!("worker task {}", worker_task.as_str()),
+                    "task directory not found",
+                );
+            }
+
+            // Add worker summary facts with start/end times from the history records.
+            let agent_name: AgentName = match worker_agents
+                .get(&worker_task)
+                .and_then(|name| name.parse().ok())
+            {
+                Some(name) => name,
+                None => continue,
+            };
+            let asked_by = worker_asked_bys.get(&worker_task).cloned().flatten();
+
+            // Find the latest run's start and end from the records.
+            let mut last_started: Option<Timestamp> = None;
+            let mut last_ended: Option<Timestamp> = None;
+            let mut end_detail = String::from("running");
+            for stored in &records {
+                match &stored.record {
+                    agent_core::history::Record::Run(start) if start.task == worker_task => {
+                        if last_started.is_none() || Some(start.at) > last_started {
+                            last_started = Some(start.at);
+                        }
+                    }
+                    agent_core::history::Record::RunEnd(end) => {
+                        // Find matching run starts with same run ID
+                        for s in &records {
+                            if let agent_core::history::Record::Run(s) = &s.record {
+                                if s.task == worker_task && s.run == end.run {
+                                    if last_ended.is_none() || Some(end.at) > last_ended {
+                                        last_ended = Some(end.at);
+                                        end_detail = format!("{:?}", end.end);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            self.summary.workers.push(WorkerSummaryFacts {
+                task: worker_task,
+                agent: agent_name,
+                why_asked_by: asked_by,
+                last_run_started: last_started,
+                last_run_ended: last_ended,
+                last_run_end_detail: end_detail,
+            });
+        }
+
         Ok(())
     }
 
