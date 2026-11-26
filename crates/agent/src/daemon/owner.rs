@@ -3003,7 +3003,6 @@ impl Owner {
 
     /// Queues the paused tasks whose time has come.
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
-        self.reconcile_investigations().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {

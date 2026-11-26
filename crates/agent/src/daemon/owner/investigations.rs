@@ -22,7 +22,6 @@ const QUEUE_MAX: NonZeroUsize = NonZeroUsize::new(3).unwrap();
 impl Owner {
     /// Serves open investigation requests with free investigators for `team_id`.
     pub(super) async fn serve_investigations(&mut self, team_id: &TeamId) -> Result<(), OwnerError> {
-        self.reconcile_investigations().await?;
         let now = Timestamp::now(&self.parts.clock)?;
         let configured_keys: BTreeSet<InvestigatorName> =
             self.parts.settings.config.investigators().keys().cloned().collect();
@@ -30,6 +29,7 @@ impl Owner {
             return Ok(());
         };
 
+        self.reconcile_investigations().await?;
         let team = self
             .parts
             .state
@@ -439,6 +439,14 @@ impl Owner {
                     .map_err(|source| OwnerError::Bus { source })?;
                 continue;
             };
+            if matches!(found.member.status(), TaskStatus::Done | TaskStatus::Failed) {
+                self.parts
+                    .bus
+                    .inv_set(req.id, &InvTransition::Requeued)
+                    .await
+                    .map_err(|source| OwnerError::Bus { source })?;
+                continue;
+            }
             let task = found.member.task().clone();
             let located = self.locate(&task)?;
             if found.member.status() == TaskStatus::Stopped {
