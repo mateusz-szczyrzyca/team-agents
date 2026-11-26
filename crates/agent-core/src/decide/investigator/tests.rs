@@ -68,13 +68,9 @@ fn human_examples_and_global_tie_break() {
         (vec![("c", 1, Investigator, 20)], &["a", "b", "d"]),
     ];
     for (records, valid) in tie_cases {
-        let chosen = select(&records, &["a", "b", "c", "d"], &[], 1)
-            .expect("a never-used investigator is available");
+        let chosen = select(&records, &["a", "b", "c", "d"], &[], 1).expect("a never-used investigator is available");
         assert_eq!(chosen.len(), 1);
-        assert!(
-            valid.contains(&chosen[0].as_str()),
-            "{chosen:?} is not in {valid:?}"
-        );
+        assert!(valid.contains(&chosen[0].as_str()), "{chosen:?} is not in {valid:?}");
     }
     let deterministic = [
         (

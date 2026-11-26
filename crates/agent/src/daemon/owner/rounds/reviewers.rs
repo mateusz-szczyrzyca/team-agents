@@ -15,8 +15,8 @@ use agent_runtime::process::error_chain;
 use super::super::teams::Look;
 use crate::daemon::merge::{count, review_deliveries};
 use crate::daemon::review::{Reviewer, Slot, free_reviewers, select_reviewers};
-use agent_core::decide::investigator::refused_investigators;
 use crate::daemon::team::{Why, task_branch};
+use agent_core::decide::investigator::refused_investigators;
 
 use super::super::{Owner, OwnerError};
 use super::{Lead, PublishError};

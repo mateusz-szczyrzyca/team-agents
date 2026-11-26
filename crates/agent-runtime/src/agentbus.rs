@@ -1612,7 +1612,11 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`].
-    pub async fn inv_next(&self, queue_max: NonZeroUsize, slots: NonZeroUsize) -> Result<Option<Investigation>, AgentBusError> {
+    pub async fn inv_next(
+        &self,
+        queue_max: NonZeroUsize,
+        slots: NonZeroUsize,
+    ) -> Result<Option<Investigation>, AgentBusError> {
         let command = BusCommand::InvNext;
         let args = Args::new()
             .flag("--queue-max", queue_max.to_string())

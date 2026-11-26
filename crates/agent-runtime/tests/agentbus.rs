@@ -1349,10 +1349,7 @@ mod agentbus_commands {
         let fixture = fixture();
         let next = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap();
         assert!(next.is_none());
@@ -1366,10 +1363,7 @@ mod agentbus_commands {
         let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
         let next = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap()
             .expect("a request");
@@ -1381,10 +1375,7 @@ mod agentbus_commands {
 
         let second = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap();
         assert!(second.is_none());
@@ -1421,21 +1412,13 @@ mod agentbus_commands {
         // Take the request so it is not in the queue (inv-set needs a running request).
         let _next = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap()
             .expect("a request");
         fixture
             .bus
-            .inv_set(
-                id,
-                &InvTransition::Running {
-                    task: task("bbb2"),
-                },
-            )
+            .inv_set(id, &InvTransition::Running { task: task("bbb2") })
             .await
             .unwrap();
 
@@ -1443,7 +1426,10 @@ mod agentbus_commands {
         let state_path = fixture.bus.bus_dir().join("state.json");
         let state_text = read_to_string(state_path).unwrap();
         assert!(state_text.contains("bbb2"), "inv_task should be set");
-        assert!(state_text.contains("\"status\":\"running\"") || state_text.contains("\"status\": \"running\""), "status should be running");
+        assert!(
+            state_text.contains("\"status\":\"running\"") || state_text.contains("\"status\": \"running\""),
+            "status should be running"
+        );
     }
 
     #[tokio::test]
@@ -1466,7 +1452,10 @@ mod agentbus_commands {
         let state_path = fixture.bus.bus_dir().join("state.json");
         let state_text = read_to_string(state_path).unwrap();
         assert!(state_text.contains("Not enough context"), "reason should be stored");
-        assert!(state_text.contains("\"status\":\"failed\"") || state_text.contains("\"status\": \"failed\""), "status should be failed");
+        assert!(
+            state_text.contains("\"status\":\"failed\"") || state_text.contains("\"status\": \"failed\""),
+            "status should be failed"
+        );
     }
 
     #[tokio::test]
@@ -1478,26 +1467,16 @@ mod agentbus_commands {
         // Take the request first so it is starting, then requeue it.
         let _next = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap()
             .expect("a request");
-        fixture
-            .bus
-            .inv_set(id, &InvTransition::Requeued)
-            .await
-            .unwrap();
+        fixture.bus.inv_set(id, &InvTransition::Requeued).await.unwrap();
 
         // It should be available again.
         let again = fixture
             .bus
-            .inv_next(
-                NonZeroUsize::new(3).unwrap(),
-                NonZeroUsize::new(1).unwrap(),
-            )
+            .inv_next(NonZeroUsize::new(3).unwrap(), NonZeroUsize::new(1).unwrap())
             .await
             .unwrap();
         assert!(again.is_some(), "requeued request should be available again");
@@ -1581,7 +1560,10 @@ mod agentbus_commands {
         // We check the state.json for the summary, plus inv_open exclusion.
         let state_path = fixture.bus.bus_dir().join("state.json");
         let state_text = read_to_string(state_path).unwrap();
-        assert!(state_text.contains("Solved by adding wrapper"), "summary should be recorded");
+        assert!(
+            state_text.contains("Solved by adding wrapper"),
+            "summary should be recorded"
+        );
 
         // The done request should not appear in inv_open.
         let open = fixture.bus.inv_open().await.unwrap();

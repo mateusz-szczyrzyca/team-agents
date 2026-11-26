@@ -20,8 +20,8 @@ use super::reviewers::Prepared;
 use super::{Announcement, AutopilotNotice, Lead, PublishError, Pulls};
 use crate::daemon::merge::count;
 use crate::daemon::review::{free_reviewers, investigator_of, select_reviewers};
-use agent_core::decide::investigator::refused_investigators;
 use crate::daemon::settle::limit_of;
+use agent_core::decide::investigator::refused_investigators;
 
 /// A review that does not come: its reviewer cannot work.
 pub(super) struct Gone {
