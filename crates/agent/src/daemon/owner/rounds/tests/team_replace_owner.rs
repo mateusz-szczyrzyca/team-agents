@@ -272,3 +272,49 @@ async fn team_replace_legacy_handover_is_migrated_after_loading_state_without_pe
     );
     assert!(owner.parts.state.pending_team_replaces().is_empty());
 }
+
+#[tokio::test]
+async fn team_replace_open_team_missing_both_names_keeps_the_operation_pending() {
+    let daemon = Daemon::new(&crate::fixtures::team_state(), None);
+    daemon.configure("[replacement]\nagents = [\"claude-2\"]\n");
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    create_bus_team(&owner).await;
+    let original = "claude-1".parse().unwrap();
+    let unrelated = "claude-3".parse().unwrap();
+    owner
+        .parts
+        .bus
+        .team_replace(&team_id(0), &original, &unrelated)
+        .await
+        .unwrap();
+    owner.take_over(&task(2), Role::Member, Trouble::RoundOverdue).unwrap();
+    let pending = owner.parts.state.pending_team_replaces().clone();
+    block_launches(&mut owner);
+
+    owner.start_queued().await.unwrap();
+
+    assert_eq!(owner.parts.state.pending_team_replaces(), &pending);
+    assert!(!owner.try_pending_team_replace_for(&task(2)).await.unwrap());
+    let roster = owner.parts.bus.team_get(&team_id(0)).await.unwrap();
+    assert_eq!(
+        roster.members.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        ["claude-3"]
+    );
+    owner.start_queued().await.unwrap();
+    assert_eq!(owner.parts.state.pending_team_replaces(), &pending);
+
+    owner
+        .parts
+        .bus
+        .team_replace(&team_id(0), &unrelated, &original)
+        .await
+        .unwrap();
+    owner.start_queued().await.unwrap();
+
+    assert!(owner.parts.state.pending_team_replaces().is_empty());
+    let roster = owner.parts.bus.team_get(&team_id(0)).await.unwrap();
+    assert_eq!(
+        roster.members.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        ["claude-2"]
+    );
+}
