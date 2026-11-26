@@ -300,6 +300,12 @@ fi
 init
 read_messages
 case $action in
+  inv-add:*)
+    branch=$(git symbolic-ref --short HEAD)
+    "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add:}" --kind "" > /dev/null
+    result 'Asked investigation.\nSTATUS: SLEEPING'
+    ;;
+  inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)
     # OpenCode's first launch after the configuration switch fails without tools; the next session works.
     if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
