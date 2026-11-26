@@ -460,3 +460,34 @@ async fn an_item_without_a_local_branch_is_not_made_of_another_items_work() {
     assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
     assert_eq!(rows(&rig, LogEvent::PublishOffBranch).len(), 1);
 }
+
+// Rule: the last tip of an item on origin is the item's tip when the item has no local branch, also when what the worktree has
+// out has merged it: the commits that the worktree has out are not pushed to the item's branch.
+#[tokio::test]
+async fn an_item_without_a_local_branch_is_not_made_of_the_work_that_has_merged_its_origin_tip() {
+    let mut rig = rig_of("fix-script-answers:bfix", "done").await;
+    let scripts = rig.home.root().join("fake-scripts");
+    let merge_then_drop_branch = "b=\"$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-1.1')\"\n\
+        git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false merge -q --no-edit \"origin/$b\"\n\
+        git branch -q -D \"$b\"\n";
+    std::fs::write(
+        scripts.join("bfix.sh"),
+        format!("{PRELUDE}{FIX_WITHOUT_ISSUE}{BACK_TO_THE_OTHER_ITEM}{merge_then_drop_branch}"),
+    )
+    .unwrap();
+    let items = items_ready(&mut rig).await;
+    rig.prompt(&items.task, 4).await;
+
+    let prompt = rig.prompt(&items.task, 4).await;
+    let remote = rig.remote_tip(&items.fixed);
+    rig.stop().await.unwrap();
+
+    let fixed = &items.fixed;
+    assert!(
+        prompt.contains(&format!("The harness publishes `{fixed}`, but your worktree has")),
+        "{prompt}"
+    );
+    assert_eq!(remote, items.fixed_tip_before);
+    assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
+    assert_eq!(rows(&rig, LogEvent::PublishOffBranch).len(), 1);
+}
