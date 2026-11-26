@@ -140,6 +140,33 @@ pub fn resolve_debug_target(state: &State, target: &DebugTarget) -> Result<TeamI
         })
 }
 
+/// Resolves a target using the state first, then falls back to the history for worker tasks.
+///
+/// When the state has no such task, the history's `runs` table is queried for the team of its latest run.
+/// A task found neither in the state nor in the history fails with [`DebugRuntimeError::UnknownTarget`].
+/// A team found in the history but not in the state also fails with `UnknownTarget`.
+///
+/// # Errors
+/// [`DebugRuntimeError::UnknownTarget`] when no team owns the ID.
+pub fn resolve_debug_target_with_history(
+    state: &State,
+    target: &DebugTarget,
+    history_path: &std::path::Path,
+) -> Result<TeamId, DebugRuntimeError> {
+    let _ = history_path;
+    // First try state lookup.
+    if let Ok(team) = resolve_debug_target(state, target) {
+        return Ok(team);
+    }
+    // Stub: always fail for RED commit.
+    let id = match target {
+        DebugTarget::Team(id) => id.to_string(),
+        DebugTarget::Round(id) => id.to_string(),
+        DebugTarget::Task(id) => id.to_string(),
+    };
+    Err(DebugRuntimeError::UnknownTarget { id })
+}
+
 /// Reads secrets strictly before any bundle or output parent is created.
 ///
 /// # Errors

@@ -353,6 +353,78 @@ fn resolve_target_unknown_round_returns_error() {
 }
 
 #[test]
+fn worker_task_resolves_to_team() {
+    use crate::history::{HistoryDb, Store};
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy};
+    use agent_core::kinds::{CliKind, Tier};
+
+    let (_dir, home, args) = fixture();
+    let team_id = match &args.target {
+        DebugTarget::Team(id) => id.clone(),
+        _ => panic!("fixture targets a team"),
+    };
+    let worker_id: TaskId = "task-20261117-120001-wrk1".parse().unwrap();
+    let worker_run: agent_core::ids::RunId = "run-20261117-120001-wrk1".parse().unwrap();
+
+    // Write a worker run in the history for the team.
+    let mut database = HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[Record::Run(Box::new(RunStart {
+            run: worker_run,
+            team: team_id.clone(),
+            task: worker_id.clone(),
+            at: "2026-11-17T12:00:00Z".parse().unwrap(),
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Normal,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: agent_core::kinds::Role::Worker,
+            rounds: vec![],
+            why: RunWhy::Request { asked_by: None },
+            prompt: "Worker prompt".to_owned(),
+            worktree: agent_core::config::AbsolutePath::try_from("/tmp/wrk".to_owned()).unwrap(),
+            branch: "wrk-branch".parse().unwrap(),
+            session: None,
+        }))])
+        .unwrap();
+    drop(database);
+
+    let state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
+    // The state does not have the worker task.
+    assert!(resolve_debug_target(&state, &DebugTarget::Task(worker_id.clone())).is_err());
+
+    // The history-based resolver finds it.
+    let result =
+        resolve_debug_target_with_history(&state, &DebugTarget::Task(worker_id.clone()), &home.history_file());
+    assert_eq!(result.unwrap(), team_id);
+}
+
+#[test]
+fn unknown_task_still_fails() {
+    let state = State::new();
+    let unknown: TaskId = "task-20261117-230000-xxxx".parse().unwrap();
+    // Not in state.
+    assert!(matches!(
+        resolve_debug_target(&state, &DebugTarget::Task(unknown.clone())),
+        Err(DebugRuntimeError::UnknownTarget { id }) if id == unknown.as_str()
+    ));
+    // Not in history either since there is no history with this task.
+    let temp = tempfile::tempdir().unwrap();
+    let history = temp.path().join("nonexistent.db");
+    let result = resolve_debug_target_with_history(
+        &state,
+        &DebugTarget::Task(unknown.clone()),
+        &history,
+    );
+    assert!(
+        matches!(&result, Err(DebugRuntimeError::UnknownTarget { id }) if id.as_str() == unknown.as_str()),
+        "{result:?}"
+    );
+}
+
+#[test]
 fn redacts_secrets_before_compacting_required_summary_reasons() {
     let (_dir, home, args) = fixture();
     let reason = format!("{}test-confidential-λ{}", "z".repeat(110), "q".repeat(120_000));
