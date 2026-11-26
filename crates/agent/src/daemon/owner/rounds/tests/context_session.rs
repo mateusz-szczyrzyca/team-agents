@@ -322,6 +322,7 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
     rig.state_where("the task to wait with its run ended", |state| {
         state.find_task(&tasks[0]).is_some_and(|found| {
             found.member.status() == agent_core::status::TaskStatus::Waiting
+                && found.member.runs().len() == 2
                 && found.member.runs().last().is_some_and(|run| !run.is_running())
         })
     })
