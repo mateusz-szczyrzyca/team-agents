@@ -207,7 +207,9 @@ async fn storage_failure_blocks_the_replacement_run_until_a_later_pass_succeeds(
         ),
     )
     .unwrap();
-    rig.start().await;
+    let log_dir = tempfile::tempdir().unwrap();
+    let log_path = log_dir.path().join("history.db");
+    let started = record_team_replace_logs(&mut rig, &log_path).await;
     let (_team, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, Some("inv-lead"))
         .await;
@@ -261,4 +263,31 @@ async fn storage_failure_blocks_the_replacement_run_until_a_later_pass_succeeds(
         .await;
     assert!(state.pending_team_replaces().is_empty());
     rig.stop().await.unwrap();
+    started.writer.close().unwrap();
+    let rows = Reader::open(&log_path).unwrap().daemon_logs().unwrap();
+    assert!(
+        rows.iter().any(|row| row.event() == LogEvent::BusDown
+            && row.fields().get("operation") == Some(&serde_json::json!("team_replace"))),
+        "{rows:?}"
+    );
+}
+
+/// Records structured daemon logs without changing the rig's process behavior.
+async fn record_team_replace_logs(rig: &mut Rig, path: &std::path::Path) -> agent_runtime::history::Started {
+    let started = History::start(
+        HistoryDb::open(path, MaxTextBytes::default()).unwrap(),
+        Setup {
+            reporter: Arc::new(TestReporter),
+            capacity: DEFAULT_QUEUE,
+        },
+    )
+    .unwrap();
+    rig.start_with_log_layer(HistoryLayer::new(
+        LogLevel::Info,
+        SharedClock::new(SystemClock),
+        Secrets::default(),
+        Some(started.history.clone()),
+    ))
+    .await;
+    started
 }

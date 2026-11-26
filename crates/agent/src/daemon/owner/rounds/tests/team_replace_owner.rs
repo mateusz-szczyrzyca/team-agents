@@ -145,16 +145,68 @@ async fn storage_failure_keeps_pending_operation_for_the_next_scheduler_pass() {
 
 #[tokio::test]
 async fn not_found_settles_the_pending_operation() {
-    let daemon = flaky_daemon();
-    let (mut owner, _sinks) = daemon.bare_owner().await;
-    owner.take_over(&task(2), Role::Member, Trouble::RoundOverdue).unwrap();
-    owner.save().await.unwrap();
-    block_launches(&mut owner);
-    let marker = daemon.home.root().join("flaky-bus-refuse-once");
-    std::fs::write(&marker, "team-replace").unwrap();
-    owner.start_queued().await.unwrap();
-    assert_eq!(owner.parts.state.pending_team_replaces(), &BTreeSet::new());
-    assert!(!marker.exists());
+    use super::rig::{ONE, Rig, investigator, normal};
+    use agent_core::state::MergeMode;
+    use agent_core::status::TaskStatus;
+    use agent_runtime::agentbus::AgentBus;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "hold"),
+            normal("claude-2", "hold"),
+            investigator("inv-lead", "sleep"),
+            investigator("inv-review-1", "sleep"),
+            investigator("inv-review-2", "sleep"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::NoMerge, Some("inv-lead"))
+        .await;
+    let state = rig
+        .state_where("the original member starts", |state| {
+            tasks.iter().any(|task| {
+                state.find_task(task).is_some_and(|found| {
+                    found.member.agent().name() == "claude-1" && found.member.status() == TaskStatus::Running
+                })
+            })
+        })
+        .await;
+    let task = tasks
+        .iter()
+        .find(|task| state.find_task(task).unwrap().member.agent().name() == "claude-1")
+        .unwrap()
+        .clone();
+    rig.stop().await.unwrap();
+    let mut state = rig.state();
+    state
+        .hand_over_task(&task, crate::fixtures::normal("claude-2"), at(1))
+        .unwrap();
+    let from = "claude-1".parse().unwrap();
+    let to = "claude-2".parse().unwrap();
+    state.record_pending_team_replace(team.clone(), from.clone(), to.clone());
+    std::fs::write(rig.home.state_file(), state.to_json().unwrap()).unwrap();
+    let bus = AgentBus::new(
+        agentbus_binary().to_str().unwrap().parse().unwrap(),
+        rig.home.root().to_str().unwrap().parse().unwrap(),
+    );
+    bus.team_replace(&team, &from, &to).await.unwrap();
+    // Retrying this completed operation now produces the real NoSuchMember response.
+    rig.start().await;
+    let state = rig
+        .state_where("NoSuchMember permits the replacement's second run", |state| {
+            state.find_task(&task).is_some_and(|found| {
+                found.member.agent().name() == "claude-2"
+                    && found.member.runs().len() == 2
+                    && found.member.status() == TaskStatus::Running
+            })
+        })
+        .await;
+    assert!(state.pending_team_replaces().is_empty());
+    assert_eq!(state.find_task(&task).unwrap().member.runs().len(), 2);
+    rig.stop().await.unwrap();
 }
 
 #[tokio::test]
