@@ -686,11 +686,32 @@ impl Owner {
 
     /// Marks the team done on the bus and names what the bus keeps of its tasks, which the harness cannot release: the
     /// reservations stay until they expire or someone releases them, and the wake-ups of the bus are not removed.
-    async fn release_on_bus(&self, team: &TeamId, tasks: &[TaskId], removal: &mut Removal) {
+    async fn release_on_bus(&mut self, team: &TeamId, tasks: &[TaskId], removal: &mut Removal) {
         removal.left_behind.push(
             "the bus itself was neither read for wake-ups nor cleaned; unread messages and reservations remain"
                 .to_owned(),
         );
+        match self.parts.bus.inv_open().await {
+            Ok(requests) => {
+                for request in requests {
+                    if tasks.contains(&request.from_task)
+                        && let Err(error) = self
+                            .fail_investigation(&request, "the requester's task ended", None)
+                            .await
+                    {
+                        removal.left_behind.push(format!(
+                            "investigation {} could not be closed: {}",
+                            request.id,
+                            error_chain(&error)
+                        ));
+                    }
+                }
+            }
+            Err(error) => removal.left_behind.push(format!(
+                "open investigations on the bus cannot be read: {}",
+                error_chain(&error)
+            )),
+        }
         if let Err(error) = self.parts.bus.team_done(team).await {
             removal.left_behind.push(format!(
                 "the team is not marked done on the bus: {}",
