@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.131.0 · agent-core 0.128.0 — 26.11.2026 — PR pending
+
+### Bug fixes
+- [agent] [agent-core] A round is no longer stopped and handed over for the time it waited for your answer: `round_minutes` counts only the time the agent could work.
+
+### Configuration
+- [agent] [agent-core] changed: `[limits] round_minutes` (default `0`, off) — time waiting for your answer is excluded from the round's time limit.
+
 ## agent 0.130.0 · agent-core 0.127.0 · agent-runtime 0.116.0 — 26.11.2026 — PR #313
 
 ### Bug fixes
