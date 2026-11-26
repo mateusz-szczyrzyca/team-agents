@@ -25,7 +25,8 @@ pub struct Activity<'a> {
 /// Selects a complete request, or waits when too few free investigators remain.
 ///
 /// Crew and caller exclusions are permanent. Candidates are ordered by their last
-/// activity for the team, then by their last activity anywhere, then by name; no
+/// activity for the team, then by their last activity anywhere, then by name.
+/// Candidates tied on the oldest last activity are drawn at random with `rng`; no
 /// activity sorts before any timestamp. The investigators of the latest request for the
 /// team have the newest activity in it, so they come after every other candidate and
 /// are chosen only when too few others are left (the relaxation of the latest request).
@@ -159,7 +160,7 @@ pub fn investigator_of(member: &crate::state::Member) -> Option<&InvestigatorNam
 
 /// Whether the reviewer `member` has a review to give for an item of `team` that is in review.
 #[must_use]
-pub fn has_pending_review(team: &crate::state::Team, member: &crate::state::Member) -> bool {
+fn has_pending_review(team: &crate::state::Team, member: &crate::state::Member) -> bool {
     if pending_opinion(team, member.task()).is_some() {
         return true;
     }
