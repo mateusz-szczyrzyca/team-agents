@@ -1144,6 +1144,11 @@ impl Owner {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
         };
+        // The pull request of the task's item and its review are told to a new session only: the others keep their session.
+        let review = match briefing.as_ref().map(|_| self.briefing_review(&task)).transpose() {
+            Ok(review) => review.unwrap_or_default(),
+            Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
+        };
         let last_message = match self.briefed_last_message(&task, briefing.is_some()).await {
             Ok(message) => message,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
@@ -1167,7 +1172,9 @@ impl Owner {
                 self.parts.zone,
                 &mut self.parts.rng,
                 &task,
-                briefing.as_ref(),
+                briefing
+                    .as_ref()
+                    .map(|draft| briefing::Briefed { draft, review: &review }),
                 last_message.as_ref(),
             )
             .await

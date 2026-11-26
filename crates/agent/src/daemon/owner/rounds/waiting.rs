@@ -1,7 +1,7 @@
 //! Project the owner's queued work and the durable round state into an idle wait reason.
 
 use agent_core::decide::wait::{Activity, Obligation, Waiting, round_wait};
-use agent_core::ids::TeamId;
+use agent_core::ids::{TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::prompt::Variables;
@@ -445,6 +445,15 @@ impl Owner {
             .then_some(Obligation::QueuedRun)
     }
 
+    /// Whether the lead `task` was sent back as often as it is and now waits for the human; a restart of the daemon counts
+    /// again from none.
+    pub(in crate::daemon::owner) fn sent_back_to_its_limit(&self, task: &TaskId) -> bool {
+        self.watch
+            .gate_sent_back
+            .get(task)
+            .is_some_and(|sent| *sent >= GATE_SEND_BACKS)
+    }
+
     /// The pending operation, including gates which do not run a model task.
     pub(in crate::daemon::owner) fn round_obligation(&self, team: &Team, round: &Round) -> Option<Obligation> {
         if round.delivered_by().is_some() {
@@ -483,12 +492,7 @@ impl Owner {
                 });
             }
         }
-        if self
-            .watch
-            .gate_sent_back
-            .get(lead.task())
-            .is_some_and(|sent| *sent >= GATE_SEND_BACKS)
-        {
+        if self.sent_back_to_its_limit(lead.task()) {
             return Some(Obligation::Human);
         }
         if let Some(obligation) = self.watch.waits.get(round.id()) {
