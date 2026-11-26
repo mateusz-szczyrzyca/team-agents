@@ -20,6 +20,9 @@ const APPROVING: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 /// A reviewer that asks for changes the first time and approves afterwards.
 const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
+/// A tick of the owner's loop that does not come within a test.
+const IDLE: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// What a checkpoint says that these tests look at.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Seen {
@@ -358,22 +361,40 @@ async fn the_start_of_a_fix_pass_is_a_checkpoint_before_the_fix_agent_runs() {
         false,
     )
     .await;
+    let history = rig.home.history_file();
+    // The fix agent copies the history as the very first thing it does, so that the test reads what was durable when the
+    // agent started, not what the daemon wrote in the time the test took to notice the agent.
     let signals = script(
         &rig,
         "hold-fix",
-        "g commit -q --allow-empty -m fix\ntouch \"$sig/fix-started\"\nwait_for go\n",
+        &format!(
+            "cp '{db}' \"$sig/at-start.db\"\nif [ -e '{db}-wal' ]; then cp '{db}-wal' \"$sig/at-start.db-wal\"; fi\n\
+             touch \"$sig/fix-started\"\nwait_for go\n",
+            db = history.display()
+        ),
     );
-    rig.start().await;
+    // With a tick this long the owner takes the checkpoints a step queued only when it acts on the next step, so a
+    // checkpoint in the copy was taken before the agent was started and not by the next turn of the owner's loop.
+    rig.start_with_tick(IDLE).await;
     let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
 
     rig.wait_for("the fix agent", || signals.join("fix-started").exists())
         .await;
-    let started = has(&rig, &team, CheckpointCause::FixPassStarted);
+    let at_start = Reader::open(&signals.join("at-start.db")).unwrap();
+    let started = at_start.team_records(&team).unwrap().into_iter().any(|stored| {
+        matches!(
+            stored.record,
+            Record::Event(event) if matches!(
+                event.event,
+                HistoryEvent::Checkpoint { cause: CheckpointCause::FixPassStarted, .. }
+            )
+        )
+    });
     std::fs::write(signals.join("go"), "").unwrap();
     rig.stop().await.unwrap();
 
     assert!(
         started,
-        "the fix agent ran before the checkpoint of its pass was in the history"
+        "the fix agent started before the checkpoint of its pass was in the history"
     );
 }
