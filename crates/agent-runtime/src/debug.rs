@@ -298,7 +298,7 @@ async fn execute_debug_internal(
     let secrets = load_debug_secrets(home).await?;
     let cut = SecretsCut::new(&secrets, std::env::vars_os());
     let state = load_debug_state(home).await?;
-    let id = resolve_debug_target(&state, &args.target)?;
+    let id = resolve_debug_target_with_history(&state, &args.target, &home.history_file())?;
     let team = state
         .team(&id)
         .ok_or_else(|| DebugRuntimeError::UnknownTarget { id: id.to_string() })?;
