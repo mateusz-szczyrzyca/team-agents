@@ -647,6 +647,27 @@ async fn answers_saved_while_the_run_goes_with_a_verdict_missing_tell_the_human_
 }
 
 #[tokio::test]
+async fn a_file_answered_incompletely_while_the_run_goes_is_watched_so_that_its_completion_is_taken_up() {
+    let (mut daemon, worktree) = asking_while_running().await;
+    let path = daemon.questions_file(1, 1);
+    let mut incomplete = written(&path).await;
+    incomplete.mark_answered();
+    std::fs::write(&path, incomplete.render()).unwrap();
+    let_the_run_end(&daemon, &worktree);
+    daemon.notification_with("answers are not complete").await;
+
+    let complete = answered_with(written(&path).await, "Use the disk");
+    std::fs::write(&path, complete.render()).unwrap();
+
+    let state = daemon.status_is(1, TaskStatus::Done).await;
+    assert_eq!(answered_via(&state), AnsweredVia::SavedFile);
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(prompt.contains("Use the disk"), "{prompt}");
+    daemon.stop().await.unwrap();
+    assert_eq!(answered_in_history(&daemon), vec![AnsweredVia::SavedFile]);
+}
+
+#[tokio::test]
 async fn a_file_not_answered_when_the_run_ends_with_questions_waits_for_the_human() {
     let (mut daemon, worktree) = asking_while_running().await;
     let path = daemon.questions_file(1, 1);
