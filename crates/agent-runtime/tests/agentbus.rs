@@ -1400,7 +1400,14 @@ mod agentbus_commands {
 
         let state_path = fixture.bus.bus_dir().join("state.json");
         let state_text = read_to_string(state_path).unwrap();
-        assert!(state_text.contains("Solved by adding wrapper"));
+        assert!(
+            state_text.contains("Solved by adding wrapper"),
+            "summary should be stored"
+        );
+        assert!(
+            state_text.contains("\"status\":\"done\"") || state_text.contains("\"status\": \"done\""),
+            "status should be done"
+        );
     }
 
     #[tokio::test]
