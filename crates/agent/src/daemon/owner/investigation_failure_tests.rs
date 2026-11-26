@@ -189,7 +189,7 @@ async fn an_ended_requester_fails_without_a_message() {
 #[tokio::test]
 async fn a_restart_requeues_an_assignment_without_a_live_task() {
     let attempt = Attempt::new();
-    attempt.request("starting", Some(task(99)));
+    attempt.request("starting", Some(task(9)));
     let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
     let (mut owner, _sinks) = daemon.bare_owner().await;
     owner.reconcile_investigations().await.unwrap();
