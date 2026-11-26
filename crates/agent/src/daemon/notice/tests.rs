@@ -103,7 +103,7 @@ async fn the_body_of_a_notice_has_the_facts_of_it() {
         "{questions}"
     );
     assert!(hung.contains("30 minutes") && hung.contains("3 times"), "{hung}");
-    assert!(paused.contains("2026-11-11 20:15 +00:00"), "{paused}");
+    assert!(paused.contains("2026-11-11 20:15"), "{paused}");
     assert!(paused.contains("rate_limit") && paused.contains("HTTP 429"), "{paused}");
     assert!(none.contains("exit: signal"), "{none}");
     assert!(code.contains("exit: 3"), "{code}");
@@ -206,7 +206,7 @@ fn layout_as_a_table_every_field_present() {
     assert_eq!(notification.title(), "✅✅ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 21:15 +02:00
+Time: 2026-11-11 21:15
 Task: Fix the typo in the README.
 Agent: codex-1 (codex, o3-mini)
 Task ID: task-20261111-191500-1111
@@ -248,7 +248,7 @@ fn layout_optional_fields_absent() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 19:15 +00:00
+Time: 2026-11-11 19:15
 Task: Fix the typo in the README.
 Agent: codex-1 (codex)
 Task ID: task-20261111-191500-1111
@@ -288,7 +288,7 @@ fn layout_empty_body() {
     assert_eq!(notification.title(), "❌ team-agents");
     let expected_body = "\
 Repo: team-agents
-Time: 2026-11-11 19:15 +00:00
+Time: 2026-11-11 19:15
 Task: Fix the typo in the README.
 Agent: codex-1 (codex)
 Task ID: task-20261111-191500-1111
@@ -840,7 +840,7 @@ fn layout_notification_formats_time_header_with_the_offset_of_the_event_in_zone(
     let notification = layout_notification(NoticeKind::Approved, &context, "Title\nBody").unwrap();
 
     assert!(
-        notification.body().contains("\nTime: 2026-11-21 17:30 +01:00\n"),
+        notification.body().contains("\nTime: 2026-11-21 17:30\n"),
         "{}",
         notification.body()
     );
@@ -896,7 +896,7 @@ async fn a_paused_notice_gives_its_resume_time_in_the_local_zone() {
     };
     let notification = notice.render(&texts().await, &context).unwrap();
     let body = notification.body();
-    assert!(body.contains("paused until 2026-11-11 21:15 +01:00"), "{body}");
+    assert!(body.contains("paused until 2026-11-11 21:15"), "{body}");
     assert!(!body.contains("2026-11-11T20:15:00Z"), "{body}");
     assert!(
         body.contains("429 · Model busy, retry later · engine_overloaded"),
@@ -984,7 +984,7 @@ async fn a_deepinfra_refusal_notice_tells_the_provider_words_the_kind_and_the_re
         body.contains("429 · Model busy, retry later · engine_overloaded"),
         "{body}"
     );
-    assert!(body.contains("paused until 2026-11-11 20:21 +01:00"), "{body}");
+    assert!(body.contains("paused until 2026-11-11 20:21"), "{body}");
     assert!(!body.contains("19:21:00Z"), "{body}");
 }
 
@@ -998,8 +998,8 @@ async fn a_refusal_notice_names_its_kind_once_and_uses_one_local_time_format() {
     )
     .await;
     assert_eq!(body.matches("an overload").count(), 1, "{body}");
-    assert!(body.contains("Time: 2026-11-11 20:15 +01:00"), "{body}");
-    assert!(body.contains("paused until 2026-11-11 20:15 +01:00"), "{body}");
+    assert!(body.contains("Time: 2026-11-11 20:15"), "{body}");
+    assert!(body.contains("paused until 2026-11-11 20:15"), "{body}");
 }
 
 #[tokio::test]
@@ -1032,12 +1032,12 @@ async fn refusal_change_and_wait_notices_use_the_headers_local_zone() {
     ] {
         let notification = notice.render(&texts().await, &context).unwrap();
         assert!(
-            notification.body().contains("Time: 2026-11-11 20:15 +01:00"),
+            notification.body().contains("Time: 2026-11-11 20:15"),
             "{}",
             notification.body()
         );
         assert!(
-            notification.body().contains("until 2026-11-11 21:15 +01:00"),
+            notification.body().contains("until 2026-11-11 21:15"),
             "{}",
             notification.body()
         );
@@ -1052,7 +1052,7 @@ async fn a_wait_for_another_agent_keeps_the_pause_until_wording() {
         return_at: at(3600),
     })
     .await;
-    assert!(body.contains("is paused until 2026-11-11 20:15 +00:00"), "{body}");
+    assert!(body.contains("is paused until 2026-11-11 20:15"), "{body}");
     assert!(body.contains("stays paused:"), "{body}");
 }
 

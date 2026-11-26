@@ -38,10 +38,10 @@ fn utc_zone_writes_the_rfc3339_text_of_the_files() {
 fn fixed_zones_write_the_local_date_time_and_the_offset() {
     let at = stamp("2026-11-21T12:50:02Z");
     let cases = [
-        (UtcOffset::from_hms(1, 0, 0), "2026-11-21 13:50:02 +01:00"),
-        (UtcOffset::from_hms(-5, 0, 0), "2026-11-21 07:50:02 -05:00"),
-        (UtcOffset::from_hms(5, 30, 0), "2026-11-21 18:20:02 +05:30"),
-        (UtcOffset::from_hms(0, 0, 0), "2026-11-21 12:50:02 +00:00"),
+        (UtcOffset::from_hms(1, 0, 0), "2026-11-21 13:50:02"),
+        (UtcOffset::from_hms(-5, 0, 0), "2026-11-21 07:50:02"),
+        (UtcOffset::from_hms(5, 30, 0), "2026-11-21 18:20:02"),
+        (UtcOffset::from_hms(0, 0, 0), "2026-11-21 12:50:02"),
     ];
     for (offset, expected) in cases {
         let offset = offset.expect("the test offset is valid");
@@ -54,14 +54,14 @@ fn a_lookup_writes_the_offset_valid_at_each_moment() {
     let zone = Zone::Lookup(central_european);
     let cases = [
         // Just before the change to summer time, and just after it.
-        ("2026-03-29T00:59:59Z", "2026-03-29 01:59:59 +01:00"),
-        ("2026-03-29T01:00:00Z", "2026-03-29 03:00:00 +02:00"),
+        ("2026-03-29T00:59:59Z", "2026-03-29 01:59:59"),
+        ("2026-03-29T01:00:00Z", "2026-03-29 03:00:00"),
         // Just before the change back to winter time, and just after it.
-        ("2026-10-25T00:59:59Z", "2026-10-25 02:59:59 +02:00"),
-        ("2026-10-25T01:00:00Z", "2026-10-25 02:00:00 +01:00"),
+        ("2026-10-25T00:59:59Z", "2026-10-25 02:59:59"),
+        ("2026-10-25T01:00:00Z", "2026-10-25 02:00:00"),
         // Midnight crossing a date, in winter and in summer.
-        ("2026-11-20T23:30:00Z", "2026-11-21 00:30:00 +01:00"),
-        ("2026-07-01T22:30:00Z", "2026-07-02 00:30:00 +02:00"),
+        ("2026-11-20T23:30:00Z", "2026-11-21 00:30:00"),
+        ("2026-07-01T22:30:00Z", "2026-07-02 00:30:00"),
     ];
     for (moment, expected) in cases {
         assert_eq!(zone.stamp(stamp(moment)), expected, "moment {moment}");
@@ -139,7 +139,7 @@ fn a_skipped_hour_is_read_with_the_offset_before_the_change() {
     let zone = Zone::Lookup(central_european);
     let at = zone.parse_typed("2026-03-29 02:30").expect("the time is read");
     assert_eq!(at.to_string(), "2026-03-29T01:30:00Z");
-    assert_eq!(zone.stamp(at), "2026-03-29 03:30:00 +02:00");
+    assert_eq!(zone.stamp(at), "2026-03-29 03:30:00");
 }
 
 #[test]
@@ -234,23 +234,23 @@ fn a_minute_stamp_writes_the_date_the_hour_and_the_minute_with_the_zone() {
     let at = stamp("2026-11-21T12:50:02Z");
     assert_eq!(
         Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid")).stamp_minute(at),
-        "2026-11-21 13:50 +01:00"
+        "2026-11-21 13:50"
     );
     assert_eq!(
         Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid")).stamp_minute(at),
-        "2026-11-21 07:50 -05:00"
+        "2026-11-21 07:50"
     );
     assert_eq!(
         Zone::Fixed(UtcOffset::from_hms(5, 30, 0).expect("valid")).stamp_minute(at),
-        "2026-11-21 18:20 +05:30"
+        "2026-11-21 18:20"
     );
     assert_eq!(
         Zone::Lookup(central_european).stamp_minute(stamp("2026-03-29T00:59:59Z")),
-        "2026-03-29 01:59 +01:00"
+        "2026-03-29 01:59"
     );
     assert_eq!(
         Zone::Lookup(central_european).stamp_minute(stamp("2026-03-29T01:00:00Z")),
-        "2026-03-29 03:00 +02:00"
+        "2026-03-29 03:00"
     );
     assert_eq!(Zone::Lookup(unknown).stamp_minute(at), "2026-11-21 12:50 UTC");
     assert_eq!(Zone::Utc.stamp_minute(at), "2026-11-21T12:50:02Z");
@@ -263,11 +263,11 @@ fn waiting_lines_reformat_their_retry_minute_into_the_zone() {
     let west = Zone::Fixed(UtcOffset::from_hms(-5, 0, 0).expect("valid"));
     assert_eq!(
         east.stamp_waiting(line),
-        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07"
     );
     assert_eq!(
         west.stamp_waiting(line),
-        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00"
+        "GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07"
     );
     assert_eq!(Zone::Utc.stamp_waiting(line), line);
     assert_eq!(east.stamp_waiting("an answer of the human"), "an answer of the human");
@@ -280,7 +280,7 @@ fn waiting_lines_reformat_the_start_of_a_wait_into_the_zone() {
     let east = Zone::Fixed(UtcOffset::from_hms(1, 0, 0).expect("valid"));
     assert_eq!(
         east.stamp_waiting(line),
-        "the lead's correction, owed by the lead since 2026-11-21 01:07 +01:00"
+        "the lead's correction, owed by the lead since 2026-11-21 01:07"
     );
     assert_eq!(Zone::Utc.stamp_waiting(line), line);
     assert_eq!(

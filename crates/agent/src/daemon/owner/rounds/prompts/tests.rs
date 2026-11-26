@@ -58,7 +58,7 @@ async fn review_gate_in_formats_finished_time_in_the_daemon_zone() {
 
     let rendered = review_gate_in(&texts, &head, Some(&record), east).unwrap();
 
-    assert!(rendered.contains("Finished: 2026-11-19 10:30:00 +01:00."), "{rendered}");
+    assert!(rendered.contains("Finished: 2026-11-19 10:30:00."), "{rendered}");
 }
 
 // Rule: the findings file is named only where it is: a pass begun before the file was kept, or one whose file could not be

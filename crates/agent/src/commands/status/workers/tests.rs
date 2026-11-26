@@ -93,7 +93,7 @@ fn a_request_not_yet_given_a_task_names_none() {
 fn a_used_result_is_accepted_with_its_start_and_end() {
     assert_eq!(
         shown(&done(Some(HelperVerdict::Used)), same_day(), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59"
     );
 }
 
@@ -101,7 +101,7 @@ fn a_used_result_is_accepted_with_its_start_and_end() {
 fn a_corrected_result_is_accepted_after_correction() {
     assert_eq!(
         shown(&done(Some(HelperVerdict::Corrected)), same_day(), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted after correction, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted after correction, 2026-11-25 08:57–08:59"
     );
 }
 
@@ -109,7 +109,7 @@ fn a_corrected_result_is_accepted_after_correction() {
 fn a_discarded_result_is_rejected() {
     assert_eq!(
         shown(&done(Some(HelperVerdict::Discarded)), same_day(), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  rejected, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  rejected, 2026-11-25 08:57–08:59"
     );
 }
 
@@ -117,7 +117,7 @@ fn a_discarded_result_is_rejected() {
 fn a_done_result_without_a_verdict_is_not_rated_yet() {
     assert_eq!(
         shown(&done(None), same_day(), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  not rated yet, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  not rated yet, 2026-11-25 08:57–08:59"
     );
 }
 
@@ -128,7 +128,7 @@ fn a_running_worker_says_since_when_it_works() {
 
     assert_eq!(
         shown(&running, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  working, since 2026-11-25 08:57 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  working, since 2026-11-25 08:57"
     );
 }
 
@@ -148,7 +148,7 @@ fn a_failed_worker_whose_end_was_not_written_says_so() {
 
     assert_eq!(
         shown(&failed, span(Some("2026-11-25T08:57:45Z"), None), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  failed, 2026-11-25 08:57 +00:00, end not recorded"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  failed, 2026-11-25 08:57, end not recorded"
     );
 }
 
@@ -158,7 +158,7 @@ fn an_unclear_request_asked_back() {
 
     assert_eq!(
         shown(&unclear, same_day(), UTC),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  unclear, asked back, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  unclear, asked back, 2026-11-25 08:57–08:59"
     );
 }
 
@@ -170,7 +170,7 @@ fn a_run_over_midnight_writes_both_dates() {
             span(Some("2026-11-25T23:58:00Z"), Some("2026-11-26T00:03:00Z")),
             UTC
         ),
-        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 23:58 +00:00 – 2026-11-26 00:03 +00:00"
+        "  task-20261125-075745-w8vj  worker  glm-1  step 6.1  accepted, 2026-11-25 23:58 – 2026-11-26 00:03"
     );
 }
 
@@ -182,7 +182,7 @@ fn the_line_is_padded_to_the_columns_of_the_tasks() {
             &served(&done(Some(HelperVerdict::Used)), same_day(), UTC),
             Columns::new(11, 25)
         ),
-        "  task-20261125-075745-w8vj  worker       glm-1  step 6.1            accepted, 2026-11-25 08:57–08:59 +00:00"
+        "  task-20261125-075745-w8vj  worker       glm-1  step 6.1            accepted, 2026-11-25 08:57–08:59"
     );
 }
 

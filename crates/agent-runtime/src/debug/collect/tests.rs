@@ -714,7 +714,7 @@ fn run_detail_formats_prose_with_zone() {
     let offset = time::UtcOffset::from_hms(1, 0, 0).unwrap();
     assert_eq!(
         run_detail_at(&state, agent_core::local_time::Zone::Fixed(offset)),
-        "ended, reported DONE, at 2026-11-17 13:00:00 +01:00"
+        "ended, reported DONE, at 2026-11-17 13:00:00"
     );
 }
 
@@ -818,7 +818,7 @@ async fn gate_source_timestamp_includes_the_machine_offset() {
     collection.task(&home, member, Role::Solo).await.unwrap();
     let output = &collection.summary.gate[0].recent_output_tails[0];
     assert!(output.contains("+05:30"), "{output}");
-    assert!(output.contains("2026-11-17 17:30:00 +05:30"), "{output}");
+    assert!(output.contains("2026-11-17 17:30:00"), "{output}");
 }
 
 #[tokio::test]

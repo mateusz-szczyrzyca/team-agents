@@ -436,7 +436,7 @@ async fn an_exhausted_quota_pauses_the_task_until_the_reset_and_it_goes_on_by_it
     let notes = f.notifications();
     assert_eq!(notes.len(), 1, "{notes:?}");
     assert!(
-        notes[0].contains("is paused until 2026-11-11 22:16 +00:00"),
+        notes[0].contains("is paused until 2026-11-11 22:16"),
         "{}",
         notes[0]
     );

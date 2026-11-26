@@ -230,13 +230,13 @@ fn timestamps_formatted_in_utc_and_local_offset() {
     let offset_plus = UtcOffset::from_hms(2, 0, 0).expect("valid offset");
     let summary_plus = render_summary(&input, Zone::Fixed(offset_plus)).expect("mandatory summary facts fit");
 
-    assert!(summary_plus.contains("2026-11-17 22:00:00 +02:00"));
+    assert!(summary_plus.contains("2026-11-17 22:00:00"));
 
     // Offset -05:00
     let offset_minus = UtcOffset::from_hms(-5, 0, 0).expect("valid offset");
     let summary_minus = render_summary(&input, Zone::Fixed(offset_minus)).expect("mandatory summary facts fit");
 
-    assert!(summary_minus.contains("2026-11-17 15:00:00 -05:00"));
+    assert!(summary_minus.contains("2026-11-17 15:00:00"));
 }
 
 #[test]
@@ -317,7 +317,7 @@ fn format_time_includes_local_date_and_handles_midnight_crossing() {
     let summary = render_summary(&input, zone).expect("mandatory summary facts fit");
 
     // UTC is 2026-11-17, local date after crossing midnight at +02:00 is 2026-11-18
-    assert!(summary.contains("2026-11-18 01:30:00 +02:00"));
+    assert!(summary.contains("2026-11-18 01:30:00"));
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn gate_records_include_full_commit_finished_time_and_log_path() {
         "gate section must include gate log path"
     );
     assert!(
-        summary.contains("2026-11-17 19:50:00 +00:00"),
+        summary.contains("2026-11-17 19:50:00"),
         "gate section must include finished timestamp"
     );
 }
@@ -463,7 +463,7 @@ fn newer_executable_and_closed_round_are_rendered_with_context() {
     };
     let summary = render_summary(&input, Zone::Fixed(UtcOffset::UTC)).expect("mandatory summary facts fit");
     assert!(summary.contains("  (Warning: binary on disk is newer than running process)\n"));
-    assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00 +00:00"));
+    assert!(summary.contains("closed (approved) at 2026-11-17 19:55:00"));
 }
 
 #[test]
@@ -1134,11 +1134,11 @@ fn format_time_and_render_summary_write_single_zoned_local_timestamps() {
 
     assert_eq!(
         format_time("2026-11-17T12:00:00Z".parse().expect("valid"), east),
-        "2026-11-17 13:00:00 +01:00"
+        "2026-11-17 13:00:00"
     );
     let rendered = render_summary(&input, east).expect("render summary");
     assert!(
-        rendered.contains("\nCollected at: 2026-11-17 21:00:00 +01:00\n"),
+        rendered.contains("\nCollected at: 2026-11-17 21:00:00\n"),
         "{rendered}"
     );
 }

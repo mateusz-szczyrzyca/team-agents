@@ -134,9 +134,9 @@ mod tests {
         found[0].contains(" run run-20261121-132909-0001 started by claude-1 on task task-20261121-132909-0001 of team team-20261121-132909-aaaa "),
         "{found:?}"
     );
-        assert_eq!(found[1], "2026-11-21 13:50:02 +01:00 command: cargo build");
+        assert_eq!(found[1], "2026-11-21 13:50:02 command: cargo build");
         assert!(found[2].contains("of team team-20261121-132909-bbbb "), "{found:?}");
-        assert_eq!(found[3], "2026-11-21 13:50:04 +01:00 command: cargo test");
+        assert_eq!(found[3], "2026-11-21 13:50:04 command: cargo test");
     }
 
     /// A history of the schema version 13, as an older daemon wrote it, with one run of `codex-1` and its step.
@@ -171,7 +171,7 @@ mod tests {
             found[0].contains(" run run-20261121-132909-0001 started by codex-1 on task task-20261121-132909-0001 "),
             "{found:?}"
         );
-        assert_eq!(found[1], "2026-11-21 13:50:02 +01:00 command: cargo build");
+        assert_eq!(found[1], "2026-11-21 13:50:02 command: cargo build");
     }
 
     #[test]
@@ -199,6 +199,6 @@ mod tests {
             first.contains(" run run-20261121-132909-0001 started by codex-1 "),
             "{first}"
         );
-        assert_eq!(second, "2026-11-21 13:50:02 +01:00 command: cargo build\n");
+        assert_eq!(second, "2026-11-21 13:50:02 command: cargo build\n");
     }
 }

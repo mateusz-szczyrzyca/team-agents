@@ -334,10 +334,10 @@ mod daemon_process {
         let ended = finish(daemon);
         assert!(ended.status.success(), "{ended:?}");
 
-        assert!(status_east.contains("started 2026-11-11 20:15 +01:00"), "{status_east}");
-        assert!(status_west.contains("started 2026-11-11 14:15 -05:00"), "{status_west}");
+        assert!(status_east.contains("started 2026-11-11 20:15"), "{status_east}");
+        assert!(status_west.contains("started 2026-11-11 14:15"), "{status_west}");
         assert!(
-            round_east.contains("  opened 2026-11-11 20:15:00 +01:00\n"),
+            round_east.contains("  opened 2026-11-11 20:15:00\n"),
             "{round_east}"
         );
         assert_eq!(json_east, json_utc);

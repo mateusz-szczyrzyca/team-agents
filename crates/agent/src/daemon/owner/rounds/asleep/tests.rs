@@ -90,7 +90,7 @@ async fn standing_item_line_formats_ended_run_time_in_the_daemon_zone_and_dedupl
     assert_eq!(
         rendered,
         format!(
-            "- claude-1 (member, task {}): failed; its last run ended at 2026-11-11 20:15:10 +01:00 with: STATUS: FAILED",
+            "- claude-1 (member, task {}): failed; its last run ended at 2026-11-11 20:15:10 with: STATUS: FAILED",
             task(2)
         )
     );

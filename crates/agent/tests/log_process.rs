@@ -170,7 +170,7 @@ mod log_zone {
 
         let text = text_of(&home, &["--round", round], CENTRAL_EUROPE);
 
-        assert!(text.contains("2026-11-11 20:30:00 +01:00"), "{text}");
+        assert!(text.contains("2026-11-11 20:30:00"), "{text}");
         assert!(!text.contains("19:30:00Z"), "{text}");
     }
 
@@ -222,7 +222,7 @@ mod log_zone {
 
         assert_eq!(local, with_zone);
         assert!(
-            local.contains("2026-11-11 20:31:44 +01:00 step 1 of the run"),
+            local.contains("2026-11-11 20:31:44 step 1 of the run"),
             "{local}"
         );
         assert!(!local.contains("run-20261111-193001-r7q2"), "{local}");
@@ -255,8 +255,8 @@ mod log_zone {
 
         let text = text_of(&home, &["--round", round], CENTRAL_EUROPE);
 
-        assert!(text.contains("2026-07-01 14:00:00 +02:00"), "{text}");
-        assert!(text.contains("2026-11-11 20:30:04 +01:00"), "{text}");
+        assert!(text.contains("2026-07-01 14:00:00"), "{text}");
+        assert!(text.contains("2026-11-11 20:30:04"), "{text}");
     }
 
     #[test]

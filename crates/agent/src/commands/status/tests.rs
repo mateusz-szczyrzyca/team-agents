@@ -423,9 +423,9 @@ fn the_last_activity_is_told_as_the_local_time_of_day() {
 
     assert_eq!(
         clock_time(at, Zone::Fixed(UtcOffset::UTC)),
-        "2026-11-14 22:10:11 +00:00"
+        "2026-11-14 22:10:11"
     );
-    assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11 +01:00");
+    assert_eq!(clock_time(at, Zone::Fixed(warsaw)), "2026-11-14 23:10:11");
 }
 
 // Rule: the last activity of a running task is read from the output of its runs in the home.
@@ -575,10 +575,10 @@ fn a_round_is_shown_with_its_item_its_tasks_with_where_they_work_and_their_runs(
         text,
         "\
 round-20261111-153002-q1w2  item 1.2  open  team team-20261111-153000-t5m8
-  opened 2026-11-11 19:15:20 +00:00
+  opened 2026-11-11 19:15:20
   item 1.2: The second item (in_progress)
   task-20261111-153002-k3x9  member  claude-1  /srv/agents/worktrees/team-agents/task-20261111-153002-k3x9  agents/claude-1/task-20261111-153002-k3x9-1.2
-    run-20261111-153001-r7q2  started 2026-11-11 19:15:21 +00:00  running
+    run-20261111-153001-r7q2  started 2026-11-11 19:15:21  running
 "
     );
 }
@@ -601,7 +601,7 @@ fn a_closed_round_says_when_and_how_it_ended_and_an_item_in_review_shows_its_pul
     let text = render_round(&detail(&state));
 
     assert!(
-        text.contains("  closed 2026-11-11 19:15:50 +00:00, abandoned\n"),
+        text.contains("  closed 2026-11-11 19:15:50, abandoned\n"),
         "{text}"
     );
     assert!(
@@ -791,7 +791,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 ),
             ],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:50 +00:00",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:50",
         ),
         (
             vec![review_activity(
@@ -802,7 +802,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 &finished(at(30)),
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30",
         ),
         (
             vec![review_activity(
@@ -827,7 +827,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the human stopped it",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: the human stopped it",
         ),
         (
             vec![review_activity(
@@ -843,7 +843,7 @@ fn a_reviewers_line_says_what_it_did_or_does_rather_than_that_it_waits() {
                 },
             )],
             None,
-            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: the run showed no activity for too long",
+            "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: the run showed no activity for too long",
         ),
     ];
     for (activities, running, line) in tables {
@@ -877,7 +877,7 @@ fn the_ordinal_of_a_review_counts_only_the_reviews_this_investigator_gave_for_th
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30 +00:00"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:30"
     );
 }
 
@@ -953,7 +953,7 @@ fn a_review_that_ended_without_a_report_says_when_and_why_it_stopped() {
         assert_eq!(
             reviewer_line(4, activities),
             format!(
-                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: {reason}"
             )
         );
     }
@@ -1006,7 +1006,7 @@ fn a_review_that_failed_says_the_end_of_its_run() {
         assert_eq!(
             reviewer_line(4, activities),
             format!(
-                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: {reason}"
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: {reason}"
             )
         );
     }
@@ -1086,7 +1086,7 @@ fn a_reviewers_ordinal_leaves_out_a_review_that_ended_without_its_report() {
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:50 +00:00"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:15:50"
     );
 }
 
@@ -1119,7 +1119,7 @@ fn a_verification_asked_in_the_second_of_the_first_review_is_its_second_review()
 
     assert_eq!(
         reviewer_line(4, activities),
-        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:40 +00:00"
+        "  task-20261111-153004-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:15:40"
     );
 }
 
@@ -1154,7 +1154,7 @@ fn an_abandoned_second_opinion_says_the_reason_the_daemon_recorded() {
         assert_eq!(
             reviewer_line(4, activities),
             format!(
-                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30 +00:00, reason: its second opinion was abandoned: {reason}"
+                "  task-20261111-153004-k3x9  reviewer     inv-codex  stopped at 2026-11-11 19:15:30, reason: its second opinion was abandoned: {reason}"
             )
         );
     }
@@ -1543,8 +1543,8 @@ fn a_status_time_and_a_log_time_of_one_moment_in_one_zone_are_the_same_text() {
     let zone = Zone::Fixed(time::UtcOffset::from_hms(1, 0, 0).expect("a literal offset is valid"));
     let at: agent_core::state::Timestamp = "2026-11-21T12:50:02Z".parse().expect("a literal time is valid");
     assert_eq!(clock_of(at, zone), zone.stamp(at));
-    assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02 +01:00");
-    assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50 +01:00");
+    assert_eq!(clock_of(at, zone), "2026-11-21 13:50:02");
+    assert_eq!(zone.stamp_minute(at), "2026-11-21 13:50");
 }
 
 #[test]
@@ -1581,14 +1581,14 @@ fn a_round_is_shown_with_its_times_in_the_zone_given() {
 
     let text = super::render_round_in(&detail(&state), zone);
 
-    assert!(text.contains("  opened 2026-11-11 20:15:20 +01:00\n"), "{text}");
+    assert!(text.contains("  opened 2026-11-11 20:15:20\n"), "{text}");
     assert!(
-        text.contains("  closed 2026-11-11 20:15:50 +01:00, abandoned\n"),
+        text.contains("  closed 2026-11-11 20:15:50, abandoned\n"),
         "{text}"
     );
     assert!(
         text.contains(
-            "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21 +01:00  ended 2026-11-11 20:15:30 +01:00\n"
+            "    run-20261111-153001-r7q2  started 2026-11-11 20:15:21  ended 2026-11-11 20:15:30\n"
         ),
         "{text}"
     );
@@ -1618,13 +1618,13 @@ fn a_round_with_a_github_retry_wait_shows_its_next_try_in_the_client_zone() {
 
     assert!(
         east_text.contains(
-            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00\n"
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07\n"
         ),
         "{east_text}"
     );
     assert!(
         west_text.contains(
-            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00\n"
+            ", waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07\n"
         ),
         "{west_text}"
     );
@@ -1644,9 +1644,9 @@ fn clock_time_and_clock_of_format_moments_with_the_offset_of_their_day_in_zone()
     });
     let winter_system = SystemTime::UNIX_EPOCH + Duration::from_secs(1_795_278_593);
 
-    assert_eq!(clock_of(summer, cet_cest), "2026-07-15 14:00:00 +02:00");
-    assert_eq!(clock_of(winter, cet_cest), "2026-11-21 17:29:53 +01:00");
-    assert_eq!(clock_time(winter_system, cet_cest), "2026-11-21 17:29:53 +01:00");
+    assert_eq!(clock_of(summer, cet_cest), "2026-07-15 14:00:00");
+    assert_eq!(clock_of(winter, cet_cest), "2026-11-21 17:29:53");
+    assert_eq!(clock_time(winter_system, cet_cest), "2026-11-21 17:29:53");
 }
 
 #[test]
@@ -2041,7 +2041,7 @@ agentbus = "{}"
     let count = lines.iter().position(|line| line.starts_with("  tasks:")).unwrap();
     assert_eq!(
         lines[count - 1],
-        "  task-20261125-075745-w8vj  worker       minimax-1  step 1.2  accepted, 2026-11-25 07:57–08:59 +00:00",
+        "  task-20261125-075745-w8vj  worker       minimax-1  step 1.2  accepted, 2026-11-25 07:57–08:59",
         "{}",
         shown.text
     );
@@ -2123,7 +2123,7 @@ fn the_lines_of_the_workers_share_the_columns_of_the_tasks() {
     );
     assert!(
         lines.contains(
-            &"  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00 +00:00"
+            &"  task-20261125-095910-qlb9  worker       openrouter-minimax  step 4.2  failed, 2026-11-25 10:59–11:00"
         ),
         "{text}"
     );

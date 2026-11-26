@@ -124,14 +124,14 @@ fn the_line_of_a_wait_names_the_step_the_tries_and_the_next_try_in_local_time() 
 
     assert_eq!(
         wait.line(agent_core::local_time::Zone::Fixed(two_hours)),
-        "prepare a second opinion #138, tried 1 time, next try 2026-11-20 02:05 +02:00"
+        "prepare a second opinion #138, tried 1 time, next try 2026-11-20 02:05"
     );
     assert_eq!(
         clock_time(
             at("2026-11-20T00:07:00Z"),
             agent_core::local_time::Zone::Fixed(two_hours)
         ),
-        "2026-11-20 02:07 +02:00"
+        "2026-11-20 02:07"
     );
 }
 
@@ -270,7 +270,7 @@ fn a_next_try_on_a_whole_minute_is_shown_at_that_minute() {
     assert_eq!(wait.next_at, Some(at("2026-11-20T00:05:00Z")));
     assert_eq!(
         wait.line(agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC)),
-        "prepare a second opinion #138, tried 1 time, next try 2026-11-20 00:05 +00:00"
+        "prepare a second opinion #138, tried 1 time, next try 2026-11-20 00:05"
     );
 }
 
@@ -352,7 +352,7 @@ fn wait_line_formats_next_try_with_the_offset_of_that_minute_in_zone() {
 
     assert_eq!(
         wait.line(east),
-        "prepare a second opinion #138, tried 1 time, next try 2026-11-21 01:07 +01:00"
+        "prepare a second opinion #138, tried 1 time, next try 2026-11-21 01:07"
     );
 }
 

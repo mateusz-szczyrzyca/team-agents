@@ -48,10 +48,10 @@ fn a_github_retry_wait_is_formatted_in_the_client_zone() {
 
     assert_eq!(
         super::wait_text_in(&round(), &asked, east),
-        "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07 +01:00"
+        "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-21 01:07"
     );
     assert_eq!(
         super::wait_text_in(&round(), &asked, west),
-        "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07 -05:00"
+        "round round-20261121-132909-q1w2 waits for GitHub: refresh the description of the pull requests, tried 4 times, next try 2026-11-20 19:07"
     );
 }
