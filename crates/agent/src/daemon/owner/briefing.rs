@@ -25,14 +25,18 @@ use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::{JudgementRecord, ReadError, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{
-    Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, ComposeError,
-    PlanHeadings, briefing_variables_with,
+    Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingReview, BriefingRun,
+    BriefingStep, ComposeError, PlanHeadings, briefing_variables_with,
 };
 use agent_runtime::run::outcome::read_outcome;
 use agent_runtime::snapshot::{SnapshotError, take_snapshot};
 use agent_runtime::text_file::read_text_file;
 
 use super::round_state;
+
+mod review;
+
+pub(super) use self::review::ReviewFacts;
 use super::start::{StartProblem, work_branch};
 use super::{Owner, OwnerError};
 use crate::daemon::team::{BusJob, lead_takes_work};
@@ -127,6 +131,10 @@ pub(super) fn lead_last_message_paragraph(
 
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
+
+/// The variables of the briefing that tell the pull request of the task's item and its review, which a lead's text leaves
+/// out: the lead is told the work of a member, not the review of its own.
+const REVIEW_VARIABLES: [&str; 3] = ["pull_request", "review_state", "findings"];
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -279,21 +287,7 @@ impl Owner {
                 repo: team.repo().to_string(),
             })?;
         let branch = work_branch(team, member)?;
-        let round = member
-            .runs()
-            .iter()
-            .rev()
-            .flat_map(|run| run.rounds().iter().rev())
-            .find(|round| team.round(round).is_some_and(agent_core::state::Round::is_open))
-            .cloned();
-        // A task that never ran works for the rounds its first run is given: a busy agent's hand-over briefs it so.
-        let round = match round {
-            Some(round) => Some(round),
-            None => round_state::rounds_for(&self.parts.state, task, None)
-                .map_err(BriefingProblem::Rounds)?
-                .into_iter()
-                .find(|round| team.round(round).is_some_and(agent_core::state::Round::is_open)),
-        };
+        let round = self.open_round_of(task)?;
         // A round that closed while the task waited still holds the record of its work: the newest round of the task's
         // runs is the checkpoint of a task with no open round.
         let round = round.or_else(|| {
@@ -368,6 +362,37 @@ impl Owner {
             },
             history,
         }))
+    }
+
+    /// The open round the next run of `task` works for: the newest open round of its runs, or, for a task that never ran,
+    /// the open round its first run is given; `None` when it works for none.
+    ///
+    /// # Errors
+    /// [`BriefingProblem::NoTask`] when the task is not in the state; [`BriefingProblem::Rounds`] when the rounds of a task
+    /// that never ran cannot be told.
+    pub(super) fn open_round_of(&self, task: &TaskId) -> Result<Option<RoundId>, BriefingProblem> {
+        let found = self
+            .parts
+            .state
+            .find_task(task)
+            .ok_or_else(|| BriefingProblem::NoTask { task: task.clone() })?;
+        let (team, member) = (found.team, found.member);
+        let is_open = |round: &RoundId| team.round(round).is_some_and(agent_core::state::Round::is_open);
+        let round = member
+            .runs()
+            .iter()
+            .rev()
+            .flat_map(|run| run.rounds().iter().rev())
+            .find(|round| is_open(round))
+            .cloned();
+        // A task that never ran works for the rounds its first run is given: a busy agent's hand-over briefs it so.
+        match round {
+            Some(round) => Ok(Some(round)),
+            None => Ok(round_state::rounds_for(&self.parts.state, task, None)
+                .map_err(BriefingProblem::Rounds)?
+                .into_iter()
+                .find(|round| is_open(round))),
+        }
     }
 
     /// The agent's final message of the task's last run, whole, as the history recorded it; `None` when that run ended
@@ -603,6 +628,15 @@ impl Owner {
     }
 }
 
+/// A briefing's facts with the review of the task's item, as a run is made ready with them.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Briefed<'a> {
+    /// What the runs of the task left.
+    pub(super) draft: &'a BriefingDraft,
+    /// The pull request of the task's item and its review.
+    pub(super) review: &'a ReviewFacts,
+}
+
 /// The facts of a briefing: what the task's own record gives (its facts) and what its history and question files give.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) struct BriefingDraft {
@@ -654,8 +688,25 @@ impl BriefingDraft {
     ///
     /// # Errors
     /// [`ComposeError`] when the text of the briefing cannot be filled.
+    #[cfg(test)]
     pub(super) fn render(&self, texts: &HarnessPrompts, task: &TaskId, prompt: &str) -> Result<String, ComposeError> {
-        self.facts.render_with(texts, task, prompt, &self.history)
+        self.render_reviewed(texts, task, prompt, &ReviewFacts::default())
+    }
+
+    /// The briefing of `task`, whose own prompt is `prompt`, with the pull request and review `review` of its item, rendered
+    /// through `texts`.
+    ///
+    /// # Errors
+    /// [`ComposeError`] when the text of the briefing cannot be filled.
+    pub(super) fn render_reviewed(
+        &self,
+        texts: &HarnessPrompts,
+        task: &TaskId,
+        prompt: &str,
+        review: &ReviewFacts,
+    ) -> Result<String, ComposeError> {
+        self.facts
+            .render_with(texts, task, prompt, &self.history, &review.as_review())
     }
 
     /// What a lead given the work of `task` is told the runs of the task left, rendered through `texts`.
@@ -674,7 +725,13 @@ impl BriefingFacts {
     /// [`ComposeError`] when the text of the briefing cannot be filled.
     #[cfg(test)]
     pub(super) fn render(&self, texts: &HarnessPrompts, task: &TaskId, prompt: &str) -> Result<String, ComposeError> {
-        self.render_with(texts, task, prompt, &BriefingHistory::default())
+        self.render_with(
+            texts,
+            task,
+            prompt,
+            &BriefingHistory::default(),
+            &BriefingReview::default(),
+        )
     }
 
     /// The briefing of `task`, whose own prompt is `prompt`, with `history`, rendered through `texts`.
@@ -687,8 +744,9 @@ impl BriefingFacts {
         task: &TaskId,
         prompt: &str,
         history: &BriefingHistory,
+        review: &BriefingReview<'_>,
     ) -> Result<String, ComposeError> {
-        let values = self.variables(texts, task, prompt, history)?;
+        let values = self.variables(texts, task, prompt, (history, review))?;
         Ok(texts.render(HarnessPrompt::Briefing, &values)?)
     }
 
@@ -703,9 +761,13 @@ impl BriefingFacts {
         task: &TaskId,
         history: &BriefingHistory,
     ) -> Result<String, ComposeError> {
-        let all = self.variables(texts, task, "", history)?;
+        let all = self.variables(texts, task, "", (history, &BriefingReview::default()))?;
         let mut values = Variables::new();
-        for name in all.names().filter(|name| name.as_str() != PROMPT_VARIABLE) {
+        // The lead's briefing has neither the task's prompt nor the item's pull request.
+        for name in all
+            .names()
+            .filter(|name| name.as_str() != PROMPT_VARIABLE && !REVIEW_VARIABLES.contains(&name.as_str()))
+        {
             if let Some(value) = all.get(name) {
                 values = values.with(name.as_str(), value)?;
             }
@@ -719,7 +781,7 @@ impl BriefingFacts {
         texts: &HarnessPrompts,
         task: &TaskId,
         prompt: &str,
-        history: &BriefingHistory,
+        (history, review): (&BriefingHistory, &BriefingReview<'_>),
     ) -> Result<Variables, ComposeError> {
         let commits: Vec<String> = self.commits.iter().map(|commit| commit.id.to_string()).collect();
         let listed: Vec<BriefingCommit<'_>> = self
@@ -809,6 +871,7 @@ impl BriefingFacts {
                 mismatch: &mismatch,
                 not_done: &not_done,
             },
+            review: *review,
         };
         Ok(briefing_variables_with(&facts, &notes)?)
     }

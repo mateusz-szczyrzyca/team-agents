@@ -14,6 +14,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] A replacement takes the old agent's place on the team bus before its first run, so team messages and Serena reminders reach it. If the bus is unavailable, the daemon saves the change and retries it before starting the replacement, including after a restart. Busy hand-overs use the same process; solo hand-overs make no bus change. Hand-overs saved by older daemons are recovered before launch, and missing or closed teams keep the replacement pending.
 
+## agent 0.129.0 · agent-core 0.126.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #314
+
+### Enhancements
+- [agent] [agent-core] [agent-runtime] The briefing of a new session (after `agent renew`, a takeover or a busy hand-over) now has a section "The pull request and its review": the pull request of the task's item, where its review stands (in review, fix pass `n` of the limit, waiting for the human, approved) and the findings by number with their status (`open`, `resolved`, `not confirmed`). The new session is told to go on in that pull request and fix the open findings, not to start the item again.
+
 ## agent 0.128.0 · agent-core 0.125.0 — 26.11.2026 — PR #312
 
 ### New features

@@ -37,7 +37,7 @@ use agent_runtime::store::Home;
 use agent_runtime::team_prompts::TeamPrompts;
 use rand::{Rng, RngExt};
 
-use super::briefing::{BriefingDraft, LastMessage, MessageSource};
+use super::briefing::{Briefed, LastMessage, MessageSource};
 use super::rounds::{Addition, SectionError, sections_for_in};
 use crate::daemon::questions::{self, QuestionsProblem, TextError};
 use crate::daemon::team::{TeamPromptError, TeamRun, Why, agent_name, shape_with_answers, task_branch};
@@ -235,7 +235,7 @@ fn with_run_sections(
     found: &TaskRef<'_>,
     kind: PromptKind,
     prompt: String,
-    briefing: Option<&BriefingDraft>,
+    briefing: Option<Briefed<'_>>,
     last_message: Option<&LastMessage>,
 ) -> Result<String, StartProblem> {
     let (team, role, member, task) = (found.team, found.role, found.member, found.member.task());
@@ -247,7 +247,9 @@ fn with_run_sections(
         None => prompt,
     };
     let prompt = match briefing {
-        Some(draft) => draft.render(ctx.texts, task, &prompt)?,
+        Some(briefed) => briefed
+            .draft
+            .render_reviewed(ctx.texts, task, &prompt, briefed.review)?,
         None => prompt,
     };
     // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
@@ -363,7 +365,7 @@ pub(super) async fn plan(
     zone: agent_core::local_time::Zone,
     rng: &mut impl Rng,
     task: &TaskId,
-    briefing: Option<&BriefingDraft>,
+    briefing: Option<Briefed<'_>>,
     last_message: Option<&LastMessage>,
 ) -> Result<Plan, StartProblem> {
     let found = ctx

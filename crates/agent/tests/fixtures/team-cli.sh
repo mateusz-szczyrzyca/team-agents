@@ -510,6 +510,13 @@ case $action in
       result "VERDICT: REQUEST_CHANGES\n$answers\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — missing regression → add it\n   CHECK: read src/lib.rs:7\nSTATUS: DONE"
     fi
     ;;
+  held-verify:*)
+    # A verify that waits for `.fake-continue` first, as a reviewer the test keeps at work.
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.02
+    done
+    action=verify:${action#*:}
+    ;&
   verify:*|late-verify:*)
     # Structured reports answer the supplied permanent numbers before any new findings.
     if [[ $action == late-verify:* ]]; then
@@ -534,6 +541,28 @@ case $action in
       report="$first\n$answers$rest"
     fi
     result "$report"'\nSTATUS: DONE'
+    ;;
+  verify-partial:*)
+    # A verification that resolves the first supplied finding and leaves every other one open.
+    report=${action#*:}
+    answers=''
+    verifying=false
+    resolved=false
+    while IFS= read -r line; do
+      if [[ $line == '# OPEN FINDINGS TO VERIFY' ]]; then verifying=true; fi
+      if [[ $verifying == true && $line =~ ^([0-9]+)\.\ \[ ]]; then
+        if [[ $resolved == false ]]; then
+          answers+="FINDING ${BASH_REMATCH[1]}: RESOLVED\n"
+          resolved=true
+        else
+          answers+="FINDING ${BASH_REMATCH[1]}: OPEN — still untested\n"
+        fi
+      fi
+    done <<< "$prompt"
+    verdict=${report%%\\n*}
+    rest=${report#*\\n}
+    if [[ $rest == "$report" ]]; then rest=''; fi
+    result "$verdict"'\n'"$answers$rest"'\nSTATUS: DONE'
     ;;
   delivery-from-prompt)
     # A coordinator uses only a protocol supplied in its first prompt.

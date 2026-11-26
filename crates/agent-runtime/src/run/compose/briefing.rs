@@ -4,6 +4,10 @@
 use agent_core::plan::judge::JudgementState;
 use agent_core::prompt::{Variables, VariablesError};
 
+mod review;
+
+pub use review::{BriefingFindings, BriefingPullRequest, BriefingReview, ReviewStanding};
+
 /// One run of the task, as the briefing lists it: when it started, the agent that ran it and how it ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BriefingRun<'a> {
@@ -43,6 +47,8 @@ pub struct BriefingNotes<'a> {
     pub judgements: &'a [(&'a str, JudgementState)],
     /// The headings of the groups the plan's steps are listed in.
     pub headings: PlanHeadings<'a>,
+    /// The pull request of the task's item and its review; the default is an item with no pull request.
+    pub review: BriefingReview<'a>,
 }
 
 /// The headings of the four groups of the plan's steps, as the catalog words them. Its default has no words: a briefing
@@ -155,7 +161,8 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         std::iter::once(format!("- #{} {}:", message.id, message.from))
             .chain(message.text.lines().map(|line| format!("  {line}")))
     }));
-    let pairs: [(&str, &str); 15] = [
+    let review = review::review_values(&notes.review);
+    let pairs: [(&str, &str); 18] = [
         ("reason", facts.reason),
         ("task", facts.task),
         ("prompt", facts.prompt.trim_end()),
@@ -174,6 +181,9 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         ),
         ("left_out", facts.left_out.unwrap_or_default().trim_end()),
         ("messages", &messages),
+        ("pull_request", &review.pull_request),
+        ("review_state", &review.review_state),
+        ("findings", &review.findings),
     ];
     pairs
         .iter()
