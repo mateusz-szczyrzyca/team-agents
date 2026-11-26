@@ -19,7 +19,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
 };
-use agent_core::history::{AgentIdentity, HistoryEvent};
+use agent_core::history::{AgentIdentity, HistoryEvent, RunStart};
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
@@ -1708,17 +1708,21 @@ impl Owner {
                 cli: job.cli,
                 model: job.model.clone(),
             };
-            self.record_pool_run_start(
-                &worker_task,
-                team.id(),
-                &job.run,
-                started,
-                agent_identity,
-                agent_core::history::RunWhy::Request { asked_by },
-                &job.prompt,
-                &job.working_dir,
-                &branch,
-            );
+            let start = RunStart {
+                run: job.run.clone(),
+                team: team.id().clone(),
+                task: worker_task.clone(),
+                at: started,
+                agent: agent_identity,
+                role: Role::Worker,
+                rounds: Vec::new(),
+                why: agent_core::history::RunWhy::Request { asked_by },
+                prompt: job.prompt.clone(),
+                worktree: job.working_dir.clone(),
+                branch: branch.clone(),
+                session: None,
+            };
+            self.record_pool_run_start(start);
 
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
             self.spawn_job(worker_task.clone(), job, run_span);
@@ -1806,7 +1810,7 @@ impl Owner {
         &mut self,
         task: &TaskId,
         served: &Served,
-        run_id: &Option<RunId>,
+        run_id: Option<&RunId>,
         outcome: Outcome,
     ) -> Result<(), OwnerError> {
         let team_id = self
@@ -1816,7 +1820,7 @@ impl Owner {
             .map(|f| f.team.id().clone());
 
         // Record the run end in the history.
-        if let Some(ref run_id) = *run_id {
+        if let Some(run_id) = run_id {
             match &outcome {
                 Outcome::Verdict(verdict) => match verdict.as_ref() {
                     RunVerdict::Finished(run) => {

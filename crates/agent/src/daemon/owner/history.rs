@@ -2,12 +2,10 @@
 //! while a run is going. Each is handed to the history after the state holds it; the history never refuses or delays.
 
 use agent_core::cli::ActivityEvent;
-use agent_core::config::AbsolutePath;
 use agent_core::history::{
     AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
 };
-use agent_core::ids::{BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::ids::{ItemId, RoundId, RunId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
@@ -336,39 +334,14 @@ impl Owner {
         })));
     }
 
-    /// Records the start of a pool worker run that serves a request of `team`, whose requester's current run is
-    /// `asked_by` (`None` when the state has none).
+    /// Records the start of a pool worker run.
     ///
     /// The job's steps land under this run.
-    pub(super) fn record_pool_run_start(
-        &self,
-        task: &TaskId,
-        team: &TeamId,
-        run: &RunId,
-        at: Timestamp,
-        agent: AgentIdentity,
-        why: RunWhy,
-        prompt: &str,
-        worktree: &AbsolutePath,
-        branch: &BranchName,
-    ) {
+    pub(super) fn record_pool_run_start(&self, run: RunStart) {
         if self.history.is_disabled() {
             return;
         }
-        self.history.record(Record::Run(Box::new(RunStart {
-            run: run.clone(),
-            team: team.clone(),
-            task: task.clone(),
-            at,
-            agent,
-            role: Role::Worker,
-            rounds: Vec::new(),
-            why,
-            prompt: prompt.to_owned(),
-            worktree: worktree.clone(),
-            branch: branch.clone(),
-            session: None,
-        })));
+        self.history.record(Record::Run(Box::new(run)));
     }
 
     /// Records how `run` ended at `at`, with the agent's `final_message`, and forgets the numbering of its steps.
