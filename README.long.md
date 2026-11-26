@@ -634,6 +634,8 @@ runs remain in the bundle.
 Questions are ordered numerically, and gate outputs name their source and modification time. Worktrees removed
 after a merged round are explained once, with retained branch facts read from the caller's clone.
 An unpublished member branch is expected; the coordinator's origin ref is still checked.
+The bundle also includes the team's worker tasks, with each worker's `context.json` and latest three
+runs; `--task` accepts a worker task resolved through the team's history.
 
 The summary uses the pure anomaly assessment and stays below 100,000 bytes; full collected details are separate
 artifacts. Summary redaction precedes truncation and byte budgeting, including daemon logs and process command lines.

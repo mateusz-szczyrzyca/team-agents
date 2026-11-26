@@ -1,0 +1,10 @@
+{"type":"session_start","message":"Starting session","timestamp":"2026-11-17T12:00:00Z"}
+{"type":"system","message":"System prompt loaded test-confidential-λ","timestamp":"2026-11-17T12:00:01Z"}
+{"type":"thinking","message":"Analyzing request","timestamp":"2026-11-17T12:00:02Z"}
+{"type":"tool_call","message":"Calling read tool","timestamp":"2026-11-17T12:00:03Z"}
+{"type":"tool_result","message":"File contents","timestamp":"2026-11-17T12:00:04Z"}
+{"type":"thinking","message":"Planning changes","timestamp":"2026-11-17T12:00:05Z"}
+{"type":"tool_call","message":"Calling edit tool","timestamp":"2026-11-17T12:00:06Z"}
+{"type":"tool_result","message":"Edit applied","timestamp":"2026-11-17T12:00:07Z"}
+{"type":"thinking","message":"Verifying result","timestamp":"2026-11-17T12:00:08Z"}
+{"type":"text","message":"STATUS: DONE","timestamp":"2026-11-17T12:00:09Z"}
