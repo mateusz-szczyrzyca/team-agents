@@ -515,6 +515,7 @@ impl Owner {
                 Ok(Attempt::Published(published)) => {
                     self.watch.retry_at.remove(&key);
                     self.watch.gate_sent_back.remove(&lead.task);
+                    self.watch.gate_held.remove(&lead.task);
                     self.watch.own_gates.remove(&lead.task);
                     self.each_item(team_id, &published.items, |item| {
                         item.reset_publish_tries();
@@ -1545,6 +1546,7 @@ impl Owner {
         let Site { pulls, team, lead } = site;
         let sent = self.watch.gate_sent_back.get(&lead.task).copied().unwrap_or(0);
         if sent >= GATE_SEND_BACKS {
+            self.watch.gate_held.insert(lead.task.clone());
             let announcement = Announcement::GateNotPassed {
                 team: team.clone(),
                 branch: publication.head_branch.clone(),

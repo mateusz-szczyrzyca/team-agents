@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.129.0 · agent-core 0.126.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #314
+
+### Enhancements
+- [agent] [agent-core] [agent-runtime] The briefing of a new session (after `agent renew`, a takeover or a busy hand-over) now has a section "The pull request and its review": the pull request of the task's item, where its review stands (in review, fix pass `n` of the limit, waiting for the human, approved) and the findings by number with their status (`open`, `resolved`, `not confirmed`). The new session is told to go on in that pull request and fix the open findings, not to start the item again.
+
 ## agent 0.128.0 · agent-core 0.125.0 — 26.11.2026 — PR #312
 
 ### New features

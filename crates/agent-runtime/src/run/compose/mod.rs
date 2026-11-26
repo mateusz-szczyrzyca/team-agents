@@ -21,8 +21,9 @@ mod briefing;
 mod serena;
 
 pub use briefing::{
-    Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingRun, BriefingStep, PlanHeadings,
-    briefing_variables, briefing_variables_with,
+    Briefing, BriefingAnswer, BriefingCommit, BriefingFindings, BriefingMessage, BriefingNotes, BriefingPullRequest,
+    BriefingReview, BriefingRun, BriefingStep, PlanHeadings, ReviewStanding, briefing_variables,
+    briefing_variables_with,
 };
 pub use serena::{Serena, serena_section};
 
