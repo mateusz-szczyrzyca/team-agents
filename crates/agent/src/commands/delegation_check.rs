@@ -144,7 +144,7 @@ pub(crate) fn keyword(rejection: &Rejection) -> &'static str {
         Rejection::MissingFiles => MISSING_FILES,
         Rejection::BadFiles { .. } => PATH_OUTSIDE,
         Rejection::MissingCheck => MISSING_CHECK,
-        Rejection::CheckRefused { .. } | Rejection::BadCheck { .. } => CHECK_REFUSED,
+        Rejection::CheckRefused { .. } | Rejection::BadCheck { .. } | Rejection::SentenceCheck { .. } => CHECK_REFUSED,
         Rejection::MissingDo => MISSING_DO,
     }
 }

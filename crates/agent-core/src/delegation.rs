@@ -102,6 +102,14 @@ pub enum Rejection {
         #[source]
         source: PlanError,
     },
+    /// The check is a command followed by words that say what it shows: run as a command, it fails in every worktree.
+    #[error("the request's check {check:?} is not yet refused as a sentence at {word:?}")]
+    SentenceCheck {
+        /// The check as the requester wrote it.
+        check: String,
+        /// The first word that reads as prose rather than part of the command.
+        word: String,
+    },
     /// The requirement says nothing to do.
     #[error("the request says nothing to do: add do, what the worker is to do")]
     MissingDo,
