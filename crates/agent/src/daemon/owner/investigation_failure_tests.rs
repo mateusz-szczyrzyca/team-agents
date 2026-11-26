@@ -297,3 +297,37 @@ async fn a_restart_requeues_an_assignment_whose_task_has_finished() {
     owner.reconcile_investigations().await.unwrap();
     assert!(attempt.calls().contains("queued"), "{}", attempt.calls());
 }
+
+#[tokio::test]
+async fn a_complete_answer_preserves_private_attempts_only_in_the_file() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::NoStatus { exit_code: Some(0) },
+            Some("private résumé"),
+        )
+        .await
+        .unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            Some("complete solution\nSTATUS: DONE"),
+        )
+        .await
+        .unwrap();
+    let answer = std::fs::read_to_string(attempt.dir.path().join("answer.md")).unwrap();
+    assert!(answer.contains("private résumé"), "{answer}");
+    assert!(answer.contains("complete solution"), "{answer}");
+    let calls = attempt.calls();
+    assert!(!calls.contains("private résumé"), "{calls}");
+    assert!(calls.contains("complete solution"), "{calls}");
+}
