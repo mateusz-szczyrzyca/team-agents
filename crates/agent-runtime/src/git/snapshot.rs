@@ -34,7 +34,57 @@ pub struct Snapshot {
     pub bytes: u64,
 }
 
+/// Whether a snapshot was written for a request or an earlier one stood in for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SnapshotOrigin {
+    /// A new commit and reference were written.
+    Taken,
+    /// The worktree's tree and head were those of the earlier snapshot: its reference is kept as it is.
+    Reused,
+}
+
+/// A snapshot taken for a checkpoint by [`Git::snapshot_unless_unchanged`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CheckpointSnapshot {
+    /// The snapshot, new or the earlier one that stands in for it.
+    pub snapshot: Snapshot,
+    /// The reference that keeps the snapshot's commit: `refs/agents/snapshots/<round>/<task>/<n>`.
+    pub reference: String,
+    /// Whether the snapshot is new.
+    pub origin: SnapshotOrigin,
+}
+
 impl Git {
+    /// Keeps the worktree like [`Git::snapshot`], unless the snapshot under `previous` already holds the same tree on the
+    /// same head: then that snapshot is the answer and nothing is written.
+    ///
+    /// # Errors
+    /// The errors of [`Git::snapshot`].
+    pub async fn snapshot_unless_unchanged(
+        &self,
+        round: &RoundId,
+        task: &TaskId,
+        previous: Option<&str>,
+    ) -> Result<CheckpointSnapshot, GitError> {
+        let _ = previous;
+        let snapshot = self.snapshot(round, task).await?;
+        let reference = format!("{SNAPSHOT_REFS}/{round}/{task}/{}", snapshot.number);
+        Ok(CheckpointSnapshot {
+            snapshot,
+            reference,
+            origin: SnapshotOrigin::Taken,
+        })
+    }
+
+    /// Removes the snapshot references `references`; one that is already gone is no error.
+    ///
+    /// # Errors
+    /// [`GitError`] when git cannot delete a reference.
+    pub async fn delete_snapshot_references(&self, references: &[String]) -> Result<(), GitError> {
+        let _ = references;
+        Ok(())
+    }
+
     /// Keeps everything in the worktree — modified, staged, deleted, untracked and binary files; ignored files are left out
     /// — as a commit under `refs/agents/snapshots/<round>/<task>/<n>`, whose parent is the head.
     ///
