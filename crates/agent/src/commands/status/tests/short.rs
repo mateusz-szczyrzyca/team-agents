@@ -103,6 +103,7 @@ fn each_status_is_counted_in_its_own_word_in_a_fixed_order() {
              task-20261111-153001-k3x9  coordinator  inv-opus   paused\n  \
              task-20261111-153002-k3x9  member       claude-1   running\n  \
              task-20261111-153003-k3x9  worker       glm-1      waiting\n  \
+             task-20261111-153004-k3x9  reviewer     inv-codex  done\n  \
              tasks: 1 running, 1 waiting, 1 paused, 1 done\n"
         )
     );
