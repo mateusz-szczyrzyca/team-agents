@@ -757,6 +757,8 @@ fn write_worker_history(home: &Home, team: &TeamId, runs: u32, last_ended: bool)
     use crate::history::Store;
     use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunEndRecord, RunStart, RunWhy, TeamStart};
     use agent_core::kinds::{CliKind, Role, Tier};
+    // The summary leaves out the history of a home whose configuration cannot be read.
+    std::fs::write(home.config_file(), "[repos.example]\ngate = \"make gate\"\n").unwrap();
     let mut database = crate::history::HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
     let at = |second: u32| -> Timestamp { format!("2026-11-17T13:00:{second:02}Z").parse().unwrap() };
     let mut records = vec![Record::Team(Box::new(TeamStart {
