@@ -316,6 +316,13 @@ async fn a_renewed_session_of_a_task_with_no_open_round_is_briefed_from_its_newe
     std::fs::create_dir_all(&scripts).unwrap();
     std::fs::write(scripts.join("first.jsonl"), usage_line(42_000)).unwrap();
     std::fs::write(scripts.join("second.jsonl"), usage_line(200_000)).unwrap();
+    // The second item's pull request cannot be merged, so nothing finishes the team between the read of the state and
+    // the stop of the daemon below: the task waits there until the test moves it.
+    rig.github.fail_calls_to(
+        "PUT",
+        &format!("/repos/{}/pulls/2/merge", super::fake_github::SLUG),
+        500,
+    );
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let worktree = rig.worktree(&tasks[0]);
