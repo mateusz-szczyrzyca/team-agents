@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-runtime 0.114.0 — 26.11.2026 — PR #<PR>
+
+### Bug fixes
+- [agent-runtime] `agent debug --task <worker task>` now resolves a pool worker task to its team through the history. The team's bundle includes each worker task's `context.json` and its newest three runs' `out.jsonl` and `err.log`, with the same redaction as member files. The summary lists every worker task with its agent, requester run and last run times. A worker task whose directory is missing does not fail the bundle.
+
+### Enhancements
+- [agent-runtime] The diagnostic bundle's summary has a new `## Workers` section listing every pool worker that served the team.
+
 ## agent 0.120.0 · agent-core 0.118.0 · agent-runtime 0.113.0 — 26.11.2026 — PR #287
 
 ### New features
