@@ -200,3 +200,60 @@ mod checks_record_commits {
         );
     }
 }
+
+#[cfg(test)]
+mod lifting_a_refusal {
+    use agent_core::decide::checks::Subject;
+    use agent_core::ids::ItemId;
+    use agent_core::state::{Basis, ChecksRecord, CommitId, Covers};
+
+    fn item() -> ItemId {
+        "1.1".parse().unwrap()
+    }
+
+    fn path(text: &str) -> Subject {
+        Subject::Path(text.parse().unwrap())
+    }
+
+    fn head(digit: char) -> CommitId {
+        digit.to_string().repeat(40).parse().unwrap()
+    }
+
+    fn refused_at(head_digit: char, subjects: &[Subject]) -> ChecksRecord {
+        let mut record = ChecksRecord {
+            basis: Some(Basis {
+                head: head(head_digit),
+                covers: Covers::Everything,
+            }),
+            ..ChecksRecord::default()
+        };
+        record.answered(&[item()], &[], subjects);
+        record
+    }
+
+    #[test]
+    fn a_lifted_file_is_no_longer_refused_and_keeps_no_head() {
+        let mut record = refused_at('2', &[path("tests/a.rs"), path("tests/b.rs")]);
+
+        record.lift_refused(&[item()], &["tests/a.rs".parse().unwrap()]);
+
+        assert_eq!(record.refused_of(&[item()]), [path("tests/b.rs")]);
+        assert_eq!(
+            record.covered_at_of(&[item()]).into_iter().collect::<Vec<_>>(),
+            [("tests/b.rs".parse().unwrap(), head('2'))]
+        );
+    }
+
+    #[test]
+    fn lifting_keeps_the_refusals_of_commits() {
+        let commit = Subject::Commit {
+            commit: head('3'),
+            path: "tests/a.rs".parse().unwrap(),
+        };
+        let mut record = refused_at('2', &[path("tests/a.rs"), commit.clone()]);
+
+        record.lift_refused(&[item()], &["tests/a.rs".parse().unwrap()]);
+
+        assert_eq!(record.refused_of(&[item()]), [commit]);
+    }
+}

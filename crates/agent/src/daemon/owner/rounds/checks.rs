@@ -140,7 +140,12 @@ impl Owner {
             }
         }
         let (gathered, assessed) = self.assess_round(site, reviewing, &mut record, &rules).await?;
-        let Assessed { issues, settled, .. } = assessed;
+        let Assessed {
+            issues,
+            settled,
+            lifted,
+            ..
+        } = assessed;
         // What the human refused about a file keeps the round back until the team undoes it; what they refused about a
         // commit holds nothing back, because the team cannot undo a commit.
         let refused: Vec<Subject> = record
@@ -154,10 +159,11 @@ impl Owner {
         log_decision(
             "conclude_checks",
             &format!(
-                "pr={}, issues={}, refused={}",
+                "pr={}, issues={}, refused={}, lifted={}",
                 reviewing.pr,
                 issues.len(),
-                refused.len()
+                refused.len(),
+                lifted.len()
             ),
             &format!("{step:?}"),
         );
@@ -212,8 +218,17 @@ impl Owner {
         if migrate(record, reviewing.items, &first) || bounded {
             self.parts.store.save_checks_record(&lead.task, record).await?;
         }
+        // A refused file that the team changed again after the refusal is an ordinary finding once more: what the first
+        // look kept about the commits it covered stays, and the human is asked about the file and its new commits.
+        if !first.lifted.is_empty() {
+            record.lift_refused(reviewing.items, &first.lifted);
+            self.parts.store.save_checks_record(&lead.task, record).await?;
+        }
         self.revoke_changed_allowances(site, reviewing, record).await?;
-        let assessed = judge(&gathered, rules, record, reviewing.items, &team_allowances);
+        let assessed = Assessed {
+            lifted: first.lifted,
+            ..judge(&gathered, rules, record, reviewing.items, &team_allowances)
+        };
         Ok((gathered, assessed))
     }
 
@@ -633,6 +648,8 @@ struct Assessed {
     settled: Settled,
     /// The subjects of the findings that a file the human refused before commits had subjects covers.
     inherited_refused: Vec<Subject>,
+    /// The refused files that a commit made after the refusal changed: their refusal is lifted.
+    lifted: Vec<RepoPath>,
 }
 
 /// What a question is put about.
@@ -687,6 +704,7 @@ fn judge(
             Subject::NoTests | Subject::Commit { .. } => None,
         })
         .collect();
+    let lifted = commits::lifted_refusals(&found.commits, &gathered.facts, &refused_paths);
     let by_refusal = commits::inherit_refusals(found.commits, &gathered.facts, &refused_paths);
     let settled = commits::settle(
         by_refusal.remaining,
@@ -702,6 +720,7 @@ fn judge(
         issues,
         settled,
         inherited_refused: by_refusal.refused,
+        lifted,
     }
 }
 

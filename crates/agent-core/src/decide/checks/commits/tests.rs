@@ -366,3 +366,56 @@ fn a_file_refused_before_findings_had_a_subject_covers_the_commits_up_to_its_hea
         assert_eq!(inherited.refused, case.refused_subjects, "{}", case.name);
     }
 }
+
+#[test]
+fn a_refused_file_is_lifted_only_by_a_commit_made_after_its_head() {
+    struct Case {
+        name: &'static str,
+        findings: Vec<CommitFinding>,
+        refused: BTreeMap<RepoPath, Option<CommitId>>,
+        lifted: Vec<RepoPath>,
+    }
+    let cases = [
+        Case {
+            name: "a finding at a commit after the head",
+            findings: vec![finding('3', "tests/a.rs")],
+            refused: refused_paths(&[("tests/a.rs", Some('2'))]),
+            lifted: vec![path("tests/a.rs")],
+        },
+        Case {
+            name: "a finding at the head",
+            findings: vec![finding('2', "tests/a.rs")],
+            refused: refused_paths(&[("tests/a.rs", Some('2'))]),
+            lifted: vec![],
+        },
+        Case {
+            name: "a finding before the head",
+            findings: vec![finding('2', "tests/a.rs")],
+            refused: refused_paths(&[("tests/a.rs", Some('3'))]),
+            lifted: vec![],
+        },
+        Case {
+            name: "a file refused with no head",
+            findings: vec![finding('3', "tests/a.rs")],
+            refused: refused_paths(&[("tests/a.rs", None)]),
+            lifted: vec![],
+        },
+        Case {
+            name: "a finding about another file",
+            findings: vec![finding('3', "tests/b.rs")],
+            refused: refused_paths(&[("tests/a.rs", Some('2'))]),
+            lifted: vec![],
+        },
+        Case {
+            name: "several findings about one file lift it once",
+            findings: vec![finding('3', "tests/a.rs"), finding('4', "tests/a.rs")],
+            refused: refused_paths(&[("tests/a.rs", Some('2'))]),
+            lifted: vec![path("tests/a.rs")],
+        },
+    ];
+    for case in cases {
+        let lifted = lifted_refusals(&case.findings, &facts(), &case.refused);
+
+        assert_eq!(lifted, case.lifted, "{}", case.name);
+    }
+}

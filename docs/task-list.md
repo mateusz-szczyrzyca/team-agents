@@ -37,6 +37,18 @@ Depends on: 1
 [ ] 2.1 Third item
 ```
 
+### Examples
+
+Two complete task lists, written for a team with workers, show the format in use. Each has a legend of its labels
+(`W1`, `K1`, ...), rules for every item, steps a worker can do alone, and items with exact tests and checks:
+
+- [`examples/task-list-code.md`](examples/task-list-code.md) — a feature of a fictional Rust CLI, three items, test
+  first;
+- [`examples/task-list-research.md`](examples/task-list-research.md) — research on the web, ending in a PDF report,
+  with no code.
+
+Both parse with `TaskList::parse`.
+
 ### The lines
 
 - **`Coordinator: NAME`** — only as the first line that is not blank. `NAME` is an agent's or an investigator's name

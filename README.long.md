@@ -672,8 +672,8 @@ starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_n
 Read a round with `agent log --round <round-id>`, or a team's rounds with `agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
 as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
-review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
-are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
+review requests, and the pass's review reports follow all of those runs; if any request is missing, their original order
+remains. Every other event stays in place, run timestamps and contents are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. `agent log` reads a history of an older schema without changing it; the daemon migrates it
 when it opens it for writing. Worker tasks are shown like member tasks: `agent log --task task-…-e8j7`
 prints the runs and steps of a pool worker.
@@ -1173,6 +1173,12 @@ before. A file you allowed or refused before this was so (`checks.json` of an ea
 the round then, and no later one. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
 no test fix: it is such a finding too. Answer with `allow` or `refuse`; `allow except` names paths and does not apply to
 commits.
+A file you refused stays refused until the item is closed, and the round goes back to the team until it undoes the change,
+but only until the team changes that file again: a commit to a refused file made after the refusal lifts the refusal, and you are
+asked about the file again, together with the new commit, as for any change. `allow` starts the review; `refuse` sends the round
+back once more and the file is not asked again until another commit changes it. A refused file that nobody has changed since is
+sent back and not asked, as before. The decision line of the log (`conclude_checks`) says how many refusals were lifted
+(`lifted=<n>`).
 **A commit of a frozen test is refused while it can still be undone.** The `git` of every run an agent starts is given a
 `commit-msg` hook (through `core.hooksPath` in the run's environment: nothing is written into the repository, and the
 repository's own hooks keep running). The hook runs `agent guard-commit`, which asks the rule above while the commit is only
@@ -1214,7 +1220,7 @@ last gate and the gate command has not changed, a gate that passed there is answ
 there twice in a row is answered with its last failure: the command says the same as that gate did, the new
 `gate-<n>.log` holds that gate's output and ends with a line `gate: not run again: ...` that says why and what to do (for
 a failure: fix the cause and commit, or, when the failure is not caused by the change, say so in the questions file and
-wait for the answer). A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
+wait for the answer). A gate that the busy test lock refused (the command exits with 75 and says "another tests are running now") ran no check and does not count: it is neither a failure nor a pass of the commit, it does not reset the count of the failures before it, and the next gate runs. A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
 answer as `checks_decided` with `outcome` `gate_reused`, the `head`, the `gate` it repeats (`passed`, `failed` or
 `timed_out`) and the `failures` in a row. The daemon remembers the last gates in memory only: after a restart of the
 daemon the first gate of each task runs again. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".
