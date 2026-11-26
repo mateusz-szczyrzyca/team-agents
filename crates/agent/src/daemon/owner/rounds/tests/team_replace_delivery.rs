@@ -264,7 +264,7 @@ async fn storage_failure_blocks_the_replacement_run_until_a_later_pass_succeeds(
     assert!(state.pending_team_replaces().is_empty());
     rig.stop().await.unwrap();
     started.writer.close().unwrap();
-    let rows = Reader::open(&log_path).unwrap().daemon_logs().unwrap();
+    let rows = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
     assert!(
         rows.iter().any(|row| row.event() == LogEvent::BusDown
             && row.fields().get("operation") == Some(&serde_json::json!("team_replace"))),
