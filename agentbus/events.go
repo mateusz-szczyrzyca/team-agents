@@ -552,3 +552,15 @@ type EventScript struct {
 
 func (e EventScript) Kind() MessageKind { return KindScript } // Kind implements busEvent.
 func (e EventScript) Text() string      { return e.Body }     // Text implements busEvent.
+
+// memberReplacedEvent tells a team which agent now owns a member's task.
+type memberReplacedEvent struct {
+	From string `json:"from"` // outgoing member's agent name
+	To   string `json:"to"`   // replacement agent's name
+}
+
+// Kind implements busEvent.
+func (e memberReplacedEvent) Kind() MessageKind { return "" }
+
+// Text implements busEvent.
+func (e memberReplacedEvent) Text() string { return "" }

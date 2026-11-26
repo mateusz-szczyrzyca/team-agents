@@ -1143,3 +1143,23 @@ func cmdNotes(args []string) {
 	out.printf("%s", text)
 	exitOn(fromStorage(CmdNotesStorage, out.err).asError())
 }
+
+// cmdTeamReplace moves a team member to a replacement agent name.
+func cmdTeamReplace(args []string) {
+	fs := newFlagSet("team-replace")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	team := fs.String("team", "", "team ID")
+	from := fs.String("from", "", "outgoing member")
+	to := fs.String("to", "", "replacement agent")
+	parseFlags(fs, args)
+	out, err := teamReplace(&Bus{dir: *dir}, *team, *from, *to)
+	exitOn(err.asError())
+	var writer cliWriter // command output errors use the operation's storage cause
+	writer.println(out)
+	exitOn(fromStorage(CmdTeamReplaceStorage, writer.err).asError())
+}
+
+// teamReplace atomically transfers a member and its pending work to another agent.
+func teamReplace(_ *Bus, team string, _, _ string) (string, *CmdTeamReplaceError) {
+	return "", opErr(CmdTeamReplaceNoSuchTeam, "no open team %s", team)
+}

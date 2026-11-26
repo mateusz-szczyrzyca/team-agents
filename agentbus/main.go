@@ -1660,6 +1660,8 @@ func main() {
 		cmdTeamCreate(os.Args[2:])
 	case "team-set":
 		cmdTeamSet(os.Args[2:])
+	case "team-replace":
+		cmdTeamReplace(os.Args[2:])
 	case "team-done":
 		cmdTeamDone(os.Args[2:])
 	case "team-get":
