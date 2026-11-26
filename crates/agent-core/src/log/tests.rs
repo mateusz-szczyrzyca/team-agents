@@ -460,3 +460,11 @@ fn closed_delivery_has_its_own_warning_event() {
     assert_eq!(LogEvent::DeliveryClosed.as_str(), "delivery_closed");
     assert_eq!(LogEvent::DeliveryClosed.level(), LogLevel::Warn);
 }
+
+#[test]
+fn investigation_failures_have_stable_info_events() {
+    for name in ["investigation_requeued", "investigation_failed"] {
+        let event = LogEvent::ALL.iter().find(|event| event.as_str() == name);
+        assert_eq!(event.map(|event| event.level()), Some(LogLevel::Info), "{name}");
+    }
+}
