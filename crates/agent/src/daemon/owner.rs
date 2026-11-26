@@ -3645,7 +3645,7 @@ enum NoticeItem {
 /// items) or when the list does not have it.
 fn item_line_of_task(team: &agent_core::state::Team, role: Role, member: &agent_core::state::Member) -> Option<String> {
     match role {
-        Role::Coordinator => None,
+        Role::Coordinator | Role::Investigator => None,
         Role::Solo | Role::Member | Role::Worker | Role::Reviewer => {
             let rounds = member.runs().last()?.rounds();
             let round = rounds

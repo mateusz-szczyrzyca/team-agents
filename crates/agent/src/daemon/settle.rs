@@ -67,7 +67,7 @@ pub(super) fn settle(role: Role, end: &RunEnd, pause: Option<&Pause>, final_mess
 /// its next assignment, a coordinator for the work of the others, a worker for its next request.
 const fn after_done(role: Role) -> TaskStatus {
     match role {
-        Role::Solo | Role::Reviewer => TaskStatus::Done,
+        Role::Solo | Role::Reviewer | Role::Investigator => TaskStatus::Done,
         Role::Coordinator | Role::Member | Role::Worker => TaskStatus::Waiting,
     }
 }

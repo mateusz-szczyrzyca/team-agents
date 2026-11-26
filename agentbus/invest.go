@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -427,13 +428,27 @@ func printJSON(v any) *StorageError {
 	return nil
 }
 
-// inv-next: promotes the waiting room; if an investigator slot is free, marks the first queued request as
-// "starting" and prints it as JSON (empty output = nothing to start).
+// taskFilter collects the repeated --task flag of inv-next.
+type taskFilter []string
+
+// String renders the collected tasks for flag's help output.
+func (f *taskFilter) String() string { return strings.Join(*f, ",") }
+
+// Set appends one task ID (flag.Value).
+func (f *taskFilter) Set(v string) error {
+	*f = append(*f, v)
+	return nil
+}
+
+// inv-next: promotes the waiting room; if an investigator slot is free, marks the first queued request of a
+// matching task (when --task is given) as "starting" and prints it as JSON (empty output = nothing to start).
 func cmdInvNext(args []string) {
 	fs := newFlagSet("inv-next")
 	dir := fs.String("dir", defaultDir(), "state directory")
 	queueMax := fs.Int("queue-max", 3, "queue limit")
 	slots := fs.Int("inv-slots", 1, "number of investigators")
+	var tasks taskFilter
+	fs.Var(&tasks, "task", "only investigations of this task (repeat for each live task)")
 	parseFlags(fs, args)
 	invSlots = *slots
 	b := &Bus{dir: *dir}
@@ -443,7 +458,7 @@ func cmdInvNext(args []string) {
 			return nil
 		}
 		for _, inv := range sortedInv(st) {
-			if inv.Status == InvQueued {
+			if inv.Status == InvQueued && (len(tasks) == 0 || slices.Contains(tasks, inv.FromTask)) {
 				inv.Status = InvStarting
 				return fromStorage(CmdInvNextStorage, printJSON(inv))
 			}

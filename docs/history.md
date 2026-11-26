@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `26` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `34` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -571,6 +571,10 @@ of a run that started before — and counts them.
 
 ## Versions and migrations
 
+Migration `33` admits the `investigator` run role and preserves existing runs, related records,
+log IDs, round links, search entries and cursors. Investigation log events arrive with their daemon
+emitters in a separate follow-up migration.
+
 `PRAGMA user_version` is the number of the last migration applied. The schema is the result of the migrations of
 `schema.rs` applied in order to an empty database — a new database and an old one end up the same. A migration is never
 edited once it has shipped; a change of the schema is a new migration, forward only, each in a transaction of its own
@@ -901,6 +905,6 @@ upgrading if you need to return to an older daemon.
 History version 32 admits the `publish_off_branch` warning. Its migration (`032-publish-off-branch.sql`) preserves existing daemon
 logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older daemon.
 
-History version 33 admits the `checkpoint` record and the `checkpoint_failed` warning. Its migration (`033-checkpoints.sql`) preserves existing records,
+History version 34 admits the `checkpoint` record and the `checkpoint_failed` warning. Its migration (`034-checkpoints.sql`) preserves existing records,
 round links, search entries and daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
 daemon.

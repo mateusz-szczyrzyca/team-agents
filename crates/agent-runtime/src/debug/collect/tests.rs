@@ -1608,3 +1608,29 @@ async fn a_run_without_a_reminder_tells_none() {
 
     assert!(summary.contains("- Serena reminder: none\n"), "{summary}");
 }
+
+#[test]
+fn debug_collection_preserves_investigator_and_legacy_reviewer_roles() {
+    use agent_core::config::AbsolutePath;
+    for role in [None, Some(Role::Reviewer), Some(Role::Investigator)] {
+        let mut json: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../../agent-core/tests/fixtures/state-before-investigator-role.json"
+        ))
+        .unwrap();
+        if let Some(role) = role {
+            json["teams"][0]["reviewers"][0]["role"] = serde_json::to_value(role).unwrap();
+        }
+        let team: Team = serde_json::from_value(json["teams"][0].clone()).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&AbsolutePath::try_from(dir.path().to_str().unwrap().to_owned()).unwrap());
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let mut collection =
+            Collection::new(&team, "2026-11-11T15:31:00Z".parse().unwrap(), Duration::from_secs(120)).unwrap();
+        runtime.block_on(collection.observe(&home, &team, None)).unwrap();
+        let roles: Vec<_> = collection.summary.tasks.iter().map(|task| task.role).collect();
+        assert_eq!(roles, vec![Role::Solo, role.unwrap_or(Role::Reviewer)]);
+    }
+}

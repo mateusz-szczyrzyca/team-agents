@@ -484,6 +484,10 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
     },
     Migration {
         version: 33,
-        sql: include_str!("033-checkpoints.sql"),
+        sql: include_str!("033-investigation-events.sql"),
+    },
+    Migration {
+        version: 34,
+        sql: include_str!("034-checkpoints.sql"),
     },
 ];

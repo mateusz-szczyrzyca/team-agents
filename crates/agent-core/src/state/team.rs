@@ -576,6 +576,12 @@ pub enum TeamError {
 /// What is wrong with a reviewer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReviewerProblem {
+    /// A crew role cannot occupy a reviewer entry.
+    #[error("reviewer entry has crew role {role}")]
+    CrewRole {
+        /// The role that belongs in a crew rather than the reviewer list.
+        role: Role,
+    },
     /// The reviewer is not an investigator.
     #[error("{agent} reviews but is not an investigator")]
     NotInvestigator {
@@ -706,7 +712,7 @@ impl Team {
         self.reviewers
             .iter_mut()
             .find(|member| member.task() == task)
-            .map(|member| (Role::Reviewer, MemberMut::new(member)))
+            .map(|member| (member.role().unwrap_or(Role::Reviewer), MemberMut::new(member)))
     }
 
     /// The member of task `task`, in the crew or among the reviewers, with its role.
@@ -716,7 +722,7 @@ impl Team {
             self.reviewers
                 .iter()
                 .find(|member| member.task() == task)
-                .map(|member| (Role::Reviewer, member))
+                .map(|member| (member.role().unwrap_or(Role::Reviewer), member))
         })
     }
 }
@@ -830,8 +836,14 @@ fn check_items(team: &TeamId, task_list: &TaskListText, items: &[ItemProgress]) 
 
 /// Checks a proposed reviewer against a crew and the reviewers already before it.
 fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<(), ReviewerProblem> {
+    match member.role() {
+        None | Some(Role::Reviewer | Role::Investigator) => {}
+        Some(role @ (Role::Solo | Role::Coordinator | Role::Member | Role::Worker)) => {
+            return Err(ReviewerProblem::CrewRole { role });
+        }
+    }
     let name = member.agent().name();
-    if !tier_fits(Role::Reviewer, member.agent()) {
+    if !tier_fits(member.role().unwrap_or(Role::Reviewer), member.agent()) {
         return Err(ReviewerProblem::NotInvestigator {
             agent: member.agent().clone(),
         });
@@ -841,7 +853,11 @@ fn check_reviewer(crew: &Crew, reviewers: &[Member], member: &Member) -> Result<
             agent: member.agent().clone(),
         });
     }
-    if reviewers.iter().any(|reviewer| reviewer.agent().name() == name) {
+    if member.role() != Some(Role::Investigator)
+        && reviewers
+            .iter()
+            .any(|reviewer| reviewer.role() != Some(Role::Investigator) && reviewer.agent().name() == name)
+    {
         return Err(ReviewerProblem::DuplicateName {
             agent: member.agent().clone(),
         });
@@ -886,7 +902,7 @@ const fn tier_fits(role: Role, participant: &Participant) -> bool {
             Role::Solo | Role::Coordinator | Role::Member,
             Participant::Normal(_) | Participant::Investigator(_)
         ) | (Role::Worker, Participant::Worker(_))
-            | (Role::Reviewer, Participant::Investigator(_))
+            | (Role::Reviewer | Role::Investigator, Participant::Investigator(_))
     )
 }
 
@@ -1004,6 +1020,7 @@ mod tests {
             (Role::Member, [true, false, true]),
             (Role::Worker, [false, true, false]),
             (Role::Reviewer, [false, false, true]),
+            (Role::Investigator, [false, false, true]),
         ];
         let participants = [normal("a"), worker("b"), inv("c")];
         for (role, fits) in table {

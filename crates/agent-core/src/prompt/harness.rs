@@ -26,6 +26,8 @@ pub enum HarnessPrompt {
     RoleWorker,
     /// The role of a reviewer of a pull request.
     RoleReviewer,
+    /// An investigation request given to an investigator, `harness/run/role-investigation.md`.
+    InvestigationRequest,
     /// The brief of the task list: the text before its first feature.
     Brief,
     /// The item an agent is given: its number, title and description.
@@ -171,6 +173,7 @@ impl HarnessPrompt {
         Self::RoleMember,
         Self::RoleWorker,
         Self::RoleReviewer,
+        Self::InvestigationRequest,
         Self::Brief,
         Self::Item,
         Self::ItemExpected,
@@ -254,6 +257,11 @@ impl HarnessPrompt {
             Self::RoleMember => PromptSpec::new("harness/run/role-member.md", Audience::Model, &[]),
             Self::RoleWorker => PromptSpec::new("harness/run/role-worker.md", Audience::Model, &[]),
             Self::RoleReviewer => PromptSpec::new("harness/run/role-reviewer.md", Audience::Model, &[]),
+            Self::InvestigationRequest => PromptSpec::new(
+                "harness/run/role-investigation.md",
+                Audience::Model,
+                &["investigation_id", "from_agent", "branch", "question", "context"],
+            ),
             Self::Brief => PromptSpec::new("harness/run/brief.md", Audience::Model, &["brief"]),
             Self::Item => PromptSpec::new(
                 "harness/run/item.md",
