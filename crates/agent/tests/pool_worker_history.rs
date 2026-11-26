@@ -106,14 +106,13 @@ Write the walkthrough of the guide.
                 ("glm-1", "worker", "sleep,done:Result: done."),
             ];
             let (mut normals, mut workers) = (Vec::new(), Vec::new());
-            for (name, kind, scenario) in
-                [
-                    ("inv-codex", "investigator", "sleep"),
-                    ("inv-gemini", "investigator", "sleep"),
-                ]
-                .iter()
-                .map(|(n, k, s)| (*n, *k, *s))
-                .chain(agents.iter().copied())
+            for (name, kind, scenario) in [
+                ("inv-codex", "investigator", "sleep"),
+                ("inv-gemini", "investigator", "sleep"),
+            ]
+            .iter()
+            .map(|(n, k, s)| (*n, *k, *s))
+            .chain(agents.iter().copied())
             {
                 let table = if kind == "investigator" {
                     "investigators"
@@ -500,9 +499,10 @@ Write the walkthrough of the guide.
         std::fs::write(world.worktree(&member).join(".fake-ask"), "").unwrap();
 
         // The worker exits with no STATUS: line (nostatus). The daemon should record a no-status end.
-        eventually("worker to have had 2 runs (the first sleep and the actual work)", || {
-            world.runs(&worker) >= 2
-        });
+        eventually(
+            "worker to have had 2 runs (the first sleep and the actual work)",
+            || world.runs(&worker) >= 2,
+        );
 
         // Wait for the worker to be settled.
         world.ended(&member, 1);

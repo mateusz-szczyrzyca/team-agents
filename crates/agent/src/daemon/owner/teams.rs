@@ -1818,12 +1818,7 @@ impl Owner {
                 Outcome::Verdict(verdict) => match verdict.as_ref() {
                     RunVerdict::Finished(run) => {
                         let now = Timestamp::now(&self.parts.clock)?;
-                        self.record_run_end(
-                            run_id,
-                            now,
-                            &run.classified.end,
-                            run.final_message.as_deref(),
-                        );
+                        self.record_run_end(run_id, now, &run.classified.end, run.final_message.as_deref());
                     }
                     RunVerdict::Interrupted { .. } => {}
                 },
