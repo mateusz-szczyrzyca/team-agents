@@ -284,7 +284,7 @@ async fn team_replace_member_end_notice_reaches_the_replacement_coordinator() {
         .await
         .unwrap();
     assert_eq!(messages.len(), 1);
-    assert!(messages[0].text.contains("claude-2"), "{:?}", messages);
+    assert!(messages[0].text.contains("claude-2"), "{messages:?}");
 }
 
 #[tokio::test]
