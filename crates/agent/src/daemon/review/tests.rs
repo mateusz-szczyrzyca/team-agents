@@ -1,6 +1,5 @@
 //! The verdict of a report and the text that is posted.
 
-use agent_core::decide::investigator::refused_investigators;
 use agent_core::status::ReviewVerdict;
 
 use super::{MAX_REPORT_CHARS, VerdictProblem, parse_verdict, report_text};
@@ -146,6 +145,7 @@ mod pool {
     use std::num::NonZeroU32;
 
     use agent_core::config::Config;
+    use agent_core::decide::investigator::refused_investigators;
     use agent_core::ids::{InvestigatorName, ItemId};
     use agent_core::state::{
         Crew, ItemPhase, MergeMode, PrNumber, PullRequest, Review, ReviewOutcome, State, TaskListText, Team,
