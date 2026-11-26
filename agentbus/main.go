@@ -1256,30 +1256,34 @@ func (s *Server) handle(line []byte) {
 // serve: runs the MCP server on stdio for one agent run until stdin closes or a signal arrives.
 // serveFlags are the flags of serve, as defineServeFlags defined them on a flag set.
 type serveFlags struct {
-	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string // where the bus is, and who the run is
-	tasksDir, team, tier, agentCmd, plan, home                     *string // its team, its tier and its harness
-	relay, member, source, workers                                 *string // a remote member's relay to its lead, or configured workers
-	queueMax, slots                                                *int    // the limits of the investigations
+	dir, agent, task, taskDir, repo, branch, worktree, peers, role *string             // where the bus is, and who the run is
+	tasksDir, team, tier, agentCmd, plan, home                     *string             // its team, its tier and its harness
+	relay, member, source, workers                                 *string             // a remote member's relay to its lead, or configured workers
+	investigations                                                 *investigationTools // access to investigation MCP tools
+	queueMax, slots                                                *int                // the limits of the investigations
 }
 
 // defineServeFlags defines the flags of serve on fs.
 func defineServeFlags(fs *flag.FlagSet) serveFlags {
+	access := investigationsLegacy // old daemons retain investigation tools
+	fs.Var(&access, "investigations", "investigation tools: off | on (default on)")
 	return serveFlags{
-		dir:      fs.String("dir", defaultDir(), "state directory"),
-		agent:    fs.String("agent", "", "this agent's name (required)"),
-		task:     fs.String("task", "", "task ID"),
-		taskDir:  fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run"),
-		repo:     fs.String("repo", "", "repository name"),
-		branch:   fs.String("branch", "", "agent's branch"),
-		worktree: fs.String("worktree", "", "path to the agent's worktree"),
-		peers:    fs.String("peers", "", "configured agents, comma-separated"),
-		role:     fs.String("role", "worker", "worker | investigator"),
-		queueMax: fs.Int("queue-max", 3, "investigation queue limit"),
-		slots:    fs.Int("inv-slots", 1, "number of investigators"),
-		tasksDir: fs.String("tasks-dir", "", "tasks directory (for investigation files)"),
-		team:     fs.String("team", "", "team ID (team mode)"),
-		tier:     fs.String("tier", "normal", "normal | worker"),
-		agentCmd: fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
+		investigations: &access,
+		dir:            fs.String("dir", defaultDir(), "state directory"),
+		agent:          fs.String("agent", "", "this agent's name (required)"),
+		task:           fs.String("task", "", "task ID"),
+		taskDir:        fs.String("task-dir", "", "the task's directory: a long-run mark there asks the agent to end its run"),
+		repo:           fs.String("repo", "", "repository name"),
+		branch:         fs.String("branch", "", "agent's branch"),
+		worktree:       fs.String("worktree", "", "path to the agent's worktree"),
+		peers:          fs.String("peers", "", "configured agents, comma-separated"),
+		role:           fs.String("role", "worker", "worker | investigator"),
+		queueMax:       fs.Int("queue-max", 3, "investigation queue limit"),
+		slots:          fs.Int("inv-slots", 1, "number of investigators"),
+		tasksDir:       fs.String("tasks-dir", "", "tasks directory (for investigation files)"),
+		team:           fs.String("team", "", "team ID (team mode)"),
+		tier:           fs.String("tier", "normal", "normal | worker"),
+		agentCmd:       fs.String("agent-cmd", "", "path to the agent script (worker requests)"),
 		plan: fs.String("plan", "", "path to the requester's plan file: a run whose role keeps a plan, whose "+
 			"delegate requests must name a step"),
 		home:    fs.String("home", agentsHome(), "AGENTS_HOME"),

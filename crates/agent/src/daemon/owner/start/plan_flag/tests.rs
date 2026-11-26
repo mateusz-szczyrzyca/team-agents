@@ -101,3 +101,50 @@ fn the_words_of_the_bus_are_flags_each_with_its_value() {
         }
     }
 }
+
+#[test]
+fn a_worker_run_gets_investigations_off() {
+    let words = bus_words(Role::Worker, &ROLES, Tier::Worker, Path::new("/w"));
+    assert_eq!(value_of(&words, "--investigations"), Some("off"));
+}
+
+#[test]
+fn a_reviewer_run_gets_investigations_off() {
+    let words = bus_words(Role::Reviewer, &ROLES, Tier::Normal, Path::new("/w"));
+    assert_eq!(value_of(&words, "--investigations"), Some("off"));
+}
+
+#[test]
+fn a_member_run_gets_investigations_on() {
+    for tier in [Tier::Normal, Tier::Investigator] {
+        let words = bus_words(Role::Member, &ROLES, tier, Path::new("/w"));
+        assert_eq!(value_of(&words, "--investigations"), Some("on"));
+    }
+}
+
+#[test]
+fn a_solo_run_gets_investigations_off() {
+    let words = bus_words(Role::Solo, &ROLES, Tier::Normal, Path::new("/w"));
+    assert_eq!(value_of(&words, "--investigations"), Some("off"));
+}
+
+#[test]
+fn investigation_access_follows_the_task_role_for_every_agent_tier() {
+    for tier in [Tier::Normal, Tier::Worker, Tier::Investigator] {
+        for (role, expected) in [
+            (Role::Solo, "off"),
+            (Role::Worker, "off"),
+            (Role::Reviewer, "off"),
+            (Role::Investigator, "off"),
+            (Role::Coordinator, "on"),
+            (Role::Member, "on"),
+        ] {
+            let words = bus_words(role, &ROLES, tier, Path::new("/w"));
+            assert_eq!(
+                value_of(&words, "--investigations"),
+                Some(expected),
+                "{role:?} {tier:?}"
+            );
+        }
+    }
+}
