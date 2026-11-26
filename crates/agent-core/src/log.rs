@@ -300,9 +300,9 @@ impl LogEvent {
             | Self::RequestRefused
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
+            | Self::InvestigationKindUnknown
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
-            Self::InvestigationKindUnknown
-            | Self::TeamChanged
+            Self::TeamChanged
             | Self::RunNoToolRetry
             | Self::TeamRemoved
             | Self::RoundChanged
