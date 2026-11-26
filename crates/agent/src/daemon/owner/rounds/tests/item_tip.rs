@@ -491,3 +491,28 @@ async fn an_item_without_a_local_branch_is_not_made_of_the_work_that_has_merged_
     assert_eq!(rows(&rig, LogEvent::GithubCallFailed), []);
     assert_eq!(rows(&rig, LogEvent::PublishOffBranch).len(), 1);
 }
+
+// Rule: when another item's work is out and nothing is known of the branch of the item — no local branch, no tip on origin —
+// publication fails and nothing is pushed to the item's branch.
+#[tokio::test]
+async fn an_item_of_which_no_tip_is_known_is_not_made_of_another_items_work() {
+    let mut rig = rig_of("fix-script-answers:bfix", "done").await;
+    let scripts = rig.home.root().join("fake-scripts");
+    let forget_branch = "b=\"$(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-1.1')\"\n\
+        git branch -q -D \"$b\"\n\
+        git update-ref -d \"refs/remotes/origin/$b\"\n";
+    std::fs::write(
+        scripts.join("bfix.sh"),
+        format!("{PRELUDE}{FIX_WITHOUT_ISSUE}{BACK_TO_THE_OTHER_ITEM}{forget_branch}"),
+    )
+    .unwrap();
+    let items = items_ready(&mut rig).await;
+    rig.prompt(&items.task, 4).await;
+
+    rig.prompt(&items.task, 4).await;
+    let remote = rig.remote_tip(&items.fixed);
+    rig.stop().await.unwrap();
+
+    assert_eq!(remote, items.fixed_tip_before);
+    assert_eq!(rows(&rig, LogEvent::PublishOffBranch), []);
+}
