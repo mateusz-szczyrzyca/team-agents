@@ -244,6 +244,24 @@ mod history_events {
                 end: RoundEnd::Merged,
             },
             HistoryEvent::TeamEnded {},
+            HistoryEvent::Checkpoint {
+                round: world::round(1),
+                item: Some("1.1".parse().unwrap()),
+                task: world::task(1),
+                job: agent_core::history::CheckpointJob::Item,
+                tier: agent_core::kinds::Tier::Normal,
+                cause: agent_core::history::CheckpointCause::Commit,
+                pull_request: Some(pr(7)),
+                head: Some(head('e')),
+                draft: true,
+                phase: agent_core::state::PhaseKind::InProgress,
+                review_pass: Some(1),
+                fix_pass: None,
+                snapshot: Some(
+                    "refs/agents/snapshots/round-20261111-193001-q1w2/task-20261111-193001-k3x9/1".to_owned(),
+                ),
+                content: None,
+            },
             HistoryEvent::Lost {
                 task: Some(world::task(1)),
                 what: LostKind::Record(RecordKind::Step),
@@ -287,6 +305,7 @@ mod history_events {
             "notified",
             "round_closed",
             "team_ended",
+            "checkpoint",
             "lost",
         ];
         let events = every_event();
