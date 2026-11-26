@@ -576,6 +576,12 @@ pub enum TeamError {
 /// What is wrong with a reviewer.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ReviewerProblem {
+    /// A crew role cannot occupy a reviewer entry.
+    #[error("reviewer entry has crew role {role}")]
+    CrewRole {
+        /// The role that belongs in a crew rather than the reviewer list.
+        role: Role,
+    },
     /// The reviewer is not an investigator.
     #[error("{agent} reviews but is not an investigator")]
     NotInvestigator {

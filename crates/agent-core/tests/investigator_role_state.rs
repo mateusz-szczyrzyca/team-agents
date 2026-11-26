@@ -121,3 +121,46 @@ fn round_members_preserve_investigator_and_legacy_reviewer_roles() {
         assert_eq!(members, vec![(role.unwrap_or(Role::Reviewer), task)]);
     }
 }
+
+#[test]
+fn reviewer_entries_reject_every_crew_role_regardless_of_tier() {
+    for role in [Role::Solo, Role::Coordinator, Role::Member, Role::Worker] {
+        for tier in ["normal", "worker", "investigator"] {
+            let mut json: serde_json::Value =
+                serde_json::from_str(include_str!("fixtures/state-before-investigator-role.json")).unwrap();
+            json["teams"][0]["reviewers"][0]["role"] = serde_json::to_value(role).unwrap();
+            json["teams"][0]["reviewers"][0]["agent"]["tier"] = tier.into();
+
+            let result = State::from_json(&json.to_string());
+
+            assert!(
+                matches!(result, Err(agent_core::state::StateError::Malformed { .. })),
+                "reviewer entry accepted crew role {role:?} with tier {tier}"
+            );
+        }
+    }
+}
+
+#[test]
+fn adding_a_reviewer_rejects_every_crew_role_with_its_typed_cause() {
+    use agent_core::state::{AddReviewerError, Member, Participant, ReviewerProblem};
+
+    for role in [Role::Solo, Role::Coordinator, Role::Member, Role::Worker] {
+        let mut state = State::from_json(include_str!("fixtures/state-before-investigator-role.json")).unwrap();
+        let team = state.teams()[0].id().clone();
+        let participant = match role {
+            Role::Worker => Participant::Worker("worker-other".parse().unwrap()),
+            Role::Solo | Role::Coordinator | Role::Member | Role::Reviewer | Role::Investigator => {
+                Participant::Investigator("inv-other".parse().unwrap())
+            }
+        };
+        let member = Member::new("task-20261111-153006-k3x9".parse().unwrap(), participant).with_role(role);
+
+        let result = state.add_reviewer(&team, member);
+
+        assert_eq!(
+            result,
+            Err(AddReviewerError::Problem(ReviewerProblem::CrewRole { role }))
+        );
+    }
+}
