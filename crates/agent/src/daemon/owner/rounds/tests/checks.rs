@@ -2153,7 +2153,7 @@ async fn a_refused_file_that_a_later_commit_changes_is_asked_again_and_allowing_
     assert!(asked.asked.as_ref().unwrap().subjects.contains(&existing()));
     assert!(!asked.refused_of(&item).contains(&existing()));
     // One question for the file and one for the new commit alone: the commit the refusal covered is not asked again.
-    let bodies: Vec<&str> = file.entries().iter().map(|entry| entry.body()).collect();
+    let bodies: Vec<&str> = file.entries().iter().map(agent_core::questions::Entry::body).collect();
     assert_eq!(bodies.len(), 2, "{bodies:?}");
     assert!(bodies[0].contains("`tests/existing.txt`"), "{}", bodies[0]);
     assert!(
