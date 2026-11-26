@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.126.0 · agent-core 0.122.0 — 26.11.2026 — PR #304
+
+### Bug fixes
+- [agent] [agent-core] A file you refused at the checks before the review no longer stays refused for good after the team changes it again: a commit to the file made after the refusal lifts the refusal, and you are asked about the file again (`allow` starts the review, `refuse` sends the round back once more). A refused file with no later commit is sent back and not asked, as before.
+
 ## agent 0.125.0 — 26.11.2026 — PR #300
 
 ### Bug fixes

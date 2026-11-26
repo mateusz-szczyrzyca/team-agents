@@ -233,6 +233,19 @@ impl ChecksRecord {
         recorded
     }
 
+    /// Takes back the refusal of each of `paths` for `items`: the file is no longer refused and no head is kept for it.
+    pub fn lift_refused(&mut self, items: &[ItemId], paths: &[RepoPath]) {
+        for item in items {
+            let Some(kept) = self.items.get_mut(item) else {
+                continue;
+            };
+            for path in paths {
+                kept.refused.remove(&Subject::Path(path.clone()));
+                kept.covered_at.remove(path);
+            }
+        }
+    }
+
     /// Records that the human refused `subjects` for `items`, without an answer to a question.
     pub fn keep_refused(&mut self, items: &[ItemId], subjects: &[Subject]) {
         for item in items {

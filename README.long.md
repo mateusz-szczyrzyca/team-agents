@@ -1173,6 +1173,12 @@ before. A file you allowed or refused before this was so (`checks.json` of an ea
 the round then, and no later one. A `TEST-FIX:` commit that also changes a file that is not a test (by the `test_paths` of the repository) is
 no test fix: it is such a finding too. Answer with `allow` or `refuse`; `allow except` names paths and does not apply to
 commits.
+A file you refused stays refused until the item is closed, and the round goes back to the team until it undoes the change,
+but only until the team changes that file again: a commit to a refused file made after the refusal lifts the refusal, and you are
+asked about the file again, together with the new commit, as for any change. `allow` starts the review; `refuse` sends the round
+back once more and the file is not asked again until another commit changes it. A refused file that nobody has changed since is
+sent back and not asked, as before. The decision line of the log (`conclude_checks`) says how many refusals were lifted
+(`lifted=<n>`).
 **A commit of a frozen test is refused while it can still be undone.** The `git` of every run an agent starts is given a
 `commit-msg` hook (through `core.hooksPath` in the run's environment: nothing is written into the repository, and the
 repository's own hooks keep running). The hook runs `agent guard-commit`, which asks the rule above while the commit is only
