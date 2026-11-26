@@ -42,57 +42,21 @@ fn reviews() -> Vec<(&'static str, Option<ActivityOutcome>)> {
 fn the_crew_a_worker_and_a_solo_task_are_listed_in_every_status() {
     for role in [Role::Solo, Role::Coordinator, Role::Member, Role::Worker] {
         for status in TaskStatus::ALL {
-            for (name, review) in reviews() {
-                assert!(alive(role, *status, review.as_ref()), "{role} {status}, {name}");
+            for (name, _) in reviews() {
+                assert!(alive(role), "{role} {status}, {name}");
             }
         }
     }
 }
 
-// Rule: a reviewer is listed while its review is not over. A task that runs is always listed. One that is done or
-// stopped is not. Otherwise the newest activity the team recorded of it decides: none yet, one that goes on and one
-// that failed (the human may resume it) are listed; one that gave its report, one the human stopped and a second opinion
-// that was abandoned are over.
+// Rule: a reviewer is listed like the rest of the team: whatever its status is and whatever the newest activity the team
+// recorded of it says — none yet, one that goes on, one that gave its report, one the human stopped, one that failed
+// and a second opinion that was abandoned. The decision reads neither, and this pins that it never does again.
 #[test]
-fn a_reviewer_is_listed_only_while_its_review_is_not_over() {
-    let unfinished = [
-        TaskStatus::Running,
-        TaskStatus::Waiting,
-        TaskStatus::Questions,
-        TaskStatus::Queued,
-        TaskStatus::Paused,
-        TaskStatus::Failed,
-    ];
-    let only_running = [TaskStatus::Running];
-    let table: Vec<(Option<ActivityOutcome>, &[TaskStatus])> = vec![
-        (None, &unfinished),
-        (Some(ActivityOutcome::Working), &unfinished),
-        (Some(finished(ActivityEnd::Failed { reason: None })), &unfinished),
-        (
-            Some(finished(ActivityEnd::Failed {
-                reason: Some(RunEnd::Hung),
-            })),
-            &unfinished,
-        ),
-        (Some(finished(ActivityEnd::Reported)), &only_running),
-        (Some(finished(ActivityEnd::Stopped)), &only_running),
-        (
-            Some(finished(ActivityEnd::OpinionFailed {
-                reason: OpinionFailure::Silent,
-            })),
-            &only_running,
-        ),
-    ];
-    // Every outcome the record can hold is a row of the table.
-    assert_eq!(table.len(), reviews().len());
-
-    for (review, listed) in table {
-        for status in TaskStatus::ALL {
-            assert_eq!(
-                alive(Role::Reviewer, *status, review.as_ref()),
-                listed.contains(status),
-                "reviewer {status}, {review:?}"
-            );
+fn a_reviewer_is_listed_in_every_status_and_after_every_review_outcome() {
+    for status in TaskStatus::ALL {
+        for (name, _) in reviews() {
+            assert!(alive(Role::Reviewer), "reviewer {status}, {name}");
         }
     }
 }

@@ -233,8 +233,8 @@ pub(crate) fn clock_of(at: Timestamp, zone: Zone) -> String {
 /// a count of its tasks, or every task with its plan, and the parts, as before the short view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Detail {
-    /// The team, its rounds, a line for each of its tasks that is alive (its crew, its workers and the reviewers whose
-    /// review is not over) and a count of all its tasks, with the questions that wait for answers named.
+    /// The team, its rounds, a line for each of its tasks (its coordinator, members, workers and reviewers) and a
+    /// count of all its tasks, with the questions that wait for answers named.
     Short,
     /// The team, its rounds, its tasks with their plans, and its parts.
     Tasks,
@@ -1037,7 +1037,7 @@ fn render_with_requests(
             lines.extend(
                 team.members
                     .iter()
-                    .filter(|member| members::listed(member, &team.activities))
+                    .filter(|member| members::listed(member))
                     .map(|member| members::line(member, team, columns, activity, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));

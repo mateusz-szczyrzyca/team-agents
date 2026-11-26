@@ -246,7 +246,7 @@ agent daemon                          runs the daemon: the owner of the state an
 agent run <agent> "task"              a solo task on the repository the current directory is in
 agent run <agents...> -f tasks.md     a team: one agent is a task of its own, more are a team
           [--coordinator NAME] [--short-desc TEXT] [--no-merge] [--allow-unpushed-base]
-agent status [--running] [--task]     the teams, their rounds, their live tasks and a count of their tasks;
+agent status [--running] [--task]     the teams, their rounds, their tasks and a count of their tasks;
                                       --running: only rounds that go on, with the workers that served them;
                                       --task: every task with its plan and the parts of a split
 agent status <team|task|round>        one team, task or round; a task ends with the context of its last run
@@ -727,7 +727,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent remove <team> [--force]` | removes a team after bundling its unmerged work; `--force` first ends its active runs and checks. See the removal details below. |
 | `agent say <task\|team> words…` | a message to the agent or the team, which reads it at its next look at the bus; a word to a task reaches the agent's session in that task's team only |
-| `agent status` | the short view: every team with its rounds, a line for each of its live tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The live tasks are the team's coordinator, members and workers (a solo task too), whatever their status, and the reviewers whose review is not over; a reviewer that gave its report or was stopped is only counted. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number. When workers are configured, a `pool:` section shows each worker, whom it serves (team or task, step) or that it is free |
+| `agent status` | the short view: every team with its rounds, a line for each of its tasks with what it does, and a count of all its tasks, by what they do (`tasks: 1 running, 1 waiting, 1 with questions; questions number 1 wait for answers (claude-1, task-…)`). The tasks listed are the team's coordinator, members, workers and reviewers (a solo task too), whatever their status; a reviewer whose review is over is listed with when it finished. The plans of the tasks and the parts of a split are not listed; a question that waits for the human is named with its number. When workers are configured, a `pool:` section shows each worker, whom it serves (team or task, step) or that it is free |
 | `agent status --task` | as `agent status`, with the lines of all the tasks, their plans and the parts of a split, as `agent status` printed them before 0.58.0. Refused with a team, a task or a round, which already show their tasks, and with `--investigators` |
 | `agent status --running` | only the teams that have a round that goes on, with those rounds: what is being worked on now and who works on it. The short view as `agent status`; the parts of an item whose every part merged are left out, its work being over. Under each team, before its count of tasks, a line for every request of its tasks that a worker took, in the columns of the tasks' lines: `  task-20261125-075745-w8vj  worker       glm-1  step 6.1  accepted, 2026-11-25 08:57–08:59 +01:00` — the worker's task (`agent log --task` takes it; its runs are in `tasks/<task>/runs/`; `no task yet` before the request was given one), the role `worker`, the worker and the step in the column of the agents (a worker with its step wider than every agent widens that column for the whole list), what became of the result (`accepted`, `accepted after correction`, `rejected`, `not rated yet`, `working`, `queued`, `failed`, `unclear, asked back`), then when the worker's runs started and ended (`since …` while it works, `not started` before). Its `pool:` section names only the busy workers of teams not listed; a free worker is not shown |
 | `agent status --running --task` | as `agent status --running`, with all the tasks, their plans and the parts |
@@ -787,9 +787,9 @@ opt-out from the history requirement; bundles and removal safeguards still apply
 
 Every list of `agent status` starts with the versions of the four crates (`agent 0.58.0 · agent-core 0.58.0 · agent-runtime 0.58.0 · agent-web 0.58.0`). The daemon tells its versions with the answer to a status request; when they differ from the command's, a second line says the daemon's versions and that they differ, and a daemon that tells none is shown as `daemon: version unknown`. `agent status --json` stays the bare array of teams, byte for byte as before, with and without `--task`: it carries no versions, since adding them needs a wrapper object that would break scripts that read the array.
 
-The short view of a team, as `agent status` and `agent status --running` print it: the team, its rounds, its live tasks
-and the count. A task that runs says when it was last active; a reviewer says what it does or did (`working`, or when
-and why its review stopped) instead of the status of its task:
+The short view of a team, as `agent status` and `agent status --running` print it: the team, its rounds, its tasks
+and the count. A task that runs says when it was last active; a reviewer says what it does or did (`working`, when its review
+finished, or when and why it stopped) instead of the status of its task:
 
 ```
 team-20261111-153000-t5m8  team-agents  autopilot  1 pending, 1 in progress, 0 in review, 0 approved, 0 done
@@ -798,14 +798,14 @@ team-20261111-153000-t5m8  team-agents  autopilot  1 pending, 1 in progress, 0 i
   task-20261111-153002-k3x9  member       claude-1   questions, questions number 2 wait for answers
   task-20261111-153003-k3x9  worker       glm-1      done
   task-20261111-153004-k3x9  reviewer     inv-codex  working, last activity 2026-11-11 19:19:58 +00:00
+  task-20261111-153005-k3x9  reviewer     inv-codex  done, 1st review finished 2026-11-11 19:16:30 +00:00
+  task-20261111-153006-k3x9  reviewer     inv-codex  done, 2nd review finished 2026-11-11 19:18:05 +00:00
   tasks: 2 running, 1 waiting, 1 with questions, 2 done; questions number 2 wait for answers (claude-1, task-20261111-153002-k3x9)
 ```
 
-The count has two tasks more than the lines: reviewers whose review is over (one waits for its next review, one is
-done). A reviewer is listed while its task runs, and otherwise until its task is done or stopped or its last review
-ended with its report, by your `agent stop`, or as a second opinion that was abandoned; a review that failed stays
-listed, since `agent resume` can start it again. `--task` lists every task, and under each its plan (`[x] 1.1 …`), and
-the parts of a split.
+Every task of the team has a line, whatever its status: a reviewer is listed after its review as it is while it works,
+with when its review finished, or how it stopped or failed. `--task` lists every task, and under each its plan
+(`[x] 1.1 …`), and the parts of a split.
 
 After a split part merges, the next part uses an available, qualified previous holder, then the configured
 `[replacement]` policy: an eligible replacement in configured order, or the lead. Stopped and failed tasks are
