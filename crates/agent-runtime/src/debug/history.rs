@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use crate::history::ReadError;
 use agent_core::cli::RunUsage;
 use agent_core::history::{Record, SequencedRecord, Step};
-use agent_core::ids::{RunId, TeamId};
+use agent_core::ids::{RunId, TaskId, TeamId};
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +19,7 @@ const SNAPSHOT_ATTEMPTS: u8 = 3;
 
 /// Why reading live history failed.
 #[derive(Debug, thiserror::Error)]
-pub(crate) enum HistoryCollectionError {
+pub enum HistoryCollectionError {
     /// A database or sidecar file exceeds the maximum permitted size.
     #[error("history file {} exceeds limit ({size} bytes > {limit} bytes)", path.display())]
     TooLarge {
@@ -221,6 +221,36 @@ fn read_with_copy(
         }
     }
     Err(HistoryCollectionError::Changed)
+}
+
+/// The team of the latest run of `task` in the live history at `history_path`, read from a copy of the database like the
+/// records of a team; `None` when the history has no run of the task.
+///
+/// # Errors
+/// [`HistoryCollectionError`] as [`read_live_run_usage`] makes it.
+pub(crate) fn read_live_task_team(
+    history_path: &Path,
+    task: &TaskId,
+) -> Result<Option<TeamId>, HistoryCollectionError> {
+    if file_stamp(history_path)?.is_none() {
+        return Ok(None);
+    }
+    for _attempt in 0..SNAPSHOT_ATTEMPTS {
+        match snapshot_with(history_path, &mut copy_bounded, |copied| team_of_task(copied, task)) {
+            Err(HistoryCollectionError::Changed) => {}
+            result => return result,
+        }
+    }
+    Err(HistoryCollectionError::Changed)
+}
+
+/// The team of the newest run of `task` in the database at `copied`.
+fn team_of_task(copied: &Path, task: &TaskId) -> Result<Option<TeamId>, HistoryCollectionError> {
+    let reader = crate::history::Reader::open(copied).map_err(HistoryCollectionError::Read)?;
+    let newest = reader
+        .newest_runs_of_task(task, std::num::NonZeroUsize::MIN)
+        .map_err(HistoryCollectionError::Read)?;
+    Ok(newest.runs.last().map(|row| row.start.value.team.clone()))
 }
 
 /// The usage of the runs in `runs` as the live history at `history_path` says it: read from a copy of the database like

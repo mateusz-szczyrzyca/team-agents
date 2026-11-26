@@ -24,6 +24,8 @@ use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
 
+pub use history::HistoryCollectionError;
+
 use crate::clock::SystemClock;
 use crate::debug_redaction::SecretsCut;
 use crate::store::Home;
@@ -115,6 +117,14 @@ pub enum DebugRuntimeError {
     /// A participant name cannot be represented in the summary.
     #[error("cannot represent participant name")]
     Name(#[source] agent_core::ids::InvalidName),
+    /// The history could not be read to find the team of a task the state does not know.
+    #[error("cannot read the history to find the team of {id}")]
+    History {
+        /// The task that was looked up.
+        id: String,
+        /// Why the history could not be read.
+        source: HistoryCollectionError,
+    },
     /// A worker performing blocking I/O failed.
     #[error("diagnostic I/O worker failed")]
     Worker(#[source] tokio::task::JoinError),
@@ -140,17 +150,38 @@ pub fn resolve_debug_target(state: &State, target: &DebugTarget) -> Result<TeamI
         })
 }
 
-/// Resolves a target like [`resolve_debug_target`], and a task the state does not know through the history: the team
-/// of the task's latest run in the history, when the state has that team.
+/// Resolves a target like [`resolve_debug_target`], and a task the state does not know through the history: the team of
+/// the task's latest run in the history, when the state has that team.
 ///
 /// # Errors
-/// [`DebugRuntimeError::UnknownTarget`] when neither the state nor the history names a team of the ID.
+/// [`DebugRuntimeError::UnknownTarget`] when neither the state nor the history names a team of the ID;
+/// [`DebugRuntimeError::History`] when the history has to be read and cannot be; [`DebugRuntimeError::Worker`] when
+/// the blocking read fails to finish.
 pub async fn resolve_debug_target_with_history(
-    _home: &Home,
+    home: &Home,
     state: &State,
     target: &DebugTarget,
 ) -> Result<TeamId, DebugRuntimeError> {
-    resolve_debug_target(state, target)
+    let unknown = match resolve_debug_target(state, target) {
+        Err(error @ DebugRuntimeError::UnknownTarget { .. }) => error,
+        result => return result,
+    };
+    let DebugTarget::Task(task) = target else {
+        return Err(unknown);
+    };
+    let path = home.history_file();
+    let wanted = task.clone();
+    let team = tokio::task::spawn_blocking(move || history::read_live_task_team(&path, &wanted))
+        .await
+        .map_err(DebugRuntimeError::Worker)?
+        .map_err(|source| DebugRuntimeError::History {
+            id: task.to_string(),
+            source,
+        })?;
+    match team {
+        Some(team) if state.team(&team).is_some() => Ok(team),
+        Some(_) | None => Err(unknown),
+    }
 }
 
 /// Reads secrets strictly before any bundle or output parent is created.
@@ -258,7 +289,7 @@ async fn execute_debug_internal(
     let secrets = load_debug_secrets(home).await?;
     let cut = SecretsCut::new(&secrets, std::env::vars_os());
     let state = load_debug_state(home).await?;
-    let id = resolve_debug_target(&state, &args.target)?;
+    let id = resolve_debug_target_with_history(home, &state, &args.target).await?;
     let team = state
         .team(&id)
         .ok_or_else(|| DebugRuntimeError::UnknownTarget { id: id.to_string() })?;
