@@ -305,6 +305,14 @@ case $action in
     "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add:}" --kind "" > /dev/null
     result 'Asked investigation.\nSTATUS: SLEEPING'
     ;;
+  inv-review-hold)
+    # Complete a held review with a verdict before accepting an investigation.
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    head=$(git rev-parse HEAD)
+    result "VERDICT: APPROVE\nSUMMARY: commit \`$head\`\nSTATUS: DONE"
+    ;;
   inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)
     # OpenCode's first launch after the configuration switch fails without tools; the next session works.
