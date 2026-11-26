@@ -73,3 +73,51 @@ fn state_with_investigator_task_identifies_role_and_round_trips() {
     let found_again = round_tripped.find_task(&task_id).unwrap();
     assert_eq!(found_again.role, Role::Investigator);
 }
+
+#[test]
+fn team_summary_preserves_investigator_and_legacy_reviewer_roles() {
+    for role in [None, Some(Role::Reviewer), Some(Role::Investigator)] {
+        let mut json: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/state-before-investigator-role.json")).unwrap();
+        if let Some(role) = role {
+            json["teams"][0]["reviewers"][0]["role"] = serde_json::to_value(role).unwrap();
+        }
+        let state = State::from_json(&json.to_string()).unwrap();
+        let summary = agent_core::protocol::TeamSummary::from(&state.teams()[0]);
+        let roles: Vec<_> = summary.members.iter().map(|member| member.role).collect();
+        assert_eq!(roles, vec![Role::Solo, role.unwrap_or(Role::Reviewer)]);
+    }
+}
+
+#[test]
+fn round_members_preserve_investigator_and_legacy_reviewer_roles() {
+    for role in [None, Some(Role::Reviewer), Some(Role::Investigator)] {
+        let mut json: serde_json::Value =
+            serde_json::from_str(include_str!("fixtures/state-before-investigator-role.json")).unwrap();
+        if let Some(role) = role {
+            json["teams"][0]["reviewers"][0]["role"] = serde_json::to_value(role).unwrap();
+        }
+        let mut team: agent_core::state::Team = serde_json::from_value(json["teams"][0].clone()).unwrap();
+        let round: agent_core::ids::RoundId = "round-20261111-153004-k3x9".parse().unwrap();
+        let at = "2026-11-11T15:31:00Z".parse().unwrap();
+        team.open_round(round.clone(), Some("1.1".parse().unwrap()), at)
+            .unwrap();
+        let task = team.reviewers()[0].task().clone();
+        team.begin_run(
+            &task,
+            agent_core::state::NewRun {
+                id: "run-20261111-153005-k3x9".parse().unwrap(),
+                at,
+                session: None,
+                rounds: vec![round.clone()],
+            },
+        )
+        .unwrap();
+        let members: Vec<_> = team
+            .members_in(&round)
+            .into_iter()
+            .map(|(role, member)| (role, member.task().clone()))
+            .collect();
+        assert_eq!(members, vec![(role.unwrap_or(Role::Reviewer), task)]);
+    }
+}
