@@ -2179,12 +2179,33 @@ impl Owner {
             }
         ) {
             let answer = message.unwrap_or_default();
-            tokio::fs::write(&inv.file, answer)
+            use tokio::io::AsyncWriteExt;
+            let has_unfinished = self.parts.state.team(&located.team).is_some_and(|team| {
+                team.investigations()
+                    .iter()
+                    .any(|record| record.id == inv.id && !record.failed_with.is_empty())
+            });
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .append(has_unfinished)
+                .truncate(!has_unfinished)
+                .open(&inv.file)
                 .await
                 .map_err(|source| OwnerError::WriteRecord {
                     path: inv.file.clone(),
                     source,
                 })?;
+            file.write_all(answer.as_bytes())
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: inv.file.clone(),
+                    source,
+                })?;
+            file.sync_all().await.map_err(|source| OwnerError::WriteRecord {
+                path: inv.file.clone(),
+                source,
+            })?;
             let summary: String = answer
                 .lines()
                 .map(str::trim)
