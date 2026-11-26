@@ -71,16 +71,31 @@ async fn a_renewed_task_in_a_fix_pass_is_told_its_pull_request_and_which_finding
             .collect::<Vec<_>>(),
         [(1, FindingStatus::Resolved), (2, FindingStatus::Open)]
     );
-    let pass = item.fix_passes().len();
+    let ItemPhase::Fixing { pr, .. } = item.phase() else {
+        panic!("the item is not being fixed");
+    };
+    assert_eq!(item.fix_passes().len(), 2);
     assert!(briefing.contains("## The pull request and its review"), "{briefing}");
-    assert!(briefing.contains("Pull request #1 on branch "), "{briefing}");
-    assert!(briefing.contains(&format!("fix pass {pass} of 5")), "{briefing}");
     assert!(
-        briefing.contains("- #2 [MAJOR] src/lib.rs:8 — the case is untested → add coverage (open;"),
+        briefing.contains(&format!("Pull request #1 on branch {}, opened ", pr.branch)),
         "{briefing}"
     );
     assert!(
-        briefing.contains("- #1 [MINOR] src/lib.rs:7 — the wording is unclear → clarify it (resolved;"),
+        briefing.contains(
+            "Where the review stands: fix pass 2 of 5 was sent back to its limit; it waits for the human. Read the human's messages first.\n"
+        ),
+        "{briefing}"
+    );
+    assert!(
+        briefing.contains(
+            "- #2 [MAJOR] src/lib.rs:8 — the case is untested → add coverage (open; reported in pass 1 by inv-r1)\n"
+        ),
+        "{briefing}"
+    );
+    assert!(
+        briefing.contains(
+            "- #1 [MINOR] src/lib.rs:7 — the wording is unclear → clarify it (resolved; reported in pass 1 by inv-r1)\n"
+        ),
         "{briefing}"
     );
 }
@@ -154,14 +169,28 @@ async fn a_task_handed_over_in_a_fix_pass_because_its_agent_is_busy_is_told_its_
     let item = state.team(&team).unwrap().item(item_id).unwrap();
     assert!(matches!(item.phase(), ItemPhase::Fixing { .. }), "{:?}", item.phase());
     assert!(briefing.contains("`busy`"), "{briefing}");
-    assert!(briefing.contains("Pull request #1 on branch "), "{briefing}");
-    assert!(briefing.contains("fix pass 1 of 5"), "{briefing}");
+    let ItemPhase::Fixing { pr, .. } = item.phase() else {
+        panic!("the item is not being fixed");
+    };
     assert!(
-        briefing.contains("- #2 [MAJOR] src/lib.rs:8 — the case is untested → add coverage (open;"),
+        briefing.contains(&format!("Pull request #1 on branch {}, opened ", pr.branch)),
         "{briefing}"
     );
     assert!(
-        briefing.contains("- #1 [MINOR] src/lib.rs:7 — the wording is unclear → clarify it (open;"),
+        briefing
+            .contains("Where the review stands: fix pass 1 of 5: fix the open findings below, in this pull request.\n"),
+        "{briefing}"
+    );
+    assert!(
+        briefing.contains(
+            "- #2 [MAJOR] src/lib.rs:8 — the case is untested → add coverage (open; reported in pass 1 by inv-r1)\n"
+        ),
+        "{briefing}"
+    );
+    assert!(
+        briefing.contains(
+            "- #1 [MINOR] src/lib.rs:7 — the wording is unclear → clarify it (open; reported in pass 1 by inv-r1)\n"
+        ),
         "{briefing}"
     );
 }
