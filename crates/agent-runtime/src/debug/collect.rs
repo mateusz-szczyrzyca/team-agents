@@ -377,11 +377,11 @@ impl Collection {
                 "daemon does not answer; no status response was available",
             ),
         }
-        let roster = team
-            .crew()
-            .roster()
-            .into_iter()
-            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
+        let roster = team.crew().roster().into_iter().chain(
+            team.reviewers()
+                .iter()
+                .map(|member| (member.role().unwrap_or(Role::Reviewer), member)),
+        );
         for (role, member) in roster {
             self.task(home, member, role).await?;
         }
@@ -800,11 +800,11 @@ impl Collection {
 
     fn enrich_last_run_details(&mut self, records: &[agent_core::history::SequencedRecord], team: &Team) {
         let selection = agent_core::story::Selection::Team(team.id().clone());
-        let roster = team
-            .crew()
-            .roster()
-            .into_iter()
-            .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)));
+        let roster = team.crew().roster().into_iter().chain(
+            team.reviewers()
+                .iter()
+                .map(|member| (member.role().unwrap_or(Role::Reviewer), member)),
+        );
         for (_role, member) in roster {
             let Some(last_run) = member.runs().last() else {
                 continue;
@@ -1480,7 +1480,11 @@ fn task_round<'a>(
         .crew()
         .roster()
         .into_iter()
-        .chain(team.reviewers().iter().map(|member| (Role::Reviewer, member)))
+        .chain(
+            team.reviewers()
+                .iter()
+                .map(|member| (member.role().unwrap_or(Role::Reviewer), member)),
+        )
         .find(|(_, member)| member.task() == task)
         .map(|(_, member)| member);
     let run_round = member

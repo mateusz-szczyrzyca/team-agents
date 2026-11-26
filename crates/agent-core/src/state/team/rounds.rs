@@ -275,7 +275,10 @@ impl Team {
     /// team: the crew, then the reviewers.
     #[must_use]
     pub fn members_in(&self, round: &RoundId) -> Vec<(Role, &Member)> {
-        let reviewers = self.reviewers.iter().map(|member| (Role::Reviewer, member));
+        let reviewers = self
+            .reviewers
+            .iter()
+            .map(|member| (member.role().unwrap_or(Role::Reviewer), member));
         self.crew
             .roster()
             .into_iter()

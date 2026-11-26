@@ -616,7 +616,10 @@ impl From<&Team> for TeamSummary {
             items.count(item.status());
         }
         let crew = team.crew().roster().into_iter();
-        let reviewers = team.reviewers().iter().map(|member| (Role::Reviewer, member));
+        let reviewers = team
+            .reviewers()
+            .iter()
+            .map(|member| (member.role().unwrap_or(Role::Reviewer), member));
         Self {
             id: team.id().clone(),
             repo: team.repo().clone(),
