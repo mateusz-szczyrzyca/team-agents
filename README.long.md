@@ -1380,11 +1380,11 @@ that took it: the agent's run in another team cannot release it, and it is freed
 ### `agentbus team-replace`
 
 `agentbus team-replace [--dir D] --team ID --from OLD --to NEW` replaces one team member with another in
-one atomic operation: the membership moves from `--from` to `--to`, the board item `--from` claimed becomes
-`--to`'s, and the unread messages of `--from`'s team session move to `--to`. Messages already read stay read.
+one atomic operation: the membership moves from `--from` to `--to`, every board item `--from` claimed becomes
+`--to`'s, and the unread messages of `--from`'s team session move to `--to`. Messages already read keep their original recipient.
 The team reads a `member_replaced` event naming `from` and `to`; the command prints `REPLACED from to` on
-stdout. It is one of the agentbus subcommands the daemon calls; as item 1.1, it is the standalone command
-alone — the daemon does not integrate or retry it yet.
+stdout. Missing or finished teams and missing members exit with status 3, an existing replacement member
+with status 6, and identical names with status 2. The `member_replaced` log record has `team`, `from` and `to` fields.
 
 ## Development and tests
 

@@ -1611,7 +1611,7 @@ func main() {
   agentbus inv-next|inv-set|inv-get|inv-pending|inv-add   (used by the agent script)
   agentbus normalize --type claude|codex|gemini|opencode   (stdin: CLI stream, stdout: activity JSONL)
   agentbus team-list [--all] | notes --repo R [--section S] [-n 30] [--search Q]
-  agentbus team-create|team-set|team-done|team-get|team-waiting   (used by the agent script)
+  agentbus team-create|team-set|team-replace|team-done|team-get|team-waiting   (used by the agent script)
   agentbus round-size --repo DIR --base REF [--exclude PATTERNS] [--json]   size of a round's change
   agentbus node-request --url URL [--path PATH] [--get|--validate]   node HTTP transport
   agentbus node-checkout --repo NAME --base REF [--sha SHA] --repo-path NAME=PATH   resolve a node job base

@@ -11,6 +11,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1160,6 +1161,102 @@ func cmdTeamReplace(args []string) {
 }
 
 // teamReplace atomically transfers a member and its pending work to another agent.
-func teamReplace(_ *Bus, team string, _, _ string) (string, *CmdTeamReplaceError) {
-	return "", opErr(CmdTeamReplaceNoSuchTeam, "no open team %s", team)
+func teamReplace(b *Bus, team, from, to string) (string, *CmdTeamReplaceError) {
+	err := transact(b, CmdTeamReplaceStorage, func(st *State) *CmdTeamReplaceError {
+		t := st.Teams[team]
+		if t == nil || t.Done {
+			return opErr(CmdTeamReplaceNoSuchTeam, "no open team %s", team)
+		}
+		if from == to {
+			return opErr(CmdTeamReplaceSameAgent, "replacement agent %s is the outgoing member", to)
+		}
+		member := t.Members[from]
+		if member == nil {
+			return opErr(CmdTeamReplaceNoSuchMember, "no member %s in team %s", from, team)
+		}
+		if _, present := t.Members[to]; present {
+			return opErr(CmdTeamReplaceAlreadyMember, "%s is already a member of team %s", to, team)
+		}
+		if serr := retargetTeamMessages(b, st, team, from, to); serr != nil {
+			return fromStorage(CmdTeamReplaceStorage, serr)
+		}
+		st.Cursors[messageCursor(to, team)] = cursor(st, from, team)
+		delete(t.Members, from)
+		member.Agent = to
+		t.Members[to] = member
+		if t.Lead == from {
+			t.Lead = to
+		}
+		for _, item := range t.Board {
+			if item.Status == BoardClaimed && item.Assignee == from {
+				item.Assignee = to
+			}
+		}
+		// Attribute the notice to the new member so posting it preserves that member's
+		// sleeping state; other sleeping members, including the lead, wake normally.
+		_, serr := b.post(st, to, teamRecipient(team), memberReplacedEvent{From: from, To: to})
+		return fromStorage(CmdTeamReplaceStorage, serr)
+	})
+	if err != nil {
+		return "", err
+	}
+	logInfo(LogMemberReplaced, "team", team, "from", from, "to", to)
+	return fmt.Sprintf("REPLACED %s %s", from, to), nil
+}
+
+// retargetTeamMessages rewrites only unread recipients under the caller's transaction
+// lock, retaining unknown fields and the receipt replay cursor's message boundary.
+func retargetTeamMessages(b *Bus, st *State, team, from, to string) *StorageError {
+	path := b.path("messages.jsonl")
+	raw, err := os.ReadFile(path) //nolint:gosec // G304: fixed messages.jsonl filename under the explicitly configured bus directory.
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return storageErr(err, "cannot read messages for team %s replacement", team)
+	}
+	var rewritten []byte // replacement log; untouched lines remain byte-for-byte identical
+	var oldEnd int64     // original byte boundary after the current message
+	offset := st.OwnedReceiptOffset
+	changed := false
+	cur := cursor(st, from, team)
+	for _, line := range bytes.SplitAfter(raw, []byte{'\n'}) {
+		oldEnd += int64(len(line))
+		next := line
+		if len(bytes.TrimSpace(line)) > 0 {
+			var message Message // routing metadata used to select this team's unread direct messages
+			if err := json.Unmarshal(line, &message); err != nil {
+				return storageErr(err, "cannot decode messages for team %s replacement", team)
+			}
+			if message.Team == team && message.To == from && message.ID > cur {
+				var fields map[string]json.RawMessage // preserve fields a newer writer may have added
+				if err := json.Unmarshal(line, &fields); err != nil {
+					return storageErr(err, "cannot decode message %d fields", message.ID)
+				}
+				recipient, err := json.Marshal(to)
+				if err != nil {
+					return storageErr(err, "cannot encode replacement recipient %s", to)
+				}
+				fields["to"] = recipient
+				encoded, err := json.Marshal(fields)
+				if err != nil {
+					return storageErr(err, "cannot encode replacement message %d", message.ID)
+				}
+				next = append(encoded, '\n')
+				changed = true
+			}
+		}
+		if oldEnd <= st.OwnedReceiptOffset {
+			offset += int64(len(next)) - int64(len(line))
+		}
+		rewritten = append(rewritten, next...)
+	}
+	if !changed {
+		return nil
+	}
+	if serr := writeSyncFile(path, rewritten); serr != nil {
+		return serr
+	}
+	st.OwnedReceiptOffset = offset
+	return nil
 }
