@@ -410,4 +410,41 @@ mod daemon_process {
             .expect("summary has a Collected at line");
         assert!(!collected.contains("+01:00"), "{collected}");
     }
+
+    #[test]
+    fn agent_debug_shows_a_round_opened_at_a_fixed_moment_in_the_process_zone() {
+        use std::os::unix::fs::PermissionsExt;
+
+        const CENTRAL_EUROPE: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
+        const NEW_YORK: &str = "EST5EDT,M3.2.0,M11.1.0";
+        const ROUND: &str = "round-20261111-153000-q1w2";
+
+        let (dir, home) = home();
+        let secrets = home.root().join("secrets.toml");
+        std::fs::write(&secrets, "").unwrap();
+        std::fs::set_permissions(&secrets, std::fs::Permissions::from_mode(0o600)).unwrap();
+        seed_open_round_questions(&home, ROUND);
+
+        let east = run_in_zone(
+            &home,
+            &["debug", "--task", TASK, "--out", dir.path().to_str().unwrap()],
+            CENTRAL_EUROPE,
+        );
+        let west = run_in_zone(
+            &home,
+            &["debug", "--task", TASK, "--out", dir.path().to_str().unwrap()],
+            NEW_YORK,
+        );
+
+        let read_summary = |printed: &str| {
+            let path = printed
+                .lines()
+                .find_map(|line| line.strip_prefix("Debug summary: "))
+                .expect("debug prints the summary path");
+            std::fs::read_to_string(path).unwrap()
+        };
+        // The round opened at 19:15:00 UTC on 2026-11-11.
+        assert!(read_summary(&east).contains("| 2026-11-11 20:15:00 |"), "{east}");
+        assert!(read_summary(&west).contains("| 2026-11-11 14:15:00 |"), "{west}");
+    }
 }
