@@ -487,4 +487,3 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         sql: include_str!("033-investigation-events.sql"),
     },
 ];
-];
