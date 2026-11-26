@@ -1904,7 +1904,7 @@ impl Owner {
         self.watch_task(&site.lead.task);
         self.commit(&site.lead.task, &located, now, events, Some(notice))
             .await?;
-        self.file_saved(crate::daemon::questions::watch::Saved {
+        self.adopt_saved_file(crate::daemon::questions::watch::Saved {
             task: site.lead.task.clone(),
             number,
         })

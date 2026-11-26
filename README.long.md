@@ -874,7 +874,9 @@ turned off, or its file is missing — such a round says `only local or PR draft
 A run that ends with questions leaves `questions-<n>.md` in the task's directory and a notification file; with
 `[questions] open = "vscode"` the file is also opened in the VS Code window connected to the host. Saving that file with the
 `**ANSWERED**` marker on its last line sends the answers as well (the daemon watches the file; a file saved while it was
-down is found when it starts). A task that waits for answers is not stopped, paused or resumed: answer it first. Every
+down is found when it starts). Answers saved in the file while the run that asked is still going — the file is there from the
+moment the agent wrote it — are taken up when that run ends with its questions; `agent answer` refuses a task that is still
+running and says so. A task that waits for answers is not stopped, paused or resumed: answer it first. Every
 control is written to the activity log of each task it reached, with who did it, and `agent status` shows the new status.
 
 VS Code server discovery skips plain files beside builds (such as `cli/servers/lru.json`) and in place of a build's
