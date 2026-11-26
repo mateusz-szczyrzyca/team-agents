@@ -421,3 +421,49 @@ fn an_event_that_is_no_step_of_a_round_leaves_no_checkpoint() {
         assert_cause(event, None);
     }
 }
+
+#[test]
+fn the_gate_a_second_opinion_that_ended_a_control_and_a_reminder_leave_no_checkpoint() {
+    let at: crate::state::Timestamp = "2026-11-26T18:09:09Z".parse().unwrap();
+    let silent = [
+        HistoryEvent::Gate {
+            task: task(),
+            started_at: at,
+            record: crate::state::GateRecord {
+                tree: crate::state::GateTree::Clean,
+                result: crate::state::GateResult {
+                    head: commit(),
+                    finished_at: at,
+                    outcome: crate::state::GateOutcome::Passed,
+                    log: "/tmp/gate.log".parse().unwrap(),
+                },
+            },
+        },
+        HistoryEvent::SecondOpinionEnded {
+            pr: pr(),
+            number: NonZeroU32::MIN,
+            pass: 1,
+            by: "inv-codex".parse().unwrap(),
+            why: "the run failed".to_owned(),
+            attempt: NonZeroU32::MIN,
+        },
+        HistoryEvent::Controlled {
+            action: crate::protocol::ControlAction::Stop,
+            target: crate::protocol::Target::Team("team-20261126-180909-t5m8".parse().unwrap()),
+            by: crate::protocol::Client::Dashboard {
+                login: "human@example.com".parse().unwrap(),
+            },
+            tasks: vec![task()],
+        },
+        HistoryEvent::SerenaReminded {
+            task: task(),
+            run: "run-20261126-180909-r4b7".parse().unwrap(),
+            searches: 40,
+            step: 40,
+            cli: crate::kinds::CliKind::Claude,
+        },
+    ];
+    for event in &silent {
+        assert_cause(event, None);
+    }
+}
