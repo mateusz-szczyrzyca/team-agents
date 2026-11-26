@@ -8,6 +8,7 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use agent_core::history::{CheckpointCause, CheckpointJob, EventRecord, HistoryEvent, Record};
 use agent_core::ids::{ItemId, RoundId, TaskId, TeamId};
@@ -15,7 +16,7 @@ use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::state::{CommitId, ItemPhase, PhaseKind, PrNumber, Round, Timestamp};
 use agent_runtime::git::Revision;
-use agent_runtime::history::Reader;
+use agent_runtime::history::{Flush, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::snapshot::{prune_snapshots, take_checkpoint_snapshot};
 
@@ -25,6 +26,13 @@ use super::snapshots::validate_worktree_path;
 
 /// The seconds between two looks at the worktree of one task for a new commit.
 const LOOK_SECONDS: i64 = 60;
+
+/// How long the owner waits for the writer of the history to have a checkpoint's record, while the writer keeps up: a
+/// few milliseconds, as the writer is a thread that is already running.
+const FLUSH_WAIT: Duration = Duration::from_secs(2);
+
+/// How long the owner waits once the writer has not answered in [`FLUSH_WAIT`]: only long enough to see that it is back.
+const STALLED_FLUSH_WAIT: Duration = Duration::from_millis(20);
 
 /// What the state said of a round when a step was queued.
 #[derive(Debug, Clone)]
@@ -98,6 +106,9 @@ pub(super) struct Checkpoints {
     looked_at: HashMap<TaskId, Timestamp>,
     /// The rounds that have a checkpoint of their opening, queued or in the history.
     opened: HashSet<RoundId>,
+    /// Whether the last wait for the history's writer ended without its answer: the writer is stuck or far behind, and the
+    /// owner does not wait for it longer than [`STALLED_FLUSH_WAIT`] until it answers again.
+    stalled: bool,
 }
 
 /// Locks `mutex`; a lock left poisoned by a panic still guards a consistent list, as every change of it is one call.
@@ -299,6 +310,7 @@ impl Owner {
         if queued.is_empty() {
             return;
         }
+        let mut last_round = None;
         for step in queued {
             match step {
                 Queued::Take {
@@ -307,17 +319,48 @@ impl Owner {
                     cause,
                     at,
                     facts,
-                } => self.take_checkpoint(&team, &round, cause, at, *facts).await,
+                } => {
+                    self.take_checkpoint(&team, &round, cause, at, *facts).await;
+                    last_round = Some(round);
+                }
                 Queued::Prune { team, round, worktrees } => {
                     // The records of the round are read from the history: everything before is written first.
-                    self.history.flush();
+                    self.wait_for_history(&round);
                     self.prune_round(&team, &round, &worktrees).await;
+                    last_round = Some(round);
                 }
             }
         }
-        // The next step of a round is acted on only when this one is in `history.db`; the wait is a few milliseconds of a
-        // writer thread that is already running.
-        self.history.flush();
+        // The next step of a round is acted on only when this one is in `history.db`, as long as the writer answers: a
+        // writer that is stuck (a database another process holds) never stops a round.
+        if let Some(round) = last_round {
+            self.wait_for_history(&round);
+        }
+    }
+
+    /// Waits until the history's writer has what was handed in before, for a limited time, and logs the first time that
+    /// the writer does not answer in it.
+    fn wait_for_history(&mut self, round: &RoundId) {
+        let limit = if self.checkpoints.stalled {
+            STALLED_FLUSH_WAIT
+        } else {
+            FLUSH_WAIT
+        };
+        match self.history.flush_within(limit) {
+            Flush::Done => self.checkpoints.stalled = false,
+            Flush::TimedOut => {
+                if !self.checkpoints.stalled {
+                    tracing::warn!(
+                        event = LogEvent::CheckpointFailed.as_str(),
+                        round = %round,
+                        cause = "history_stalled",
+                        error = "the history's writer did not answer in time",
+                        "the record of a checkpoint may not be written yet: the round goes on"
+                    );
+                }
+                self.checkpoints.stalled = true;
+            }
+        }
     }
 
     /// Takes the snapshot of the holder's worktree and records the checkpoint; a snapshot that cannot be taken leaves a

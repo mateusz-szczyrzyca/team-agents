@@ -12,7 +12,7 @@ use std::fmt;
 use std::future::Future;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{Receiver, SyncSender, TryRecvError, TrySendError, sync_channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TryRecvError, TrySendError, sync_channel};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::Duration;
@@ -834,8 +834,22 @@ impl History {
     /// another process holds, a queue that is full) is not waited for longer.
     #[must_use]
     pub fn flush_within(&self, limit: Duration) -> Flush {
-        let _ = (self, limit);
-        Flush::Done
+        let Some(queue) = &self.queue else {
+            return Flush::Done;
+        };
+        let (answer, answered) = sync_channel(1);
+        match queue.try_send(Job::Flush(answer)) {
+            Ok(()) => {}
+            // The writer is gone: nothing is left to wait for.
+            Err(TrySendError::Disconnected(_)) => return Flush::Done,
+            // The writer is behind by a whole queue: waiting for it would wait for all of it.
+            Err(TrySendError::Full(_)) => return Flush::TimedOut,
+        }
+        match answered.recv_timeout(limit) {
+            // Or the writer stopped before it answered: it has nothing more to write.
+            Ok(()) | Err(RecvTimeoutError::Disconnected) => Flush::Done,
+            Err(RecvTimeoutError::Timeout) => Flush::TimedOut,
+        }
     }
 
     /// Whether the history is off: nothing is recorded, so nothing is worth working out for it.
