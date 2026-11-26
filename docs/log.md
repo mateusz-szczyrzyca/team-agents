@@ -2,7 +2,7 @@
 
 The history file and the `--json` of `agent log` hold UTC: every time is RFC 3339 with `Z`. The text that `agent log`
 prints for a person is local time: the times are written in the zone of the machine (the `TZ` variable, else the system's
-zone) with the offset valid at each moment, as `date` shows it, in the form `2026-11-21 17:29:53 +01:00`. A zone that
+zone) with the offset valid at each moment, as `date` shows it, in the form `2026-11-21 17:29:53`; the offset itself is not written. A zone that
 cannot be found is shown as UTC, marked `UTC`. `agent log --utc` prints the times of the files (RFC 3339, `Z`) instead.
 
 `agent log` tells what happened from [the history](history.md). It opens `history.db` read-only and asks no daemon, so it

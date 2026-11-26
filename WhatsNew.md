@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.122.0 · agent-core 0.119.0 — 26.11.2026 — PR #290
+
+### Enhancements
+- [agent] [agent-core] The times `agent status`, `agent log`, the notifications, the prompts and the pull request descriptions show no longer end with the offset: `2026-11-21 17:29:53` instead of `2026-11-21 17:29:53 +01:00`. A time that cannot be shown in the local zone is still written in UTC with `UTC` after it, and `agent log --utc` still prints RFC 3339 with `Z`.
+
 ## agent 0.121.0 · agent-runtime 0.114.0 — 26.11.2026 — PR #289
 
 ### Bug fixes
