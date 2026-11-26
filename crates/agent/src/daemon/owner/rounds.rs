@@ -1085,3 +1085,7 @@ mod team_replace_delivery_tests;
 #[cfg(test)]
 #[path = "rounds/tests/checkpoints.rs"]
 mod checkpoints_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/checkpoint_steps.rs"]
+mod checkpoint_steps_tests;

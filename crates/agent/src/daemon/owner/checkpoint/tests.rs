@@ -91,3 +91,36 @@ fn a_hand_over_to_the_human_does_not_prune() {
     assert_eq!(step.cause, Some(CheckpointCause::PullHandedOver));
     assert!(!step.prunes);
 }
+
+use crate::daemon::owner::fixture::Daemon;
+use crate::fixtures::{at, task, team_id, team_state};
+
+#[tokio::test]
+async fn the_end_of_a_run_of_a_worker_or_a_reviewer_leaves_no_checkpoint_but_one_of_a_member_does() {
+    let mut state = team_state();
+    let round: RoundId = "round-20261119-090000-wait".parse().unwrap();
+    {
+        let mut team = state.team_mut(&team_id(0)).unwrap();
+        let item = "1.1".parse().unwrap();
+        team.open_round(round.clone(), Some(item), at(10)).unwrap();
+        team.advance_item(
+            item,
+            agent_core::state::ItemPhase::InProgress {
+                assignee: "claude-1".parse().unwrap(),
+                branch: "agents/inv-opus/task-1-1.1".parse().unwrap(),
+            },
+        )
+        .unwrap();
+    }
+    let daemon = Daemon::new(&state, None);
+    let (owner, _sinks) = daemon.bare_owner().await;
+    let facts = |task| owner.checkpoint_facts(&team_id(0), &round, Some(&task), super::PullState::default());
+
+    // A worker and a reviewer are in the crew of the team, and neither holds an item.
+    let (worker, reviewer, member) = (facts(task(3)), facts(task(4)), facts(task(2)));
+
+    assert_eq!(
+        (worker.is_none(), reviewer.is_none(), member.map(|facts| facts.task)),
+        (true, true, Some(task(2)))
+    );
+}
