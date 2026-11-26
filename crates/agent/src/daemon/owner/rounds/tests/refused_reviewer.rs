@@ -8,6 +8,8 @@ use agent_core::ids::TaskId;
 use agent_core::state::{ItemPhase, MergeMode, Review, State};
 use agent_core::status::TaskStatus;
 
+use rand::SeedableRng;
+
 use super::rig::{ONE, Rig, investigator, normal};
 
 /// Makes the investigators `names` of `rig` `OpenCode` ones: their runs go to the same stand-in CLI, and their provider is
@@ -102,7 +104,9 @@ async fn a_reviewer_refused_on_every_run_is_replaced_by_an_investigator_of_anoth
     .await;
     with_opencode_investigators(&rig, &["inv-2", "inv-4"]);
     slow_patience_and_long_quota_pause(&rig);
-    rig.start().await;
+    // Seeded RNG so the initial reviewer selection is deterministic (finding 19
+    // randomised multi-slot ties, and this test needs inv-1 among the first two).
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
 
     let paused = rig
@@ -248,7 +252,9 @@ async fn a_restart_of_the_daemon_does_not_tell_again_that_a_refused_reviewer_wai
     .await;
     with_opencode_investigators(&rig, &["inv-2"]);
     slow_patience_and_long_quota_pause(&rig);
-    rig.start().await;
+    // Seeded RNG so the initial reviewer selection is deterministic (finding 19
+    // randomised multi-slot ties, and this test needs inv-1 among the first two).
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let paused = rig
         .state_where("the reviewer inv-1 paused by its quota", |state| {
@@ -260,7 +266,9 @@ async fn a_restart_of_the_daemon_does_not_tell_again_that_a_refused_reviewer_wai
     rig.notification_with("inv-1 waits for its provider").await;
     rig.stop().await.unwrap();
 
-    rig.start().await;
+    // After restart activity records make the selection deterministic; the seed is still
+    // explicit for reproducibility.
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     // The pause of the second refusal ends: the third run of inv-1 is refused as well, and the review still waits.
     rig.advance_history_days(1);
     rig.wait_for("the third run of inv-1", || rig.runs(&refused) >= 3).await;
@@ -293,7 +301,9 @@ async fn the_human_is_told_once_that_a_refused_reviewer_was_replaced() {
     .await;
     with_opencode_investigators(&rig, &["inv-2", "inv-4"]);
     slow_patience_and_long_quota_pause(&rig);
-    rig.start().await;
+    // Seeded RNG so the initial reviewer selection is deterministic (finding 19
+    // randomised multi-slot ties, and this test needs inv-1 among the first two).
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.state_where("the reviewer inv-1 paused by its quota", |state| {
         reviewer_paused(state, "inv-1")
