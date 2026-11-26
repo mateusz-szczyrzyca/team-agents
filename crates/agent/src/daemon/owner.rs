@@ -61,7 +61,7 @@ use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_with
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::replacement::ReplacementMode;
 use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
-use agent_core::history::{HistoryEvent, RunWhy};
+use agent_core::history::{CheckpointCause, HistoryEvent, RunWhy};
 use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::local_time::Zone;
@@ -603,6 +603,8 @@ pub(super) struct Owner {
     /// When each task with a run going was last looked at for the reminder to commit, so that the worktree is read at most
     /// once a minute.
     commit_looked_at: HashMap<TaskId, Timestamp>,
+    /// The checkpoints of the rounds: the steps waiting for their snapshot and what the last checkpoint of each task kept.
+    checkpoints: Box<checkpoint::Checkpoints>,
     /// The head and the time of the reminder to commit that went to each task, until a look sees a new head — the end of a
     /// run does not drop it. Held in memory only: a restart of the daemon re-arms the reminder.
     commit_reminded: HashMap<TaskId, (agent_core::state::CommitId, Timestamp)>,
@@ -759,6 +761,7 @@ impl Owner {
             closed: HashSet::new(),
             reminders: reminder::Backlog::default(),
             commit_looked_at: HashMap::new(),
+            checkpoints: Box::default(),
             commit_reminded: HashMap::new(),
             commit_cuts: HashMap::new(),
             overdue_cuts: HashMap::new(),
@@ -849,6 +852,7 @@ impl Owner {
                 self.check_idle_teams().await?;
                 idle_checked_at = Some(now);
             }
+            self.flush_checkpoints().await;
             self.team_life().await?;
             self.start_queued().await?;
             tokio::select! {
@@ -3301,6 +3305,9 @@ impl Owner {
         }
         // A clock that was set back must not end the run before it started in the history either.
         self.record_run_end(&run, at.max(started_at), &end, final_message);
+        for round in &rounds {
+            self.queue_checkpoint(at, team, round, CheckpointCause::RunEnded, Some(task), None);
+        }
         events.push(EventKind::RunEnded {
             team: team.clone(),
             task: task.clone(),

@@ -52,6 +52,17 @@ pub struct Stored<T> {
     pub cut: Cut,
 }
 
+/// What a checkpoint of a round keeps of a worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RoundCheckpoint {
+    /// The task whose worktree the checkpoint keeps.
+    pub task: TaskId,
+    /// The tip of the worktree's branch; `None` when git could not say.
+    pub head: Option<agent_core::state::CommitId>,
+    /// The reference of the snapshot; `None` when it could not be taken.
+    pub snapshot: Option<String>,
+}
+
 /// The newest runs of a task and whether older ones were left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewestRuns {
@@ -649,6 +660,24 @@ impl Reader {
     pub fn round_records(&self, round: &RoundId) -> Result<Vec<SequencedRecord>, ReadError> {
         let snapshot = self.snapshot("history_records")?;
         sequenced::round_records(&snapshot, round)
+    }
+
+    /// The checkpoints of `round`, oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn checkpoints_of_round(&self, round: &RoundId) -> Result<Vec<RoundCheckpoint>, ReadError> {
+        let mut found = Vec::new();
+        for stored in self.round_records(round)? {
+            if let agent_core::history::Record::Event(event) = stored.record
+                && let agent_core::history::HistoryEvent::Checkpoint {
+                    task, head, snapshot, ..
+                } = event.event
+            {
+                found.push(RoundCheckpoint { task, head, snapshot });
+            }
+        }
+        Ok(found)
     }
 
     /// The prompts of the runs of `round`, oldest first.

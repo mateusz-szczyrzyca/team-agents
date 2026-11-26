@@ -539,6 +539,7 @@ impl Owner {
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
             for task in self.tasks_with_a_run(team) {
+                self.look_for_commits(&task).await;
                 self.remind_to_commit(&task).await;
                 self.remind_of_context(&task).await;
                 self.cut_overdue_round(&task);
