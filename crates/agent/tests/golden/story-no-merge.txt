@@ -47,7 +47,7 @@ STATUS: DONE
       uncommitted: added .fake-runs (+<n> -<n>)
 <time>  pull request #1 opened: branch agents/claude-1/<task-4>-1.1 at <commit-2>
   title: Item 1.1: The first item
-  ----- pull request body (975 bytes) -----
+  ----- pull request body (968 bytes) -----
 Work of the team `<team-2>` on `example`, opened by the harness after the repository's gate passed on this branch
 (passed at [`<commit-2>`](https://github.com/octo/example/commit/<commit-2>)).
 
@@ -149,7 +149,7 @@ SUMMARY: fine
 <time>  pull request #1 approved and handed to the human (--no-merge)
 <time>  round <round-1> closed: approved
 <time>  notification sent: ✅✅ example (task <task-4>)
-  ----- notification (617 bytes) -----
+  ----- notification (610 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -170,7 +170,7 @@ Build the thing.
   ----- end of notification -----
 <time>  pull request #1 merged as <commit-2>
 <time>  notification sent: 🟣 example (task <task-4>)
-  ----- notification (435 bytes) -----
+  ----- notification (428 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
@@ -190,7 +190,7 @@ Build the thing.
   ----- end of notification -----
 <time>  team ended
 <time>  notification sent: ✅ example (task <task-4>)
-  ----- notification (436 bytes) -----
+  ----- notification (429 bytes) -----
 Repo: example
 Time: <time>
 Task: Build the thing.
