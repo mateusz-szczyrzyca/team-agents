@@ -254,10 +254,6 @@ pub enum LogEvent {
     /// The harness was to publish an item's branch while the lead's worktree had another branch out and no gate had passed at
     /// the tip of the item's branch: nothing was pushed, and the lead was sent back to switch and run the gate.
     PublishOffBranch,
-    /// An investigator task was started to answer an investigation request.
-    InvestigationStarted,
-    /// An investigator task ended and delivered its answer to the requester.
-    InvestigationAnswered,
 }
 
 impl Keyword for LogEvent {
@@ -341,9 +337,7 @@ impl LogEvent {
             | Self::CommitCut
             | Self::TaskHandedOver
             | Self::TaskAgentChanged
-            | Self::TaskWaitForFreeAgent
-            | Self::InvestigationStarted
-            | Self::InvestigationAnswered => LogLevel::Info,
+            | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }

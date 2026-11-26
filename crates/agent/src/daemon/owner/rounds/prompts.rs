@@ -248,7 +248,9 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
         source: Some(source),
     })?;
     let bus = agent_runtime::agentbus::AgentBus::new(ctx.settings.config.binaries().agentbus.clone(), home);
-    let open = bus.inv_open().await?;
+    let Ok(open) = bus.inv_open().await else {
+        return Ok(None);
+    };
     if let Some(inv) = open
         .into_iter()
         .find(|i| i.inv_task.as_ref() == Some(found.member.task()))

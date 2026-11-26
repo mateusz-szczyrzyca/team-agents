@@ -2032,12 +2032,9 @@ impl Owner {
         end: &RunEnd,
         message: Option<&str>,
     ) -> Result<(), OwnerError> {
-        let open = self
-            .parts
-            .bus
-            .inv_open()
-            .await
-            .map_err(|source| OwnerError::Bus { source })?;
+        let Ok(open) = self.parts.bus.inv_open().await else {
+            return Ok(());
+        };
         let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(task)) else {
             return Ok(());
         };
@@ -2062,11 +2059,14 @@ impl Owner {
                 .chars()
                 .take(200)
                 .collect();
-            self.parts
-                .bus
-                .inv_set(inv.id, &InvTransition::Done { summary })
-                .await
-                .map_err(|source| OwnerError::Bus { source })?;
+            if let Err(error) = self.parts.bus.inv_set(inv.id, &InvTransition::Done { summary }).await {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    task = %task,
+                    error = %error,
+                    "cannot mark investigation done on bus"
+                );
+            }
             let from: AgentName = located.agent.parse()?;
             let to = Recipient::Task {
                 agent: inv.from_agent.clone(),
@@ -2078,24 +2078,27 @@ impl Owner {
                 .with("file", inv.file.display().to_string())?
                 .with("answer", answer)?;
             let text = self.parts.team_texts.render(TeamPrompt::InvestigationAnswer, &values)?;
-            self.parts
-                .bus
-                .send(&from, &to, &Outgoing::Chat { text })
-                .await
-                .map_err(|source| OwnerError::Bus { source })?;
+            if let Err(error) = self.parts.bus.send(&from, &to, &Outgoing::Chat { text }).await {
+                tracing::warn!(
+                    event = LogEvent::BusDown.as_str(),
+                    task = %task,
+                    error = %error,
+                    "cannot send investigation answer on bus"
+                );
+            }
             tracing::info!(
-                event = LogEvent::InvestigationAnswered.as_str(),
                 id = %inv.id,
                 investigator = %located.agent,
                 chars = answer.chars().count(),
                 "investigation answered"
             );
-        } else {
-            self.parts
-                .bus
-                .inv_set(inv.id, &InvTransition::Requeued)
-                .await
-                .map_err(|source| OwnerError::Bus { source })?;
+        } else if let Err(error) = self.parts.bus.inv_set(inv.id, &InvTransition::Requeued).await {
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                task = %task,
+                error = %error,
+                "cannot requeue investigation on bus"
+            );
         }
         self.look_at(&located.team);
         Ok(())

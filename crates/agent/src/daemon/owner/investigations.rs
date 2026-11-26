@@ -35,31 +35,41 @@ impl Owner {
             if free.is_empty() {
                 break;
             }
-            let Some(req) = self
-                .parts
-                .bus
-                .inv_next(queue_max, slots)
-                .await
-                .map_err(|source| OwnerError::Bus { source })?
-            else {
-                break;
+            let req = match self.parts.bus.inv_next(queue_max, slots).await {
+                Ok(Some(req)) => req,
+                Ok(None) => break,
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        %team_id,
+                        error = %error,
+                        "cannot poll investigations from bus"
+                    );
+                    break;
+                }
             };
 
             if !self.is_task_live_in_team(team_id, &req.from_task) {
-                self.parts
-                    .bus
-                    .inv_set(req.id, &InvTransition::Requeued)
-                    .await
-                    .map_err(|source| OwnerError::Bus { source })?;
+                if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Requeued).await {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        %team_id,
+                        error = %error,
+                        "cannot requeue investigation on bus"
+                    );
+                }
                 break;
             }
 
             let Some(chosen) = self.pick_investigator(team_id, &req, &configured_keys, &free) else {
-                self.parts
-                    .bus
-                    .inv_set(req.id, &InvTransition::Requeued)
-                    .await
-                    .map_err(|source| OwnerError::Bus { source })?;
+                if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Requeued).await {
+                    tracing::warn!(
+                        event = LogEvent::BusDown.as_str(),
+                        %team_id,
+                        error = %error,
+                        "cannot requeue investigation on bus"
+                    );
+                }
                 break;
             };
 
@@ -159,16 +169,25 @@ impl Owner {
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
             .map_err(|e| OwnerError::Publish(e.to_string()))?;
-        self.parts
+        if let Err(error) = self
+            .parts
             .bus
             .inv_set(req.id, &InvTransition::Running { task: task.clone() })
             .await
-            .map_err(|source| OwnerError::Bus { source })?;
+        {
+            tracing::warn!(
+                event = LogEvent::BusDown.as_str(),
+                %team_id,
+                %task,
+                error = %error,
+                "cannot mark investigation running on bus"
+            );
+            return Ok(());
+        }
         next.record_activities(now);
         self.parts.state = next;
 
         tracing::info!(
-            event = LogEvent::InvestigationStarted.as_str(),
             id = %req.id,
             investigator = %chosen,
             task = %task,
