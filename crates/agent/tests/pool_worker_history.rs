@@ -398,7 +398,13 @@ printf '%s\n' '{"type":"assistant","message":{"content":[{"type":"tool_use","nam
         );
         let end = run.end.as_ref().expect("the run has an end");
         assert!(
-            matches!(end.value.end, agent_core::state::RunEnd::Reported { .. }),
+            matches!(
+                end.value.end,
+                agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                    ..
+                }
+            ),
             "{:?}",
             end.value.end
         );
@@ -542,7 +548,13 @@ git -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the
         assert_eq!(ids.len(), all_runs.len(), "each run has exactly one row: {all_runs:?}");
         let last_end = runs[1].end.as_ref().expect("the run after the restart has an end");
         assert!(
-            matches!(last_end.value.end, agent_core::state::RunEnd::Reported { .. }),
+            matches!(
+                last_end.value.end,
+                agent_core::state::RunEnd::Reported {
+                    outcome: agent_core::status::RunOutcome::Done,
+                    ..
+                }
+            ),
             "{:?}",
             last_end.value.end
         );
