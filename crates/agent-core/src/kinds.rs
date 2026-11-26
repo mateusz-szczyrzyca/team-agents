@@ -195,6 +195,8 @@ pub enum Role {
     Worker,
     /// Reviews a pull request of a team it is not in.
     Reviewer,
+    /// Investigates an investigation request for a team.
+    Investigator,
 }
 
 impl Keyword for Role {
@@ -304,6 +306,7 @@ pub(crate) mod tests {
         (Role::Member, "member"),
         (Role::Worker, "worker"),
         (Role::Reviewer, "reviewer"),
+        (Role::Investigator, "investigator"),
     ];
 
     #[test]
@@ -340,7 +343,7 @@ pub(crate) mod tests {
 
     #[test]
     fn roles_refuse_unknown_texts() {
-        assert_refuses("role", ROLES, &["lead", "helper", "investigator", "merger"]);
+        assert_refuses("role", ROLES, &["lead", "helper", "allocator", "merger"]);
     }
 }
 

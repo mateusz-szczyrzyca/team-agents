@@ -86,7 +86,7 @@ pub(super) fn line(
         .map_or_else(String::new, |said| format!(", {said}"));
     let status = match member.role {
         Role::Reviewer => reviewer::status(member, &team.activities, zone).unwrap_or_else(|| member.status.to_string()),
-        Role::Solo | Role::Coordinator | Role::Member | Role::Worker => member.status.to_string(),
+        Role::Solo | Role::Coordinator | Role::Member | Role::Worker | Role::Investigator => member.status.to_string(),
     };
     // A queued task whose agent holds its limit of runs says which run it waits for, and in which team.
     let blocked = member.waits_for.as_ref().map_or_else(String::new, |wait| {
@@ -112,7 +112,7 @@ pub(super) const fn listed(member: &MemberSummary) -> bool {
 /// wants to see who is in the team and who reviewed, also once the work is done, stopped or failed.
 pub(super) const fn alive(role: Role) -> bool {
     match role {
-        Role::Solo | Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer => true,
+        Role::Solo | Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer | Role::Investigator => true,
     }
 }
 

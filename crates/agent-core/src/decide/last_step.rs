@@ -67,7 +67,7 @@ pub const fn after_last_step(
     let asks = match role {
         Role::Solo | Role::Member => taken_over,
         Role::Coordinator => taken_over || matches!(work, MembersWork::OfAStoppedMember),
-        Role::Worker | Role::Reviewer => false,
+        Role::Worker | Role::Reviewer | Role::Investigator => false,
     };
     if asks {
         AfterLastStep::AskHuman

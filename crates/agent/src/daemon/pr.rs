@@ -115,7 +115,7 @@ pub(super) fn plan_publications(team: &Team) -> Result<Vec<Publication>, PlanErr
     }
     let team_branch = match role {
         Role::Solo => None,
-        Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer => {
+        Role::Coordinator | Role::Member | Role::Worker | Role::Reviewer | Role::Investigator => {
             // A lead's own branch is named after the agent its task was first given to, whoever holds it now.
             Some(task_branch(&agent_name(lead.bus_agent())?, lead.task())?)
         }

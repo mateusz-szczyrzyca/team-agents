@@ -217,7 +217,7 @@ pub(super) fn after_cut(setting: RestartSession, role: Role, member: &Member, ro
     // A worker is a request of a task and a reviewer keeps its findings file only: neither has a session worth a briefing.
     let works_on_its_own = match role {
         Role::Solo | Role::Coordinator | Role::Member => true,
-        Role::Worker | Role::Reviewer => false,
+        Role::Worker | Role::Reviewer | Role::Investigator => false,
     };
     // A task with no open round has no snapshot to brief from, and one that already awaits a new session is briefed.
     let briefable = round.is_some()

@@ -14,7 +14,7 @@
 //! What a command prints is a format of Go code. The readers here accept exactly what the commands of this
 //! repository print; an output they do not recognise is [`AgentBusError::Unexpected`], never a guess.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
@@ -1643,11 +1643,15 @@ impl AgentBus {
         &self,
         queue_max: NonZeroUsize,
         slots: NonZeroUsize,
+        tasks: &BTreeSet<TaskId>,
     ) -> Result<Option<Investigation>, AgentBusError> {
         let command = BusCommand::InvNext;
-        let args = Args::new()
+        let mut args = Args::new()
             .flag("--queue-max", queue_max.to_string())
             .flag("--inv-slots", slots.to_string());
+        for task in tasks {
+            args = args.flag("--task", task.as_str());
+        }
         let output = self.run(command, args, None).await?;
         if output.trim().is_empty() {
             return Ok(None);

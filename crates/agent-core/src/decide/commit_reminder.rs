@@ -41,7 +41,7 @@ pub enum ReminderDue {
 pub const fn is_reminded(role: Role) -> bool {
     match role {
         Role::Solo | Role::Coordinator | Role::Member => true,
-        Role::Worker | Role::Reviewer => false,
+        Role::Worker | Role::Reviewer | Role::Investigator => false,
     }
 }
 

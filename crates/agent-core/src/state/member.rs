@@ -110,6 +110,9 @@ pub struct Member {
     /// The last run of the previous holder; omitted for tasks written before holder boundaries.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     holder_after_run: Option<RunId>,
+    /// The role of the task; omitted for legacy states and reviewer tasks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    role: Option<crate::kinds::Role>,
 }
 
 /// Why a task begins a new session.
@@ -161,6 +164,9 @@ struct MemberWire {
     /// See [`Member`]; legacy tasks have no holder boundary.
     #[serde(default)]
     holder_after_run: Option<RunId>,
+    /// See [`Member`].
+    #[serde(default)]
+    role: Option<crate::kinds::Role>,
 }
 
 /// Serializes a member's [`PlanKeeping`] while storing its `judging` marker in `plan_judging` on the enclosing
@@ -478,7 +484,15 @@ impl Member {
             past_holders: Vec::new(),
             waiting_since: None,
             holder_after_run: None,
+            role: None,
         }
+    }
+
+    /// Attaches an explicit role to this member.
+    #[must_use]
+    pub const fn with_role(mut self, role: crate::kinds::Role) -> Self {
+        self.role = Some(role);
+        self
     }
 
     /// A member of a task created after plans (`0.35.0`) and before step judging (`#163`): it keeps a plan for
@@ -499,6 +513,7 @@ impl Member {
             past_holders: Vec::new(),
             waiting_since: None,
             holder_after_run: None,
+            role: None,
         }
     }
 
@@ -519,6 +534,7 @@ impl Member {
             past_holders: Vec::new(),
             waiting_since: None,
             holder_after_run: None,
+            role: None,
         }
     }
 
@@ -536,6 +552,11 @@ impl Member {
     getter!("The task's ID.", pub const fn task(&self) -> &TaskId = &self.task);
 
     getter!("Who works in the task.", pub const fn agent(&self) -> &Participant = &self.agent);
+
+    getter!(
+        "The explicit role of the task, if set.",
+        pub const fn role(&self) -> Option<crate::kinds::Role> = self.role
+    );
 
     /// The questions the human was asked what becomes of the task after the last step of the ladder; `None` until then.
     #[must_use]
@@ -1159,6 +1180,7 @@ mod tests {
                 past_holders: Vec::new(),
                 waiting_since: None,
                 holder_after_run: None,
+                role: None,
             };
             member.sync_plan_judging();
             check_member(&member)?;

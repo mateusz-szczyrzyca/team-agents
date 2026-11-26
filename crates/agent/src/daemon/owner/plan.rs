@@ -109,7 +109,7 @@ impl Owner {
     pub(super) async fn keep_plan_out_of_delivery(&self, task: &TaskId, located: &Located) {
         match located.role {
             Role::Solo | Role::Coordinator | Role::Member => {}
-            Role::Worker | Role::Reviewer => return,
+            Role::Worker | Role::Reviewer | Role::Investigator => return,
         }
         match self.untrack_plan(task, located).await {
             Ok(Kept::Untracked(untracked)) => {

@@ -360,6 +360,21 @@ case $action in
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
     ;;
   done) result 'Finished the work.\nSTATUS: DONE' ;;
+  inv-done:*)
+    result "${action#inv-done:}\nSTATUS: DONE"
+    ;;
+  inv-add|inv-add:*)
+    task=$(grep -o 'task-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+    [[ -z $task ]] && task=$(basename "$PWD")
+    question="Please investigate this problem"
+    if [[ $action == inv-add:* ]]; then
+      question="${action#inv-add:}"
+    fi
+    branch=$(git rev-parse --abbrev-ref HEAD)
+    repo=$(basename "$(git remote get-url origin 2>/dev/null || git rev-parse --show-toplevel)" .git)
+    "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$task" --repo "$repo" --branch "$branch" --tasks-dir "$home/tasks" --question "$question" --kind "" > /dev/null
+    result 'Asked investigation.\nSTATUS: SLEEPING'
+    ;;
   review-commit:*|late-commit:*)
     # These new actions quote the commit actually checked out by the reviewer.
     if [[ $action == late-commit:* ]]; then
@@ -678,6 +693,12 @@ case $action in
       sleep 0.2
     done
     result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
+  hold-approve)
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    result 'VERDICT: APPROVE\nSUMMARY: fine\nSTATUS: DONE'
     ;;
   serena-hold)
     # A run that reads forty-two files of code with its own `Read` tool, none with Serena, and then holds until the test
