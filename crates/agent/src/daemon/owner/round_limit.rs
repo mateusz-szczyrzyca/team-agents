@@ -91,7 +91,7 @@ pub(super) fn timed_round(state: &State, task: &TaskId) -> Option<Timed> {
                     end: RunEnd::Stopped,
                     ..
                 }
-            ),
+            ) && !state.commit_cut(task, run.id()),
         })
         .collect();
     Some(Timed {

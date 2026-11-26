@@ -439,7 +439,17 @@ impl Owner {
         order: CommitOrder,
         mut events: Vec<EventKind>,
     ) -> Result<(), OwnerError> {
+        let cut = self
+            .parts
+            .state
+            .find_task(task)
+            .and_then(|found| found.member.current_run())
+            .map(|run| run.id().clone())
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         self.end_run(task, &located.team, now, RunEnd::Stopped, false, None, &mut events)?;
+        // The clock of the round goes on through this cut (`[limits] round_minutes`): only a stop of the human starts it
+        // again.
+        self.parts.state.record_commit_cut(task.clone(), cut);
         self.reasons.insert(
             task.clone(),
             Why::CommitOrder {
