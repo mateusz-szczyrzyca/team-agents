@@ -308,7 +308,8 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
             | Self::PublishOffBranch
-            | Self::HistoryRecordIncomplete => LogLevel::Warn,
+            | Self::HistoryRecordIncomplete
+            | Self::InvestigationKindUnknown => LogLevel::Warn,
             Self::TeamChanged
             | Self::RunNoToolRetry
             | Self::TeamRemoved
@@ -346,7 +347,6 @@ impl LogEvent {
             | Self::TaskWaitForFreeAgent
             | Self::InvestigationStarted
             | Self::InvestigationAnswered => LogLevel::Info,
-            Self::InvestigationKindUnknown => LogLevel::Warn,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
