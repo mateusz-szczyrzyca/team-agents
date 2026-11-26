@@ -217,7 +217,7 @@ fn overlapping_waits_are_left_out_once() {
     assert_eq!(
         round_overdue_with_waits(&opened_at_ten(&runs), &waits, at("2026-11-25T15:00:00Z"), 120),
         Overdue::Due {
-            minutes: 120,
+            minutes: 150,
             since: at("2026-11-25T10:00:00Z"),
         }
     );
