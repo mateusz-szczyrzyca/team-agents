@@ -60,22 +60,43 @@ pub fn choose(
             .map(|activity| activity.asked_at)
             .max();
         let last_anywhere = own.iter().map(|activity| activity.asked_at).max();
-        let tie_breaker = if last_team.is_some() || last_anywhere.is_some() {
-            rng.next_u64()
-        } else {
-            0
-        };
-        candidates.push(((last_team, last_anywhere), tie_breaker, name));
+        candidates.push(((last_team, last_anywhere), name));
     }
     if candidates.len() < required.get() {
         return None;
     }
     candidates.sort_unstable();
+
+    let req = required.get();
+    let boundary_key = candidates[req - 1].0;
+    let oldest_activity_key = candidates
+        .iter()
+        .map(|(k, _)| *k)
+        .filter(|k| k.0.is_some() || k.1.is_some())
+        .min();
+    // Tie-breaking applies when multiple candidates share the same oldest last activity.
+    if Some(boundary_key) == oldest_activity_key {
+        let start = candidates.iter().position(|(k, _)| *k == boundary_key).unwrap_or(0);
+        let end = candidates
+            .iter()
+            .rposition(|(k, _)| *k == boundary_key)
+            .map_or(candidates.len(), |p| p + 1);
+        let candidates_for_key = end - start;
+        let slots_for_key = req - start;
+        if slots_for_key < candidates_for_key {
+            use rand::seq::SliceRandom;
+            let tied = &mut candidates[start..end];
+            tied.shuffle(rng);
+            let chosen = &mut tied[..slots_for_key];
+            chosen.sort_unstable();
+        }
+    }
+
     Some(
         candidates
             .into_iter()
-            .take(required.get())
-            .map(|(_, _, name)| (*name).clone())
+            .take(req)
+            .map(|(_, name)| (*name).clone())
             .collect(),
     )
 }
