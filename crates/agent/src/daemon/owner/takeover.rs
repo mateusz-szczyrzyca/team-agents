@@ -5,6 +5,7 @@
 use agent_core::decide::busy::{self, Availability, Decision, Offer, TaskWait, Waiting};
 use agent_core::decide::ladder::Trouble;
 use agent_core::decide::replacement::{Activity, Candidate, Handover, ReplacementMode, choose};
+use agent_core::history::CheckpointCause;
 use agent_core::ids::{AgentName, ItemId, TaskId};
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::state::{ItemPhase, Participant, Team, Timestamp};
@@ -121,6 +122,7 @@ impl Owner {
                     &format!("agent={name}"),
                 );
                 handed_over(&team, task, held.name(), name.as_str(), trouble);
+                self.queue_for_task(task, CheckpointCause::HolderChanged);
                 Takeover::Agent
             }
             Chosen::Lead => {
@@ -128,6 +130,7 @@ impl Owner {
                 self.parts.state.owe_lead(task, trouble, at)?;
                 log_decision("takeover", &format!("task={task}, from={}", held.name()), LEAD);
                 handed_over(&team, task, held.name(), LEAD, trouble);
+                self.queue_for_task(task, CheckpointCause::HolderChanged);
                 Takeover::Lead
             }
         };

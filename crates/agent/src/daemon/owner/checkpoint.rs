@@ -96,6 +96,8 @@ pub(super) struct Checkpoints {
     last: HashMap<TaskId, LastCheckpoint>,
     /// When each task was last looked at for a new commit.
     looked_at: HashMap<TaskId, Timestamp>,
+    /// The rounds that have a checkpoint of their opening, queued or in the history.
+    opened: HashSet<RoundId>,
 }
 
 /// Locks `mutex`; a lock left poisoned by a panic still guards a consistent list, as every change of it is one call.
@@ -339,6 +341,13 @@ impl Owner {
                 .map_err(|error| error_chain(&error)),
             Err(cause) => Err(cause),
         };
+        if cause == CheckpointCause::DaemonStarted
+            && let Ok(taken) = &taken
+            && previous.as_deref() == Some(taken.reference.as_str())
+        {
+            // The worktree is as the last checkpoint kept it: a start of the daemon changed nothing to keep.
+            return;
+        }
         let (head, snapshot) = match taken {
             Ok(taken) => {
                 self.checkpoints.last.insert(
@@ -438,6 +447,105 @@ impl Owner {
         }
     }
 
+    /// The team and the open round `task` works for: the newest open round of its current run, else of its last run, else
+    /// the only open round of its team. `None` when the task is in no open round.
+    pub(super) fn checkpoint_round_of(&self, task: &TaskId) -> Option<(TeamId, RoundId)> {
+        let found = self.parts.state.find_task(task)?;
+        let open = |id: &&RoundId| found.team.round(id).is_some_and(Round::is_open);
+        let run = found.member.current_run().or_else(|| found.member.runs().last());
+        let round = run
+            .and_then(|run| run.rounds().iter().rev().find(open))
+            .cloned()
+            .or_else(|| {
+                let mut opens = found.team.open_rounds();
+                let only = opens.next()?;
+                opens.next().is_none().then(|| only.id().clone())
+            })?;
+        Some((found.team.id().clone(), round))
+    }
+
+    /// Queues the checkpoint of `cause` for `task`, in the open round it works for; a task in none has no checkpoint.
+    pub(super) fn queue_for_task(&self, task: &TaskId, cause: CheckpointCause) {
+        let Some((team, round)) = self.checkpoint_round_of(task) else {
+            return;
+        };
+        let Ok(at) = Timestamp::now(&self.parts.clock) else {
+            return;
+        };
+        self.queue_checkpoint(at, &team, &round, cause, Some(task), None);
+    }
+
+    /// Takes the checkpoint of `cause` for `task` now, with the ones queued before it: for a step the owner is about to
+    /// act on at once, where the next turn of its loop is too late.
+    pub(super) async fn checkpoint_now(&mut self, task: &TaskId, cause: CheckpointCause) {
+        self.queue_for_task(task, cause);
+        self.flush_checkpoints().await;
+    }
+
+    /// Takes the checkpoint of the opening of the round `task` is about to work in, once per round, before its run starts.
+    pub(super) async fn checkpoint_round_opened(&mut self, task: &TaskId) {
+        let Some((_, round)) = self.checkpoint_round_of(task) else {
+            return;
+        };
+        if self.checkpoints.opened.insert(round) {
+            self.checkpoint_now(task, CheckpointCause::RoundOpened).await;
+        }
+    }
+
+    /// Reads the checkpoints the history already has for the open rounds, so that the first look and the first snapshot
+    /// after a start of the daemon compare with them, then takes a `daemon_started` checkpoint of each task of an open
+    /// round whose worktree is not as its last checkpoint kept it.
+    pub(super) async fn checkpoint_daemon_started(&mut self) {
+        let history_file = self.parts.store.home().history_file();
+        let mut tasks = Vec::new();
+        for team in self.parts.state.teams() {
+            for round in team.open_rounds() {
+                let kept = match Reader::open(&history_file).and_then(|reader| reader.checkpoints_of_round(round.id()))
+                {
+                    Ok(kept) => kept,
+                    Err(error) => {
+                        tracing::warn!(
+                            event = LogEvent::CheckpointFailed.as_str(),
+                            team = %team.id(),
+                            round = %round.id(),
+                            error = %error_chain(&error),
+                            "the checkpoints of an open round cannot be read at the start of the daemon"
+                        );
+                        continue;
+                    }
+                };
+                if !kept.is_empty() {
+                    self.checkpoints.opened.insert(round.id().clone());
+                }
+                for checkpoint in kept {
+                    self.checkpoints.last.insert(
+                        checkpoint.task,
+                        LastCheckpoint {
+                            head: checkpoint.head,
+                            snapshot: checkpoint.snapshot,
+                        },
+                    );
+                }
+            }
+            tasks.extend(
+                team.crew()
+                    .roster()
+                    .into_iter()
+                    .map(|(_, member)| member.task().clone()),
+            );
+        }
+        let home = self.parts.store.home().clone();
+        for task in tasks {
+            let Some(repo) = self.parts.state.find_task(&task).map(|found| found.team.repo().clone()) else {
+                continue;
+            };
+            if home.worktree_dir(&repo, &task).exists() {
+                self.queue_for_task(&task, CheckpointCause::DaemonStarted);
+            }
+        }
+        self.flush_checkpoints().await;
+    }
+
     /// Looks at the worktree of `task`, when it has a run going for an open round, at most once a minute, and queues a
     /// `commit` checkpoint when its head is not the head of the task's last checkpoint. Several commits in one minute are
     /// one checkpoint; a task with no checkpoint yet is only noted.
@@ -445,15 +553,7 @@ impl Owner {
         let Ok(Some(target)) = watched_run(&self.parts.state, task) else {
             return;
         };
-        let Some((team, round)) = self.parts.state.find_task(task).and_then(|found| {
-            let run = found.member.current_run()?;
-            let open = run
-                .rounds()
-                .iter()
-                .rev()
-                .find(|id| found.team.round(id).is_some_and(Round::is_open))?;
-            Some((found.team.id().clone(), open.clone()))
-        }) else {
+        let Some((team, round)) = self.checkpoint_round_of(task) else {
             return;
         };
         let Ok(now) = Timestamp::now(&self.parts.clock) else {

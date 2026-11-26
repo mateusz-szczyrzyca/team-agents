@@ -9,6 +9,7 @@
 use agent_core::decide::commit_reminder::is_reminded;
 use agent_core::decide::ladder::Trouble;
 use agent_core::decide::round_limit::{Overdue, RoundClock, RunMark, round_overdue};
+use agent_core::history::CheckpointCause;
 use agent_core::ids::{ItemId, RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::protocol::EventKind;
@@ -172,6 +173,8 @@ impl Owner {
         cut: OverdueCut,
         mut events: Vec<EventKind>,
     ) -> Result<(), OwnerError> {
+        // The commits the cut round holds are kept before the take-over writes anything about the task.
+        self.checkpoint_now(task, CheckpointCause::RoundOverdue).await;
         self.end_run(task, &located.team, now, RunEnd::Stopped, false, None, &mut events)?;
         let takeover = self.take_over(task, located.role, Trouble::RoundOverdue)?;
         let (status, notice) = match takeover {

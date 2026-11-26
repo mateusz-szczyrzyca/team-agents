@@ -921,6 +921,7 @@ impl Owner {
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
+        self.checkpoint_daemon_started().await;
         self.load_plan_snapshots().await;
         for task in &recovery.exhausted {
             let located = self.locate(task)?;
@@ -1244,6 +1245,7 @@ impl Owner {
         if let Err(problem) = self.checkout_item_branch(&task).await {
             return self.fail_to_start(&task, error_chain(&problem)).await;
         }
+        self.checkpoint_round_opened(&task).await;
         let briefing = match self.briefing_facts(&task).await {
             Ok(briefing) => briefing,
             Err(problem) => return self.fail_to_start(&task, error_chain(&problem)).await,
@@ -2754,10 +2756,15 @@ impl Owner {
             LadderStep::SameSession => Some(Step::SameSession),
             LadderStep::NewSession => {
                 let at = self.after_last_run(task)?;
-                self.parts
+                let renewed_now = self
+                    .parts
                     .state
                     .renew_task(task, trouble, at)?
-                    .then_some(Step::NewSession)
+                    .then_some(Step::NewSession);
+                if renewed_now.is_some() {
+                    self.queue_for_task(task, CheckpointCause::HolderChanged);
+                }
+                renewed_now
             }
             LadderStep::GiveUp => None,
         };
