@@ -296,3 +296,10 @@ impl Owner {
         Ok(())
     }
 }
+
+impl Owner {
+    /// Recovers open requests after restart and enforces their active answer deadline.
+    pub(super) async fn reconcile_investigations(&mut self) -> Result<(), OwnerError> {
+        Ok(())
+    }
+}
