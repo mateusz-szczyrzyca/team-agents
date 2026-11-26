@@ -4,7 +4,7 @@
 //! agent that holds it now, and the first run after a run that ended stopped began (the human stopped the task and
 //! resumed it, or the daemon cut the run to hand it over). A cut for an order to commit, which resumes the run in its
 //! session, is not a stop for the clock. The daemon asks only for a task that works on an item with no pull request in
-//! review yet; a round in review, approved or done is never overdue.
+//! review yet; a round in review, approved or done is never overdue. Time waiting for human answers is left out.
 
 use crate::state::Timestamp;
 
@@ -36,7 +36,7 @@ pub enum Overdue {
     NotDue,
     /// The round is over its limit.
     Due {
-        /// The whole minutes from `since` to now; at least the limit.
+        /// The whole working minutes from `since` to now, excluding human waits; at least the limit.
         minutes: u64,
         /// When the clock started, see [`clock_start`].
         since: Timestamp,
@@ -64,20 +64,7 @@ pub fn clock_start(clock: &RoundClock<'_>) -> Timestamp {
 /// the start of the clock is never overdue.
 #[must_use]
 pub fn round_overdue(clock: &RoundClock<'_>, now: Timestamp, limit_minutes: u32) -> Overdue {
-    if limit_minutes == 0 {
-        return Overdue::NotDue;
-    }
-    let since = clock_start(clock);
-    let minutes = (now.as_utc() - since.as_utc()).whole_minutes();
-    if minutes < 0 {
-        return Overdue::NotDue;
-    }
-    let minutes = minutes.unsigned_abs();
-    if minutes >= u64::from(limit_minutes) {
-        Overdue::Due { minutes, since }
-    } else {
-        Overdue::NotDue
-    }
+    round_overdue_with_waits(clock, &[], now, limit_minutes)
 }
 
 /// One interval the task waits for the human's answer.
@@ -93,11 +80,38 @@ pub struct HumanWait {
 #[must_use]
 pub fn round_overdue_with_waits(
     clock: &RoundClock<'_>,
-    _waits: &[HumanWait],
+    waits: &[HumanWait],
     now: Timestamp,
     limit_minutes: u32,
 ) -> Overdue {
-    round_overdue(clock, now, limit_minutes)
+    if limit_minutes == 0 {
+        return Overdue::NotDue;
+    }
+    let since = clock_start(clock);
+    if now < since {
+        return Overdue::NotDue;
+    }
+    let mut counted = now.as_utc() - since.as_utc();
+    let mut intervals: Vec<_> = waits
+        .iter()
+        .map(|wait| (wait.asked_at.max(since), wait.answered_at.unwrap_or(now).min(now)))
+        .collect();
+    intervals.sort_unstable();
+    // The cursor merges overlaps as they are subtracted, so each instant is left out only once.
+    let mut cursor = since;
+    for (start, end) in intervals {
+        let start = start.max(cursor);
+        if end > start {
+            counted = counted.saturating_sub(end.as_utc() - start.as_utc());
+            cursor = end;
+        }
+    }
+    let minutes = counted.whole_minutes().unsigned_abs();
+    if minutes >= u64::from(limit_minutes) {
+        Overdue::Due { minutes, since }
+    } else {
+        Overdue::NotDue
+    }
 }
 
 #[cfg(test)]

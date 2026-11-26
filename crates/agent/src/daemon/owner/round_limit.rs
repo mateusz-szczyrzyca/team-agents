@@ -8,11 +8,11 @@
 
 use agent_core::decide::commit_reminder::is_reminded;
 use agent_core::decide::ladder::Trouble;
-use agent_core::decide::round_limit::{Overdue, RoundClock, RunMark, round_overdue};
+use agent_core::decide::round_limit::{HumanWait, Overdue, RoundClock, RunMark, round_overdue_with_waits};
 use agent_core::ids::{ItemId, RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::protocol::EventKind;
-use agent_core::state::{ItemPhase, Round, RunEnd, RunState, State, Timestamp};
+use agent_core::state::{ItemPhase, QuestionState, Round, RunEnd, RunState, State, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::process::error_chain;
 
@@ -46,6 +46,8 @@ pub(super) struct Timed {
     pub(super) held_since: Option<Timestamp>,
     /// The task's runs, oldest first.
     pub(super) runs: Vec<RunMark>,
+    /// Every interval waiting for a human answer, including check questions.
+    pub(super) waits: Vec<HumanWait>,
 }
 
 impl Timed {
@@ -100,6 +102,18 @@ pub(super) fn timed_round(state: &State, task: &TaskId) -> Option<Timed> {
         opened_at: round.opened_at(),
         held_since: found.member.past_holders().last().map(|holding| holding.until),
         runs,
+        waits: found
+            .member
+            .questions()
+            .iter()
+            .map(|question| HumanWait {
+                asked_at: question.asked_at(),
+                answered_at: match question.state() {
+                    QuestionState::Open => None,
+                    QuestionState::Answered { at, .. } => Some(*at),
+                },
+            })
+            .collect(),
     })
 }
 
@@ -132,13 +146,17 @@ impl Owner {
                 return;
             }
         };
-        let Overdue::Due { minutes, since } = round_overdue(&timed.clock(), now, limit) else {
+        let Overdue::Due { minutes, since } = round_overdue_with_waits(&timed.clock(), &timed.waits, now, limit) else {
             return;
         };
+        let waited = (now.as_utc() - since.as_utc())
+            .whole_minutes()
+            .unsigned_abs()
+            .saturating_sub(minutes);
         agent_runtime::history::log_decision(
             "round_overdue",
             &format!(
-                "task={task}, round={}, item={}, since={since}, limit={limit}",
+                "task={task}, round={}, item={}, since={since}, limit={limit}, waited={waited}",
                 timed.round, timed.item
             ),
             &format!("cut after {minutes} minutes"),
