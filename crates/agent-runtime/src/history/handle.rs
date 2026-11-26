@@ -169,6 +169,24 @@ pub enum Flush {
     TimedOut,
 }
 
+/// Where the writer says that a flush is done: a thread that waits for it, or a task of the runtime.
+enum FlushAnswer {
+    /// A thread blocks on the receiving end.
+    Blocking(SyncSender<()>),
+    /// A task awaits the receiving end.
+    Waiting(tokio::sync::oneshot::Sender<()>),
+}
+
+impl FlushAnswer {
+    /// Tells the one who flushes that everything before it is written; `false` when it gave up waiting.
+    fn answer(self) -> bool {
+        match self {
+            Self::Blocking(sender) => sender.send(()).is_ok(),
+            Self::Waiting(sender) => sender.send(()).is_ok(),
+        }
+    }
+}
+
 /// What the queue carries.
 enum Job {
     /// Scheduled cleanup, ordered after records already handed in.
@@ -202,7 +220,7 @@ enum Job {
         ack: tokio::sync::oneshot::Sender<Result<(), WriteError>>,
     },
     /// The writer is to answer on this channel when everything before it is written.
-    Flush(SyncSender<()>),
+    Flush(FlushAnswer),
     /// The writer is to stop.
     Close,
 }
@@ -820,7 +838,7 @@ impl History {
             return;
         };
         let (answer, answered) = sync_channel(1);
-        if queue.send(Job::Flush(answer)).is_err() {
+        if queue.send(Job::Flush(FlushAnswer::Blocking(answer))).is_err() {
             // The writer is gone: nothing is left to wait for.
             return;
         }
@@ -838,7 +856,7 @@ impl History {
             return Flush::Done;
         };
         let (answer, answered) = sync_channel(1);
-        match queue.try_send(Job::Flush(answer)) {
+        match queue.try_send(Job::Flush(FlushAnswer::Blocking(answer))) {
             Ok(()) => {}
             // The writer is gone: nothing is left to wait for.
             Err(TrySendError::Disconnected(_)) => return Flush::Done,
@@ -854,8 +872,23 @@ impl History {
 
     /// Waits at most `limit`, without blocking a thread of the runtime, until everything handed in before is written or
     /// lost; a writer that is stuck is not waited for longer.
-    pub async fn flush_within_async(&self, _limit: Duration) -> Flush {
-        Flush::Done
+    pub async fn flush_within_async(&self, limit: Duration) -> Flush {
+        let Some(queue) = &self.queue else {
+            return Flush::Done;
+        };
+        let (answer, answered) = tokio::sync::oneshot::channel();
+        match queue.try_send(Job::Flush(FlushAnswer::Waiting(answer))) {
+            Ok(()) => {}
+            // The writer is gone: nothing is left to wait for.
+            Err(TrySendError::Disconnected(_)) => return Flush::Done,
+            // The writer is behind by a whole queue: waiting for it would wait for all of it.
+            Err(TrySendError::Full(_)) => return Flush::TimedOut,
+        }
+        match tokio::time::timeout(limit, answered).await {
+            // Or the writer stopped before it answered: it has nothing more to write.
+            Ok(Ok(()) | Err(_)) => Flush::Done,
+            Err(_) => Flush::TimedOut,
+        }
     }
 
     /// Whether the history is off: nothing is recorded, so nothing is worth working out for it.
@@ -884,7 +917,7 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
         };
         let mut batch: Vec<Record> = Vec::new();
         let mut log_batch: Vec<LogRecord> = Vec::new();
-        let mut flushes: Vec<SyncSender<()>> = Vec::new();
+        let mut flushes: Vec<FlushAnswer> = Vec::new();
         let mut next = Some(first);
         while let Some(job) = next.take() {
             match job {
@@ -975,7 +1008,7 @@ fn write_jobs(mut store: impl Store, jobs: &Receiver<Job>, shared: &Shared) {
         write_log_batch(&mut store, shared, log_batch);
         for answer in flushes {
             // The one who flushes may have given up waiting; there is nobody to tell then.
-            if answer.send(()).is_err() {
+            if !answer.answer() {
                 tracing::debug!("a flush of the history was not waited for");
             }
         }
@@ -989,7 +1022,7 @@ fn count_what_is_left(jobs: &Receiver<Job>, shared: &Shared) {
         match job {
             Job::Record(_) => shared.lose(1),
             Job::Flush(answer) => {
-                if answer.send(()).is_err() {
+                if !answer.answer() {
                     tracing::debug!("a flush of the history was not waited for");
                 }
             }
