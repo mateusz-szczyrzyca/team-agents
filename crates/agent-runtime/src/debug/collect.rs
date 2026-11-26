@@ -392,7 +392,10 @@ impl Collection {
     }
 
     /// Observes pool worker tasks that served the team, as recorded in the history.
-    #[expect(clippy::too_many_lines, reason = "worker observation is one logical unit that reads history, collects files and builds summary in sequence")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "worker observation is one logical unit that reads history, collects files and builds summary in sequence"
+    )]
     async fn observe_workers(&mut self, home: &Home, team: &Team) -> Result<(), DebugRuntimeError> {
         /// Maximum worker runs to collect per task.
         const MAX_WORKER_RUNS: usize = 3;
@@ -409,11 +412,13 @@ impl Collection {
         {
             Ok(records) => records,
             Err(error) => {
-                self.assessment.unreadable.push(agent_core::diagnostic_assessment::ReadFailure {
-                    section: SummarySection::CollectionFailures,
-                    part: "worker tasks history".to_owned(),
-                    reason: error_chain(&error),
-                });
+                self.assessment
+                    .unreadable
+                    .push(agent_core::diagnostic_assessment::ReadFailure {
+                        section: SummarySection::CollectionFailures,
+                        part: "worker tasks history".to_owned(),
+                        reason: error_chain(&error),
+                    });
                 return Ok(());
             }
         };
@@ -504,10 +509,7 @@ impl Collection {
             }
 
             // Add worker summary facts with start/end times from the history records.
-            let agent_name: AgentName = match worker_agents
-                .get(&worker_task)
-                .and_then(|name| name.parse().ok())
-            {
+            let agent_name: AgentName = match worker_agents.get(&worker_task).and_then(|name| name.parse().ok()) {
                 Some(name) => name,
                 None => continue,
             };

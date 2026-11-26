@@ -397,8 +397,7 @@ fn worker_task_resolves_to_team() {
     resolve_debug_target(&state, &DebugTarget::Task(worker_id.clone())).unwrap_err();
 
     // The history-based resolver finds it.
-    let result =
-        resolve_debug_target_with_history(&state, &DebugTarget::Task(worker_id.clone()), &home.history_file());
+    let result = resolve_debug_target_with_history(&state, &DebugTarget::Task(worker_id.clone()), &home.history_file());
     assert_eq!(result.unwrap(), team_id);
 }
 
@@ -414,11 +413,7 @@ fn unknown_task_still_fails() {
     // Not in history either since there is no history with this task.
     let temp = tempfile::tempdir().unwrap();
     let history = temp.path().join("nonexistent.db");
-    let result = resolve_debug_target_with_history(
-        &state,
-        &DebugTarget::Task(unknown.clone()),
-        &history,
-    );
+    let result = resolve_debug_target_with_history(&state, &DebugTarget::Task(unknown.clone()), &history);
     assert!(
         matches!(&result, Err(DebugRuntimeError::UnknownTarget { id }) if id.as_str() == unknown.as_str()),
         "{result:?}"
@@ -809,13 +804,7 @@ async fn secret_in_process_command_line_is_in_no_file_of_bundle() {
     assert!(!summary.contains(secret), "summary must not contain secret: {summary}");
 }
 
-fn write_worker_run(
-    home: &Home,
-    team: &TeamId,
-    worker_task: &TaskId,
-    run: &agent_core::ids::RunId,
-    at: &str,
-) {
+fn write_worker_run(home: &Home, team: &TeamId, worker_task: &TaskId, run: &agent_core::ids::RunId, at: &str) {
     use crate::history::{HistoryDb, Store};
     use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy};
     use agent_core::kinds::{CliKind, Tier};
@@ -861,14 +850,24 @@ async fn team_bundle_has_worker_files() {
     let run_dir = task_dir.join("runs").join(worker_run.as_str());
     std::fs::create_dir_all(&run_dir).unwrap();
     std::fs::write(task_dir.join("context.json"), b"{\"context\": 5000}").unwrap();
-    std::fs::write(run_dir.join("out.jsonl"), b"{\"type\": \"text\", \"message\": \"worker output\"}\n").unwrap();
+    std::fs::write(
+        run_dir.join("out.jsonl"),
+        b"{\"type\": \"text\", \"message\": \"worker output\"}\n",
+    )
+    .unwrap();
 
     let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
 
     // The bundle has the worker task files.
     let worker_bundle = result.bundle_dir.join("tasks").join(worker_id.as_str());
     assert!(worker_bundle.join("context.json").exists());
-    assert!(worker_bundle.join("runs").join(worker_run.as_str()).join("out.jsonl").exists());
+    assert!(
+        worker_bundle
+            .join("runs")
+            .join(worker_run.as_str())
+            .join("out.jsonl")
+            .exists()
+    );
 
     // The summary lists the worker.
     let summary = std::fs::read_to_string(result.summary_path).unwrap();
@@ -949,13 +948,7 @@ async fn only_last_three_worker_runs() {
         .map(|i| format!("run-20261117-12000{i}-wrk4").parse().unwrap())
         .collect();
     for (i, run) in runs.iter().enumerate() {
-        write_worker_run(
-            &home,
-            &team_id,
-            &worker_id,
-            run,
-            &format!("2026-11-17T12:0{i}:00Z"),
-        );
+        write_worker_run(&home, &team_id, &worker_id, run, &format!("2026-11-17T12:0{i}:00Z"));
         let run_dir = home.task_dir(&worker_id).join("runs").join(run.as_str());
         std::fs::create_dir_all(&run_dir).unwrap();
         std::fs::write(run_dir.join("out.jsonl"), format!("{{\"run\":{i}}}\n")).unwrap();
@@ -972,9 +965,24 @@ async fn only_last_three_worker_runs() {
 
     // Only the newest 3 runs (indices 4,3,2 = runs 5,4,3) should be present.
     assert_eq!(entries.len(), 3, "entries: {entries:?}");
-    assert!(!entries.iter().any(|name| name.contains("120001")), "run 1 should be absent");
-    assert!(!entries.iter().any(|name| name.contains("120002")), "run 2 should be absent");
-    assert!(entries.iter().any(|name| name.contains("120003")), "run 3 should be present");
-    assert!(entries.iter().any(|name| name.contains("120004")), "run 4 should be present");
-    assert!(entries.iter().any(|name| name.contains("120005")), "run 5 should be present");
+    assert!(
+        !entries.iter().any(|name| name.contains("120001")),
+        "run 1 should be absent"
+    );
+    assert!(
+        !entries.iter().any(|name| name.contains("120002")),
+        "run 2 should be absent"
+    );
+    assert!(
+        entries.iter().any(|name| name.contains("120003")),
+        "run 3 should be present"
+    );
+    assert!(
+        entries.iter().any(|name| name.contains("120004")),
+        "run 4 should be present"
+    );
+    assert!(
+        entries.iter().any(|name| name.contains("120005")),
+        "run 5 should be present"
+    );
 }

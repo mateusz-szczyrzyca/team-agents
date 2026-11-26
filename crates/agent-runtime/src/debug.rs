@@ -175,17 +175,12 @@ pub fn resolve_debug_target_with_history(
         DebugRuntimeError::UnknownTarget { id }
     })?;
     // Find the latest run by its start time to get the team.
-    let latest = runs
-        .into_iter()
-        .max_by_key(|row| row.start.value.at);
-    let team_id = latest
-        .map(|row| row.start.value.team);
+    let latest = runs.into_iter().max_by_key(|row| row.start.value.at);
+    let team_id = latest.map(|row| row.start.value.team);
     // Verify the team still exists in the state.
     match team_id {
         Some(id) if state.team(&id).is_some() => Ok(id),
-        _ => Err(DebugRuntimeError::UnknownTarget {
-            id: task.to_string(),
-        }),
+        _ => Err(DebugRuntimeError::UnknownTarget { id: task.to_string() }),
     }
 }
 

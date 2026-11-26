@@ -729,16 +729,11 @@ fn render_workers(workers: &[WorkerSummaryFacts], out: &mut SummaryWriter) {
             .why_asked_by
             .as_ref()
             .map_or_else(|| "-".to_owned(), |r| r.as_str().to_owned());
-        let started = w
-            .last_run_started
-            .map_or_else(|| "-".to_owned(), |s| format!("{s:?}"));
+        let started = w.last_run_started.map_or_else(|| "-".to_owned(), |s| format!("{s:?}"));
         let ended = w.last_run_end_detail.clone();
         write_line(
             out,
-            &format!(
-                "| {} | {} | {} | {} | {} |",
-                w.task, w.agent, asked_by, started, ended
-            ),
+            &format!("| {} | {} | {} | {} | {} |", w.task, w.agent, asked_by, started, ended),
         );
     }
 }
