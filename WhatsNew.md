@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.122.0 — 26.11.2026 — PR pending
+
+### Bug fixes
+- [agent-core] Replacement and busy hand-over now select only an agent of the same tier: a normal agent for a normal agent, an investigator for an investigator.
+
+### Configuration
+- [agent-core] changed: `[replacement] agents` (default `[]`) — only an agent of the same tier as the one it replaces is taken.
+
 ## agent 0.125.0 — 26.11.2026 — PR #300
 
 ### Bug fixes
