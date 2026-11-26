@@ -1265,8 +1265,9 @@ have the formats.
 
 Investigator request support is being introduced in stages. Team state can retain an `investigator` task role
 beside reviewer tasks and record its investigation activity; older state without the role field still loads.
-History schema 33 accepts investigator runs and the three investigation event names. The request and answer
-prompts are installed, but this release does not start queued investigations or deliver their answers.
+History schema 33 accepts investigator runs. Investigation log events will arrive with their daemon emitters
+in a follow-up migration. The request and answer prompts are installed, but this release does not start queued
+investigations or deliver their answers.
 
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
