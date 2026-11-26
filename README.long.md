@@ -672,8 +672,8 @@ starts to wait, with `team`, `operation`, `pr`, `outlook` (`may_pass` or `will_n
 Read a round with `agent log --round <round-id>`, or a team's rounds with `agent log --team <team-id>`. Both read the history directly and work with the daemon stopped.
 Use `--prompts` for whole prompts, `--no-steps` to omit individual steps, or `--json` for every record exactly once
 as JSON lines. In text, adjacent reviewer run blocks of the same team, pull request and pass follow their first recorded
-review requests; if any request is missing, their original order remains. Events stay in place, run timestamps and contents
-are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
+review requests, and the pass's review reports follow all of those runs; if any request is missing, their original order
+remains. Every other event stays in place, run timestamps and contents are preserved, and JSON stays chronological. An unknown round or team exits with code `3`. See [`docs/log.md`](docs/log.md) for the story format,
 ordering and exit codes. `agent log` reads a history of an older schema without changing it; the daemon migrates it
 when it opens it for writing. Worker tasks are shown like member tasks: `agent log --task task-…-e8j7`
 prints the runs and steps of a pool worker.
