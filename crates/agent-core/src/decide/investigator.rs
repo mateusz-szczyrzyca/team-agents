@@ -68,7 +68,7 @@ pub fn choose(
     candidates.sort_unstable();
 
     let req = required.get();
-    let boundary_key = candidates[req - 1].0;
+    let boundary_key = candidates.get(req.saturating_sub(1)).map(|(k, _)| *k)?;
     let oldest_activity_key = candidates
         .iter()
         .map(|(k, _)| *k)
@@ -85,10 +85,12 @@ pub fn choose(
         let slots_for_key = req - start;
         if slots_for_key < candidates_for_key {
             use rand::seq::SliceRandom;
-            let tied = &mut candidates[start..end];
-            tied.shuffle(rng);
-            let chosen = &mut tied[..slots_for_key];
-            chosen.sort_unstable();
+            if let Some(tied) = candidates.get_mut(start..end) {
+                tied.shuffle(rng);
+                if let Some(chosen) = tied.get_mut(..slots_for_key) {
+                    chosen.sort_unstable();
+                }
+            }
         }
     }
 
