@@ -17,7 +17,7 @@
 use std::collections::BTreeMap;
 use std::ffi::{OsStr, OsString};
 use std::fmt;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::string::FromUtf8Error;
@@ -32,9 +32,11 @@ use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::Instrument;
 
+mod investigations;
 mod latest;
 mod unread;
 
+pub use investigations::{InvTransition, Investigation, InvestigationKind};
 pub use latest::{LatestMessageError, MessageNote};
 pub use unread::{
     Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, Said, UnreadMessage, UnreadMessages, UnreadMessagesError,
@@ -147,6 +149,14 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// `inv-next`.
+    InvNext,
+    /// `inv-set`.
+    InvSet,
+    /// `inv-get`.
+    InvGet,
+    /// `inv-list`.
+    InvList,
 }
 
 /// Why `agentbus` failed, by its exit status.
@@ -255,6 +265,9 @@ pub enum AgentBusError {
         command: BusCommand,
         /// What it printed, bounded.
         output: String,
+        /// Why decoding failed, when a typed decode was attempted on valid JSON.
+        #[source]
+        source: Option<serde_json::Error>,
     },
 }
 
@@ -1597,6 +1610,104 @@ impl AgentBus {
         parse_status(&output)
     }
 
+    /// Takes the next eligible queued investigation request, marking it `starting`; none when the queue is empty
+    /// or active investigators reached `slots`.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn inv_next(
+        &self,
+        queue_max: NonZeroUsize,
+        slots: NonZeroUsize,
+    ) -> Result<Option<Investigation>, AgentBusError> {
+        let command = BusCommand::InvNext;
+        let args = Args::new()
+            .flag("--queue-max", queue_max.to_string())
+            .flag("--inv-slots", slots.to_string());
+        let output = self.run(command, args, None).await?;
+        if output.trim().is_empty() {
+            return Ok(None);
+        }
+        // Decode the raw value first so the id is recoverable if the typed decode fails.
+        let raw: serde_json::Value =
+            serde_json::from_str(&output).map_err(|source| AgentBusError::Decode { command, source })?;
+        let id = raw
+            .get("id")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| u32::try_from(n).ok().and_then(NonZeroU32::new));
+        serde_json::from_value(raw).map(Some).map_err(|source| {
+            // `inv-next` already marked the request `starting`; return the id so the caller can
+            // requeue or fail the request.
+            match id {
+                Some(id) => AgentBusError::Unexpected {
+                    command,
+                    output: format!("could not decode request #{id}"),
+                    source: Some(source),
+                },
+                None => AgentBusError::Decode { command, source },
+            }
+        })
+    }
+
+    /// Sets the status of an investigation request.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] for an investigation that does not exist.
+    pub async fn inv_set(&self, id: NonZeroU32, transition: &InvTransition) -> Result<(), AgentBusError> {
+        let mut args = Args::new().flag("--id", id.to_string());
+        match transition {
+            InvTransition::Running { task } => {
+                args = args.flag("--status", "running").flag("--inv-task", task.as_str());
+            }
+            InvTransition::Done { summary } => {
+                args = args.flag("--status", "done").flag("--summary", summary);
+            }
+            InvTransition::Failed { reason } => {
+                args = args.flag("--status", "failed").flag("--summary", reason);
+            }
+            InvTransition::Requeued => {
+                args = args.flag("--status", "queued");
+            }
+        }
+        self.run(BusCommand::InvSet, args, None).await.map(drop)
+    }
+
+    /// Reads an investigation by ID.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] if no such investigation exists.
+    pub async fn inv_get(&self, id: NonZeroU32) -> Result<Investigation, AgentBusError> {
+        let command = BusCommand::InvGet;
+        let args = Args::new().flag("--id", id.to_string());
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
+    }
+
+    /// Lists open investigations (pending or in progress).
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn inv_open(&self) -> Result<Vec<Investigation>, AgentBusError> {
+        let command = BusCommand::InvList;
+        let output = self.run(command, Args::new(), None).await?;
+        let mut ids = Vec::new();
+        for line in output.lines() {
+            let trimmed = line.trim_start();
+            if let Some(rest) = trimmed.strip_prefix('#') {
+                let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+                let Ok(id) = digits.parse::<NonZeroU32>() else {
+                    return Err(unexpected(BusCommand::InvList, &output));
+                };
+                ids.push(id);
+            }
+        }
+        let mut items = Vec::with_capacity(ids.len());
+        for id in ids {
+            items.push(self.inv_get(id).await?);
+        }
+        Ok(items)
+    }
+
     /// Runs `command` with `args` against this bus and returns what it printed. The bus is named with `--dir`, which
     /// wins over `AGENTBUS_DIR` of the environment, and in `AGENTS_HOME`, where the command writes its log: nothing
     /// but this `AgentBus` decides which bus a command works on.
@@ -1683,6 +1794,7 @@ fn unexpected(command: BusCommand, output: &str) -> AgentBusError {
     AgentBusError::Unexpected {
         command,
         output: diagnostic(output.as_bytes()),
+        source: None,
     }
 }
 

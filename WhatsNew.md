@@ -9,15 +9,23 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.120.0 — 26.11.2026 — PR #290
+## agent 0.121.0 — 26.11.2026 — PR #290
 
 ### Bug fixes
 - [agent] A pool worker's run is now recorded in the history: `agent log --task <worker task>` shows its start, end and steps instead of nothing, and the steps are no longer lost.
 
-## agent-runtime 0.113.0 — 26.11.2026 — PR #289
+## agent-runtime 0.114.0 — 26.11.2026 — PR #289
 
 ### Bug fixes
 - [agent-runtime] `agent debug` now covers a team's pool workers: `--task` accepts a worker task and writes its team's bundle, and every team bundle holds the workers' `context.json`, the output of their last three runs and a `workers:` list in the summary. Before, a worker task failed with `unknown diagnostic target` and the bundle left the workers out.
+
+## agent 0.120.0 · agent-core 0.118.0 · agent-runtime 0.113.0 — 26.11.2026 — PR #287
+
+### New features
+- [agent-runtime] The bus library adds typed wrappers for `inv-next`, `inv-set`, `inv-get` and `inv-list`.
+
+### Enhancements
+- [agent] [agent-core] The daemon picks randomly among investigators tied on oldest activity.
 
 ## agent 0.119.0 — 26.11.2026 — PR #288
 
