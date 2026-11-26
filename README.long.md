@@ -1253,7 +1253,7 @@ daemon the first gate of each task runs again. Details: [`docs/architecture.md`]
 ### Compatibility and upgrades
 
 Each version reads what an older one wrote: the state (`state.json`, schema 15 now) is migrated when the daemon loads
-it, and the history (`history.db`, schema 28 now) when the daemon opens it for writing — `agent log` reads an older
+it, and the history (`history.db`, schema 33 now) when the daemon opens it for writing — `agent log` reads an older
 history as it is. A version that adds a field, a log event or a table migrates forward and keeps every record. The way
 back is closed: **an older daemon refuses a state or a history of a newer schema**, so keep a copy of `state.json` and
 `history.db` before an upgrade if you may need to return. The CLI and the daemon talk over `agent.sock` with protocol
@@ -1262,6 +1262,17 @@ older protocol lacks; an older daemon refuses a command it does not know, such a
 installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
 changes and what you must do (**Action:**); [`docs/state.md`](docs/state.md) and [`docs/history.md`](docs/history.md)
 have the formats.
+
+Investigator request support is being introduced in stages. Team state can retain an `investigator` task role
+beside reviewer tasks and record its investigation activity; older state without the role field still loads.
+History schema 33 accepts investigator runs. Investigation log events will arrive with their daemon emitters
+in a follow-up migration. The request and answer prompts are installed, but this release does not start queued
+investigations or deliver their answers.
+
+For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
+`--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
+queued, and the investigator slot limit remains global. The Rust bus wrapper exposes this as `inv_next_for_tasks`;
+an empty task set retains the unfiltered behavior of `inv_next`.
 
 ## MCP tools available to agents
 

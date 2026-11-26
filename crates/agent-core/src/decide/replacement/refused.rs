@@ -153,7 +153,7 @@ fn fits(role: Role, team: &[AgentName], refused_provider: &str, candidate: &Cand
     match role {
         Role::Coordinator => candidate.tier == Tier::Investigator,
         Role::Member => candidate.tier != Tier::Worker,
-        Role::Solo | Role::Worker | Role::Reviewer => true,
+        Role::Solo | Role::Worker | Role::Reviewer | Role::Investigator => true,
     }
 }
 
@@ -165,7 +165,7 @@ fn fallback_candidates<'a>(
 ) -> &'a [Candidate<'a>] {
     match role {
         Role::Coordinator => investigators,
-        Role::Solo | Role::Member | Role::Worker | Role::Reviewer => normal_agents,
+        Role::Solo | Role::Member | Role::Worker | Role::Reviewer | Role::Investigator => normal_agents,
     }
 }
 

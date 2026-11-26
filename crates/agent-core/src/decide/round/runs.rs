@@ -55,7 +55,7 @@ pub fn rounds_of_run(role: Role, start: RunStart<'_>, task: &TaskRounds<'_>) -> 
         (Role::Reviewer, RunStart::Review { round }) => round.into_iter().cloned().collect(),
         (Role::Solo | Role::Member, _) => task.item.into_iter().cloned().collect(),
         (Role::Coordinator, _) => task.open.to_vec(),
-        (Role::Worker | Role::Reviewer, _) => Vec::new(),
+        (Role::Worker | Role::Reviewer | Role::Investigator, _) => Vec::new(),
     }
 }
 

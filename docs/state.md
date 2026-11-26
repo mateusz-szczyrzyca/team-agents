@@ -330,7 +330,11 @@ field; keep a pre-upgrade state backup if a downgrade is needed.
 | `team` | `coordinator`, `members`, `workers` | the coordinator is a normal agent or an investigator; `members` (at least one) take items and are normal agents or investigators — a second investigator in a team is a member; `workers` serve `delegate` requests, in the configured order, and are workers |
 
 A member's **role** is its place in the crew — it is not stored twice. Roles are `solo`, `coordinator`, `member`,
-`worker` and, for the reviewers of a team, `reviewer` (an investigator outside the crew). A participant is written
+`worker` and, for the reviewers of a team, `reviewer` (an investigator outside the crew). An investigation task
+is retained beside reviewers with an explicit `"role": "investigator"`; an absent role still means `reviewer` there.
+Reviewer entries accept only absent, `reviewer`, or `investigator` roles; crew roles are rejected.
+Multiple investigation tasks may retain the same investigator name, each with its own task ID. Their durable activity
+has request kind `investigation`, and a completed task records a reported outcome. A participant is written
 `{"tier": "normal" | "worker" | "investigator", "name": "codex-1"}`; the names of the three tiers share one namespace,
 as in the configuration.
 

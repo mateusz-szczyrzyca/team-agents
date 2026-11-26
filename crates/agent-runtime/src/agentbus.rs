@@ -14,7 +14,7 @@
 //! What a command prints is a format of Go code. The readers here accept exactly what the commands of this
 //! repository print; an output they do not recognise is [`AgentBusError::Unexpected`], never a guess.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::num::{NonZeroU32, NonZeroU64, NonZeroUsize};
@@ -1634,20 +1634,36 @@ impl AgentBus {
         parse_status(&output)
     }
 
-    /// Takes the next eligible queued investigation request, marking it `starting`; none when the queue is empty
-    /// or active investigators reached `slots`.
+    /// Takes the next queued investigation without restricting its requesting task.
     ///
     /// # Errors
-    /// [`AgentBusError`].
+    /// [`AgentBusError`] if the bus fails or returns invalid data.
     pub async fn inv_next(
         &self,
         queue_max: NonZeroUsize,
         slots: NonZeroUsize,
     ) -> Result<Option<Investigation>, AgentBusError> {
+        self.inv_next_for_tasks(queue_max, slots, &BTreeSet::new()).await
+    }
+
+    /// Takes the next eligible queued investigation request, marking it `starting`; none when the queue is empty
+    /// or active investigators reached `slots`. An empty task set includes all requesters.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn inv_next_for_tasks(
+        &self,
+        queue_max: NonZeroUsize,
+        slots: NonZeroUsize,
+        tasks: &BTreeSet<TaskId>,
+    ) -> Result<Option<Investigation>, AgentBusError> {
         let command = BusCommand::InvNext;
-        let args = Args::new()
+        let mut args = Args::new()
             .flag("--queue-max", queue_max.to_string())
             .flag("--inv-slots", slots.to_string());
+        for task in tasks {
+            args = args.flag("--task", task.as_str());
+        }
         let output = self.run(command, args, None).await?;
         if output.trim().is_empty() {
             return Ok(None);

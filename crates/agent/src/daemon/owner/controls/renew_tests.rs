@@ -136,3 +136,26 @@ async fn a_team_is_not_renewed_as_a_whole() {
     );
     daemon.stop().await.unwrap();
 }
+
+#[tokio::test]
+async fn an_investigator_is_not_renewed() {
+    let mut state = crate::daemon::owner::fixture::pair_state();
+    let mut investigator = crate::fixtures::member(3, crate::fixtures::investigator("inv-1"))
+        .with_role(agent_core::kinds::Role::Investigator);
+    investigator.transition(TaskStatus::Stopped).unwrap();
+    state.add_reviewer(&team_id(0), investigator).unwrap();
+    let mut daemon = Daemon::new(&state, None);
+    daemon.scenario(1, "busy");
+    daemon.scenario(2, "busy");
+    daemon.start().await;
+
+    let (kind, message) = refusal(daemon.ask(renew(3)).await);
+
+    assert_eq!(kind, FailureKind::Conflict);
+    assert_eq!(
+        message,
+        format!("{} is a investigator: only a lead or a member can be renewed", task(3))
+    );
+    assert_eq!(history_of(&daemon.state(), 3), (0, None));
+    daemon.stop().await.unwrap();
+}

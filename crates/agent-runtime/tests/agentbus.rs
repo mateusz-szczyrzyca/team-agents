@@ -1686,4 +1686,46 @@ mod agentbus_commands {
             .unwrap();
         assert!(third.is_none(), "both slots filled, third call should be None");
     }
+    #[tokio::test]
+    async fn inv_next_for_tasks_preserves_other_teams_requests_and_filters_repeated_tasks() {
+        let fixture = fixture();
+        let first = add_investigation(&fixture, &agent("gemini-1"), &task("1111"), "Other team", "").await;
+        let second = add_investigation(&fixture, &agent("gemini-1"), &task("2222"), "Pytanie 日本語", "").await;
+        let third = add_investigation(&fixture, &agent("gemini-1"), &task("3333"), "Another member", "").await;
+        let max = NonZeroUsize::new(3).unwrap();
+        let slots = NonZeroUsize::new(2).unwrap();
+        let missing = std::collections::BTreeSet::from([task("4444")]);
+        assert_eq!(
+            fixture.bus.inv_next_for_tasks(max, slots, &missing).await.unwrap(),
+            None
+        );
+        let tasks = std::collections::BTreeSet::from([task("2222"), task("3333")]);
+        let next = fixture
+            .bus
+            .inv_next_for_tasks(max, slots, &tasks)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((next.id, next.from_task), (second, task("2222")));
+        let next = fixture
+            .bus
+            .inv_next_for_tasks(max, slots, &tasks)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((next.id, next.from_task), (third, task("3333")));
+        assert_eq!(fixture.bus.inv_next(max, slots).await.unwrap(), None);
+        fixture
+            .bus
+            .inv_set(
+                second,
+                &InvTransition::Done {
+                    summary: "answered".into(),
+                },
+            )
+            .await
+            .unwrap();
+        let next = fixture.bus.inv_next(max, slots).await.unwrap().unwrap();
+        assert_eq!((next.id, next.from_task), (first, task("1111")));
+    }
 }

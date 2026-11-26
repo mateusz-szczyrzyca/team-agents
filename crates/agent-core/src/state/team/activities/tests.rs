@@ -677,3 +677,45 @@ fn a_start_failure_after_a_run_without_a_status_is_told_to_the_record_and_not_in
         }
     );
 }
+
+#[test]
+fn investigation_tasks_retain_one_assignment_and_report_completion() {
+    let mut team = team(1);
+    team.add_reviewer(member(20, inv("inv-codex"))).unwrap();
+    team.add_reviewer(member(21, inv("inv-codex")).with_role(crate::kinds::Role::Investigator))
+        .unwrap();
+    team.record_activities(at(21));
+    assert_eq!(team.activities().len(), 2);
+    let entry = team.activities().last().unwrap();
+    assert_eq!(entry.investigator().as_str(), "inv-codex");
+    assert_eq!(entry.task(), &task(21));
+    assert_eq!(entry.request(), &ActivityRequest::Investigation);
+    assert_eq!(entry.asked_at(), at(21));
+    assert_eq!(entry.rounds(), &[]);
+    assert_eq!(entry.outcome(), &ActivityOutcome::Working);
+    let (role, mut investigator) = team.find_mut(&task(21)).unwrap();
+    assert_eq!(role, crate::kinds::Role::Investigator);
+    investigator.transition(TaskStatus::Running).unwrap();
+    investigator.begin_run(run(1), at(22), None).unwrap();
+    investigator
+        .end_run(
+            at(30),
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    investigator.transition(TaskStatus::Done).unwrap();
+    team.record_activities(at(31));
+    team.record_activities(at(32));
+    assert_eq!(team.activities().len(), 2);
+    let entry = team.activities().last().unwrap();
+    assert_eq!(entry.asked_at(), at(21));
+    assert_eq!(
+        entry.outcome(),
+        &ActivityOutcome::Finished {
+            at: at(30),
+            end: ActivityEnd::Reported
+        }
+    );
+}

@@ -41,7 +41,7 @@ fn a_history_of_version_18_keeps_its_logs_when_upgraded_and_takes_the_damage_of_
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 32);
+    assert_eq!(version, 33);
     let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
     assert_eq!(
         logs.iter()
