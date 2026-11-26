@@ -304,6 +304,7 @@ impl Collection {
                 configuration: None,
                 secret_keys: vec![],
                 machine: empty_machine_summary(),
+                workers: vec![],
                 unreadable_parts: vec![],
             },
             checkout: None,

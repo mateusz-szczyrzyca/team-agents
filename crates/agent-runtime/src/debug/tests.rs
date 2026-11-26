@@ -102,6 +102,7 @@ fn retries_oversized_required_presentation_without_losing_full_facts() {
             tasks_dir_bytes: None,
             worktrees_dir_bytes: None,
         },
+        workers: vec![],
         unreadable_parts: vec![UnreadablePartSummary {
             section: agent_core::debug_summary::SummarySection::Machine,
             name: "worktree".to_owned(),
@@ -806,4 +807,174 @@ async fn secret_in_process_command_line_is_in_no_file_of_bundle() {
     assert_no_secret_in_directory(&result.bundle_dir, secret);
     let summary = std::fs::read_to_string(&result.summary_path).unwrap();
     assert!(!summary.contains(secret), "summary must not contain secret: {summary}");
+}
+
+fn write_worker_run(
+    home: &Home,
+    team: &TeamId,
+    worker_task: &TaskId,
+    run: &agent_core::ids::RunId,
+    at: &str,
+) {
+    use crate::history::{HistoryDb, Store};
+    use agent_core::history::{AgentIdentity, MaxTextBytes, Record, RunStart, RunWhy};
+    use agent_core::kinds::{CliKind, Tier};
+
+    let mut database = HistoryDb::open(&home.history_file(), MaxTextBytes::default()).unwrap();
+    database
+        .write(&[Record::Run(Box::new(RunStart {
+            run: run.clone(),
+            team: team.clone(),
+            task: worker_task.clone(),
+            at: at.parse().unwrap(),
+            agent: AgentIdentity {
+                name: "codex-1".to_owned(),
+                tier: Tier::Worker,
+                cli: CliKind::Codex,
+                model: None,
+            },
+            role: agent_core::kinds::Role::Worker,
+            rounds: vec![],
+            why: RunWhy::Request { asked_by: None },
+            prompt: "Worker prompt".to_owned(),
+            worktree: agent_core::config::AbsolutePath::try_from("/tmp/wrk".to_owned()).unwrap(),
+            branch: "wrk-branch".parse().unwrap(),
+            session: None,
+        }))])
+        .unwrap();
+}
+
+#[tokio::test]
+async fn team_bundle_has_worker_files() {
+    let (_dir, home, args) = fixture();
+    let team_id = match &args.target {
+        DebugTarget::Team(id) => id.clone(),
+        _ => panic!("fixture targets a team"),
+    };
+    let worker_id: TaskId = "task-20261117-120001-wrk1".parse().unwrap();
+    let worker_run: agent_core::ids::RunId = "run-20261117-120001-wrk1".parse().unwrap();
+
+    write_worker_run(&home, &team_id, &worker_id, &worker_run, "2026-11-17T12:00:00Z");
+
+    // Create the worker task directory with a context.json and out.jsonl.
+    let task_dir = home.task_dir(&worker_id);
+    let run_dir = task_dir.join("runs").join(worker_run.as_str());
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(task_dir.join("context.json"), b"{\"context\": 5000}").unwrap();
+    std::fs::write(run_dir.join("out.jsonl"), b"{\"type\": \"text\", \"message\": \"worker output\"}\n").unwrap();
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    // The bundle has the worker task files.
+    let worker_bundle = result.bundle_dir.join("tasks").join(worker_id.as_str());
+    assert!(worker_bundle.join("context.json").exists());
+    assert!(worker_bundle.join("runs").join(worker_run.as_str()).join("out.jsonl").exists());
+
+    // The summary lists the worker.
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    assert!(summary.contains(worker_id.as_str()), "summary: {summary}");
+}
+
+#[tokio::test]
+async fn worker_output_is_redacted() {
+    let (_dir, home, args) = fixture();
+    let team_id = match &args.target {
+        DebugTarget::Team(id) => id.clone(),
+        _ => panic!("fixture targets a team"),
+    };
+    let worker_id: TaskId = "task-20261117-120002-wrk2".parse().unwrap();
+    let worker_run: agent_core::ids::RunId = "run-20261117-120002-wrk2".parse().unwrap();
+
+    write_worker_run(&home, &team_id, &worker_id, &worker_run, "2026-11-17T12:00:00Z");
+
+    let task_dir = home.task_dir(&worker_id);
+    let run_dir = task_dir.join("runs").join(worker_run.as_str());
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(
+        run_dir.join("out.jsonl"),
+        b"{\"type\": \"text\", \"message\": \"secret test-confidential-\\u03bb exposed\"}\n",
+    )
+    .unwrap();
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    let out_jsonl = std::fs::read_to_string(
+        result
+            .bundle_dir
+            .join("tasks")
+            .join(worker_id.as_str())
+            .join("runs")
+            .join(worker_run.as_str())
+            .join("out.jsonl"),
+    )
+    .unwrap();
+    assert!(out_jsonl.contains("<cut>"), "{out_jsonl}");
+    assert!(!out_jsonl.contains("test-confidential-λ"), "{out_jsonl}");
+}
+
+#[tokio::test]
+async fn missing_worker_dir_is_noted() {
+    let (_dir, home, args) = fixture();
+    let team_id = match &args.target {
+        DebugTarget::Team(id) => id.clone(),
+        _ => panic!("fixture targets a team"),
+    };
+    let worker_id: TaskId = "task-20261117-120003-wrk3".parse().unwrap();
+    let worker_run: agent_core::ids::RunId = "run-20261117-120003-wrk3".parse().unwrap();
+
+    write_worker_run(&home, &team_id, &worker_id, &worker_run, "2026-11-17T12:00:00Z");
+    // Do not create the task directory — it is missing.
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    let summary = std::fs::read_to_string(result.summary_path).unwrap();
+    // The summary should mention the missing worker task.
+    assert!(
+        summary.contains(worker_id.as_str()) || summary.contains("task_failed"),
+        "summary: {summary}"
+    );
+}
+
+#[tokio::test]
+async fn only_last_three_worker_runs() {
+    let (_dir, home, args) = fixture();
+    let team_id = match &args.target {
+        DebugTarget::Team(id) => id.clone(),
+        _ => panic!("fixture targets a team"),
+    };
+    let worker_id: TaskId = "task-20261117-120004-wrk4".parse().unwrap();
+
+    // Write 5 runs.
+    let runs: Vec<agent_core::ids::RunId> = (1..=5)
+        .map(|i| format!("run-20261117-12000{i}-wrk4").parse().unwrap())
+        .collect();
+    for (i, run) in runs.iter().enumerate() {
+        write_worker_run(
+            &home,
+            &team_id,
+            &worker_id,
+            run,
+            &format!("2026-11-17T12:0{i}:00Z"),
+        );
+        let run_dir = home.task_dir(&worker_id).join("runs").join(run.as_str());
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join("out.jsonl"), format!("{{\"run\":{i}}}\n")).unwrap();
+    }
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    let worker_runs_bundle = result.bundle_dir.join("tasks").join(worker_id.as_str()).join("runs");
+    let mut entries: Vec<_> = std::fs::read_dir(&worker_runs_bundle)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    entries.sort();
+
+    // Only the newest 3 runs (indices 4,3,2 = runs 5,4,3) should be present.
+    assert_eq!(entries.len(), 3, "entries: {entries:?}");
+    assert!(!entries.iter().any(|name| name.contains("120001")), "run 1 should be absent");
+    assert!(!entries.iter().any(|name| name.contains("120002")), "run 2 should be absent");
+    assert!(entries.iter().any(|name| name.contains("120003")), "run 3 should be present");
+    assert!(entries.iter().any(|name| name.contains("120004")), "run 4 should be present");
+    assert!(entries.iter().any(|name| name.contains("120005")), "run 5 should be present");
 }

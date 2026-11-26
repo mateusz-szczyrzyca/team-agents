@@ -124,6 +124,8 @@ pub struct SummaryInput {
     pub secret_keys: Vec<String>,
     /// Machine health and resources.
     pub machine: MachineSummary,
+    /// Worker tasks that served the team, with their run summary.
+    pub workers: Vec<WorkerSummaryFacts>,
     /// Names and error reasons for any collection parts that could not be read.
     pub unreadable_parts: Vec<UnreadablePartSummary>,
 }
@@ -374,6 +376,23 @@ pub struct MachineSummary {
     pub tasks_dir_bytes: Option<u64>,
     /// Total size in bytes of worktrees directory.
     pub worktrees_dir_bytes: Option<u64>,
+}
+
+/// Summary of a pool worker task that served the team.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkerSummaryFacts {
+    /// The worker's task ID.
+    pub task: TaskId,
+    /// The worker agent's name.
+    pub agent: AgentName,
+    /// The requester's run, or `None` when not known.
+    pub why_asked_by: Option<RunId>,
+    /// Last run start time.
+    pub last_run_started: Option<Timestamp>,
+    /// Last run end time, or `None` when the run has no recorded end.
+    pub last_run_ended: Option<Timestamp>,
+    /// Last run end detail, or `"running"` when the worker is still running.
+    pub last_run_end_detail: String,
 }
 
 /// Filesystem space and inode usage.

@@ -147,6 +147,7 @@ fn sample_input() -> SummaryInput {
             tasks_dir_bytes: Some(50_000_000),
             worktrees_dir_bytes: Some(120_000_000),
         },
+        workers: vec![],
         unreadable_parts: vec![],
     }
 }
