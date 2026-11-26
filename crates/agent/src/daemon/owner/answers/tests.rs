@@ -1,12 +1,17 @@
 //! The questions of a task through the daemon: the file a run's questions leave, the notification, and the three ways
 //! the answers arrive — the protocol, a saved file and the dashboard — each resuming the task with them.
 
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
+
+use agent_core::history::{HistoryEvent, Record};
 use agent_core::protocol::{Client, Command, ControlRequest, FailureKind, Reply, Target};
-use agent_core::questions::QuestionsFile;
+use agent_core::questions::{QuestionsFile, Verdict};
 use agent_core::state::{AnsweredVia, QuestionState, State};
 use agent_core::status::TaskStatus;
+use agent_runtime::history::Reader;
 
-use super::super::fixture::{Daemon, answer, n};
+use super::super::fixture::{Daemon, PATIENCE, answer, n};
 use crate::client::ClientError;
 use crate::daemon::questions::watch::Report;
 use crate::fixtures::{solo_state, task};
@@ -526,4 +531,158 @@ async fn a_rescan_reads_the_open_files_whose_save_was_not_reported() {
         TaskStatus::Questions,
         "the answers in the file were not read"
     );
+}
+
+/// A daemon whose task 1 has written its questions file and goes on running until the test creates `.fake-continue` in
+/// the returned worktree: the human has the file in their hands while the run still goes.
+async fn asking_while_running() -> (Daemon, PathBuf) {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let file = daemon.questions_file(1, 1);
+    let worktree = daemon.scenario(1, &format!("questions-hold {}", file.display()));
+    daemon.start().await;
+    written(&file).await;
+    (daemon, worktree)
+}
+
+/// Waits until the run has written the questions file `path` whole, and returns it.
+async fn written(path: &Path) -> QuestionsFile {
+    let deadline = Instant::now() + PATIENCE;
+    loop {
+        if let Ok(text) = std::fs::read_to_string(path)
+            && let Ok(file) = QuestionsFile::parse(&text)
+        {
+            return file;
+        }
+        assert!(Instant::now() < deadline, "timed out waiting for {}", path.display());
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+}
+
+/// `file` with the verdict `verdict` for question 1, marked answered.
+fn answered_with(mut file: QuestionsFile, verdict: &str) -> QuestionsFile {
+    file.set_verdict(n(1), Some(Verdict::from_text(verdict).unwrap().unwrap()))
+        .unwrap();
+    file.mark_answered();
+    file
+}
+
+/// Lets the run that holds in `worktree` end, and the run after it be the one that does `done`.
+fn let_the_run_end(daemon: &Daemon, worktree: &Path) {
+    daemon.scenario(1, "done");
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+}
+
+/// The channels through which the questions of task 1 were recorded as answered in the history, once the daemon has
+/// stopped and the history is complete.
+fn answered_in_history(daemon: &Daemon) -> Vec<AnsweredVia> {
+    let state = daemon.state();
+    let team = state.find_task(&task(1)).unwrap().team.id().clone();
+    Reader::open(&daemon.home.history_file())
+        .unwrap()
+        .team_records(&team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|row| match row.record {
+            Record::Event(event) => match event.event {
+                HistoryEvent::QuestionAnswered { via, .. } => Some(via),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn answers_saved_while_the_run_goes_are_taken_up_when_the_run_ends_with_questions() {
+    let (mut daemon, worktree) = asking_while_running().await;
+    let path = daemon.questions_file(1, 1);
+    let file = answered_with(written(&path).await, "Use the disk");
+    std::fs::write(&path, file.render()).unwrap();
+
+    let_the_run_end(&daemon, &worktree);
+
+    let state = daemon.status_is(1, TaskStatus::Done).await;
+    assert_eq!(answered_via(&state), AnsweredVia::SavedFile);
+    let prompt = daemon.recorded(1, ".fake-args");
+    assert!(prompt.contains("Use the disk"), "{prompt}");
+    assert!(prompt.contains("questions number 1"), "{prompt}");
+    daemon.stop().await.unwrap();
+    assert_eq!(answered_in_history(&daemon), vec![AnsweredVia::SavedFile]);
+}
+
+#[tokio::test]
+async fn a_file_answered_while_the_run_goes_stays_byte_for_byte_as_the_human_saved_it() {
+    let (mut daemon, worktree) = asking_while_running().await;
+    let path = daemon.questions_file(1, 1);
+    let saved = answered_with(written(&path).await, "Użyj dysku — ok").render();
+    std::fs::write(&path, &saved).unwrap();
+
+    let_the_run_end(&daemon, &worktree);
+
+    daemon.status_is(1, TaskStatus::Done).await;
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), saved);
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_saved_while_the_run_goes_with_a_verdict_missing_tell_the_human_when_the_run_ends() {
+    let (mut daemon, worktree) = asking_while_running().await;
+    let path = daemon.questions_file(1, 1);
+    let mut file = written(&path).await;
+    file.mark_answered();
+    std::fs::write(&path, file.render()).unwrap();
+
+    let_the_run_end(&daemon, &worktree);
+
+    let note = daemon.notification_with("answers are not complete").await;
+    assert!(note.contains("question 1 (Which store?): no verdict"), "{note}");
+    assert!(note.contains("questions-1.md"), "{note}");
+    let state = daemon.state();
+    assert_eq!(
+        state.find_task(&task(1)).unwrap().member.status(),
+        TaskStatus::Questions
+    );
+    assert!(state.find_task(&task(1)).unwrap().member.open_question().is_some());
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_file_not_answered_when_the_run_ends_with_questions_waits_for_the_human() {
+    let (mut daemon, worktree) = asking_while_running().await;
+    let path = daemon.questions_file(1, 1);
+
+    let_the_run_end(&daemon, &worktree);
+
+    daemon.status_is(1, TaskStatus::Questions).await;
+    let note = daemon.notification_with("questions-1.md").await;
+    assert!(note.contains(&format!("agent answer {}", task(1))), "{note}");
+    let file = written(&path).await;
+    assert!(!file.is_answered());
+    assert!(file.instructions().contains(&format!("agent answer {}", task(1))));
+    std::fs::write(&path, answered_with(file, "ok").render()).unwrap();
+    let state = daemon.status_is(1, TaskStatus::Done).await;
+    assert_eq!(answered_via(&state), AnsweredVia::SavedFile);
+    daemon.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn answers_through_the_command_for_a_task_that_is_running_are_refused_with_the_way_to_answer() {
+    let mut daemon = Daemon::new(&solo_state(), None);
+    let worktree = daemon.scenario(1, "hold");
+    daemon.start().await;
+    daemon.status_is(1, TaskStatus::Running).await;
+
+    let (kind, message) = refusal(daemon.ask(answer(1, 1, &[(1, "ok")])).await);
+
+    assert_eq!(kind, FailureKind::Conflict);
+    assert!(message.contains("is running, not waiting for answers"), "{message}");
+    assert!(
+        message.contains(
+            "Save the answers in its questions file with **ANSWERED** on the last line; they are taken up when the run ends."
+        ),
+        "{message}"
+    );
+    std::fs::write(worktree.join(".fake-continue"), "").unwrap();
+    daemon.status_is(1, TaskStatus::Done).await;
+    daemon.stop().await.unwrap();
 }
