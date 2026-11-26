@@ -2,7 +2,8 @@
 //!
 //! The clock of a round starts at the latest of three moments: the round was opened, the task was handed over to the
 //! agent that holds it now, and the first run after a run that ended stopped began (the human stopped the task and
-//! resumed it, or the daemon cut the run). The daemon asks only for a task that works on an item with no pull request in
+//! resumed it, or the daemon cut the run to hand it over). A cut for an order to commit, which resumes the run in its
+//! session, is not a stop for the clock. The daemon asks only for a task that works on an item with no pull request in
 //! review yet; a round in review, approved or done is never overdue.
 
 use crate::state::Timestamp;
@@ -12,7 +13,8 @@ use crate::state::Timestamp;
 pub struct RunMark {
     /// When the run's CLI was started.
     pub started_at: Timestamp,
-    /// Whether the run ended stopped: by the human's `agent stop`, or by a cut of the daemon.
+    /// Whether the run ended stopped and the clock starts again after it: by the human's `agent stop`, or by a cut of
+    /// the daemon other than one for an order to commit.
     pub stopped: bool,
 }
 

@@ -504,8 +504,10 @@ handed over as above at once, without a new session of the same agent first: to 
 agents`, which is briefed in a new session on the same worktree and branch; to the team's lead; or, with nobody to take it
 (`mode = "off"`, a solo task with no agent listed), the task fails and you are notified with the round, the item and the
 minutes. You need no `agent swap` for it. The clock starts at the latest of: the opening of the round, the hand-over of the
-task to the agent that holds it now, and the first run after a run that ended stopped — a task you stopped and resumed,
-or one the daemon cut to commit its work, starts its clock again. A round in review, approved or being fixed after a review
+task to the agent that holds it now, and the first run after a run that ended stopped — a task you stopped and resumed
+starts its clock again. The daemon's cut of a run that did not commit (`[commit_reminder] cut_after`) resumes it in its
+session and does not start the clock again, so an agent that keeps its work uncommitted is still stopped at the limit.
+A round in review, approved or being fixed after a review
 is never stopped by this limit, nor a worker or a reviewer. The cut counts as no retry, turn or rejection. Each cut is the
 debug decision `round_overdue` in the history, and its hand-over the log event `task_handed_over` with
 `reason = "round_overdue"`. `round_minutes = 0`, the default, turns it off.
