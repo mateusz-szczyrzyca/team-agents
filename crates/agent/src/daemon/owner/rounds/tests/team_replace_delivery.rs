@@ -25,6 +25,70 @@ impl Reporter for TestReporter {
     }
 }
 
+/// Verifies the roster at launch and message delivery in the replacement process.
+async fn verify_membership_and_deliver_messages(
+    rig: &Rig,
+    task: &agent_core::ids::TaskId,
+    team: agent_core::ids::TeamId,
+) {
+    let current_bus = AgentBus::new(
+        super::super::fixture::agentbus_binary()
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+        rig.home.root().to_str().unwrap().parse().unwrap(),
+    );
+    let roster = current_bus.team_get(&team).await.unwrap();
+    assert_eq!(
+        roster.members.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        ["claude-2", "inv-lead"]
+    );
+    let membership = rig.worktree(task).join(".fake-replacement-members");
+    rig.wait_for("replacement CLI membership snapshot", || {
+        std::fs::read_to_string(&membership).is_ok_and(|text| serde_json::from_str::<serde_json::Value>(&text).is_ok())
+    })
+    .await;
+    let members: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&membership).unwrap()).unwrap();
+    assert!(members["members"].get("claude-2").is_some(), "{members}");
+    assert!(members["members"].get("claude-1").is_none(), "{members}");
+    let bus = AgentBus::new(
+        super::super::fixture::agentbus_binary()
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap(),
+        rig.home.root().to_str().unwrap().parse().unwrap(),
+    );
+    bus.send(
+        &"inv-lead".parse().unwrap(),
+        &Recipient::Member {
+            team,
+            agent: "claude-2".parse().unwrap(),
+        },
+        &Outgoing::Chat {
+            text: "Continue the café item".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let inbox = rig.worktree(task).join(".fake-replacement-inbox");
+    rig.wait_for("the lead message in the replacement run", || {
+        std::fs::read_to_string(&inbox).is_ok_and(|text| text.contains("Continue the café item"))
+    })
+    .await;
+    rig.wait_for("the replacement's Serena reminder", || {
+        super::serena_delivery_tests::chats_from_the_harness(rig)
+            .iter()
+            .any(|text| text.contains("Serena"))
+    })
+    .await;
+    rig.wait_for("Serena reminder read by the replacement", || {
+        std::fs::read_to_string(&inbox).is_ok_and(|text| text.contains("Serena"))
+    })
+    .await;
+}
+
 #[tokio::test]
 async fn overdue_member_has_bus_membership_before_launch_and_receives_lead_and_serena_messages() {
     let mut rig = Rig::new(
@@ -90,62 +154,7 @@ async fn overdue_member_has_bus_membership_before_launch_and_receives_lead_and_s
             .is_some_and(|found| found.member.agent().name() == "claude-2" && found.member.runs().len() == 2)
     })
     .await;
-    let current_bus = AgentBus::new(
-        super::super::fixture::agentbus_binary()
-            .to_str()
-            .unwrap()
-            .parse()
-            .unwrap(),
-        rig.home.root().to_str().unwrap().parse().unwrap(),
-    );
-    let roster = current_bus.team_get(&team).await.unwrap();
-    assert_eq!(
-        roster.members.keys().map(ToString::to_string).collect::<Vec<_>>(),
-        ["claude-2", "inv-lead"]
-    );
-    let membership = rig.worktree(&task).join(".fake-replacement-members");
-    rig.wait_for("replacement CLI membership snapshot", || {
-        std::fs::read_to_string(&membership).is_ok_and(|text| serde_json::from_str::<serde_json::Value>(&text).is_ok())
-    })
-    .await;
-    let members: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&membership).unwrap()).unwrap();
-    assert!(members["members"].get("claude-2").is_some(), "{members}");
-    assert!(members["members"].get("claude-1").is_none(), "{members}");
-    let bus = AgentBus::new(
-        super::super::fixture::agentbus_binary()
-            .to_str()
-            .unwrap()
-            .parse()
-            .unwrap(),
-        rig.home.root().to_str().unwrap().parse().unwrap(),
-    );
-    bus.send(
-        &"inv-lead".parse().unwrap(),
-        &Recipient::Member {
-            team,
-            agent: "claude-2".parse().unwrap(),
-        },
-        &Outgoing::Chat {
-            text: "Continue the café item".to_owned(),
-        },
-    )
-    .await
-    .unwrap();
-    let inbox = rig.worktree(&task).join(".fake-replacement-inbox");
-    rig.wait_for("the lead message in the replacement run", || {
-        std::fs::read_to_string(&inbox).is_ok_and(|text| text.contains("Continue the café item"))
-    })
-    .await;
-    rig.wait_for("the replacement's Serena reminder", || {
-        super::serena_delivery_tests::chats_from_the_harness(&rig)
-            .iter()
-            .any(|text| text.contains("Serena"))
-    })
-    .await;
-    rig.wait_for("Serena reminder read by the replacement", || {
-        std::fs::read_to_string(&inbox).is_ok_and(|text| text.contains("Serena"))
-    })
-    .await;
+    verify_membership_and_deliver_messages(&rig, &task, team).await;
     let state = rig
         .state_where("the replacement's running history", |state| {
             state
