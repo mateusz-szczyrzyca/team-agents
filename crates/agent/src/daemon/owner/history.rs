@@ -355,20 +355,9 @@ impl Owner {
         outcome: &Outcome,
     ) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
-        let at = started.map_or(now, |started| now.max(started));
-        match outcome {
-            Outcome::Verdict(verdict) => match verdict.as_ref() {
-                RunVerdict::Finished(finished) => {
-                    self.record_run_end(run, at, &finished.classified.end, finished.final_message.as_deref());
-                }
-                RunVerdict::Interrupted { .. } => {
-                    self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, None);
-                }
-            },
-            Outcome::Failed(_) => {
-                self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, None);
-            }
-        }
+        let at = pool_run_end_time(now, started);
+        let (end, final_message) = pool_run_end(outcome);
+        self.record_run_end(run, at, &end, final_message);
         Ok(())
     }
 
@@ -416,3 +405,25 @@ impl Owner {
         }
     }
 }
+
+/// The time a pool worker's run ended: `now`, and never before the `started` time of its request when that is known,
+/// because a clock set back during the run would end the run before it began.
+fn pool_run_end_time(now: Timestamp, started: Option<Timestamp>) -> Timestamp {
+    started.map_or(now, |started| now.max(started))
+}
+
+/// How a pool worker's run ended, from its job's `outcome`, and the agent's final message to record with it. A run
+/// that was interrupted or failed ended with no status and no exit code, and a failed one has no final message: the
+/// engine's error is not what the agent said.
+fn pool_run_end(outcome: &Outcome) -> (RunEnd, Option<&str>) {
+    match outcome {
+        Outcome::Verdict(verdict) => match verdict.as_ref() {
+            RunVerdict::Finished(finished) => (finished.classified.end.clone(), finished.final_message.as_deref()),
+            RunVerdict::Interrupted { .. } => (RunEnd::NoStatus { exit_code: None }, None),
+        },
+        Outcome::Failed(_) => (RunEnd::NoStatus { exit_code: None }, None),
+    }
+}
+
+#[cfg(test)]
+mod tests;
