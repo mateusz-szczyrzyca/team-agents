@@ -525,6 +525,8 @@ minutes. You need no `agent swap` for it. The clock starts at the latest of: the
 task to the agent that holds it now, and the first run after a run that ended stopped — a task you stopped and resumed
 starts its clock again. The daemon's cut of a run that did not commit (`[commit_reminder] cut_after`) resumes it in its
 session and does not start the clock again, so an agent that keeps its work uncommitted is still stopped at the limit.
+The time the task waits for your answer to its questions is left out of the clock, so a round you answer late is not
+stopped for it.
 A round in review, approved or being fixed after a review
 is never stopped by this limit, nor a worker or a reviewer. The cut counts as no retry, turn or rejection. Each cut is the
 debug decision `round_overdue` in the history, and its hand-over the log event `task_handed_over` with
