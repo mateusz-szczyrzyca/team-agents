@@ -1470,6 +1470,40 @@ func (c CmdTeamSetCause) info() causeInfo { return cmdTeamSetCauses[c] }
 // String returns the cause name.
 func (c CmdTeamSetCause) String() string { return c.info().name }
 
+// ---------------------------------------------------------------- team-replace
+
+// CmdTeamReplaceCause is a reason why the subcommand team-replace failed.
+type CmdTeamReplaceCause int
+
+const (
+	CmdTeamReplaceNoSuchTeam    CmdTeamReplaceCause = iota // nonexistent or finished team [NotFound]
+	CmdTeamReplaceNoSuchMember                             // from absent [NotFound]
+	CmdTeamReplaceAlreadyMember                            // to present [Conflict]
+	CmdTeamReplaceSameAgent                                // from equals to [InvalidArgument]
+	CmdTeamReplaceStorage                                  // the shared state or a file could not be read or written [Storage]
+)
+
+// CmdTeamReplaceError is the error of the subcommand team-replace.
+type CmdTeamReplaceError = OpError[CmdTeamReplaceCause]
+
+// cmdTeamReplaceCauses describes the CmdTeamReplaceCause values (same order as the constants).
+var cmdTeamReplaceCauses = [...]causeInfo{
+	{"NoSuchTeam", ClassNotFound},
+	{"NoSuchMember", ClassNotFound},
+	{"AlreadyMember", ClassConflict},
+	{"SameAgent", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (CmdTeamReplaceCause) op() string { return "team-replace" }
+
+// info implements opCause.
+func (c CmdTeamReplaceCause) info() causeInfo { return cmdTeamReplaceCauses[c] }
+
+// String returns the cause name.
+func (c CmdTeamReplaceCause) String() string { return c.info().name }
+
 // ---------------------------------------------------------------- team-done
 
 // CmdTeamDoneCause is a reason why the subcommand team-done failed.
