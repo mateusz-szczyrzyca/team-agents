@@ -1120,7 +1120,7 @@ impl Owner {
         self.save().await
     }
 
-    /// Exit 3 also denotes a missing or closed team, so confirm an absent member on an open team before settling it.
+    /// Exit 3 settles only when an open team contains the replacement and no longer contains the old member.
     async fn replace_team_member(
         &self,
         team: &agent_core::ids::TeamId,
@@ -1135,7 +1135,7 @@ impl Owner {
                 },
             ) => {
                 let roster = self.parts.bus.team_get(team).await?;
-                if !roster.done && !roster.members.contains_key(from) {
+                if !roster.done && !roster.members.contains_key(from) && roster.members.contains_key(to) {
                     Ok(())
                 } else {
                     Err(error)
