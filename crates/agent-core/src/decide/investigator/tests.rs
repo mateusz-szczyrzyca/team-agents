@@ -58,9 +58,25 @@ fn select_with_rng(
 #[test]
 fn human_examples_and_global_tie_break() {
     use ActivityKind::{Investigator, Reviewer, TaskAllocator, TeamMember};
-    let cases = [
-        (vec![("a", 1, TeamMember, 20), ("b", 1, Reviewer, 10)], vec!["c"]),
-        (vec![("c", 1, Investigator, 20)], vec!["a"]),
+    // The first two cases have multiple never-used investigators that are tied
+    // on (None, None) and may be chosen at random by choose's new rng tie-break.
+    let tie_cases = [
+        (
+            vec![("a", 1, TeamMember, 20), ("b", 1, Reviewer, 10)],
+            &["c", "d"] as &[&str],
+        ),
+        (vec![("c", 1, Investigator, 20)], &["a", "b", "d"]),
+    ];
+    for (records, valid) in tie_cases {
+        let chosen = select(&records, &["a", "b", "c", "d"], &[], 1)
+            .expect("a never-used investigator is available");
+        assert_eq!(chosen.len(), 1);
+        assert!(
+            valid.contains(&chosen[0].as_str()),
+            "{chosen:?} is not in {valid:?}"
+        );
+    }
+    let deterministic = [
         (
             vec![
                 ("a", 1, TeamMember, 40),
@@ -80,7 +96,7 @@ fn human_examples_and_global_tie_break() {
             vec!["d"],
         ),
     ];
-    for (records, expected) in cases {
+    for (records, expected) in deterministic {
         assert_eq!(
             select(&records, &["a", "b", "c", "d"], &[], 1),
             Some(expected.into_iter().map(str::to_owned).collect())
