@@ -30,3 +30,6 @@ func (v *investigationTools) Set(raw string) error {
 	}
 	return nil
 }
+
+// investigationNotAllowedMessage explains which task roles the daemon permits to investigate.
+const investigationNotAllowedMessage = "only the coordinator and the members of a team may request an investigation"
