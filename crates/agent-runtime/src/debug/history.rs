@@ -19,6 +19,7 @@ const SNAPSHOT_ATTEMPTS: u8 = 3;
 
 /// Why reading live history failed.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum HistoryCollectionError {
     /// A database or sidecar file exceeds the maximum permitted size.
     #[error("history file {} exceeds limit ({size} bytes > {limit} bytes)", path.display())]
