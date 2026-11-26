@@ -83,8 +83,20 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-use crate::ids::{ItemId, RoundId, TaskId, TeamId};
+use crate::ids::{AgentName, ItemId, RoundId, TaskId, TeamId};
 use crate::kinds::Role;
+
+/// A `team-replace` call the daemon must complete before the task's next run: the bus must be told the member changed
+/// so it can route messages and deliver reminders to the new agent.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+pub struct PendingTeamReplace {
+    /// The team whose member is being replaced.
+    pub team: TeamId,
+    /// The agent name being replaced.
+    pub from: AgentName,
+    /// The replacement agent name.
+    pub to: AgentName,
+}
 
 /// The schema version this build writes, with investigator activities reconstructed from versions 1 through 10.
 pub const SCHEMA_VERSION: u32 = 15;
@@ -136,6 +148,9 @@ pub struct State {
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
+    /// Team-replace calls the daemon has not yet completed: their task's next run waits until the bus knows
+    /// the new member. A state written before 1.2 loads without this field.
+    pub(crate) pending_team_replaces: BTreeSet<PendingTeamReplace>,
 }
 
 /// How a [`State`] is written as JSON: `queued` is omitted whenever it matches the natural team-creation order.
@@ -163,6 +178,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
+    /// See [`State`]; omitted when no team-replace call is pending.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    pending_team_replaces: &'a BTreeSet<PendingTeamReplace>,
 }
 
 impl Serialize for State {
@@ -182,6 +200,7 @@ impl Serialize for State {
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
             commit_cuts: &self.commit_cuts,
+            pending_team_replaces: &self.pending_team_replaces,
         }
         .serialize(serializer)
     }
@@ -196,6 +215,7 @@ impl PartialEq for State {
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
             && self.commit_cuts == other.commit_cuts
+            && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
     }
 }
@@ -226,6 +246,9 @@ struct StateWire {
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
+    /// Optional in state written before team-replace calls were persisted.
+    #[serde(default)]
+    pending_team_replaces: BTreeSet<PendingTeamReplace>,
 }
 
 /// Only the schema version of a state file, read before the rest.
@@ -477,6 +500,7 @@ impl State {
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
             commit_cuts: BTreeMap::new(),
+            pending_team_replaces: BTreeSet::new(),
         }
     }
 
@@ -575,6 +599,25 @@ impl State {
             })
             .collect();
         self.queued.iter().filter_map(|task| by_task.remove(task)).collect()
+    }
+
+    /// The team-replace calls the daemon has not yet completed.
+    pub fn pending_team_replaces(&self) -> &BTreeSet<PendingTeamReplace> {
+        &self.pending_team_replaces
+    }
+
+    /// Records a team-replace call the daemon must complete before the task's next run.
+    pub fn record_pending_team_replace(&mut self, team: TeamId, from: AgentName, to: AgentName) {
+        self.pending_team_replaces.insert(PendingTeamReplace { team, from, to });
+    }
+
+    /// Removes a team-replace call after the bus was notified.
+    pub fn remove_pending_team_replace(&mut self, team: &TeamId, from: &AgentName, to: &AgentName) -> bool {
+        self.pending_team_replaces.remove(&PendingTeamReplace {
+            team: team.clone(),
+            from: from.clone(),
+            to: to.clone(),
+        })
     }
 
     /// The teams, oldest first.
@@ -1134,6 +1177,7 @@ impl TryFrom<StateWire> for State {
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
             commit_cuts: wire.commit_cuts,
+            pending_team_replaces: wire.pending_team_replaces,
         };
         state.sync_queued();
         Ok(state)

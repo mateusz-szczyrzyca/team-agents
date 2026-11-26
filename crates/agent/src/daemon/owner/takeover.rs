@@ -115,6 +115,9 @@ impl Owner {
         let takeover = match chosen {
             Chosen::Agent(name) => {
                 self.hand_task_over(task, &name, &held, trouble, at)?;
+                self.parts
+                    .state
+                    .record_pending_team_replace(team.clone(), held.agent_name(), name.clone());
                 log_decision(
                     "takeover",
                     &format!("task={task}, from={}", held.name()),

@@ -174,4 +174,16 @@ mod state_file {
             StateError::UnsupportedSchema(UnsupportedSchema { found: 16 })
         ));
     }
+
+    /// A state written before team-replace pending calls existed loads with the set empty.
+    #[test]
+    fn an_old_state_without_pending_team_replaces_loads_with_an_empty_set() {
+        const OLD_FIXTURE: &str = include_str!("fixtures/state-before-team-replaces.json");
+        let state = State::from_json(OLD_FIXTURE).unwrap();
+
+        assert!(
+            state.pending_team_replaces().is_empty(),
+            "old state must load with empty pending_team_replaces"
+        );
+    }
 }

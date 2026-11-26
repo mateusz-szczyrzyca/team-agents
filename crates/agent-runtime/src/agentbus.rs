@@ -157,6 +157,8 @@ pub enum BusCommand {
     InvGet,
     /// `inv-list`.
     InvList,
+    /// `team-replace`.
+    TeamReplace,
 }
 
 /// Why `agentbus` failed, by its exit status.
@@ -1278,6 +1280,27 @@ impl AgentBus {
             .map(drop)
     }
 
+    /// Replaces a team member with a new agent. The bus retargets any pending messages from the old to
+    /// the new name and posts a replacement notice so the lead and members can update their records.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] when the team or the outgoing member does not exist,
+    /// [`FailureClass::InvalidArgument`] when `--from` equals `--to` or the new agent is already a member.
+    pub async fn team_replace(&self, team: &TeamId, from: &AgentName, to: &AgentName) -> Result<(), AgentBusError> {
+        let command = BusCommand::TeamReplace;
+        let output = self
+            .run(
+                command,
+                Args::new()
+                    .flag("--team", team.as_str())
+                    .flag("--from", from.as_str())
+                    .flag("--to", to.as_str()),
+                None,
+            )
+            .await?;
+        parse_replaced(command, &output, from, to)
+    }
+
     /// Adds an item to a team's board as one of its members.
     ///
     /// # Errors
@@ -1855,6 +1878,16 @@ fn parse_woken(output: &str) -> Result<Woken, AgentBusError> {
         "waking" => Ok(Woken::Message),
         "waking (board)" => Ok(Woken::Board),
         _ => Err(unexpected(BusCommand::TeamSet, output)),
+    }
+}
+
+/// The output of `team-replace`: `REPLACED <from> <to>`.
+fn parse_replaced(command: BusCommand, output: &str, from: &AgentName, to: &AgentName) -> Result<(), AgentBusError> {
+    let expected = format!("REPLACED {from} {to}");
+    if output.trim() == expected {
+        Ok(())
+    } else {
+        Err(unexpected(command, output))
     }
 }
 
@@ -2603,5 +2636,50 @@ mod tests {
         assert_eq!(read.check.as_deref(), Some("test -s docs/count.txt"));
         assert_eq!(read.doing.as_deref(), Some("Count the headings."));
         assert_eq!(none, RequestWork::default());
+    }
+
+    #[test]
+    fn team_replace_parses_the_replaced_line() {
+        let from: AgentName = "claude-1".parse().unwrap();
+        let to: AgentName = "deepseek-1".parse().unwrap();
+        let captured = captured(exited(0), b"REPLACED claude-1 deepseek-1\n", b"");
+
+        let result = outcome(BusCommand::TeamReplace, captured).unwrap();
+
+        parse_replaced(BusCommand::TeamReplace, &result, &from, &to).unwrap();
+    }
+
+    #[test]
+    fn team_replace_rejects_an_unexpected_output() {
+        let from: AgentName = "claude-1".parse().unwrap();
+        let to: AgentName = "deepseek-1".parse().unwrap();
+        let captured = captured(exited(0), b"ok\n", b"");
+
+        let result = outcome(BusCommand::TeamReplace, captured).unwrap();
+
+        let err = parse_replaced(BusCommand::TeamReplace, &result, &from, &to).unwrap_err();
+        assert!(matches!(
+            err,
+            AgentBusError::Unexpected {
+                command: BusCommand::TeamReplace,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn team_replace_failure_not_found_is_classified() {
+        let captured = captured(exited(3), b"", b"agentbus: no member claude-1 in team t1\n");
+
+        let err = outcome(BusCommand::TeamReplace, captured).unwrap_err();
+
+        assert!(matches!(
+            &err,
+            AgentBusError::Failed {
+                command: BusCommand::TeamReplace,
+                class: FailureClass::NotFound,
+                ..
+            }
+        ));
     }
 }
