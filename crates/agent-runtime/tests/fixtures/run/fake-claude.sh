@@ -58,8 +58,6 @@
 #   dirty-hold-commit-twice  as `dirty-hold-commit`, but the first resumed run commits dirty.txt, writes second.txt of 400
 #                         lines, holds until .fake-continue exists and ends like `done`; a second resumed run commits
 #                         second.txt and ends like `done`
-#   commit-steps          for each step N = 1, 2, 3: holds until .fake-step-N exists, then commits step-N.txt; then holds
-#                         until .fake-continue exists and ends like `done`
 #   dirty-late            holds until .fake-more exists, then writes dirty.txt of 400 lines, holds until .fake-continue
 #                         exists and ends like `done`
 #
@@ -429,17 +427,6 @@ case $scenario in
     write_400_lines dirty.txt
     git add dirty.txt
     commit_long_ago
-    hold_until .fake-continue
-    result false 'Finished the item.\nSTATUS: DONE'
-    ;;
-  commit-steps)
-    init
-    for step in 1 2 3; do
-      hold_until ".fake-step-$step"
-      echo "step $step" > "step-$step.txt"
-      git add "step-$step.txt"
-      commit_long_ago
-    done
     hold_until .fake-continue
     result false 'Finished the item.\nSTATUS: DONE'
     ;;
