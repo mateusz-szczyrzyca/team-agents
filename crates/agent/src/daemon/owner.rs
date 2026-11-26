@@ -2210,6 +2210,8 @@ impl Owner {
                 investigator = %located.agent,
                 chars = answer.chars().count(),
             );
+        } else {
+            self.requeue_investigation(&inv, located, end, message).await?;
         }
         self.look_at(&located.team);
         Ok(())

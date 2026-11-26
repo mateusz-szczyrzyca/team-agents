@@ -7,7 +7,7 @@ use agent_core::decide::investigator::Activity;
 use agent_core::ids::{AgentName, InvestigatorName, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::state::{Member, Participant, Timestamp};
+use agent_core::state::{InvestigationRecord, Member, Participant, RunEnd, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind, InvestigationStatus};
 use agent_runtime::git::Revision;
@@ -223,6 +223,76 @@ impl Owner {
             from_task = %req.from_task,
         );
         self.look_at(team_id);
+        Ok(())
+    }
+}
+
+impl Owner {
+    /// Retains an unfinished answer privately before returning the request to the queue.
+    pub(super) async fn requeue_investigation(
+        &mut self,
+        req: &Investigation,
+        located: &super::Located,
+        end: &RunEnd,
+        message: Option<&str>,
+    ) -> Result<(), OwnerError> {
+        use tokio::io::AsyncWriteExt;
+
+        if let Some(message) = message.filter(|text| !text.trim().is_empty()) {
+            let mut file = tokio::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&req.file)
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: req.file.clone(),
+                    source,
+                })?;
+            let text = format!("\n## Unfinished answer of {} ({end:?})\n\n{message}\n", located.agent);
+            file.write_all(text.as_bytes())
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: req.file.clone(),
+                    source,
+                })?;
+            file.sync_all().await.map_err(|source| OwnerError::WriteRecord {
+                path: req.file.clone(),
+                source,
+            })?;
+        }
+        let now = Timestamp::now(&self.parts.clock)?;
+        let team = self
+            .parts
+            .state
+            .team(&located.team)
+            .ok_or_else(|| OwnerError::LostTeam {
+                team: located.team.clone(),
+            })?;
+        let mut record = team
+            .investigations()
+            .iter()
+            .find(|record| record.id == req.id)
+            .cloned()
+            .unwrap_or_else(|| InvestigationRecord {
+                id: req.id,
+                task: req.from_task.clone(),
+                started: now,
+                failed_with: Vec::new(),
+            });
+        record.failed_with.push(located.agent.parse()?);
+        self.parts
+            .state
+            .team_mut(&located.team)
+            .ok_or_else(|| OwnerError::LostTeam {
+                team: located.team.clone(),
+            })?
+            .record_investigation(record);
+        self.save().await?;
+        self.parts
+            .bus
+            .inv_set(req.id, &InvTransition::Requeued)
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
         Ok(())
     }
 }
