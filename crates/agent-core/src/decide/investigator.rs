@@ -80,7 +80,10 @@ pub fn choose(
             .map_or(candidates.len(), |p| p + 1);
         let candidates_for_key = end - start;
         let slots_for_key = req - start;
-        if slots_for_key < candidates_for_key {
+        // Only randomize when the tie resolves a single slot; multiple-slot
+        // fills are deterministic by name (the original behaviour before
+        // (None, None) was treated as a tie key).
+        if slots_for_key == 1 && slots_for_key < candidates_for_key {
             use rand::seq::SliceRandom;
             if let Some(tied) = candidates.get_mut(start..end) {
                 tied.shuffle(rng);

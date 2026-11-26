@@ -512,34 +512,35 @@ gate = ["true"]
             let drawn = choose_reviewers(
                 with_known(pool(4), &["inv-b", "inv-d"]),
                 &mut StdRng::seed_from_u64(seed),
-            )
-            .unwrap();
+            );
 
-            let names: Vec<&str> = drawn.iter().map(|r| r.name.as_str()).collect();
-            assert_eq!(names.len(), 2, "seed {seed}: two reviewers are chosen");
-            assert_ne!(names[0], names[1], "seed {seed}: two distinct reviewers");
-            // Never-used investigators tied on (None, None) are drawn at random;
-            // the pool always yields two distinct reviewers from the available four.
+            let drawn: BTreeSet<String> = drawn.unwrap().into_iter().map(|r| r.name.as_str().to_owned()).collect();
+            assert_eq!(
+                drawn,
+                BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]),
+                "seed {seed}"
+            );
         }
     }
 
     #[test]
     fn one_existing_task_does_not_change_the_deterministic_tie_break() {
+        let mut others = BTreeSet::new();
         for seed in 0..64 {
             let drawn = choose_reviewers(with_known(pool(4), &["inv-c"]), &mut StdRng::seed_from_u64(seed)).unwrap();
 
             let names: Vec<&str> = drawn.iter().map(|r| r.name.as_str()).collect();
-            assert_eq!(names.len(), 2, "seed {seed}: two reviewers are chosen");
-            assert_ne!(names[0], names[1], "seed {seed}: two distinct reviewers");
-            // Never-used investigators tied on (None, None) are drawn at random;
-            // a candidate with a task slot is not excluded from choose.
+            assert_eq!(names.len(), 2, "seed {seed}");
+            assert_eq!(names, ["inv-a", "inv-b"], "seed {seed}");
+            others.extend(names.into_iter().filter(|name| *name != "inv-c").map(str::to_owned));
         }
+
+        assert_eq!(others, BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]));
     }
 
     #[test]
     fn the_choice_is_identical_for_every_random_source() {
         let draw = |seed| choose_reviewers(pool(4), &mut StdRng::seed_from_u64(seed)).unwrap();
-        // The same seed must still give the same result.
         assert_eq!(draw(7), draw(7));
 
         let mut seen = BTreeSet::new();
@@ -549,13 +550,7 @@ gate = ["true"]
             }
         }
 
-        // Never-used investigators that are tied on (None, None) are drawn at random;
-        // any of the pool may appear over many seeds.
-        assert!(seen.len() >= 2, "at least 2 distinct reviewers appear");
-        assert!(
-            seen.iter().all(|n| n.starts_with("inv-")),
-            "only inv-* reviewers are drawn"
-        );
+        assert_eq!(seen, BTreeSet::from(["inv-a".to_owned(), "inv-b".to_owned()]));
     }
 }
 
@@ -725,14 +720,7 @@ fn verification_uses_only_available_candidates_and_breaks_ties_by_name() {
         assert_ne!(chosen[0].name, chosen[1].name);
         firsts.insert(chosen[0].name.clone());
     }
-    // Never-used investigators tied on (None, None) are drawn at random; any of the
-    // three free candidates may appear first.
-    assert!(!firsts.is_empty(), "at least one reviewer appears first");
-    assert!(
-        firsts
-            .iter()
-            .all(|n| ["inv-free", "inv-other", "inv-third"].contains(&n.as_str()))
-    );
+    assert_eq!(firsts, ["inv-free".parse().unwrap()].into());
     assert_eq!(
         choose_verifiers(
             Vec::new(),

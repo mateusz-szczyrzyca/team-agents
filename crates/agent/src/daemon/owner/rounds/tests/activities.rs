@@ -262,7 +262,7 @@ async fn three_reviews_rotate_pairs_and_the_next_team_uses_the_oldest_global_pai
     let oldest_pair = first_asked[..2].to_vec();
     assert_eq!(asked(&second), oldest_pair);
     // Each team keeps its own task and worktree for the same investigator.
-    for name in ["inv-r1", "inv-r2"] {
+    for name in &oldest_pair {
         let task = |id| {
             state
                 .team(id)
