@@ -3555,8 +3555,9 @@ async fn connect_when_listening(socket: &Path) -> Connection {
 async fn a_connection_made_before_the_daemon_listens_waits_for_it() {
     let dir = tempfile::tempdir().unwrap();
     let socket = dir.path().join("agent.sock");
-    // A socket file that nothing listens on: what a daemon that has bound but not yet listened looks like.
-    drop(tokio::net::UnixListener::bind(&socket).unwrap());
+    // Nothing is there yet, so a connection is not possible, as for a daemon that has not yet listened. A listener bound
+    // and dropped here would do as well, but a process that another test forks meanwhile keeps its socket open, and
+    // the connection would be made to that one.
     let waiting = tokio::spawn({
         let socket = socket.clone();
         async move { connect_when_listening(&socket).await }
@@ -3564,7 +3565,6 @@ async fn a_connection_made_before_the_daemon_listens_waits_for_it() {
     tokio::task::yield_now().await;
     assert!(!waiting.is_finished(), "the connection was refused, so it must wait");
 
-    std::fs::remove_file(&socket).unwrap();
     let listener = tokio::net::UnixListener::bind(&socket).unwrap();
     let (accepted, connected) = tokio::join!(listener.accept(), waiting);
 
