@@ -37,12 +37,7 @@ impl Owner {
                 team.crew()
                     .roster()
                     .into_iter()
-                    .filter(|(_, m)| {
-                        !matches!(
-                            m.status(),
-                            TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done
-                        )
-                    })
+                    .filter(|(_, m)| !matches!(m.status(), TaskStatus::Stopped | TaskStatus::Failed | TaskStatus::Done))
                     .map(|(_, m)| m.task().clone())
                     .collect()
             })
