@@ -128,7 +128,10 @@ fn the_records_of_a_version_32_history_read_as_before_next_to_a_checkpoint() {
             other => panic!("a record that is no event: {other:?}"),
         })
         .collect();
-    assert_eq!(events, [EventKind::Notified, EventKind::PullReady, EventKind::Checkpoint]);
+    assert_eq!(
+        events,
+        [EventKind::Notified, EventKind::PullReady, EventKind::Checkpoint]
+    );
     assert_eq!(
         after.iter().take(2).map(|stored| &stored.record).collect::<Vec<_>>(),
         before.iter().map(|stored| &stored.record).collect::<Vec<_>>()

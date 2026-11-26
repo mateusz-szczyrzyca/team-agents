@@ -5,6 +5,10 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
+use agent_core::history::CheckpointCause::{
+    Commit, FindingAnswered, FixPassStarted, PullApproved, PullMerged, PullOpened, PullPushed, PullReady,
+    ReviewSubmitted, RoundOpened, RunEnded,
+};
 use agent_core::history::{CheckpointCause, HistoryEvent, Record};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
@@ -536,10 +540,6 @@ async fn a_round_with_answered_findings_leaves_every_step_with_its_head_and_pass
 
     let taken = checkpoints(&rig, &team);
 
-    use CheckpointCause::{
-        Commit, FindingAnswered, FixPassStarted, PullApproved, PullMerged, PullOpened, PullPushed, PullReady,
-        ReviewSubmitted, RoundOpened, RunEnded,
-    };
     // The step, the review pass and the fix pass of the round then, and whether the pull request was a draft.
     let rows: Vec<_> = taken
         .iter()
