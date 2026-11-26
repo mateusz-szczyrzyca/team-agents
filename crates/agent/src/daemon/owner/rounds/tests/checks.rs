@@ -2074,3 +2074,147 @@ async fn a_legacy_answer_about_a_file_with_no_finding_yet_does_not_cover_a_commi
         }]
     );
 }
+
+// ---- a file the human refused, changed again by the team ---------------------------------------------------------------
+
+/// The scripts of a round that edits an existing test after a `RED:` commit touched it, and of the commit a fix pass adds
+/// to the same file.
+fn refused_file_scripts(rig: &Rig) {
+    script(
+        rig,
+        "red-edit",
+        "echo d >> tests/existing.txt\ngit add tests/existing.txt\ncommit -m 'RED: touch the test'\nsed -i 2d tests/existing.txt\ngit add tests/existing.txt\ncommit -m 'Tidy the test'\n",
+    );
+    script(
+        rig,
+        "edit-more",
+        "sed -i 1d tests/existing.txt\ngit add tests/existing.txt\ncommit -m 'Tidy the test again'\n",
+    );
+}
+
+/// Answers every question of the file number `number` of `task` with the verdict `text`.
+async fn answer_every(rig: &Rig, task: &TaskId, number: u32, text: &str) {
+    let count = u32::try_from(questions_of(rig, task, number).entries().len()).unwrap();
+    let answers = AnswerList::try_from(
+        (1..=count)
+            .map(|question| AnswerInput {
+                question: NonZeroU32::new(question).unwrap(),
+                verdict: Verdict::from_text(text).unwrap().unwrap(),
+            })
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: NonZeroU32::new(number).unwrap(),
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+}
+
+/// The file the scripts of [`refused_file_scripts`] change.
+fn existing() -> Subject {
+    Subject::Path("tests/existing.txt".parse().unwrap())
+}
+
+// Rule: a file the human refused that the team changes again by a new commit is asked about again, and `allow` starts the
+// review.
+#[tokio::test]
+async fn a_refused_file_that_a_later_commit_changes_is_asked_again_and_allowing_it_starts_the_review() {
+    let mut rig = checking_rig(
+        "script:red-edit,questions,done,script:edit-more,questions,done",
+        5,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    refused_file_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer_every(&rig, &tasks[0], 1, "refuse").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    let asked = record(&rig, &tasks[0]).await;
+    let file = questions_of(&rig, &tasks[0], 2);
+    let item = ["1.1".parse().unwrap()];
+
+    assert!(asked.asked.as_ref().unwrap().subjects.contains(&existing()));
+    assert!(!asked.refused_of(&item).contains(&existing()));
+    assert_eq!(file.entries().len(), 1);
+    assert!(
+        file.entries()[0].body().contains("`tests/existing.txt`"),
+        "{}",
+        file.entries()[0].body()
+    );
+
+    answer_every(&rig, &tasks[0], 2, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+
+    assert!(!rig.github.pulls()[0].draft);
+    assert!(record(&rig, &tasks[0]).await.allowed_of(&item).contains(&existing()));
+}
+
+// Rule: when the human refuses the file again, the round goes back to the team, and the file is not asked about again until
+// another commit changes it.
+#[tokio::test]
+async fn a_file_refused_again_after_a_later_commit_goes_back_to_the_team_and_is_not_asked_until_it_changes() {
+    let mut rig = checking_rig(
+        "script:red-edit,questions,done,script:edit-more,questions,done",
+        5,
+        SILENT,
+        SILENT,
+    )
+    .await;
+    refused_file_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer_every(&rig, &tasks[0], 1, "refuse").await;
+    rig.wait_for("the second question of the checks", || {
+        second_question_recorded(&rig, &tasks[0])
+    })
+    .await;
+    answer_every(&rig, &tasks[0], 2, "refuse").await;
+    // The team makes no change in its next pass; the checks look again and send it back once more.
+    let back = rig.prompt(&tasks[0], 8).await;
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert!(back.contains("THE ROUND IS NOT READY FOR ITS REVIEW"), "{back}");
+    assert!(back.contains("`tests/existing.txt`"), "{back}");
+    assert!(kept.refused_of(&["1.1".parse().unwrap()]).contains(&existing()));
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(3).unwrap()).exists());
+}
+
+// Rule: a refused file that no commit changed after the refusal goes back to the team and nothing is asked, as before.
+#[tokio::test]
+async fn a_refused_file_with_no_later_commit_goes_back_to_the_team_and_nothing_is_asked() {
+    let mut rig = checking_rig("script:red-edit,questions,done,done", 5, SILENT, SILENT).await;
+    refused_file_scripts(&rig);
+    rig.start().await;
+
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer_every(&rig, &tasks[0], 1, "refuse").await;
+    let back = rig.prompt(&tasks[0], 5).await;
+    let kept = record(&rig, &tasks[0]).await;
+    rig.stop().await.unwrap();
+
+    assert!(back.contains("THE ROUND IS NOT READY FOR ITS REVIEW"), "{back}");
+    assert!(kept.refused_of(&["1.1".parse().unwrap()]).contains(&existing()));
+    assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
+}
