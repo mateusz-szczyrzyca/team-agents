@@ -158,7 +158,9 @@ async fn a_reviewer_refused_once_keeps_its_review_after_a_good_retry() {
     .await;
     with_opencode_investigators(&rig, &["inv-2", "inv-4"]);
     slow_patience_and_long_quota_pause(&rig);
-    rig.start().await;
+    // Seeded RNG so the initial reviewer selection is deterministic (finding 19
+    // randomised multi-slot ties, and this test needs inv-1 among the first two).
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
 
     let paused = rig
@@ -206,7 +208,9 @@ async fn a_refused_reviewer_waits_and_the_human_is_told_once_when_no_investigato
     .await;
     with_opencode_investigators(&rig, &["inv-2"]);
     slow_patience_and_long_quota_pause(&rig);
-    rig.start().await;
+    // Seeded RNG so the initial reviewer selection is deterministic (finding 19
+    // randomised multi-slot ties, and this test needs inv-1 among the first two).
+    rig.start_with_rng(rand::rngs::StdRng::seed_from_u64(0)).await;
     rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
 
     let paused = rig
