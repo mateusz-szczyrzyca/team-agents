@@ -602,6 +602,7 @@ impl State {
     }
 
     /// The team-replace calls the daemon has not yet completed.
+    #[must_use]
     pub fn pending_team_replaces(&self) -> &BTreeSet<PendingTeamReplace> {
         &self.pending_team_replaces
     }
