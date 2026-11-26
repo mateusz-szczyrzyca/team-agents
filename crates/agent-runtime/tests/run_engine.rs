@@ -524,7 +524,7 @@ mod run_engine {
             after(time::Duration::hours(2) + time::Duration::minutes(1))
         );
         assert!(pause.evidence.starts_with("a quota: API Error: 429"), "{pause:?}");
-        assert!(pause.evidence.ends_with(" · resets 2026-11-12T12:00:00Z"), "{pause:?}");
+        assert!(pause.evidence.ends_with(" · resets 2026-11-12 12:00:00"), "{pause:?}");
     }
 
     #[tokio::test]
@@ -580,7 +580,7 @@ mod run_engine {
         );
         assert_eq!(
             run.classified.pause.unwrap().evidence,
-            "a quota: 429 · API Error: 429 rate limit exceeded · resets 3pm · resets 2026-11-12T12:00:00Z"
+            "a quota: 429 · API Error: 429 rate limit exceeded · resets 3pm · resets 2026-11-12 12:00:00"
         );
     }
 
