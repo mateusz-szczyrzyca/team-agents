@@ -57,7 +57,7 @@ fn zero_busy_after_never_hands_a_task_over() {
 }
 
 #[test]
-fn a_candidate_of_the_same_or_a_higher_tier_takes_over_and_a_lower_one_does_not() {
+fn a_candidate_of_the_same_tier_takes_over_and_another_tier_does_not() {
     let same = agent("claude-2");
     let higher = agent("inv-opus");
     let lower = agent("glm-1");
@@ -74,10 +74,7 @@ fn a_candidate_of_the_same_or_a_higher_tier_takes_over_and_a_lower_one_does_not(
     );
 
     let only_higher = [free(&higher, Tier::Investigator, 0)];
-    assert_eq!(
-        decide(&waiting(Tier::Normal, 10, 300, &only_higher)),
-        Decision::HandOver(&higher)
-    );
+    assert_eq!(decide(&waiting(Tier::Normal, 10, 300, &only_higher)), Decision::Keep);
 }
 
 #[test]
@@ -207,7 +204,7 @@ fn decide_table_covers_every_wait_candidate_load_and_non_handed_over_state() {
         (
             "candidate of higher tier",
             waiting(Tier::Normal, 10, 300, &higher),
-            Decision::HandOver(&inv_opus),
+            Decision::Keep,
         ),
         (
             "candidate in the task's team",
