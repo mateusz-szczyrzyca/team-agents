@@ -156,3 +156,67 @@ async fn not_found_settles_the_pending_operation() {
     assert_eq!(owner.parts.state.pending_team_replaces(), &BTreeSet::new());
     assert!(!marker.exists());
 }
+
+#[tokio::test]
+async fn team_replace_missing_team_stays_pending_until_the_team_exists() {
+    let daemon = Daemon::new(&crate::fixtures::team_state(), None);
+    daemon.configure("[replacement]\nagents = [\"claude-2\"]\n");
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.take_over(&task(2), Role::Member, Trouble::RoundOverdue).unwrap();
+    block_launches(&mut owner);
+    owner.start_queued().await.unwrap();
+    assert_eq!(owner.parts.state.pending_team_replaces().len(), 1);
+    create_bus_team(&owner).await;
+    owner.start_queued().await.unwrap();
+    assert!(owner.parts.state.pending_team_replaces().is_empty());
+    assert!(
+        owner
+            .parts
+            .bus
+            .team_get(&team_id(0))
+            .await
+            .unwrap()
+            .members
+            .contains_key(&"claude-2".parse().unwrap())
+    );
+}
+
+#[tokio::test]
+async fn team_replace_closed_team_keeps_the_operation_pending() {
+    let daemon = Daemon::new(&crate::fixtures::team_state(), None);
+    daemon.configure("[replacement]\nagents = [\"claude-2\"]\n");
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    create_bus_team(&owner).await;
+    owner.parts.bus.team_done(&team_id(0)).await.unwrap();
+    owner.take_over(&task(2), Role::Member, Trouble::RoundOverdue).unwrap();
+    block_launches(&mut owner);
+    owner.start_queued().await.unwrap();
+    assert_eq!(owner.parts.state.pending_team_replaces().len(), 1);
+    owner.start_queued().await.unwrap();
+    assert_eq!(owner.parts.state.pending_team_replaces().len(), 1);
+}
+
+#[tokio::test]
+async fn team_replace_legacy_handover_is_migrated_after_loading_state_without_pending_field() {
+    let mut state = crate::fixtures::team_state();
+    state
+        .hand_over_task(&task(2), crate::fixtures::normal("claude-2"), at(1))
+        .unwrap();
+    let mut legacy: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
+    legacy.as_object_mut().unwrap().remove("pending_team_replaces");
+    let daemon = Daemon::new(&state, None);
+    std::fs::write(daemon.home.state_file(), serde_json::to_string(&legacy).unwrap()).unwrap();
+    let loaded =
+        agent_core::state::State::from_json(&std::fs::read_to_string(daemon.home.state_file()).unwrap()).unwrap();
+    assert!(loaded.pending_team_replaces().is_empty());
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    create_bus_team(&owner).await;
+    block_launches(&mut owner);
+    owner.start_queued().await.unwrap();
+    let bus = owner.parts.bus.team_get(&team_id(0)).await.unwrap();
+    assert_eq!(
+        bus.members.keys().map(ToString::to_string).collect::<Vec<_>>(),
+        ["claude-2"]
+    );
+    assert!(owner.parts.state.pending_team_replaces().is_empty());
+}
