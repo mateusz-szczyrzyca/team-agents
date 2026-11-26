@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.129.0 · agent-core 0.126.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #313
+## agent 0.130.0 · agent-core 0.127.0 · agent-runtime 0.116.0 — 26.11.2026 — PR #313
 
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] A replacement takes the old agent's place on the team bus before its first run, so team messages and Serena reminders reach it. If the bus is unavailable, the daemon saves the change and retries it before starting the replacement, including after a restart. Busy hand-overs use the same process; solo hand-overs make no bus change. Hand-overs saved by older daemons are recovered before launch, and missing or closed teams keep the replacement pending.
