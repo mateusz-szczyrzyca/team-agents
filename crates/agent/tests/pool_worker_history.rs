@@ -304,7 +304,7 @@ Write the walkthrough of the guide.
         /// The file `name` of the worktree of `task`, once it is there.
         fn file(&self, task: &str, name: &str) -> String {
             let path = self.worktree(task).join(name);
-            eventually(&format!("{}", path.display()), || path.exists());
+            eventually(&format!("{path}", path = path.display()), || path.exists());
             std::fs::read_to_string(path).unwrap()
         }
     }
@@ -576,8 +576,8 @@ Write the walkthrough of the guide.
             .spawn()
             .unwrap();
         let call = format!(
-            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"delegate\",\"arguments\":{}}}}}\n",
-            MEMBER_REQUEST
+            "{{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/call\",\"params\":{{\"name\":\"delegate\",\"arguments\":{request}}}}}\n",
+            request = MEMBER_REQUEST
         );
         std::io::Write::write_all(&mut bus.stdin.take().unwrap(), call.as_bytes()).unwrap();
         let out = bus.wait_with_output().unwrap();

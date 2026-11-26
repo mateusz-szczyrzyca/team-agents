@@ -1390,7 +1390,7 @@ impl Owner {
         {
             self.pool_dispatch.run_teams.remove(&task);
             let run_id = self.request_runs.remove(&task);
-            return self.settle_pool_worker_run(&task, &served, run_id, outcome);
+            return self.settle_pool_worker_run(&task, &served, &run_id, outcome);
         }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {

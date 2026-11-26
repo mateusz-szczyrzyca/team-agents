@@ -7,7 +7,7 @@ use agent_core::history::{
     AgentIdentity, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, Record, RunEndRecord, RunStart, RunWhy,
 };
 use agent_core::ids::{BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
-use agent_core::kinds::{CliKind, Role, Tier};
+use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::protocol::RunRequest;
 use agent_core::state::{ItemPhase, RunState, Timestamp};
@@ -346,10 +346,7 @@ impl Owner {
         team: &TeamId,
         run: &RunId,
         at: Timestamp,
-        worker_name: &str,
-        tier: Tier,
-        cli: CliKind,
-        model: Option<&agent_core::config::ModelName>,
+        agent: AgentIdentity,
         why: RunWhy,
         prompt: &str,
         worktree: &AbsolutePath,
@@ -363,12 +360,7 @@ impl Owner {
             team: team.clone(),
             task: task.clone(),
             at,
-            agent: AgentIdentity {
-                name: worker_name.to_owned(),
-                tier,
-                cli,
-                model: model.cloned(),
-            },
+            agent,
             role: Role::Worker,
             rounds: Vec::new(),
             why,
