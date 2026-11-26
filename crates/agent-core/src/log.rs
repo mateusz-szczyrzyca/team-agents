@@ -251,6 +251,8 @@ pub enum LogEvent {
     /// The daemon did not put a task's worktree on the branch of the item the run works on: the tree has changes that a
     /// switch would lose, or the switch failed. The run starts anyway.
     WorktreeSwitchRefused,
+    /// An investigation request from the bus has a kind other than "" (question) or "review".
+    InvestigationKindUnknown,
 }
 
 impl Keyword for LogEvent {
@@ -299,7 +301,8 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
-            Self::TeamChanged
+            Self::InvestigationKindUnknown
+            | Self::TeamChanged
             | Self::RunNoToolRetry
             | Self::TeamRemoved
             | Self::RoundChanged

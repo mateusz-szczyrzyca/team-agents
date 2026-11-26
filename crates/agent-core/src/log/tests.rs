@@ -199,6 +199,11 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             "worktree_switch_refused",
             LogLevel::Warn,
         ),
+        (
+            LogEvent::InvestigationKindUnknown,
+            "investigation_kind_unknown",
+            LogLevel::Warn,
+        ),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());
