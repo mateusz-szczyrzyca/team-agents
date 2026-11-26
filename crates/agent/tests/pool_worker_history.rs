@@ -94,6 +94,14 @@ Write the walkthrough of the guide.
     }
 
     impl World {
+        /// Gives the stand-ins that run `script:NAME` their script: it runs in the worktree of the agent.
+        fn script(&self, name: &str, body: &str) {
+            let dir = self.home.join("fake-scripts");
+            std::fs::create_dir_all(&dir).unwrap();
+            let exclude = "printf '%s\\n' '.fake-*' >> \"$(git rev-parse --git-path info/exclude)\"\n";
+            std::fs::write(dir.join(format!("{name}.sh")), format!("{exclude}{body}")).unwrap();
+        }
+
         fn new() -> Self {
             let dir = tempfile::tempdir().unwrap();
             let root = dir.path().canonicalize().unwrap();
@@ -381,26 +389,46 @@ Write the walkthrough of the guide.
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
 
-        // The worker runs at least twice: the initial sleep run and the request-serving run.
-        assert!(
-            runs.len() >= 2,
-            "expected at least 2 runs for the pool worker (sleep + request), got {runs:?}"
-        );
-        // The last run is the request-serving run.
-        let run = runs.last().unwrap();
+        // Filter to the request-serving runs (those with why='request').
+        let request_runs: Vec<_> = runs
+            .iter()
+            .filter(|row| row.start.value.why.kind() == agent_core::history::WhyKind::Request)
+            .collect();
+        assert!(!request_runs.is_empty(), "expected at least 1 request-serving run");
+
+        // The first request run must have correct properties.
+        let run = request_runs.first().unwrap();
         let start = &run.start.value;
         assert_eq!(start.task.as_str(), worker);
         assert_eq!(start.role, agent_core::kinds::Role::Worker);
-        assert_eq!(start.why.kind(), agent_core::history::WhyKind::Request);
         assert_eq!(start.team.as_str(), team);
-        // The prompt should contain the request content.
+        // The prompt should contain the request content from the member.
         assert!(
             start.prompt.contains("FROM claude-1"),
             "prompt should mention the requester, got: {}",
             start.prompt
         );
+        assert!(
+            start.prompt.contains("one section per question"),
+            "prompt should contain the request text, got: {}",
+            start.prompt
+        );
         // The end must be recorded.
-        assert!(run.end.is_some(), "run must have an end record");
+        assert!(run.end.is_some(), "request run must have an end record");
+
+        // At least one request run must end with a Reported (DONE) verdict.
+        let done_ends: Vec<_> = request_runs
+            .iter()
+            .filter(|row| {
+                row.end
+                    .as_ref()
+                    .is_some_and(|e| matches!(e.value.end, agent_core::state::RunEnd::Reported { .. }))
+            })
+            .collect();
+        assert!(
+            !done_ends.is_empty(),
+            "at least one request run should have a Reported end"
+        );
     }
 
     #[test]
@@ -409,9 +437,10 @@ Write the walkthrough of the guide.
         // Write a stream JSONL file for the worker that prints two tool steps.
         let scripts = world.home.join("fake-scripts");
         std::fs::create_dir(&scripts).unwrap();
+        // The format is Claude Code's stream JSON: assistant messages with content blocks.
         let steps_jsonl = "\
-{\"type\":\"tool_use\",\"tool\":{\"name\":\"bash\",\"arguments\":{\"command\":\"echo hello\"},\"result\":{\"stdout\":\"hello\\n\"}}}
-{\"type\":\"tool_use\",\"tool\":{\"name\":\"write\",\"arguments\":{\"path\":\"docs/guide.md\",\"content\":\"the guide\"},\"result\":{}}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"echo hello\"}}]}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"file_path\":\"docs/guide.md\",\"content\":\"the guide\"}}]}}
 ";
         std::fs::write(scripts.join("steps.jsonl"), steps_jsonl).unwrap();
 
@@ -424,31 +453,51 @@ Write the walkthrough of the guide.
 
         let reader = open_reader(&world);
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
-        let runs = reader.runs_of_task(&worker_task_id).unwrap();
-        assert!(runs.len() >= 2, "expected at least 2 runs for the pool worker");
-        let run_id = &runs.last().unwrap().start.value.run;
+        let runs: Vec<_> = reader
+            .runs_of_task(&worker_task_id)
+            .unwrap()
+            .into_iter()
+            .filter(|row| row.start.value.why.kind() == agent_core::history::WhyKind::Request)
+            .collect();
+        assert_eq!(runs.len(), 1, "expected exactly 1 request-serving run");
+        let run_id = &runs[0].start.value.run;
         let steps = reader.steps(run_id).unwrap();
 
-        // Should have at least 2 tool steps. There might also be a final message step.
-        assert!(
-            steps.len() >= 2,
-            "expected at least 2 steps for the worker run, got {}: {steps:?}",
-            steps.len()
+        // Count only tool steps (Command, FileEdit, ToolCall), not Info or Message steps.
+        let tool_steps: Vec<_> = steps
+            .iter()
+            .filter(|s| {
+                matches!(
+                    agent_core::history::StepKind::of(&s.value.event),
+                    agent_core::history::StepKind::Command
+                        | agent_core::history::StepKind::FileEdit
+                        | agent_core::history::StepKind::ToolCall
+                )
+            })
+            .collect();
+        assert_eq!(
+            tool_steps.len(),
+            2,
+            "expected exactly 2 tool steps for the worker run, got {}: {tool_steps:?}",
+            tool_steps.len()
         );
 
-        // Check lost records count via run_ends: the run must have an end.
-        assert!(runs[0].end.is_some(), "run must have an end record");
+        // The request run must have an end, so no steps are lost.
+        assert!(
+            runs[0].end.is_some(),
+            "request run must have an end record to avoid lost steps"
+        );
     }
 
     #[test]
     fn agent_log_shows_worker_task() {
         let mut world = World::new();
-        // Write a stream JSONL file with two tool steps.
+        // Write a stream JSONL file with two tool steps (Claude Code stream JSON format).
         let scripts = world.home.join("fake-scripts");
         std::fs::create_dir(&scripts).unwrap();
         let steps_jsonl = "\
-{\"type\":\"tool_use\",\"tool\":{\"name\":\"bash\",\"arguments\":{\"command\":\"echo hello\"},\"result\":{\"stdout\":\"hello\\n\"}}}
-{\"type\":\"tool_use\",\"tool\":{\"name\":\"write\",\"arguments\":{\"path\":\"docs/guide.md\",\"content\":\"the guide\"},\"result\":{}}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Bash\",\"input\":{\"command\":\"echo hello\"}}]}}
+{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"name\":\"Write\",\"input\":{\"file_path\":\"docs/guide.md\",\"content\":\"the guide\"}}]}}
 ";
         std::fs::write(scripts.join("steps.jsonl"), steps_jsonl).unwrap();
 
@@ -459,25 +508,32 @@ Write the walkthrough of the guide.
         world.ended(&worker, 2);
         world.stop();
 
-        // agent log --task <worker task> should print something.
+        // agent log --task <worker task> should print the run's start and both steps.
         let output = world.agent(&["log", "--task", &worker]);
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
         let text = String::from_utf8(output.stdout).unwrap();
         assert!(
-            text.contains(&worker),
-            "agent log output should mention the worker task\noutput:\n{text}"
+            text.contains("run started"),
+            "agent log --task should show the run start\noutput:\n{text}"
         );
-        // The output should include run start and end lines.
         assert!(
-            text.contains("run"),
-            "agent log output should mention a run\noutput:\n{text}"
+            text.contains("echo hello"),
+            "agent log --task should show the first tool step\noutput:\n{text}"
+        );
+        assert!(
+            text.contains("docs/guide.md"),
+            "agent log --task should show the second tool step\noutput:\n{text}"
         );
 
-        // agent log --run <run> should also work.
+        // agent log --run <run> should print both steps.
         let reader = open_reader(&world);
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
-        let run_id = runs.last().unwrap().start.value.run.to_string();
+        let request_run = runs
+            .iter()
+            .find(|row| row.start.value.why.kind() == agent_core::history::WhyKind::Request)
+            .expect("a request run must exist");
+        let run_id = request_run.start.value.run.to_string();
         let output_run = world.agent(&["log", "--run", &run_id]);
         assert!(
             output_run.status.success(),
@@ -486,8 +542,12 @@ Write the walkthrough of the guide.
         );
         let text_run = String::from_utf8(output_run.stdout).unwrap();
         assert!(
-            !text_run.is_empty(),
-            "agent log --run output should not be empty\noutput:\n{text_run}"
+            text_run.contains("echo hello"),
+            "agent log --run should show the first tool step\noutput:\n{text_run}"
+        );
+        assert!(
+            text_run.contains("docs/guide.md"),
+            "agent log --run should show the second tool step\noutput:\n{text_run}"
         );
     }
 
@@ -527,29 +587,89 @@ Write the walkthrough of the guide.
     }
 
     #[test]
-    #[ignore = "recovery test needs daemon restart orchestration that is timing-sensitive in this test harness"]
     fn recovered_worker_run_recorded_once() {
+        let lead_name = "claude-1";
+        let worker_name = "glm-1";
         let mut world = World::new();
-        let tasks = answered_request(&mut world, "sleep,done:Result: done.", MEMBER_REQUEST);
-        let (member, worker) = (task(&tasks, "claude-1").to_owned(), task(&tasks, "glm-1").to_owned());
 
-        // Make the first request.
+        // Override the worker's scenario: first action `sleep` to settle on the bus,
+        // second action is a script that signals it started, then waits for release.
+        let config = std::fs::read_to_string(world.home.join("agents.toml")).unwrap();
+        let updated = config.replace("sleep,done:Result: done.", "sleep,script:recovery");
+        std::fs::write(world.home.join("agents.toml"), updated).unwrap();
+        world.script(
+            "recovery",
+            "touch .fake-started\nwhile test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done\n",
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus", "glm-1"]);
+        let member = task(&tasks, lead_name).to_owned();
+        let worker = task(&tasks, worker_name).to_owned();
+        world.ended(&worker, 1);
+        world.sleeps_on_the_bus(worker_name);
+
+        // Trigger the request and wait for the worker's request-serving run to start.
         std::fs::write(world.worktree(&member).join(".fake-ask"), "").unwrap();
-        world.ended(&worker, 2);
+        eventually("worker request run to be running", || {
+            world.worktree(&worker).join(".fake-started").exists()
+        });
+
+        // Save state and journal before stopping (to simulate a crash window).
+        let running_bus = std::fs::read(world.home.join("bus/state.json")).unwrap();
+        let journal_path = world.home.join("tasks").join(&member).join("worker-recovery-1.json");
+        let running_journal = std::fs::read(&journal_path).ok();
         world.stop();
 
-        // Read the history: two runs with different IDs.
+        // Restore state as it was while the request was running (simulating a crash).
+        std::fs::write(world.home.join("bus/state.json"), running_bus).unwrap();
+        if let Some(ref data) = running_journal {
+            std::fs::write(&journal_path, data).unwrap();
+        }
+
+        // Release the worker and restart the daemon.
+        std::fs::write(world.home.join("release-worker"), "").unwrap();
+        world.start();
+
+        // Wait for the request to be done (the restarted daemon re-dispatches and the worker finishes).
+        eventually("request to be done after restart", || world.runs(&worker) >= 3);
+        world.ended(&member, 1);
+        world.stop();
+
+        // Read the history.
         let reader = open_reader(&world);
         let worker_task_id: agent_core::ids::TaskId = worker.parse().unwrap();
         let runs = reader.runs_of_task(&worker_task_id).unwrap();
-        assert_eq!(runs.len(), 2, "expected 2 runs (sleep + request), got {runs:?}");
-        assert_ne!(
-            runs[0].start.value.run, runs[1].start.value.run,
-            "the two runs must have different IDs"
+
+        // After restart, the daemon should create a new run for the worker
+        // (either a request recovery or a continuation of the interrupted session).
+        assert!(
+            runs.len() >= 2,
+            "expected at least 2 runs (sleep + request/continuation), got {}",
+            runs.len()
         );
-        // Both runs must have ends.
+
+        // Each run must have an end and a unique run ID.
+        let mut ids = std::collections::HashSet::new();
         for run in &runs {
             assert!(run.end.is_some(), "each run must have an end record");
+            assert!(
+                ids.insert(run.start.value.run.clone()),
+                "duplicate run ID: {}",
+                run.start.value.run
+            );
+        }
+
+        // There must be at least one Request run (from before restart) and one run after restart
+        // (either Request via recovery or Continuation after resume).
+        let request_runs: Vec<_> = runs
+            .iter()
+            .filter(|row| row.start.value.why.kind() == agent_core::history::WhyKind::Request)
+            .collect();
+        assert!(!request_runs.is_empty(), "expected at least 1 request run, got 0");
+        // All request runs must have ends.
+        for run in &request_runs {
+            assert!(run.end.is_some(), "each request run must have an end record");
         }
     }
 }
