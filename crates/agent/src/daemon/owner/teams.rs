@@ -19,7 +19,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
 };
-use agent_core::history::{AgentIdentity, HistoryEvent, RunStart};
+use agent_core::history::{AgentIdentity, HistoryEvent, RunStart, RunWhy};
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
@@ -1700,8 +1700,6 @@ impl Owner {
                 },
                 team.id().clone(),
             );
-            // The worker task itself does not appear through find_task, so we re-derive branch here.
-            // The branch was already computed above during workspace preparation.
             let agent_identity = AgentIdentity {
                 name: worker_name.to_string(),
                 tier: Tier::Worker,
@@ -1716,7 +1714,7 @@ impl Owner {
                 agent: agent_identity,
                 role: Role::Worker,
                 rounds: Vec::new(),
-                why: agent_core::history::RunWhy::Request { asked_by },
+                why: RunWhy::Request { asked_by },
                 prompt: job.prompt.clone(),
                 worktree: job.working_dir.clone(),
                 branch: branch.clone(),
@@ -1827,9 +1825,25 @@ impl Owner {
                         let now = Timestamp::now(&self.parts.clock)?;
                         self.record_run_end(run_id, now, &run.classified.end, run.final_message.as_deref());
                     }
-                    RunVerdict::Interrupted { .. } => {}
+                    RunVerdict::Interrupted { .. } => {
+                        let now = Timestamp::now(&self.parts.clock)?;
+                        self.record_run_end(
+                            run_id,
+                            now,
+                            &agent_core::state::RunEnd::NoStatus { exit_code: None },
+                            None,
+                        );
+                    }
                 },
-                Outcome::Failed(_) => {}
+                Outcome::Failed(reason) => {
+                    let now = Timestamp::now(&self.parts.clock)?;
+                    self.record_run_end(
+                        run_id,
+                        now,
+                        &agent_core::state::RunEnd::NoStatus { exit_code: None },
+                        Some(reason),
+                    );
+                }
             }
         }
 
