@@ -71,7 +71,7 @@ pub(in crate::daemon::owner) fn outlook_of(error: &super::super::PublishError) -
     }
 }
 
-/// The moment `time` in `zone` to the minute, as a person reads it: `2026-11-21 01:07 +01:00`.
+/// The moment `time` in `zone` to the minute, as a person reads it: `2026-11-21 01:07`.
 #[must_use]
 pub(in crate::daemon::owner) fn clock_time(time: Timestamp, zone: Zone) -> String {
     zone.stamp_minute(time)
@@ -210,7 +210,7 @@ impl Wait {
         }
     }
 
-    /// What `agent status` and the daemon log say of it: `prepare a second opinion #138, tried 4 times, next try 2026-11-21 01:07 +01:00`; for a step the
+    /// What `agent status` and the daemon log say of it: `prepare a second opinion #138, tried 4 times, next try 2026-11-21 01:07`; for a step the
     /// human resumed `..., tried 4 times, tried again at the next look`; for a refusal `..., refused: <answer>`.
     pub(super) fn line(&self, zone: Zone) -> String {
         let tried = self.tries.get();
