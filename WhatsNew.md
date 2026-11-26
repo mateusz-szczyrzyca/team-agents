@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.122.0 · agent-core 0.119.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #290
+## agent 0.122.0 · agent-core 0.119.0 · agent-runtime 0.115.0 — 26.11.2026 — PR #293
 
 ### New features
 - [agent] [agent-core] [agent-runtime] The daemon serves investigation requests from the bus with free investigators, running each in a detached worktree at the requester's branch tip and sending the answer back to the requester when done.

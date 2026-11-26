@@ -56,12 +56,7 @@ impl Owner {
                     kind = ?req.kind,
                 );
                 let reason = format!("unknown investigation kind: {:?}", req.kind);
-                if let Err(error) = self
-                    .parts
-                    .bus
-                    .inv_set(req.id, &InvTransition::Failed { reason })
-                    .await
-                {
+                if let Err(error) = self.parts.bus.inv_set(req.id, &InvTransition::Failed { reason }).await {
                     tracing::warn!(
                         event = LogEvent::BusDown.as_str(),
                         %team_id,
