@@ -232,3 +232,91 @@ async fn the_lead_of_a_round_its_member_works_on_is_not_cut() {
 
     assert!(owner.overdue_cuts.is_empty(), "{:?}", owner.overdue_cuts);
 }
+
+/// The state of the tests after the member's first run ended stopped at 20 s and a second run began at 1800 s, half an
+/// hour in; the first run was the daemon's cut for an order to commit when `commit_cut` holds.
+fn member_cut_and_resumed(commit_cut: bool) -> State {
+    let mut state = team_on(Some(in_progress("claude-1")));
+    {
+        let (_, mut found) = state.find_task_mut(&task(2)).unwrap();
+        found.end_run(at(20), RunEnd::Stopped).unwrap();
+    }
+    if commit_cut {
+        state.record_commit_cut(task(2), run(2));
+    }
+    state
+        .begin_run(
+            &task(2),
+            NewRun {
+                id: run(4),
+                at: at(1800),
+                session: None,
+                rounds: vec![round()],
+            },
+        )
+        .unwrap();
+    state
+}
+
+#[test]
+fn a_run_the_daemon_cut_for_an_order_to_commit_is_not_read_as_stopped() {
+    let state = member_cut_and_resumed(true);
+
+    let timed = timed_round(&state, &task(2)).expect("the member's round is timed");
+    assert_eq!(
+        timed.runs,
+        vec![
+            RunMark {
+                started_at: at(10),
+                stopped: false,
+            },
+            RunMark {
+                started_at: at(1800),
+                stopped: false,
+            },
+        ]
+    );
+}
+
+/// The cut the daemon keeps for the member, task 2, of `state` when the clock went `minutes` past the start of the
+/// tests under a limit of two hours.
+async fn cut_of(state: &State, minutes: i64) -> Option<OverdueCut> {
+    let daemon = Daemon::new(state, None);
+    daemon.configure(LIMIT);
+    daemon.clock.advance(time::Duration::minutes(minutes));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.cut_overdue_round(&task(2));
+    owner.overdue_cuts.get(&task(2)).cloned()
+}
+
+#[tokio::test]
+async fn a_cut_for_an_order_to_commit_does_not_start_the_clock_of_the_round_again() {
+    // The round was opened at 5 s: at 125 min the clock of the opening reads 124 whole minutes, the run after the cut
+    // only 95.
+    let cut = cut_of(&member_cut_and_resumed(true), 125).await;
+
+    assert_eq!(
+        cut,
+        Some(OverdueCut {
+            round: round(),
+            item: item(),
+            minutes: 124,
+            limit: 120,
+        })
+    );
+}
+
+#[tokio::test]
+async fn a_stop_of_the_human_still_starts_the_clock_of_the_round_again() {
+    // The run after the stop began at 30 min: at 125 min it has gone 95 minutes, at 151 min 121.
+    assert_eq!(cut_of(&member_cut_and_resumed(false), 125).await, None);
+    assert_eq!(
+        cut_of(&member_cut_and_resumed(false), 151).await,
+        Some(OverdueCut {
+            round: round(),
+            item: item(),
+            minutes: 121,
+            limit: 120,
+        })
+    );
+}

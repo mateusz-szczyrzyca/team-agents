@@ -33,6 +33,8 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+mod commit_cut_tests;
+#[cfg(test)]
 mod limit_tests;
 mod renewal;
 #[cfg(test)]
@@ -366,6 +368,19 @@ impl State {
         } else {
             self.limit_refusals.insert(task, refusals);
         }
+    }
+
+    /// Whether the daemon cut `run` of `task` for an order to commit and resumed it in its session: such a cut does not
+    /// start the clock of a round again, as a stop of the human does.
+    #[must_use]
+    pub fn commit_cut(&self, task: &TaskId, run: &crate::ids::RunId) -> bool {
+        let _ = (task, run);
+        false
+    }
+
+    /// Records that the daemon cut `run` of `task` for an order to commit.
+    pub fn record_commit_cut(&mut self, task: TaskId, run: crate::ids::RunId) {
+        let _ = (task, run);
     }
 
     /// Until when the agent is refused by its provider, `None` when it is not refused at all.
