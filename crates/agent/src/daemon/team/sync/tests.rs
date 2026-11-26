@@ -196,7 +196,7 @@ fn a_member_the_bus_does_not_know_is_left_out() {
 }
 
 #[test]
-fn a_member_taken_over_by_another_agent_is_woken_on_the_bus_under_its_first_agents_name() {
+fn a_member_taken_over_by_another_agent_is_woken_on_the_bus_under_its_current_agents_name() {
     let mut team = crew_of(PLAIN, 1, 0);
     go(&mut team, 1, &[TaskStatus::Running]);
     go(&mut team, 2, &[TaskStatus::Running, TaskStatus::Waiting]);
@@ -213,14 +213,17 @@ fn a_member_taken_over_by_another_agent_is_woken_on_the_bus_under_its_first_agen
         .unwrap();
     let team = state.team(&id).unwrap();
 
-    let plan = reconcile(team, &bus("active", "waking", "sleeping")).unwrap();
+    let mut bus = bus("active", "waking", "sleeping");
+    let member = bus.members.remove(&agent("claude-1")).unwrap();
+    bus.members.insert(agent("claude-9"), member);
+    let plan = reconcile(team, &bus).unwrap();
 
     assert_eq!(
         plan,
         Reconciliation {
-            set: vec![(agent("claude-1"), MemberState::Active)],
+            set: vec![(agent("claude-9"), MemberState::Active)],
             wake: vec![task_id(2)],
         },
-        "the bus knows the task as claude-1's, whoever holds it now"
+        "the bus knows the task by its current holder claude-9"
     );
 }
