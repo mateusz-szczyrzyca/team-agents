@@ -1384,7 +1384,10 @@ one atomic operation: the membership moves from `--from` to `--to`, every board 
 `--to`'s, and the unread messages of `--from`'s team session move to `--to`. Messages already read keep their original recipient.
 The team reads a `member_replaced` event naming `from` and `to`; the command prints `REPLACED from to` on
 stdout. Missing or finished teams and missing members exit with status 3, an existing replacement member
-with status 6, and identical names with status 2. The `member_replaced` log record has `team`, `from` and `to` fields.
+with status 6, and identical or empty agent names with status 2. The `member_replaced` log record has `team`, `from` and `to` fields.
+A failed replacement restores membership, unread messages and receipt offsets together. Interrupted replacements
+are rolled back under the bus lock before the next state load; internal `replacement-undo` backups do not change
+the state or message formats. The replacement lead can read the notice, and the moved member keeps its state.
 
 ## Development and tests
 

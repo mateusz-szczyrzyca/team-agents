@@ -1476,11 +1476,12 @@ func (c CmdTeamSetCause) String() string { return c.info().name }
 type CmdTeamReplaceCause int
 
 const (
-	CmdTeamReplaceNoSuchTeam    CmdTeamReplaceCause = iota // nonexistent or finished team [NotFound]
-	CmdTeamReplaceNoSuchMember                             // from absent [NotFound]
-	CmdTeamReplaceAlreadyMember                            // to present [Conflict]
-	CmdTeamReplaceSameAgent                                // from equals to [InvalidArgument]
-	CmdTeamReplaceStorage                                  // the shared state or a file could not be read or written [Storage]
+	CmdTeamReplaceNoSuchTeam      CmdTeamReplaceCause = iota // nonexistent or finished team [NotFound]
+	CmdTeamReplaceNoSuchMember                               // from absent [NotFound]
+	CmdTeamReplaceAlreadyMember                              // to present [Conflict]
+	CmdTeamReplaceSameAgent                                  // from equals to [InvalidArgument]
+	CmdTeamReplaceMissingArgument                            // the outgoing or replacement agent name is empty [InvalidArgument]
+	CmdTeamReplaceStorage                                    // the shared state or a file could not be read or written [Storage]
 )
 
 // CmdTeamReplaceError is the error of the subcommand team-replace.
@@ -1492,6 +1493,7 @@ var cmdTeamReplaceCauses = [...]causeInfo{
 	{"NoSuchMember", ClassNotFound},
 	{"AlreadyMember", ClassConflict},
 	{"SameAgent", ClassInvalidArgument},
+	{"MissingArgument", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 

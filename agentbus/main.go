@@ -172,6 +172,9 @@ func (b *Bus) load() (*State, *StorageError) {
 // The caller must hold the bus lock: receipt recovery can save the whole state.
 // An unknown enum value in the file is a decoding error (see types.go).
 func (b *Bus) loadLocked() (*State, *StorageError) {
+	if serr := b.recoverReplacement(); serr != nil {
+		return nil, serr
+	}
 	st := &State{}
 	data, err := os.ReadFile(b.path("state.json"))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -271,7 +274,11 @@ func (b *Bus) locked(fn func(*State)) *StorageError {
 
 // transact runs one operation on the shared state. A storage failure (lock, load, save) becomes the
 // operation's storage cause; otherwise the operation's own error (or nil) is returned.
-func transact[C opCause](b *Bus, storage C, fn func(*State) *OpError[C]) *OpError[C] {
+// Passing replacementRollback also restores state and messages after any failure.
+func transact[C opCause](b *Bus, storage C, fn func(*State) *OpError[C], rollback ...replacementRollback) *OpError[C] {
+	if len(rollback) > 0 {
+		return replacementTransact(b, storage, fn)
+	}
 	var opErr *OpError[C]
 	if serr := b.locked(func(st *State) { opErr = fn(st) }); serr != nil {
 		return fromStorage(storage, serr)

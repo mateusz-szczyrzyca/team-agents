@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agentbus — 26.11.2026 — PR pending
+## agentbus — 26.11.2026 — PR #302
 
 ### New features
 - [agentbus] `agentbus team-replace --team ID --from OLD --to NEW` moves a member, the board work they claimed and their unread team messages to the replacement, and informs the team.

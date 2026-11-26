@@ -914,6 +914,11 @@
      "name": "SameAgent",
      "class": "InvalidArgument",
      "doc": "from equals to"
+    },
+    {
+     "name": "MissingArgument",
+     "class": "InvalidArgument",
+     "doc": "the outgoing or replacement agent name is empty"
     }
    ]
   },
