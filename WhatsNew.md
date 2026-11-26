@@ -16,6 +16,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent-core] [agent-runtime] `history.db` is upgraded to schema 33 at the first start (old records load unchanged): it admits the `checkpoint` record and the `checkpoint_failed` log event.
+- [agent] [agent-runtime] The daemon waits at most 2 seconds for the history to have a checkpoint's record: a history that is stuck (a database another process holds) is logged once and no longer holds a round up.
 - [agent] A checkpoint that cannot be taken (the worktree is gone, git or the disk fails) is logged as `checkpoint_failed` and recorded without a snapshot; the round goes on.
 
 ## agent 0.131.0 · agent-core 0.128.0 — 26.11.2026 — PR pending
