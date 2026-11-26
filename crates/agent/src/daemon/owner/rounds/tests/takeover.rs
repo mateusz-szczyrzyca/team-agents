@@ -462,10 +462,10 @@ async fn the_briefing_of_a_takeover_lists_the_unread_messages_to_the_agent_repla
     );
 }
 
-// Rule: a member taken over keeps the name of its first agent on the team's bus — its runs act under it — and its task's
-// own branch: the lead is told of that branch when the work is done.
+// Rule: a member taken over uses its replacement name on the team's bus and keeps its task's original branch;
+// the lead is told of that branch when the work is done.
 #[tokio::test]
-async fn a_member_taken_over_keeps_its_name_on_the_bus_and_its_branch() {
+async fn a_member_taken_over_uses_its_new_bus_name_and_keeps_its_branch() {
     let mut rig = Rig::new(
         &[
             investigator("inv-lead", "sleep"),
@@ -501,10 +501,8 @@ async fn a_member_taken_over_keeps_its_name_on_the_bus_and_its_branch() {
 
     assert_eq!(state.find_task(&tasks[1]).unwrap().member.runs().len(), 7);
     assert_eq!(names.len(), 7, "{names:?}");
-    assert!(
-        names.iter().all(|name| name == "claude-1"),
-        "every run is claude-1 on the bus: {names:?}"
-    );
+    assert_eq!(names.iter().filter(|name| *name == "claude-1").count(), 6, "{names:?}");
+    assert_eq!(names.iter().filter(|name| *name == "claude-3").count(), 1, "{names:?}");
     assert!(
         !bus.contains("agents/claude-3/"),
         "no branch of claude-3 is named: {bus}"
@@ -624,7 +622,7 @@ async fn the_lead_that_gets_a_members_work_is_briefed_on_it() {
     );
 }
 
-// Rule: a member taken over is woken for each new message to the name its task has on the bus, as before the takeover;
+// Rule: a member taken over is woken for each new message to its replacement name on the bus;
 // the wake-ups of one message do not hold back the next.
 #[tokio::test]
 async fn a_member_taken_over_is_woken_for_each_new_message_to_its_name_on_the_bus() {
@@ -665,7 +663,7 @@ async fn a_member_taken_over_is_woken_for_each_new_message_to_its_name_on_the_bu
         bus.send(
             &"inv-lead".parse().unwrap(),
             &agent_runtime::agentbus::Recipient::Member {
-                agent: "claude-1".parse().unwrap(),
+                agent: "claude-3".parse().unwrap(),
                 team: team.clone(),
             },
             &agent_runtime::agentbus::Outgoing::Chat {

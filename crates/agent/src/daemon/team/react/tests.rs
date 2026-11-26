@@ -550,3 +550,42 @@ async fn failed_member_notices_render_the_actual_end_and_last_words_for_every_ot
         }
     }
 }
+
+#[test]
+fn team_replace_notices_use_current_holders_and_preserve_the_original_task_branch() {
+    let mut state = agent_core::state::State::new();
+    let team = crew_of(PLAIN, 1, 0);
+    let id = team.id().clone();
+    state.insert_team(team).unwrap();
+    state
+        .hand_over_task(
+            &task_id(1),
+            crate::fixtures::investigator("inv-new"),
+            crate::fixtures::at(1),
+        )
+        .unwrap();
+    state
+        .hand_over_task(&task_id(2), crate::fixtures::normal("claude-2"), crate::fixtures::at(2))
+        .unwrap();
+    let team = state.team(&id).unwrap();
+    let finished = told(team, 2, &reported(RunOutcome::Done), None).unwrap();
+    assert_eq!(finished.to, agent("inv-new"));
+    assert_eq!(
+        finished.notice,
+        BusNotice::MemberFinished {
+            member: agent("claude-2"),
+            item: None,
+            branch: "agents/claude-1/task-20261111-153002-k3x9".parse().unwrap(),
+        }
+    );
+    let (_, member) = team.find(&task_id(2)).unwrap();
+    let taken = lead_takes_work(team, member, std::path::Path::new("/worktree"), None)
+        .unwrap()
+        .unwrap();
+    assert_eq!(taken.to, agent("inv-new"));
+    let BusNotice::LeadTakesWork(work) = taken.notice else {
+        panic!("lead takeover notice")
+    };
+    assert_eq!(work.member, agent("claude-2"));
+    assert_eq!(work.branch.as_str(), "agents/claude-1/task-20261111-153002-k3x9");
+}

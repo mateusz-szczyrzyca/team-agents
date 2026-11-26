@@ -207,14 +207,13 @@ impl Owner {
         let holder = self
             .participant_of(name)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
-        let team_id = self
+        let found = self
             .parts
             .state
             .find_task(task)
-            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
-            .team
-            .id()
-            .clone();
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+        let team_id = found.team.id().clone();
+        let role = found.role;
         let items: Vec<(ItemId, agent_core::ids::BranchName)> = self
             .parts
             .state
@@ -242,6 +241,11 @@ impl Owner {
                 task: task.clone(),
                 source,
             })?;
+        if matches!(role, Role::Coordinator | Role::Member) {
+            self.parts
+                .state
+                .record_pending_team_replace(team_id.clone(), held.agent_name(), name.clone());
+        }
         // The items follow the task: the agent that took it over holds them, on the branches they were on.
         let mut team = self
             .parts

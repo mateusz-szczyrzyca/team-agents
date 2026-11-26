@@ -564,8 +564,8 @@ impl Member {
         self.renewals.as_ref().is_some_and(renewal::Renewals::busy_notice_owed)
     }
 
-    /// The agent the task is known by on its team's bus: the agent it was first given to. A task keeps that name when
-    /// another agent takes it over, so that the messages, the wake-ups and the lead's rights of the team stay with it.
+    /// The original holder, retained for the task's Git branch and legacy bus membership recovery.
+    /// Bus messages and run identities use the current holder returned by [`Self::agent`].
     #[must_use]
     pub fn bus_agent(&self) -> &Participant {
         self.past_holders.first().map_or(&self.agent, |first| &first.agent)
