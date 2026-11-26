@@ -32,9 +32,11 @@ use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::Instrument;
 
+mod investigations;
 mod latest;
 mod unread;
 
+pub use investigations::{Investigation, InvestigationKind, InvTransition};
 pub use latest::{LatestMessageError, MessageNote};
 pub use unread::{
     Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, Said, UnreadMessage, UnreadMessages, UnreadMessagesError,
@@ -147,6 +149,14 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// `inv-next`.
+    InvNext,
+    /// `inv-set`.
+    InvSet,
+    /// `inv-get`.
+    InvGet,
+    /// `inv-list`.
+    InvList,
 }
 
 /// Why `agentbus` failed, by its exit status.
@@ -1595,6 +1605,59 @@ impl AgentBus {
     pub async fn status(&self) -> Result<BusStatus, AgentBusError> {
         let output = self.run(BusCommand::Status, Args::new(), None).await?;
         parse_status(&output)
+    }
+
+    /// Takes the next eligible queued investigation request, marking it `starting`; none when the queue is empty
+    /// or active investigators reached `slots`.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn inv_next(
+        &self,
+        queue_max: usize,
+        slots: usize,
+    ) -> Result<Option<Investigation>, AgentBusError> {
+        let _ = (queue_max, slots);
+        // STUB: always return None
+        Ok(None)
+    }
+
+    /// Sets the status of an investigation request.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] for an investigation that does not exist.
+    pub async fn inv_set(
+        &self,
+        id: NonZeroU32,
+        transition: &InvTransition,
+    ) -> Result<(), AgentBusError> {
+        let _ = (id, transition);
+        // STUB: do nothing
+        Ok(())
+    }
+
+    /// Reads an investigation by ID.
+    ///
+    /// # Errors
+    /// [`AgentBusError`]; [`FailureClass::NotFound`] if no such investigation exists.
+    pub async fn inv_get(&self, id: NonZeroU32) -> Result<Investigation, AgentBusError> {
+        let _ = id;
+        // STUB: return NotFound
+        Err(AgentBusError::Failed {
+            command: BusCommand::InvGet,
+            exit_code: 3,
+            class: FailureClass::NotFound,
+            message: "no such investigation".to_string(),
+        })
+    }
+
+    /// Lists open investigations (pending in queue or waiting room).
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn inv_open(&self) -> Result<Vec<Investigation>, AgentBusError> {
+        // STUB: return empty
+        Ok(Vec::new())
     }
 
     /// Runs `command` with `args` against this bus and returns what it printed. The bus is named with `--dir`, which

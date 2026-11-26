@@ -19,8 +19,9 @@ mod agentbus_commands {
     use agent_core::ids::{AgentName, BranchName, TaskId, TeamId};
     use agent_runtime::agentbus::{
         AgentBus, AgentBusError, BoardItemId, BoardLevel, BoardStatus, BusCommand, BusMember, BusTier, CheckpointKey,
-        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, MemberState, NewBoardItem, NewMember,
-        NewTeam, NoticeKind, Outgoing, Recipient, RequestId, TaskRequest, Woken,
+        Delegation, DelegationStatus, DelegationUpdate, FailureClass, FieldName, Investigation, InvestigationKind,
+        InvTransition, MemberState, NewBoardItem, NewMember, NewTeam, NoticeKind, Outgoing, Recipient, RequestId,
+        TaskRequest, Woken,
     };
     use agent_runtime::process::CaptureError;
     use rustix::fs::{FlockOperation, flock};
@@ -1301,5 +1302,108 @@ mod agentbus_commands {
                 .count(),
             1
         );
+    }
+
+    async fn add_investigation(
+        fixture: &Fixture,
+        from_agent: &AgentName,
+        from_task: &TaskId,
+        question: &str,
+        kind: &str,
+    ) -> NonZeroU32 {
+        let tasks_dir = fixture.dir.path().join("tasks");
+        create_dir_all(tasks_dir.join(from_task.as_str()).join("investigations")).unwrap();
+        let output = Command::new(agentbus_binary())
+            .arg("inv-add")
+            .arg("--dir")
+            .arg(fixture.bus.bus_dir())
+            .arg("--from-agent")
+            .arg(from_agent.as_str())
+            .arg("--from-task")
+            .arg(from_task.as_str())
+            .arg("--repo")
+            .arg("team-agents")
+            .arg("--branch")
+            .arg("agents/gemini-1/task-1")
+            .arg("--tasks-dir")
+            .arg(tasks_dir)
+            .arg("--question")
+            .arg(question)
+            .arg("--kind")
+            .arg(kind)
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "inv-add failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let id: u32 = stdout.trim().parse().unwrap();
+        NonZeroU32::new(id).unwrap()
+    }
+
+    #[tokio::test]
+    async fn inv_next_on_an_empty_queue_returns_none() {
+        let fixture = fixture();
+        let next = fixture.bus.inv_next(3, 1).await.unwrap();
+        assert!(next.is_none());
+    }
+
+    #[tokio::test]
+    async fn inv_next_returns_the_request_and_marks_it_starting() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        let next = fixture.bus.inv_next(3, 1).await.unwrap().expect("a request");
+        assert_eq!(next.id, id);
+        assert_eq!(next.from_agent, agent_name);
+        assert_eq!(next.from_task, task_id);
+        assert_eq!(next.question, "How to fix this?");
+        assert_eq!(next.kind, InvestigationKind::Question);
+
+        let second = fixture.bus.inv_next(3, 1).await.unwrap();
+        assert!(second.is_none());
+    }
+
+    #[tokio::test]
+    async fn inv_set_done_records_the_summary() {
+        let fixture = fixture();
+        let agent_name = agent("gemini-1");
+        let task_id = task("aaa1");
+        let id = add_investigation(&fixture, &agent_name, &task_id, "How to fix this?", "").await;
+        fixture
+            .bus
+            .inv_set(
+                id,
+                &InvTransition::Done {
+                    summary: "Solved by adding wrapper".to_string(),
+                },
+            )
+            .await
+            .unwrap();
+
+        let state_path = fixture.bus.bus_dir().join("state.json");
+        let state_text = read_to_string(state_path).unwrap();
+        assert!(state_text.contains("Solved by adding wrapper"));
+    }
+
+    #[tokio::test]
+    async fn an_unknown_kind_is_read_as_unknown_not_an_error() {
+        let json = r#"{
+            "id": 42,
+            "from_agent": "gemini-1",
+            "from_task": "task-20261112-134008-aaa1",
+            "branch": "agents/gemini-1/item-1",
+            "question": "What is this kind?",
+            "context": "unknown context",
+            "kind": "split_proposal",
+            "file": "/tmp/inv-42.md"
+        }"#;
+        let inv: Investigation = serde_json::from_str(json).unwrap();
+        assert_eq!(inv.id, NonZeroU32::new(42).unwrap());
+        assert_eq!(inv.kind, InvestigationKind::Unknown("split_proposal".to_string()));
     }
 }
