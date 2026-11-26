@@ -1634,6 +1634,8 @@ impl Owner {
                 branch.to_string(),
                 "--tier".to_owned(),
                 "worker".to_owned(),
+                "--investigations".to_owned(),
+                "off".to_owned(),
                 "--home".to_owned(),
                 home_str,
                 "--dir".to_owned(),
