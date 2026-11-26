@@ -1496,14 +1496,15 @@ async fn a_gate_answered_with_its_second_failure_without_running_is_logged_with_
 /// A gate script that counts its runs in `count` and exits with the code of its turn: `codes[n - 1]` on its n-th run,
 /// and 0 after the last of them.
 fn exiting_in_turn(count: &Path, codes: &[i32]) -> String {
-    let arms: String = codes
+    let arms = codes
         .iter()
         .enumerate()
-        .map(|(index, code)| format!("{}) exit {code};; ", index + 1))
-        .collect();
+        .map(|(index, code)| format!("{}) exit {code};;", index + 1))
+        .collect::<Vec<_>>()
+        .join(" ");
     counted(
         count,
-        &format!("n=$(grep -c run {count:?}); case \"$n\" in {arms}*) exit 0;; esac"),
+        &format!("n=$(grep -c run {count:?}); case \"$n\" in {arms} *) exit 0;; esac"),
     )
 }
 
