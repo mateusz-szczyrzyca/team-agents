@@ -19,7 +19,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
 };
-use agent_core::history::{AgentIdentity, HistoryEvent, RunStart, RunWhy};
+use agent_core::history::{AgentIdentity, CheckpointCause, HistoryEvent, RunStart, RunWhy};
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
@@ -1030,6 +1030,7 @@ impl Owner {
                 })?;
             self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
             look.changed = true;
+            self.queue_for_task(&assigned.task, CheckpointCause::HolderChanged);
             tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
                 task = %assigned.task, from, to = %assigned.agent,
                 "the next split part goes to a configured replacement in a fresh session");

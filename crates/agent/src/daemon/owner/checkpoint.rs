@@ -14,7 +14,7 @@ use agent_core::history::{CheckpointCause, CheckpointJob, EventRecord, HistoryEv
 use agent_core::ids::{ItemId, RoundId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
-use agent_core::state::{CommitId, ItemPhase, PhaseKind, PrNumber, Round, Timestamp};
+use agent_core::state::{CommitId, Completion, ItemPhase, PhaseKind, PrNumber, Round, RoundEnd, Timestamp};
 use agent_runtime::git::Revision;
 use agent_runtime::history::{Flush, Reader};
 use agent_runtime::process::error_chain;
@@ -93,15 +93,26 @@ pub(super) struct LastCheckpoint {
     snapshot: Option<String>,
 }
 
+/// What the owner knows of the pull request of a round from its checkpoints.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(super) struct PullState {
+    /// The number of the pull request, once it is known.
+    number: Option<PrNumber>,
+    /// Whether the pull request is a draft: opened and not yet marked ready.
+    draft: bool,
+}
+
 /// What the owner keeps of checkpoints between two turns of its loop.
 #[derive(Debug, Default)]
 pub(super) struct Checkpoints {
     /// The steps waiting for their snapshot, oldest first. Guarded because steps are queued from `&self` methods.
     queued: Mutex<Vec<Queued>>,
-    /// The rounds whose pull request is a draft: opened and not yet marked ready.
-    drafts: Mutex<HashSet<RoundId>>,
-    /// What the last checkpoint of each task kept; the snapshot of the next one is compared with it.
-    last: HashMap<TaskId, LastCheckpoint>,
+    /// The pull request of each round that has one, and whether it is still a draft; read back from the history when the
+    /// daemon starts. Guarded because steps are queued from `&self` methods.
+    pulls: Mutex<HashMap<RoundId, PullState>>,
+    /// What the last checkpoint of each task in each round kept; the snapshot of the next one is compared with it. A
+    /// reference of one round is never the base of the snapshot of another.
+    last: HashMap<(RoundId, TaskId), LastCheckpoint>,
     /// When each task was last looked at for a new commit.
     looked_at: HashMap<TaskId, Timestamp>,
     /// The rounds that have a checkpoint of their opening, queued or in the history.
@@ -116,15 +127,33 @@ fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The pull request an event is about, for the events that open or move one.
+/// The pull request an event is about, for the events that carry its number.
 fn event_pull_request(event: &HistoryEvent) -> Option<PrNumber> {
     if let HistoryEvent::PullOpened { number, .. } = event {
         return Some(*number);
     }
-    if let HistoryEvent::PullPushed { pr, .. } | HistoryEvent::PullReady { pr, .. } = event {
+    if let HistoryEvent::PullPushed { pr, .. }
+    | HistoryEvent::PullReady { pr, .. }
+    | HistoryEvent::PullMerged { pr, .. }
+    | HistoryEvent::PullHandedOver { pr, .. }
+    | HistoryEvent::PullClosed { pr, .. } = event
+    {
         return Some(*pr);
     }
     None
+}
+
+/// Whether the snapshot references of the round an event is about are removed after it: its pull request was merged or
+/// closed, or its round ended with no pull request left for the human (an approval handed to the human keeps them until
+/// the human merges or closes it).
+fn event_prunes(event: &HistoryEvent) -> bool {
+    if let HistoryEvent::PullMerged { .. } | HistoryEvent::PullClosed { .. } = event {
+        return true;
+    }
+    if let HistoryEvent::RoundClosed { end, .. } = event {
+        return *end != RoundEnd::Approved;
+    }
+    false
 }
 
 /// What a record of the history of a round means for the checkpoints.
@@ -152,7 +181,7 @@ impl Step {
             } else {
                 None
             },
-            prunes: false,
+            prunes: event_prunes(event),
         }
     }
 }
@@ -161,14 +190,17 @@ impl Owner {
     /// Queues the checkpoints that follow the record of the event `step` was made of, and the removal of the snapshots of
     /// a round that the event closed. Called by the one function that writes the history of a round.
     pub(super) fn checkpoints_after(&self, at: Timestamp, team: &TeamId, rounds: &[RoundId], step: &Step) {
-        if let Some(round) = &step.closed {
-            self.queue_prune(team, round);
+        if let Some(cause) = step.cause {
+            for round in rounds {
+                self.queue_checkpoint(at, team, round, cause, None, step.pull_request);
+            }
         }
-        let Some(cause) = step.cause else {
-            return;
-        };
-        for round in rounds {
-            self.queue_checkpoint(at, team, round, cause, None, step.pull_request);
+        if step.prunes {
+            // The snapshots go after the checkpoint of the merge or the close: it is one of them.
+            match &step.closed {
+                Some(round) => self.queue_prune(team, round),
+                None => rounds.iter().for_each(|round| self.queue_prune(team, round)),
+            }
         }
     }
 
@@ -186,14 +218,16 @@ impl Owner {
         if self.history.is_disabled() {
             return;
         }
-        let draft = {
-            let mut drafts = locked(&self.checkpoints.drafts);
+        let pull = {
+            let mut pulls = locked(&self.checkpoints.pulls);
+            let state = pulls.entry(round.clone()).or_default();
+            if pull_request.is_some() {
+                state.number = pull_request;
+            }
             match cause {
-                CheckpointCause::PullOpened => {
-                    drafts.insert(round.clone());
-                }
+                CheckpointCause::PullOpened => state.draft = true,
                 CheckpointCause::PullReady | CheckpointCause::PullMerged | CheckpointCause::PullClosed => {
-                    drafts.remove(round);
+                    state.draft = false;
                 }
                 CheckpointCause::RoundOpened
                 | CheckpointCause::Commit
@@ -215,9 +249,9 @@ impl Owner {
                 | CheckpointCause::HolderChanged
                 | CheckpointCause::DaemonStarted => {}
             }
-            drafts.contains(round)
+            *state
         };
-        let Some(facts) = self.checkpoint_facts(team, round, holder, pull_request, draft) else {
+        let Some(facts) = self.checkpoint_facts(team, round, holder, pull) else {
             return;
         };
         locked(&self.checkpoints.queued).push(Queued::Take {
@@ -235,8 +269,7 @@ impl Owner {
         team_id: &TeamId,
         round_id: &RoundId,
         holder: Option<&TaskId>,
-        pull_request: Option<PrNumber>,
-        draft: bool,
+        pull: PullState,
     ) -> Option<Facts> {
         let team = self.parts.state.team(team_id)?;
         let round = team.round(round_id)?;
@@ -249,25 +282,38 @@ impl Owner {
                 None
             }
         });
+        // Only the lead and the members of the round hold an item: a reviewer or a worker leaves no checkpoint of its own.
         let roster = team.crew().roster();
-        let (_, member) = holder
-            .and_then(|task| roster.iter().find(|(_, member)| member.task() == task))
-            .or_else(|| {
-                roster
-                    .iter()
-                    .find(|(_, member)| Some(member.agent().name()) == assignee)
-            })
-            .or_else(|| {
-                roster
-                    .iter()
-                    .find(|(role, _)| matches!(role, Role::Solo | Role::Coordinator))
-            })
-            .or_else(|| roster.first())?;
+        let holders: Vec<_> = roster
+            .iter()
+            .filter(|(role, _)| matches!(role, Role::Solo | Role::Coordinator | Role::Member))
+            .collect();
+        let (_, member) = if let Some(task) = holder {
+            *holders.iter().find(|(_, member)| member.task() == task)?
+        } else {
+            *holders
+                .iter()
+                .find(|(_, member)| Some(member.agent().name()) == assignee)
+                .or_else(|| {
+                    holders
+                        .iter()
+                        .find(|(role, _)| matches!(role, Role::Solo | Role::Coordinator))
+                })?
+        };
         let in_pull_request = phase.and_then(|phase| match phase {
             ItemPhase::InReview { pr, .. } | ItemPhase::Fixing { pr, .. } | ItemPhase::Approved { pr, .. } => {
                 Some(pr.number)
             }
-            ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
+            ItemPhase::Done {
+                completion: Completion::Merged { pr, .. },
+                ..
+            } => Some(pr.number),
+            ItemPhase::Pending
+            | ItemPhase::InProgress { .. }
+            | ItemPhase::Done {
+                completion: Completion::Listed,
+                ..
+            } => None,
         });
         let kind = phase.map_or(PhaseKind::InProgress, ItemPhase::kind);
         let reviewed = matches!(kind, PhaseKind::InReview | PhaseKind::Fixing | PhaseKind::Approved);
@@ -275,8 +321,11 @@ impl Owner {
             item,
             task: member.task().clone(),
             tier: member.agent().tier(),
-            pull_request: pull_request.or(in_pull_request),
-            draft,
+            pull_request: pull
+                .number
+                .or(in_pull_request)
+                .or_else(|| round.part_pull_request().map(|pr| pr.number)),
+            draft: pull.draft,
             phase: kind,
             review_pass: progress
                 .filter(|_| reviewed)
@@ -329,7 +378,7 @@ impl Owner {
                 }
                 Queued::Prune { team, round, worktrees } => {
                     // The records of the round are read from the history: everything before is written first.
-                    self.wait_for_history(&round);
+                    self.wait_for_history(&round).await;
                     self.prune_round(&team, &round, &worktrees).await;
                     last_round = Some(round);
                 }
@@ -338,19 +387,19 @@ impl Owner {
         // The next step of a round is acted on only when this one is in `history.db`, as long as the writer answers: a
         // writer that is stuck (a database another process holds) never stops a round.
         if let Some(round) = last_round {
-            self.wait_for_history(&round);
+            self.wait_for_history(&round).await;
         }
     }
 
     /// Waits until the history's writer has what was handed in before, for a limited time, and logs the first time that
     /// the writer does not answer in it.
-    fn wait_for_history(&mut self, round: &RoundId) {
+    async fn wait_for_history(&mut self, round: &RoundId) {
         let limit = if self.checkpoints.stalled {
             STALLED_FLUSH_WAIT
         } else {
             FLUSH_WAIT
         };
-        match self.history.flush_within(limit) {
+        match self.history.flush_within_async(limit).await {
             Flush::Done => self.checkpoints.stalled = false,
             Flush::TimedOut => {
                 if !self.checkpoints.stalled {
@@ -380,7 +429,7 @@ impl Owner {
         let previous = self
             .checkpoints
             .last
-            .get(&facts.task)
+            .get(&(round.clone(), facts.task.clone()))
             .and_then(|last| last.snapshot.clone());
         let taken = match validate_worktree_path(&facts.worktree) {
             Ok(worktree) => take_checkpoint_snapshot(&worktree, round, &facts.task, previous.as_deref())
@@ -398,7 +447,7 @@ impl Owner {
         let (head, snapshot) = match taken {
             Ok(taken) => {
                 self.checkpoints.last.insert(
-                    facts.task.clone(),
+                    (round.clone(), facts.task.clone()),
                     LastCheckpoint {
                         head: Some(taken.snapshot.head.clone()),
                         snapshot: Some(taken.reference.clone()),
@@ -453,26 +502,30 @@ impl Owner {
                     event = LogEvent::CheckpointFailed.as_str(),
                     team = %team,
                     round = %round,
+                    cause = "prune_list",
                     error = %error_chain(&error),
                     "the snapshots of a round that ended cannot be listed: they stay"
                 );
                 return;
             }
         };
+        // The round has ended: what the checkpoints compared with and the pull request they knew are of no use any more.
+        self.checkpoints.last.retain(|(of, _), _| of != round);
+        locked(&self.checkpoints.pulls).remove(round);
         let mut references: Vec<String> = kept.into_iter().filter_map(|checkpoint| checkpoint.snapshot).collect();
         references.sort();
         references.dedup();
         if references.is_empty() {
             return;
         }
-        self.checkpoints
-            .last
-            .retain(|_, last| last.snapshot.as_ref().is_none_or(|kept| !references.contains(kept)));
+
         let Some(worktree) = worktrees.iter().find(|path| path.exists()) else {
             tracing::warn!(
                 event = LogEvent::CheckpointFailed.as_str(),
                 team = %team,
                 round = %round,
+                cause = "prune_no_worktree",
+                error = "no worktree of the team exists",
                 "no worktree of the team is left to reach the repository: the snapshots of a round that ended stay"
             );
             return;
@@ -488,21 +541,46 @@ impl Owner {
                 event = LogEvent::CheckpointFailed.as_str(),
                 team = %team,
                 round = %round,
+                cause = "prune_remove",
                 error = %error,
                 "the snapshots of a round that ended cannot be removed: they stay"
             );
         }
     }
 
-    /// The team and the open round `task` works for: the newest open round of its current run, else of its last run, else
-    /// the only open round of its team. `None` when the task is in no open round.
+    /// The team and the open round `task` works for: the newest open round of its current run, else the open round of the
+    /// item it is assigned, else the newest of its last run, else the only open round of its team. `None` when the task is
+    /// in no open round.
     pub(super) fn checkpoint_round_of(&self, task: &TaskId) -> Option<(TeamId, RoundId)> {
         let found = self.parts.state.find_task(task)?;
         let open = |id: &&RoundId| found.team.round(id).is_some_and(Round::is_open);
-        let run = found.member.current_run().or_else(|| found.member.runs().last());
-        let round = run
-            .and_then(|run| run.rounds().iter().rev().find(open))
-            .cloned()
+        let of_run = |run: &agent_core::state::Run| run.rounds().iter().rev().find(open).cloned();
+        let assigned = || {
+            found.team.items().iter().find_map(|progress| match progress.phase() {
+                ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
+                    if assignee.as_str() == found.member.agent().name() =>
+                {
+                    found
+                        .team
+                        .open_rounds()
+                        .find(|round| round.item() == Some(progress.id()))
+                        .map(|round| round.id().clone())
+                }
+                ItemPhase::Pending
+                | ItemPhase::InProgress { .. }
+                | ItemPhase::Fixing { .. }
+                | ItemPhase::InReview { .. }
+                | ItemPhase::Approved { .. }
+                | ItemPhase::Done { .. } => None,
+            })
+        };
+        let round = found
+            .member
+            .current_run()
+            .and_then(of_run)
+            // A task whose run has not started is in the round of the item it is assigned.
+            .or_else(assigned)
+            .or_else(|| found.member.runs().last().and_then(of_run))
             .or_else(|| {
                 let mut opens = found.team.open_rounds();
                 let only = opens.next()?;
@@ -511,13 +589,29 @@ impl Owner {
         Some((found.team.id().clone(), round))
     }
 
+    /// Logs that the clock gave no time for the checkpoint of `cause`, which is therefore not taken.
+    fn clock_failed(team: &TeamId, round: &RoundId, cause: CheckpointCause, error: &str) {
+        tracing::warn!(
+            event = LogEvent::CheckpointFailed.as_str(),
+            team = %team,
+            round = %round,
+            cause = %cause,
+            error = %error,
+            "the clock gives no time for a checkpoint: it is not taken, the round goes on"
+        );
+    }
+
     /// Queues the checkpoint of `cause` for `task`, in the open round it works for; a task in none has no checkpoint.
     pub(super) fn queue_for_task(&self, task: &TaskId, cause: CheckpointCause) {
         let Some((team, round)) = self.checkpoint_round_of(task) else {
             return;
         };
-        let Ok(at) = Timestamp::now(&self.parts.clock) else {
-            return;
+        let at = match Timestamp::now(&self.parts.clock) {
+            Ok(at) => at,
+            Err(error) => {
+                Self::clock_failed(&team, &round, cause, &error_chain(&error));
+                return;
+            }
         };
         self.queue_checkpoint(at, &team, &round, cause, Some(task), None);
     }
@@ -555,6 +649,7 @@ impl Owner {
                             event = LogEvent::CheckpointFailed.as_str(),
                             team = %team.id(),
                             round = %round.id(),
+                            cause = %CheckpointCause::DaemonStarted,
                             error = %error_chain(&error),
                             "the checkpoints of an open round cannot be read at the start of the daemon"
                         );
@@ -564,9 +659,19 @@ impl Owner {
                 if !kept.is_empty() {
                     self.checkpoints.opened.insert(round.id().clone());
                 }
+                if let Some(latest) = kept.last() {
+                    // A restart between the opening of a pull request and its marking ready keeps both.
+                    locked(&self.checkpoints.pulls).insert(
+                        round.id().clone(),
+                        PullState {
+                            number: latest.pull_request,
+                            draft: latest.draft,
+                        },
+                    );
+                }
                 for checkpoint in kept {
                     self.checkpoints.last.insert(
-                        checkpoint.task,
+                        (round.id().clone(), checkpoint.task),
                         LastCheckpoint {
                             head: checkpoint.head,
                             snapshot: checkpoint.snapshot,
@@ -581,14 +686,10 @@ impl Owner {
                     .map(|(_, member)| member.task().clone()),
             );
         }
-        let home = self.parts.store.home().clone();
+        // A worktree that is gone is no reason to leave the start unrecorded: the checkpoint is then taken with no snapshot
+        // and the failure is logged.
         for task in tasks {
-            let Some(repo) = self.parts.state.find_task(&task).map(|found| found.team.repo().clone()) else {
-                continue;
-            };
-            if home.worktree_dir(&repo, &task).exists() {
-                self.queue_for_task(&task, CheckpointCause::DaemonStarted);
-            }
+            self.queue_for_task(&task, CheckpointCause::DaemonStarted);
         }
         self.flush_checkpoints().await;
     }
@@ -603,8 +704,12 @@ impl Owner {
         let Some((team, round)) = self.checkpoint_round_of(task) else {
             return;
         };
-        let Ok(now) = Timestamp::now(&self.parts.clock) else {
-            return;
+        let now = match Timestamp::now(&self.parts.clock) {
+            Ok(now) => now,
+            Err(error) => {
+                Self::clock_failed(&team, &round, CheckpointCause::Commit, &error_chain(&error));
+                return;
+            }
         };
         match self.checkpoints.looked_at.get(task) {
             // The first sighting of a task only starts its minute: the checkpoint of its round's opening, or of the start of
@@ -637,13 +742,22 @@ impl Owner {
                 return;
             }
         };
-        match self.checkpoints.last.get(task).map(|last| last.head.as_ref()) {
+        match self
+            .checkpoints
+            .last
+            .get(&(round.clone(), task.clone()))
+            .map(|last| last.head.as_ref())
+        {
             Some(Some(last)) if *last != head => {
                 self.queue_checkpoint(now, &team, &round, CheckpointCause::Commit, Some(task), None);
             }
             Some(Some(_)) => {}
             Some(None) | None => {
-                self.checkpoints.last.entry(task.clone()).or_default().head = Some(head);
+                self.checkpoints
+                    .last
+                    .entry((round.clone(), task.clone()))
+                    .or_default()
+                    .head = Some(head);
             }
         }
     }

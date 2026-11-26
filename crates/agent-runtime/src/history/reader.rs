@@ -675,15 +675,20 @@ impl Reader {
         for stored in self.round_records(round)? {
             if let agent_core::history::Record::Event(event) = stored.record
                 && let agent_core::history::HistoryEvent::Checkpoint {
-                    task, head, snapshot, ..
+                    task,
+                    head,
+                    snapshot,
+                    pull_request,
+                    draft,
+                    ..
                 } = event.event
             {
                 found.push(RoundCheckpoint {
                     task,
                     head,
                     snapshot,
-                    pull_request: None,
-                    draft: false,
+                    pull_request,
+                    draft,
                 });
             }
         }

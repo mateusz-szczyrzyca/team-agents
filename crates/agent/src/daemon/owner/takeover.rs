@@ -122,7 +122,6 @@ impl Owner {
                     &format!("agent={name}"),
                 );
                 handed_over(&team, task, held.name(), name.as_str(), trouble);
-                self.queue_for_task(task, CheckpointCause::HolderChanged);
                 Takeover::Agent
             }
             Chosen::Lead => {
@@ -275,6 +274,7 @@ impl Owner {
         if !begun {
             tracing::debug!(task = %task, "a task handed over before any run of it begins no session");
         }
+        self.queue_for_task(task, CheckpointCause::HolderChanged);
         Ok(())
     }
 
