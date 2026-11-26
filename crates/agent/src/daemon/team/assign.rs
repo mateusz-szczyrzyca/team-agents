@@ -222,6 +222,16 @@ pub(in crate::daemon) fn task_branch(agent: &AgentName, task: &TaskId) -> Result
     format!("agents/{agent}/{task}").parse()
 }
 
+/// The original task branch, retained when another agent takes over the member.
+///
+/// # Errors
+/// [`InvalidBranchName`] when the original holder and task names make no branch.
+pub(in crate::daemon) fn member_task_branch(
+    member: &agent_core::state::Member,
+) -> Result<BranchName, InvalidBranchName> {
+    task_branch(&member.bus_agent().agent_name(), member.task())
+}
+
 /// Records that `assigned` works on its item.
 ///
 /// # Errors

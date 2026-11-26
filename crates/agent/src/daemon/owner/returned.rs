@@ -63,7 +63,7 @@ impl Owner {
                 Some(Rejection::Counted) => {
                     let who = found
                         .member()
-                        .map(|member| (member.task().clone(), member.bus_agent().agent_name()));
+                        .map(|member| (member.task().clone(), member.agent().agent_name()));
                     let reason = match &who {
                         Some((member, bus_name)) => {
                             self.reason_on_the_bus(lead, &located.team, (member, bus_name)).await
@@ -123,7 +123,7 @@ impl Owner {
             .parts
             .state
             .find_task(lead)
-            .map(|found| found.member.bus_agent().name().to_owned())
+            .map(|found| found.member.agent().name().to_owned())
         else {
             return NO_REASON_ON_THE_BUS.to_owned();
         };

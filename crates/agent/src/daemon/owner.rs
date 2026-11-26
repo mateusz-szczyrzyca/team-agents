@@ -718,7 +718,8 @@ impl Owner {
     }
 
     /// An owner made of `parts`.
-    pub(super) fn new(parts: OwnerParts, shutdown: CancellationToken) -> Self {
+    pub(super) fn new(mut parts: OwnerParts, shutdown: CancellationToken) -> Self {
+        queue_legacy_team_replaces(&mut parts.state);
         let (watcher, saved) = match Watcher::new() {
             Ok((watcher, saves)) => (Some(watcher), Some(saves)),
             Err(error) => {
@@ -1099,12 +1100,8 @@ impl Owner {
             let team = &pending_replace.team;
             let from = &pending_replace.from;
             let to = &pending_replace.to;
-            match self.parts.bus.team_replace(team, from, to).await {
-                Ok(())
-                | Err(AgentBusError::Failed {
-                    class: agent_runtime::agentbus::FailureClass::NotFound,
-                    ..
-                }) => {
+            match self.replace_team_member(team, from, to).await {
+                Ok(()) => {
                     self.parts.state.remove_pending_team_replace(team, from, to);
                 }
                 Err(error) => {
@@ -1121,6 +1118,31 @@ impl Owner {
             }
         }
         self.save().await
+    }
+
+    /// Exit 3 also denotes a missing or closed team, so confirm an absent member on an open team before settling it.
+    async fn replace_team_member(
+        &self,
+        team: &agent_core::ids::TeamId,
+        from: &agent_core::ids::AgentName,
+        to: &agent_core::ids::AgentName,
+    ) -> Result<(), AgentBusError> {
+        match self.parts.bus.team_replace(team, from, to).await {
+            Err(
+                error @ AgentBusError::Failed {
+                    class: agent_runtime::agentbus::FailureClass::NotFound,
+                    ..
+                },
+            ) => {
+                let roster = self.parts.bus.team_get(team).await?;
+                if !roster.done && !roster.members.contains_key(from) {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+            result => result,
+        }
     }
 
     /// Active team and request-owned runs, with legacy team workers counted once.
@@ -3622,4 +3644,39 @@ fn named_item_line(team: &agent_core::state::Team, item: agent_core::ids::ItemId
         item,
         team.round_of(item).and_then(agent_core::state::Round::part),
     )
+}
+
+/// Upgrades hand-overs saved before bus replacement existed, without duplicating an already recorded operation.
+fn queue_legacy_team_replaces(state: &mut agent_core::state::State) {
+    let pending: Vec<_> = state
+        .teams()
+        .iter()
+        .filter(|team| !super::team::is_finished(team) || !super::team::closing_transitions(team).is_empty())
+        .flat_map(|team| {
+            team.crew().roster().into_iter().filter_map(move |(role, member)| {
+                if matches!(
+                    role,
+                    agent_core::kinds::Role::Coordinator | agent_core::kinds::Role::Member
+                ) && member.bus_agent() != member.agent()
+                {
+                    Some((
+                        team.id().clone(),
+                        member.bus_agent().agent_name(),
+                        member.agent().agent_name(),
+                    ))
+                } else {
+                    None
+                }
+            })
+        })
+        .collect();
+    for (team, from, to) in pending {
+        if !state
+            .pending_team_replaces()
+            .iter()
+            .any(|pending| pending.team == team && pending.to == to)
+        {
+            state.record_pending_team_replace(team, from, to);
+        }
+    }
 }
