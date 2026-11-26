@@ -1375,9 +1375,11 @@ impl Owner {
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
         let mut owned = false;
-        let run_id = self.request_runs.remove(&task);
-        if let Some(ref run_id) = run_id {
-            owned = self.settle_owned_run(&task, run_id, &outcome).await?;
+        if let Some(run_id) = self.request_runs.remove(&task) {
+            if self.parts.state.find_task(&task).is_none() {
+                self.record_pool_run_end(&run_id, &outcome)?;
+            }
+            owned = self.settle_owned_run(&task, &run_id, &outcome).await?;
         }
         self.in_flight.remove(&task);
         self.cancels.remove(&task);
@@ -1390,7 +1392,7 @@ impl Owner {
             && let Some(served) = self.serving.remove(&task)
         {
             self.pool_dispatch.run_teams.remove(&task);
-            return self.settle_pool_worker_run(&task, &served, run_id.as_ref(), outcome);
+            return self.settle_pool_worker_run(&task, &served, outcome);
         }
         let result = match outcome {
             Outcome::Verdict(verdict) => match *verdict {

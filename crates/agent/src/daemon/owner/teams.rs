@@ -1808,7 +1808,6 @@ impl Owner {
         &mut self,
         task: &TaskId,
         served: &Served,
-        run_id: Option<&RunId>,
         outcome: Outcome,
     ) -> Result<(), OwnerError> {
         let team_id = self
@@ -1816,36 +1815,6 @@ impl Owner {
             .state
             .find_task(&served.requester_task)
             .map(|f| f.team.id().clone());
-
-        // Record the run end in the history.
-        if let Some(run_id) = run_id {
-            match &outcome {
-                Outcome::Verdict(verdict) => match verdict.as_ref() {
-                    RunVerdict::Finished(run) => {
-                        let now = Timestamp::now(&self.parts.clock)?;
-                        self.record_run_end(run_id, now, &run.classified.end, run.final_message.as_deref());
-                    }
-                    RunVerdict::Interrupted { .. } => {
-                        let now = Timestamp::now(&self.parts.clock)?;
-                        self.record_run_end(
-                            run_id,
-                            now,
-                            &agent_core::state::RunEnd::NoStatus { exit_code: None },
-                            None,
-                        );
-                    }
-                },
-                Outcome::Failed(reason) => {
-                    let now = Timestamp::now(&self.parts.clock)?;
-                    self.record_run_end(
-                        run_id,
-                        now,
-                        &agent_core::state::RunEnd::NoStatus { exit_code: None },
-                        Some(reason),
-                    );
-                }
-            }
-        }
 
         let req_outcome = match outcome {
             Outcome::Verdict(verdict) => match *verdict {

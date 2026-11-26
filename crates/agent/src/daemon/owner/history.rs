@@ -12,8 +12,8 @@ use agent_core::state::{ItemPhase, RunState, Timestamp};
 use agent_runtime::history::CaptureKind;
 use agent_runtime::process::error_chain;
 
-use super::Owner;
 use super::start::{Plan, work_branch};
+use super::{Outcome, Owner, OwnerError, RunEnd, RunVerdict};
 use crate::daemon::history::{round_opening, team_start};
 
 /// Why the daemon could not build the event that starts a fix pass.
@@ -342,6 +342,26 @@ impl Owner {
             return;
         }
         self.history.record(Record::Run(Box::new(run)));
+    }
+
+    /// Records the end of the run of a pool worker, whose task is no member of a team, from how its job `outcome`
+    /// ended; a run that was interrupted or failed ended with no status and no exit code.
+    pub(super) fn record_pool_run_end(&self, run: &RunId, outcome: &Outcome) -> Result<(), OwnerError> {
+        let at = Timestamp::now(&self.parts.clock)?;
+        match outcome {
+            Outcome::Verdict(verdict) => match verdict.as_ref() {
+                RunVerdict::Finished(finished) => {
+                    self.record_run_end(run, at, &finished.classified.end, finished.final_message.as_deref());
+                }
+                RunVerdict::Interrupted { .. } => {
+                    self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, None);
+                }
+            },
+            Outcome::Failed(reason) => {
+                self.record_run_end(run, at, &RunEnd::NoStatus { exit_code: None }, Some(reason));
+            }
+        }
+        Ok(())
     }
 
     /// Records how `run` ended at `at`, with the agent's `final_message`, and forgets the numbering of its steps.
