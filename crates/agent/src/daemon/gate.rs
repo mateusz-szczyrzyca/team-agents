@@ -41,6 +41,10 @@ pub(super) const QUEUE: usize = 16;
 /// test and is run once more, the gate asked for after the second is answered with that failure without running.
 const FAILED_RUNS_PER_COMMIT: u32 = 2;
 
+/// The exit code of a gate command that `tools/test-lock.sh` refused with "another tests are running now - please wait
+/// before you try again": it ran no check, so it tells nothing about the commit and does not count as a failure.
+const LOCK_BUSY_EXIT: i32 = 75;
+
 /// What the service is made of.
 pub(super) struct GateParts {
     /// The store, for the layout of the home, the activity logs and the records.
@@ -261,6 +265,11 @@ fn outcome_name(outcome: GateOutcome) -> &'static str {
     }
 }
 
+/// Whether `outcome` is the refusal of the busy test lock: the command exited with [`LOCK_BUSY_EXIT`].
+fn refused_by_busy_lock(outcome: &GateOutcome) -> bool {
+    matches!(outcome, GateOutcome::Failed { exit_code } if exit_code.get() == LOCK_BUSY_EXIT)
+}
+
 /// The last gate of a task that gated its commit (the tree was clean before and after it), as far as a gate asked again
 /// is concerned.
 struct LastGate {
@@ -450,9 +459,10 @@ impl Service {
     }
 
     /// Keeps `record` of a gate of `job` that ran, when it gated its commit: a gate that did not (the tree was not
-    /// clean) tells nothing about the commit, and the gate before it is kept.
+    /// clean, or the busy test lock refused it with [`LOCK_BUSY_EXIT`]) tells nothing about the commit, and the gate
+    /// before it is kept.
     fn remember(&mut self, job: &GateJob, record: &GateRecord) {
-        if record.tree != GateTree::Clean {
+        if record.tree != GateTree::Clean || refused_by_busy_lock(&record.result.outcome) {
             return;
         }
         let failures = match record.result.outcome {
