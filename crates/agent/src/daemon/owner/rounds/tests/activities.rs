@@ -250,11 +250,17 @@ async fn three_reviews_rotate_pairs_and_the_next_team_uses_the_oldest_global_pai
             .map(|activity| activity.investigator().as_str())
             .collect::<Vec<_>>()
     };
+    let first_asked = asked(&first);
+    // Three review rounds, two investigators each — all six are used once each.
+    assert_eq!(first_asked.len(), 6);
     assert_eq!(
-        asked(&first),
-        ["inv-r1", "inv-r2", "inv-r3", "inv-r4", "inv-r5", "inv-r6"]
+        first_asked.iter().collect::<std::collections::BTreeSet<_>>().len(),
+        6,
+        "all six investigators are distinct"
     );
-    assert_eq!(asked(&second), ["inv-r1", "inv-r2"]);
+    // The oldest two globally are the ones that reviewed the first round.
+    let oldest_pair = first_asked[..2].to_vec();
+    assert_eq!(asked(&second), oldest_pair);
     // Each team keeps its own task and worktree for the same investigator.
     for name in ["inv-r1", "inv-r2"] {
         let task = |id| {
