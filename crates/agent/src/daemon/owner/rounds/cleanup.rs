@@ -51,6 +51,8 @@ impl Owner {
     /// Releases completed workspaces only after every item is done, at least one merged, and no round is open.
     /// Cleanup is a side effect: failure is logged and never reverses a durable merge or prevents team closure.
     pub(in crate::daemon::owner) async fn cleanup_merged_worktrees(&mut self, team_id: &TeamId) {
+        // The checkpoints of the round are taken from its worktrees, before they are removed.
+        self.flush_checkpoints().await;
         let Some(team) = self.parts.state.team(team_id) else {
             return;
         };

@@ -6,6 +6,7 @@
 //! person looks: the event, the activity log of each task, with the client that did it.
 
 use agent_core::cli::ActivityEvent;
+use agent_core::history::CheckpointCause;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -377,6 +378,7 @@ impl Owner {
         if !self.parts.state.begin_human_session(&task, now)? {
             return Ok(Err(renew_conflict(no_session_to_renew(&task))));
         }
+        self.queue_for_task(&task, CheckpointCause::HolderChanged);
         self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
         self.save().await?;
         self.record_controlled(

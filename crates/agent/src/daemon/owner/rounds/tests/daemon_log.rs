@@ -916,7 +916,11 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
 
 /// Emits, a second apart and each at its level, the names that `daemon_log_cause_tests` provokes by their causes.
 fn emit_the_names_of_the_daemon_causes(daemon: &Daemon) {
-    for variant in [LogEvent::SnapshotFailed, LogEvent::SnapshotLarge] {
+    for variant in [
+        LogEvent::SnapshotFailed,
+        LogEvent::SnapshotLarge,
+        LogEvent::CheckpointFailed,
+    ] {
         daemon.clock.advance(time::Duration::seconds(1));
         tracing::warn!(
             event = variant.as_str(),
@@ -1467,6 +1471,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     crate::daemon::owner::worker_result::tests::record_worker_request_ended(&mut observed).await;
     super::item_branch_tests::record_worktree_switch_events(&mut observed).await;
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
+    super::checkpoints_tests::record_checkpoint_failed(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();

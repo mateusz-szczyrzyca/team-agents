@@ -474,7 +474,7 @@ impl Owner {
     }
 
     /// Git in the worktree of the task, committing as its agent.
-    fn commit_git(&self, target: &Watched) -> Result<Git, LookError> {
+    pub(super) fn commit_git(&self, target: &Watched) -> Result<Git, LookError> {
         let path = self.parts.store.home().worktree_dir(&target.repo, &target.task);
         let text = path.to_str().ok_or_else(|| LookError::Worktree {
             path: path.clone(),

@@ -13,9 +13,11 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 
 use crate::decide::round::AskReason;
 use crate::ids::{AgentName, BranchName, InvestigatorName, ItemId, RoundId, RunId, TaskId, TeamId};
-use crate::kinds::{CliKind, Keyword, UnknownKeyword};
+use crate::kinds::{CliKind, Keyword, Tier, UnknownKeyword};
 use crate::protocol::{Client, ControlAction, Target};
-use crate::state::{AnsweredVia, CommitId, GateRecord, PrNumber, RoundEnd, Timestamp};
+use crate::state::{AnsweredVia, CommitId, GateRecord, PhaseKind, PrNumber, RoundEnd, Timestamp};
+
+use super::{CheckpointCause, CheckpointContent, CheckpointJob};
 use crate::status::ReviewVerdict;
 
 /// Which record a write was about, for the message of an error; for the records of a run and a team also the `kind` the
@@ -125,6 +127,7 @@ impl FromStr for LostKind {
             | EventKind::SerenaReminded
             | EventKind::Notified
             | EventKind::RoundClosed
+            | EventKind::Checkpoint
             | EventKind::TeamEnded) => Ok(Self::Event(kind)),
             EventKind::Lost => Err(UnknownKeyword::of::<EventKind>(text)),
         }
@@ -267,6 +270,8 @@ pub enum EventKind {
     RoundClosed,
     /// [`HistoryEvent::TeamEnded`].
     TeamEnded,
+    /// [`HistoryEvent::Checkpoint`].
+    Checkpoint,
     /// [`HistoryEvent::Lost`].
     Lost,
 }
@@ -606,6 +611,44 @@ pub enum HistoryEvent {
     },
     /// A team ended.
     TeamEnded {},
+    /// A point of a round to go on from: the state of a holder's work after a step, with a snapshot of its worktree.
+    Checkpoint {
+        /// The round.
+        round: RoundId,
+        /// The item of the round, when it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<ItemId>,
+        /// The holder whose worktree the checkpoint keeps.
+        task: TaskId,
+        /// The kind of work the checkpoint keeps.
+        job: CheckpointJob,
+        /// The tier of the holder.
+        tier: Tier,
+        /// The step the checkpoint was taken after.
+        cause: CheckpointCause,
+        /// The pull request of the round, when there is one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pull_request: Option<PrNumber>,
+        /// The tip of the branch in the holder's worktree; `None` when git could not say.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        head: Option<CommitId>,
+        /// Whether the pull request is a draft.
+        draft: bool,
+        /// The phase of the item.
+        phase: PhaseKind,
+        /// The review pass, as in [`HistoryEvent::ReviewAsked`]; `None` before the first review was asked.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        review_pass: Option<u32>,
+        /// The fix pass, when the team is fixing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        fix_pass: Option<u32>,
+        /// The reference of the snapshot of the worktree; `None` when it could not be taken.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        snapshot: Option<String>,
+        /// What is to be done, what is done and what is left; absent in a checkpoint without it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        content: Option<CheckpointContent>,
+    },
     /// A record the history could not write: the writer notes what is missing and why, when it can write again.
     Lost {
         /// The task the missing record was for, when its rounds are resolved from the task's latest run.
@@ -667,6 +710,7 @@ impl HistoryEvent {
             Self::Notified { .. } => EventKind::Notified,
             Self::RoundClosed { .. } => EventKind::RoundClosed,
             Self::TeamEnded {} => EventKind::TeamEnded,
+            Self::Checkpoint { .. } => EventKind::Checkpoint,
             Self::Lost { .. } => EventKind::Lost,
         }
     }
@@ -692,6 +736,7 @@ impl HistoryEvent {
             | Self::Controlled { .. }
             | Self::SerenaReminded { .. }
             | Self::Notified { .. }
+            | Self::Checkpoint { .. }
             | Self::Lost { .. } => None,
             Self::PullOpened { number: pr, .. }
             | Self::PullReady { pr }
@@ -770,6 +815,7 @@ impl HistoryEvent {
             | Self::Controlled { .. }
             | Self::SerenaReminded { .. }
             | Self::RoundClosed { .. }
+            | Self::Checkpoint { .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }
@@ -825,6 +871,18 @@ impl HistoryEvent {
             }
             Self::Notified { task, .. } | Self::Lost { task, .. } => task.iter().map(TaskId::as_str).collect(),
             Self::RoundClosed { round, .. } => vec![round.as_str()],
+            Self::Checkpoint {
+                round,
+                task,
+                head,
+                snapshot,
+                ..
+            } => {
+                let mut found = vec![round.as_str(), task.as_str()];
+                found.extend(head.iter().map(CommitId::as_str));
+                found.extend(snapshot.iter().map(String::as_str));
+                found
+            }
             Self::PullReady { .. }
             | Self::FixPassStarted { .. }
             | Self::PullApproved { .. }

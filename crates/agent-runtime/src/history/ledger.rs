@@ -271,6 +271,7 @@ fn event_entry(tx: &Transaction<'_>, record: &EventRecord, limit: MaxTextBytes) 
         | HistoryEvent::Controlled { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::SerenaReminded { .. }
+        | HistoryEvent::Checkpoint { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::TeamEnded {}
         | HistoryEvent::Lost { .. } => record.rounds.iter().map(ToString::to_string).collect(),
