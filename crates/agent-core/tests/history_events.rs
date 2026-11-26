@@ -345,7 +345,15 @@ mod history_events {
             .map(|event| (event.kind().to_string(), event.key()))
             .collect();
         let none = |kind: &str| keys.iter().find(|(name, _)| name == kind).unwrap().1.is_none();
-        for kind in ["gate", "checked", "controlled", "serena_reminded", "notified", "lost"] {
+        for kind in [
+            "gate",
+            "checked",
+            "controlled",
+            "serena_reminded",
+            "notified",
+            "checkpoint",
+            "lost",
+        ] {
             assert!(none(kind), "{kind} can happen again");
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -354,7 +362,7 @@ mod history_events {
                 assert!(seen.insert((kind.clone(), key.clone())), "{kind} {key} is not unique");
             }
         }
-        assert_eq!(seen.len(), keys.len() - 6);
+        assert_eq!(seen.len(), keys.len() - 7);
     }
 
     #[test]
@@ -426,6 +434,7 @@ mod history_events {
             ("notified", vec!["title", "body"]),
             ("round_closed", vec![]),
             ("team_ended", vec![]),
+            ("checkpoint", vec![]),
             ("lost", vec!["detail"]),
         ];
         for (mut event, (kind, names)) in every_event().into_iter().zip(expected) {
