@@ -1,5 +1,6 @@
 //! Investigations integration tests with the rig, real agentbus, and fake CLI.
 
+use std::os::unix::fs::PermissionsExt;
 use std::process::Command;
 
 use agent_core::kinds::Role;
@@ -436,7 +437,6 @@ fi
 "#
     .replace("REAL_BUS", &format!("{:?}", super::super::fixture::agentbus_binary()));
     std::fs::write(&wrapper, script).unwrap();
-    use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
     let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
     let config = config.replace(
