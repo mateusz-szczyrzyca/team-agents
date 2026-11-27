@@ -56,6 +56,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         refused_agents: std::collections::BTreeMap::new(),
         accounts: std::collections::BTreeMap::new(),
         session_accounts: std::collections::BTreeMap::new(),
+        account_held_tasks: std::collections::BTreeSet::new(),
         commit_cuts: std::collections::BTreeMap::new(),
         pending_team_replaces: std::collections::BTreeSet::new(),
     })?)

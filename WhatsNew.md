@@ -9,11 +9,18 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.148.0 · agent-core 0.148.0 · agent-runtime 0.136.0 — 27.11.2026 — PR #362
+## agent 0.149.0 · agent-core 0.149.0 · agent-runtime 0.136.0 — 27.11.2026 — PR #362
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task. An investigator, which works for no round, is told in its prompt that the account changed, and given the plan its session before saved in its worktree.
 - [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
+
+## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
+
+### New features
+- [agent] [agent-core] When a provider refuses a run of an agent that has an account (quota or rate limit), every task of every agent of that account is paused at once until the same reset, without a run of its own, and you get one notification (`Account comp-claude is paused until ...`, naming its agents) instead of one per task. At the reset all of them are queued again. Agents of other accounts, also of another account of the same owner, run on; agents without an account are judged one by one, as before.
+- [agent] `agent status` shows a line per paused account: `account comp-claude paused until 15:30 (quota)`.
+- [agent-core] `state.json` keeps which tasks the pause of an account holds (`account_held_tasks`, written only when there are any), so that a restart of the daemon keeps the pause and its reset and never wakes a task you paused yourself.
 
 ## agent-core 0.147.0 — 27.11.2026 — PR #360
 
