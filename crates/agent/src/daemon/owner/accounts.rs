@@ -98,7 +98,9 @@ impl Owner {
                     .state
                     .account_pause(&account)
                     .map(|pause| pause.until)
-                    .ok_or_else(|| OwnerError::LostAccountPause { account: account.clone() })?;
+                    .ok_or_else(|| OwnerError::LostAccountPause {
+                        account: account.clone(),
+                    })?;
                 self.hold(task, until);
                 Ok(AccountHandled::Paused { until, notice: None })
             }

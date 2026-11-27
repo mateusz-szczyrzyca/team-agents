@@ -185,7 +185,10 @@ impl Activity {
     /// [`StatusError::Refusals`] when the state file exists but cannot be read.
     #[cfg_attr(
         not(test),
-        expect(dead_code, reason = "the status reads both lines with `provider_lines`; the tests of the line use this one")
+        expect(
+            dead_code,
+            reason = "the status reads both lines with `provider_lines`; the tests of the line use this one"
+        )
     )]
     pub(crate) async fn refused_line(&self) -> Result<Option<String>, StatusError> {
         Ok(self
