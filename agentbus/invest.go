@@ -13,6 +13,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -622,6 +623,13 @@ func cmdInvAdd(args []string) {
 	prNum := fs.Int("pr-number", 0, "PR number")
 	slots := fs.Int("inv-slots", 1, "number of investigators")
 	parseFlags(fs, args)
+	// Flag presence matters: even an empty item is invalid for other kinds.
+	hasItem := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "item" {
+			hasItem = true
+		}
+	})
 	invSlots = *slots
 	k, verr := parseEnum[InvestigationKind](*kind, "investigation kind")
 	exitOn(fromValue(CmdInvAddInvalidKind, verr).asError())
@@ -635,7 +643,7 @@ func cmdInvAdd(args []string) {
 		if !validInvestigationItem(*item) {
 			exitOn(fromValue(CmdInvAddInvalidItem, valueErr("invalid conflict item %q", *item)).asError())
 		}
-	} else if *item != "" {
+	} else if hasItem {
 		exitOn(fromValue(CmdInvAddInvalidItem, valueErr("--item is only supported for conflict requests")).asError())
 	}
 	b := &Bus{dir: *dir}
