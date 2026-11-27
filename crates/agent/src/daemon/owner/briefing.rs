@@ -134,8 +134,9 @@ const PROMPT_VARIABLE: &str = "prompt";
 
 /// The variables of the briefing that a lead's text leaves out: the pull request of the task's item and its review (the
 /// lead is told the work of a member, not the review of its own), and the checkpoint, which the lead is given in a
-/// paragraph of its own.
-const REVIEW_VARIABLES: [&str; 4] = ["pull_request", "review_state", "findings", "checkpoint"];
+/// paragraph of its own; and the line that explains the reason of a session the list of reasons does not, which only a
+/// task's own briefing has.
+const LEFT_OUT_VARIABLES: [&str; 5] = ["pull_request", "review_state", "findings", "checkpoint", "reason_note"];
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -929,7 +930,7 @@ impl BriefingFacts {
         // The lead's briefing has neither the task's prompt nor the item's pull request.
         for name in all
             .names()
-            .filter(|name| name.as_str() != PROMPT_VARIABLE && !REVIEW_VARIABLES.contains(&name.as_str()))
+            .filter(|name| name.as_str() != PROMPT_VARIABLE && !LEFT_OUT_VARIABLES.contains(&name.as_str()))
         {
             if let Some(value) = all.get(name) {
                 values = values.with(name.as_str(), value)?;
@@ -1022,6 +1023,7 @@ impl BriefingFacts {
             left_out: left_out.as_deref(),
             snapshot: &self.snapshot,
         };
+        let reason_note = reason_note(texts, self.reason)?;
         let notes = BriefingNotes {
             runs: &runs,
             runs_left_out: runs_left_out.as_deref(),
@@ -1036,8 +1038,32 @@ impl BriefingFacts {
             },
             review: *review,
             checkpoint,
+            reason_note: reason_note.as_deref(),
         };
         Ok(briefing_variables_with(&facts, &notes)?)
+    }
+}
+
+/// The line that explains `reason` in the briefing's list of reasons when the text of the briefing does not; `None` for a
+/// reason that list explains.
+///
+/// # Errors
+/// [`ComposeError`] when the line cannot be rendered.
+fn reason_note(texts: &HarnessPrompts, reason: Trouble) -> Result<Option<String>, ComposeError> {
+    match reason {
+        Trouble::AccountChanged => Ok(Some(
+            texts.render(HarnessPrompt::BriefingAccountChanged, &Variables::new())?,
+        )),
+        Trouble::NoStatus
+        | Trouble::Hang
+        | Trouble::TurnLimit
+        | Trouble::NoToolCall
+        | Trouble::Busy
+        | Trouble::DaemonDown
+        | Trouble::ContextBound
+        | Trouble::Failed
+        | Trouble::RoundOverdue
+        | Trouble::Human => Ok(None),
     }
 }
 

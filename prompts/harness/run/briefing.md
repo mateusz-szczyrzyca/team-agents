@@ -12,7 +12,7 @@ You work on task {{task}} again, in a new session. The session before you went b
 - `failed`: the last run of the session before reported `STATUS: FAILED` after it used the bus's tools: its agent said
   that it could not finish the work. What it said is at the end of this briefing; read it first.
 - `human`: no run went bad: the human started this new session with `agent renew`. Read the messages at the end of
-  this briefing first: they say what the human wants.
+  this briefing first: they say what the human wants.{{reason_note}}
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 

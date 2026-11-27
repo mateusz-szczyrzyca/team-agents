@@ -102,6 +102,9 @@ pub enum HarnessPrompt {
     BriefingMessageCut,
     /// The note of a briefing whose list of unread messages leaves older ones out.
     BriefingMessagesLeftOut,
+    /// The line of the briefing's list of reasons that tells the account of the task's agent changed, which a session
+    /// belongs to.
+    BriefingAccountChanged,
     /// The note that older runs of the task are left out of the briefing's list of runs.
     BriefingRunsLeftOut,
     /// The note that older answers of the human are left out of the briefing's list of answers.
@@ -236,6 +239,7 @@ impl HarnessPrompt {
         Self::BriefingLastMessageHistory,
         Self::BriefingMessageCut,
         Self::BriefingMessagesLeftOut,
+        Self::BriefingAccountChanged,
         Self::BriefingRunsLeftOut,
         Self::BriefingAnswersLeftOut,
         Self::BriefingPlanConfirmed,
@@ -366,6 +370,7 @@ impl HarnessPrompt {
                     "review_state",
                     "findings",
                     "checkpoint",
+                    "reason_note",
                 ],
             ),
             Self::LeadBriefing => lead_briefing_spec(),
@@ -410,6 +415,9 @@ impl HarnessPrompt {
             ),
             Self::BriefingMessageCut => {
                 PromptSpec::new("harness/run/briefing-message-cut.md", Audience::Model, &["limit"])
+            }
+            Self::BriefingAccountChanged => {
+                PromptSpec::new("harness/run/briefing-account-changed.md", Audience::Model, &[])
             }
             Self::BriefingRunsLeftOut => PromptSpec::new("harness/run/briefing-runs-left-out.md", Audience::Model, &[]),
             Self::BriefingAnswersLeftOut => {

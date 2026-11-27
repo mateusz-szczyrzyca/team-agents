@@ -51,6 +51,9 @@ pub struct BriefingNotes<'a> {
     pub review: BriefingReview<'a>,
     /// The last checkpoint of the task's round, rendered; the default is a round with no checkpoint.
     pub checkpoint: Option<&'a str>,
+    /// The line that explains the reason of the new session when the list of reasons of the briefing does not; the default
+    /// is a reason the list explains.
+    pub reason_note: Option<&'a str>,
 }
 
 /// The headings of the four groups of the plan's steps, as the catalog words them. Its default has no words: a briefing
@@ -164,7 +167,10 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
             .chain(message.text.lines().map(|line| format!("  {line}")))
     }));
     let review = review::review_values(&notes.review);
-    let pairs: [(&str, &str); 19] = [
+    let reason_note = notes
+        .reason_note
+        .map_or_else(String::new, |note| format!("\n{}", note.trim_end()));
+    let pairs: [(&str, &str); 20] = [
         ("reason", facts.reason),
         ("task", facts.task),
         ("prompt", facts.prompt.trim_end()),
@@ -187,6 +193,7 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         ("review_state", &review.review_state),
         ("findings", &review.findings),
         ("checkpoint", notes.checkpoint.map_or(NO_CHECKPOINT, str::trim_end)),
+        ("reason_note", &reason_note),
     ];
     pairs
         .iter()
