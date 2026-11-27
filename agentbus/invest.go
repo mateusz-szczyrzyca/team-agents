@@ -624,6 +624,9 @@ func cmdInvAdd(args []string) {
 	invSlots = *slots
 	k, verr := parseEnum[InvestigationKind](*kind, "investigation kind")
 	exitOn(fromValue(CmdInvAddInvalidKind, verr).asError())
+	if k == KindSplit || k == KindConflict {
+		exitOn(fromValue(CmdInvAddInvalidKind, valueErr("inv-add does not support kind %q; use request_investigation with an item", k)).asError())
+	}
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdInvAddStorage, func(st *State) *CmdInvAddError {

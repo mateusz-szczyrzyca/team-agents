@@ -1297,6 +1297,9 @@ Each team's optional `investigations` records store the request `id`, current `t
 ID so recovery preserves the original decision, including after a cancellation reports a stopped run. Old state
 without these fields still loads; empty lists and maps are omitted.
 
+`agentbus inv-add` accepts question and review requests. Request splits and conflicts through
+`request_investigation`, which requires and validates their item identifiers.
+
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
 queued, and the investigator slot limit remains global. The Rust bus wrapper exposes this as `inv_next_for_tasks`;
