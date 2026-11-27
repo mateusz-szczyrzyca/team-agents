@@ -810,7 +810,6 @@ impl HistoryEvent {
                 ("done", &mut content.done),
                 ("left", &mut content.left),
             ],
-            Self::Checkpoint { content: None, .. } => Vec::new(),
             Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
             Self::Gate { .. }
             | Self::PullPushed { .. }
@@ -823,6 +822,7 @@ impl HistoryEvent {
             | Self::Controlled { .. }
             | Self::SerenaReminded { .. }
             | Self::RoundClosed { .. }
+            | Self::Checkpoint { content: None, .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }
