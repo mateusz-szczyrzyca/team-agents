@@ -1278,18 +1278,24 @@ state without the role field still loads. History schema 33 accepts investigator
 `investigation_started`, `investigation_answered` and `investigation_kind_unknown`, preserving existing logs,
 round links, search entries and cursors. It also accepts `investigation_requeued` and `investigation_failed`.
 
-An unsuccessful attempt is closed and retried once with a different investigator. Any unfinished answer stays
+An unsuccessful attempt is closed and retried once with a different investigator. If no other configured
+investigator is eligible after excluding previous failures and the requester, the request fails immediately
+and the requester receives the failure notice. A temporarily busy investigator can still take a later retry. Any unfinished answer stays
 in the request file under `## Unfinished answer of <investigator> (<end>)`; it is never sent to the requester
 or included in the replacement's prompt. A second failure, a human stop, or expiry of
 `[investigations] answer_minutes` (default `30`, allowed `10..=1440`) ends the request and tells the requester
 to decide or ask the human in its questions file. The deadline starts when the current investigator task is
-created; queue time does not count. Ended requesters and removed teams fail their requests without a message.
+created, after worktree setup; queue and setup time do not count. Ended requesters and removed teams fail their requests without a message.
 Provider refusals close the attempt instead of pausing, switching agents or retrying the same task; an
 investigator remains unavailable until its provider cooldown ends. After restart, live assignments continue,
-and requests with no live assigned task return to the queue.
+and requests with no live assigned task return to the queue. Failure decisions are saved before stopping
+the investigator and sending the notice; the bus request closes after both succeed. A restart retries
+unfinished cleanup or delivery. A crash after sending but before closing may deliver the notice again.
 
 Each team's optional `investigations` records store the request `id`, current `task`, `started` timestamp and
-`failed_with` investigator names. Old state without these records still loads; an empty list is omitted.
+`failed_with` investigator names. The optional `investigation_failures` map retains failure reasons by request
+ID so recovery preserves the original decision, including after a cancellation reports a stopped run. Old state
+without these fields still loads; empty lists and maps are omitted.
 
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays

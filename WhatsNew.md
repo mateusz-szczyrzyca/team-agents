@@ -17,6 +17,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 Â
 
 ### Bug fixes
 - [agent] Failed investigations retry with another investigator once, keep unfinished text private, and notify the requester after a second failure, timeout or human stop. Requests from ended tasks are closed without a message; active assignments recover after restart.
+- [agent] A failed investigation with no eligible replacement now notifies its requester. Worktree setup no longer consumes the answer deadline, and failure cleanup and notice delivery can resume after restart.
 - [agent-core] Investigators at a provider's limit wait for their cooldown before receiving another request.
 
 ### Configuration
