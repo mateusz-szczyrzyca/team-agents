@@ -183,6 +183,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             "task_wait_for_free_agent",
             LogLevel::Info,
         ),
+        (LogEvent::AccountPaused, "account_paused", LogLevel::Info),
+        (LogEvent::AccountResumed, "account_resumed", LogLevel::Info),
         (LogEvent::TaskWaitsForAgent, "task_waits_for_agent", LogLevel::Info),
         (LogEvent::WorkerRequestDamaged, "worker_request_damaged", LogLevel::Warn),
         (WorkerRequestReturned, "worker_request_returned", LogLevel::Info),
