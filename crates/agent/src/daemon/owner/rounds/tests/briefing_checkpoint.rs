@@ -76,17 +76,15 @@ fn snapshot_refs(worktree: &Path) -> Vec<String> {
 
 /// The part of `briefing` that is the checkpoint's part `heading`, up to the next heading or the end of the checkpoint.
 fn part<'a>(briefing: &'a str, heading: &str) -> &'a str {
-    let from = briefing
-        .find(heading)
-        .unwrap_or_else(|| panic!("no {heading}: {briefing}"))
-        + heading.len();
-    let rest = &briefing[from..];
+    let (_, rest) = briefing
+        .split_once(heading)
+        .unwrap_or_else(|| panic!("no {heading}: {briefing}"));
     let to = [rest.find("\n### "), rest.find(AFTER_CHECKPOINT)]
         .into_iter()
         .flatten()
         .min()
         .unwrap_or(rest.len());
-    &rest[..to]
+    rest.split_at(to).0
 }
 
 /// Adds `table` to the configuration of `rig`, before the daemon starts.
@@ -158,14 +156,11 @@ async fn the_new_holder_of_a_round_the_limit_cut_is_briefed_with_the_checkpoint_
     rig.stop().await.unwrap();
 
     assert!(briefing.starts_with(BRIEFING), "{briefing}");
-    assert!(
-        briefing.contains(&format!("## Checkpoint: round_overdue at ")),
-        "{briefing}"
-    );
+    assert!(briefing.contains("## Checkpoint: round_overdue at "), "{briefing}");
     let done = part(&briefing, "### What is done\n");
-    for commit in [&first[..7], &head[..7]] {
+    for commit in [&first, &head].map(|full| full.chars().take(7).collect::<String>()) {
         assert!(
-            done.contains(commit),
+            done.contains(&commit),
             "commit {commit} is not under What is done: {done}"
         );
     }
