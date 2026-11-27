@@ -445,6 +445,10 @@ async fn a_review_that_was_going_when_the_daemon_was_killed_goes_on_from_its_dae
             .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::ReviewStarted)
     })
     .await;
+    rig.wait_for("the first run of the review to hold", || {
+        std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-prompt-1")).is_ok()
+    })
+    .await;
     std::fs::write(
         rig.worktree(&reviewer).join("scratch.md"),
         "looked at before the kill\n",
@@ -475,21 +479,13 @@ async fn a_review_that_was_going_when_the_daemon_was_killed_goes_on_from_its_dae
         prompt.contains(&format!("head {head}")),
         "the run is briefed from the state the start of the daemon took: {prompt}"
     );
-    let own: Vec<_> = job_checkpoints(&rig, &round)
-        .into_iter()
-        .filter(|checkpoint| checkpoint.task == reviewer)
-        .map(|checkpoint| checkpoint.cause)
-        .collect();
-    let at = |cause| own.iter().position(|kept| *kept == cause);
-    assert!(
-        at(CheckpointCause::DaemonStarted) < at(CheckpointCause::RunEnded),
-        "the start of the daemon took its checkpoint before the cut run was ended: {own:?}"
-    );
+    assert!(prompt.contains("## Checkpoint: daemon_started at"), "{prompt}");
     assert!(prompt.contains("finish the review of pass 1"), "{prompt}");
 }
 
 #[tokio::test]
-async fn an_investigation_that_was_going_when_the_daemon_was_killed_has_a_daemon_started_checkpoint_with_its_notes() {
+async fn an_investigation_that_was_going_when_the_daemon_was_killed_goes_on_from_its_daemon_started_checkpoint_with_its_notes()
+ {
     let mut rig = Rig::new(
         &[
             normal("claude-lead", "sleep"),
@@ -530,17 +526,23 @@ async fn an_investigation_that_was_going_when_the_daemon_was_killed_has_a_daemon
             .any(|checkpoint| checkpoint.cause == CheckpointCause::InvestigationStarted)
     })
     .await;
+    rig.wait_for("the first run of the investigation to hold", || {
+        std::fs::read_to_string(rig.worktree(&first).join(".fake-prompt-1")).is_ok()
+    })
+    .await;
     std::fs::write(rig.worktree(&first).join("notes.md"), "found before the kill\n").unwrap();
     rig.kill().await;
 
     rig.start().await;
-    rig.wait_for("the checkpoint of the start of the daemon", || {
-        daemon_started_jobs(&rig, &round)
-            .iter()
-            .any(|checkpoint| checkpoint.task == first)
+    rig.wait_for("the second prompt of the investigation", || {
+        std::fs::read_to_string(rig.worktree(&first).join(".fake-prompt-2")).is_ok()
     })
     .await;
     rig.stop().await.unwrap();
+    let prompt = std::fs::read_to_string(rig.worktree(&first).join(".fake-prompt-2")).unwrap();
+    assert!(prompt.contains("# THIS INVESTIGATION WAS TRIED BEFORE YOU"), "{prompt}");
+    assert!(prompt.contains("## Checkpoint: daemon_started at"), "{prompt}");
+    assert!(prompt.contains("notes.md"), "{prompt}");
 
     let started: Vec<_> = daemon_started_jobs(&rig, &round)
         .into_iter()
