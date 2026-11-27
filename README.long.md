@@ -1400,7 +1400,13 @@ to the task's team and log events with those same names.
 The append-only journal is `notebooks/<repo>/findings.jsonl` in the bus directory. An addition record has
 `op: "add"` and the listing fields; a resolution has `op: "resolve"`, `id`, `ts`, `author`, `task` and
 `reason`. A missing journal means no findings. Existing bus state and notebooks are unchanged and require
-no migration. This bus support does not yet inject findings into run prompts.
+no migration. The pure run selector ranks exact paths before ancestor paths, then siblings with a parent at least
+three components deep. It excludes findings from the same task, already shown IDs and findings older than
+`[findings] keep_days` (default `30`, range `0–365`; `0` disables selection). Ties use the newest date, then the
+highest numeric ID. `[findings] max_shown` (default `8`, range `1–20`) limits the count; `max_chars` (default `3000`,
+range `500–10000`) limits the sum of the texts' character lengths by removing findings from the end. Repository-wide
+environment findings match every run. These settings and the findings prompt are available for the daemon wiring
+to follow separately; this support does not yet inject findings into run prompts.
 
 ### Requests to workers
 
