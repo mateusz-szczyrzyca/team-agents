@@ -75,3 +75,26 @@ fn a_share_out_of_range_is_refused_before_the_reset_time() {
 fn the_windows_order_by_their_length() {
     assert!(LimitWindow::FiveHour < LimitWindow::SevenDay);
 }
+
+#[test]
+fn seconds_since_the_epoch_keep_a_share_at_both_ends_of_the_range() {
+    for used in [0.0, 1.0] {
+        let reading = LimitReading::from_unix(LimitWindow::SevenDay, used, 1_794_484_800).expect("a reading");
+
+        assert_eq!(reading.used().to_bits(), used.to_bits());
+        assert_eq!(reading.window(), LimitWindow::SevenDay);
+        assert_eq!(reading.resets_at(), at("2026-11-12T12:00:00Z"));
+    }
+}
+
+#[test]
+fn a_share_out_of_range_is_refused_with_the_share_it_was_given_by_both_constructors() {
+    let when = at("2026-11-12T12:00:00Z");
+    let from_new = LimitReading::new(LimitWindow::FiveHour, 1.7, when).expect_err("refused");
+    let from_unix = LimitReading::from_unix(LimitWindow::FiveHour, -0.25, 1_794_484_800).expect_err("refused");
+
+    assert!(matches!(from_new, InvalidLimitReading::UsedOutOfRange { used } if used.to_bits() == 1.7_f64.to_bits()));
+    assert!(
+        matches!(from_unix, InvalidLimitReading::UsedOutOfRange { used } if used.to_bits() == (-0.25_f64).to_bits())
+    );
+}
