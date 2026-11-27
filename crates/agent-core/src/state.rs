@@ -5,6 +5,7 @@
 //! through the control protocol ([`crate::protocol`]). Everything here is pure data with its rules: a value that
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
+mod account_pause;
 mod base;
 mod checked;
 mod checks;
@@ -33,6 +34,8 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+mod account_pause_tests;
+#[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
 mod human_session_tests;
@@ -51,6 +54,7 @@ mod values;
 mod waiting_tests;
 mod wake_delivery;
 
+pub use account_pause::AccountPause;
 pub use base::UnpushedBase;
 pub use checked::CheckedMut;
 pub use checks::{Asked, Basis, ChecksRecord, Covers, ItemChecks, Sent};
@@ -417,6 +421,15 @@ impl State {
     pub fn record_commit_cut(&mut self, task: TaskId, run: crate::ids::RunId) {
         self.commit_cuts.entry(task).or_default().insert(run);
     }
+
+    /// The pause of `account`, `None` when none is recorded for it.
+    #[must_use]
+    pub const fn account_pause(&self, _account: &crate::config::AccountName) -> Option<&AccountPause> {
+        None
+    }
+
+    /// Records the pause of `account`, or forgets it with `None`.
+    pub fn record_account_pause(&mut self, _account: crate::config::AccountName, _pause: Option<AccountPause>) {}
 
     /// Until when the agent is refused by its provider, `None` when it is not refused at all.
     #[must_use]

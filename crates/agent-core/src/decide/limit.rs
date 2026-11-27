@@ -12,6 +12,9 @@ use crate::state::RunEnd;
 mod tests;
 
 /// What the provider's refusal showed about its limit.
+///
+/// Written to the state as `{"kind": "rate_limit"}` or `{"kind": "quota", "reset_in_nanoseconds": N}` (the key is
+/// absent without a reset; `N` is positive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Limit {
     /// A rate limit or an overload: the provider names no reset.
@@ -21,6 +24,19 @@ pub enum Limit {
         /// The time until the reset the provider named, strictly positive when present.
         reset_in: Option<Duration>,
     },
+}
+
+impl serde::Serialize for Limit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_unit()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Limit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        serde::de::IgnoredAny::deserialize(deserializer)?;
+        Ok(Self::RateLimit)
+    }
 }
 
 /// The facts of one refused run, as the daemon has them after the run ended.
