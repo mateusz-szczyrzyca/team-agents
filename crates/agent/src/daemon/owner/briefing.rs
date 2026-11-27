@@ -366,12 +366,16 @@ impl Owner {
         // The bus retargets unread messages to the replacement before its run starts.
         let git = Git::new(worktree.clone(), CommitIdentity::for_agent(config.git(), &agent));
         let reader = (agent, team.id().clone());
-        // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from; nothing has
-        // touched the worktree since.
+        // What the runs of the task did is read before anything of the checkpoints: a history that cannot be read fails the
+        // start with the error of the runs.
+        let read = read_plan(&worktree, task).await;
+        let history = self.gather_history(task, read.as_ref()).await?;
         // The checkpoints queued by the steps before are taken first: the last one is what the new holder is told.
         self.flush_checkpoints().await;
         let checkpoints = self.round_checkpoints(&round, task).await?;
-        // A snapshot the last checkpoint of the task kept stands in for a new one while the worktree is as it was kept.
+        // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from, as nothing has
+        // touched the worktree since. A snapshot the last checkpoint of the task kept stands in for a new one while the
+        // worktree is as it was kept.
         let snapshot = match self.cut_snapshots.remove(task) {
             Some(reference) if reason == Trouble::DaemonDown => reference,
             Some(_) | None => match self.checkpoint_snapshot(&git, task, &checkpoints).await {
@@ -388,7 +392,6 @@ impl Owner {
             .into_iter()
             .map(|change| change.path.to_string())
             .collect();
-        let read = read_plan(&worktree, task).await;
         let plan = read.as_ref().map(steps_of);
         let unread = self
             .parts
@@ -399,7 +402,6 @@ impl Owner {
                 task,
             })
             .await?;
-        let history = self.gather_history(task, read.as_ref()).await?;
         let checkpoint = checkpoints
             .told
             .as_ref()
