@@ -195,6 +195,7 @@ impl Owner {
             let ItemPhase::Approved { pr, .. } = item.phase() else {
                 continue;
             };
+            let superseded = item.conflict_investigation().map(|record| record.id);
             let request = agent_runtime::agentbus::NewConflictRequest {
                 from_agent: lead.agent.clone(),
                 from_task: lead.task.clone(),
@@ -209,6 +210,9 @@ impl Owner {
                 pr_url: url.to_owned(),
                 pr_number: pr.number,
             };
+            if let Some(id) = superseded {
+                self.fail_superseded_conflict_request(id).await?;
+            }
             let request_id = self
                 .parts
                 .bus
@@ -244,6 +248,37 @@ impl Owner {
                 })
             })
             .map(|found| found.team.id().clone())
+    }
+
+    /// Stops pending work before its head association is replaced.
+    async fn fail_superseded_conflict_request(&mut self, id: std::num::NonZeroU32) -> Result<(), OwnerError> {
+        use agent_runtime::agentbus::InvestigationStatus;
+        let request = self
+            .parts
+            .bus
+            .inv_get(id)
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        match request.status {
+            Some(
+                InvestigationStatus::Queued
+                | InvestigationStatus::Waitroom
+                | InvestigationStatus::Starting
+                | InvestigationStatus::Running
+                | InvestigationStatus::WaitingHuman,
+            ) => {
+                self.fail_investigation(&request, "the pull request head was superseded", None)
+                    .await?;
+            }
+            Some(
+                InvestigationStatus::Done
+                | InvestigationStatus::Failed
+                | InvestigationStatus::Rejected
+                | InvestigationStatus::Unknown(_),
+            )
+            | None => {}
+        }
+        Ok(())
     }
 
     /// Resumes a durable investigation after its answer, failure, or a daemon restart.
