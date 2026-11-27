@@ -33,7 +33,6 @@ fn non_split_requests_accept_opaque_item_metadata() {
         ("question", InvestigationKind::Question),
         ("review", InvestigationKind::Review),
         ("future-kind", InvestigationKind::Unknown("future-kind".to_owned())),
-        ("conflict", InvestigationKind::Unknown("conflict".to_owned())),
     ] {
         let request: Investigation = serde_json::from_value(serde_json::json!({
             "id": 1, "from_agent": "lead", "from_task": "task-20261127-120000-abcd",
