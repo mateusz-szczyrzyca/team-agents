@@ -731,7 +731,7 @@ impl Reader {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Option<LastCheckpoint>, ReadError> {
-        Ok(newest_for(self.round_checkpoints(round)?, task, |_| true))
+        Ok(newest_for(self.round_checkpoints(round)?, task, is_an_item))
     }
 
     /// The newest checkpoint of `round` that tells how the work of `task` stands, whatever its job: a change of holder and
@@ -741,8 +741,11 @@ impl Reader {
     /// # Errors
     /// [`ReadError`].
     pub fn last_checkpoint_of_job(&self, round: &RoundId, task: &TaskId) -> Result<Option<LastCheckpoint>, ReadError> {
-        let _ = (round, task);
-        Ok(None)
+        let all = self.round_checkpoints(round)?;
+        Ok(tells_the_work(&all)
+            .into_iter()
+            .rev()
+            .find(|found| found.task == *task && found.job != agent_core::history::CheckpointJob::Item))
     }
 
     /// The checkpoints of the jobs of `round` that are not an item's (a worker's request, a review, an investigation),
@@ -751,8 +754,11 @@ impl Reader {
     /// # Errors
     /// [`ReadError`].
     pub fn job_checkpoints_of_round(&self, round: &RoundId) -> Result<Vec<LastCheckpoint>, ReadError> {
-        let _ = round;
-        Ok(Vec::new())
+        Ok(self
+            .round_checkpoints(round)?
+            .into_iter()
+            .filter(|found| found.job != agent_core::history::CheckpointJob::Item)
+            .collect())
     }
 
     /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
@@ -768,7 +774,7 @@ impl Reader {
     ) -> Result<Option<LastCheckpoint>, ReadError> {
         let all = self.round_checkpoints(round)?;
         let told = tells_the_work(&all);
-        Ok(newest_for(told, task, |_| true))
+        Ok(newest_for(told, task, is_an_item))
     }
 
     /// Every checkpoint of `round` with what it says of the work, oldest first.
@@ -1718,6 +1724,12 @@ fn newest_for(
         Some(position) => Some(accepted.swap_remove(position)),
         None => accepted.pop(),
     }
+}
+
+/// Whether `found` keeps the work of an item: a worker's request, a review and an investigation are no holder's account of a
+/// round.
+fn is_an_item(found: &LastCheckpoint) -> bool {
+    found.job == agent_core::history::CheckpointJob::Item
 }
 
 /// The checkpoints of `all` (oldest first) that tell the work: all but a change of holder and the end of a run that
