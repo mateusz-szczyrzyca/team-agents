@@ -17,6 +17,11 @@ pub enum InvestigationKind {
         /// The parent item to divide.
         item: ItemId,
     },
+    /// A coordinator asks for help resolving an item pull request conflict.
+    Conflict {
+        /// The item whose pull request must be investigated.
+        item: ItemId,
+    },
     /// A PR review (`"review"`).
     Review,
     /// Any other kind that an earlier or later bus version wrote.
