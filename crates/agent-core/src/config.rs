@@ -11,6 +11,8 @@ mod idle;
 #[cfg(test)]
 mod investigation_tests;
 pub use idle::IdleMinutes;
+mod findings;
+pub use findings::{Findings, FindingsKey, InvalidFindings};
 mod commit_reminder;
 pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_AFTER, DEFAULT_LINES, DEFAULT_MINUTES};
 mod replacement;
@@ -118,6 +120,9 @@ const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Why an `agents.toml` text is not a valid [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// A findings configuration number is outside its bounds.
+    #[error(transparent)]
+    Findings(#[from] InvalidFindings),
     /// An explicit review count exceeds the configured investigator roster.
     #[error("min_first_full_reviews requires {required} investigators, but only {configured} are configured")]
     ReviewersUnavailable {
@@ -1041,6 +1046,8 @@ pub struct Config {
     serena: SerenaSettings,
     /// The reminder to commit uncommitted work.
     commit_reminder: CommitReminder,
+    /// Validated findings limits for run messages.
+    findings: Findings,
 }
 
 /// The fewest searches of code without Serena that bring a reminder, by default.
@@ -1187,6 +1194,9 @@ struct RawConfig {
     /// See [`Config::commit_reminder`].
     #[serde(default)]
     commit_reminder: CommitReminder,
+    /// Unchecked findings limits; absent tables keep their defaults.
+    #[serde(default)]
+    findings: findings::RawFindings,
 }
 
 impl RawConfig {
@@ -1226,6 +1236,7 @@ impl RawConfig {
             log,
             serena,
             commit_reminder,
+            findings,
             web,
             repos,
         } = self;
@@ -1292,6 +1303,7 @@ impl RawConfig {
             log,
             serena,
             commit_reminder,
+            findings: findings.validate()?,
             web,
             repos,
         })
@@ -1604,6 +1616,12 @@ impl Config {
     #[must_use]
     pub const fn serena(&self) -> &SerenaSettings {
         &self.serena
+    }
+
+    /// Limits for findings included in a run message: `[findings]`.
+    #[must_use]
+    pub const fn findings(&self) -> &Findings {
+        &self.findings
     }
 
     /// When a run that holds uncommitted work is reminded to commit it: `[commit_reminder]`.

@@ -333,6 +333,12 @@ minutes = 30
 cut_after = 20
 context_percent = 80
 
+# Limits for repository findings in run messages (selection support; daemon wiring follows separately).
+[findings]
+keep_days = 30                   # 0–365 days; 0 disables selection
+max_shown = 8                    # 1–20 findings per message
+max_chars = 3000                 # 500–10000 characters across their texts
+
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
 # asked to merge the base into its branch, at most `conflict_passes` times per round; an investigator then helps once before you are asked.
