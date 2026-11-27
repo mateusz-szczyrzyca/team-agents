@@ -39,6 +39,7 @@ Top-level key and tables:
 | `language` | `English`, `Polish`, ... (letters, digits, `-`; up to 32 bytes) | `English` | language of what only the human reads: questions and notifications. Commits, pull requests, reviews and code are always English |
 | `[agents.NAME]` | table | none | one normal agent or worker |
 | `[investigators.NAME]` | table | none | one investigator |
+| `[accounts.NAME]` | table | none | one subscription or key an agent can run with ([accounts](#accountsname)) |
 | `[tiers]` | table | empty | which agents are normal and which are workers |
 | `[workers]` | table | `tries = 2`, `seconds = 0`, `wait_seconds = 600` | what the harness does with the result of a worker that served a request |
 | `[build]` | table | `incremental = false` | Cargo cache policy for managed agent CLIs and gates |
@@ -82,10 +83,59 @@ branch names, file names and unit names. The two tables have the same keys:
 | `context` | tokens, a positive integer | none | the model's context window. For an `opencode` agent whose model is `openrouter/…` or `deepinfra/…` the generated opencode configuration gives it to the model as `limit: {context, output}` (opencode's schema requires `output` next to `context`: it is the agent's `output` where set; without it the harness writes `0`, which is no limit of the model's — opencode replaces what its model catalogue knows of the model's output with it and requests 32000 tokens, so set `output` for a model whose catalogue output matters), so that opencode compacts the session at that window instead of the run failing when the provider refuses it. For a `codex` agent the run gets `-c model_context_window=N`. A window below the agent's bound is allowed: that is what makes the CLI compact first. Without the key nothing is given, as before. Claude Code and Antigravity are left as they were by this key, and so is an opencode model of another provider, which is not registered: for them the key changes nothing. `0` is refused (`ConfigError::AgentContextZero`, naming the agent and the key); no `agents.toml` written before the key has it |
 | `output` | tokens, a positive integer, at most `context` | none | the most tokens the model writes in one answer; only the `opencode` configuration reads it, next to `context` as `limit.output`, so that opencode keeps the model's real output limit instead of the fallback described under `context`. Without `context` it takes effect nowhere. `0` and a value above `context` are refused at load (`ConfigError::AgentOutputZero`, `ConfigError::AgentOutputAboveContext`), naming the agent and the keys. Other CLIs ignore it; no `agents.toml` written before the key has it |
 | `capabilities` | array of strings (no whitespace) | `[]` | declared capabilities matched against worker request `requires`, in `<namespace>:<value>` form (e.g. `["build:rust", "os:linux"]`); namespaces are `os`, `arch`, `build`, `test`, `hw`, `net`, and values contain lowercase ASCII letters, digits, `.`, `_`, or `-` |
+| `account` | name of an `[accounts.NAME]` | none | the account the agent runs with (see [`[accounts.NAME]`](#accountsname)); without it the agent behaves as before. An account that no `[accounts.*]` table defines, and a name that does not start with `<owner>-`, are refused at load, naming the agent and the account |
 
 An agent runs one task at a time: add `claude-2` for more parallel work. The investigators review every pull request
 and may coordinate a team. Every pull request gets `[review] min_first_full_reviews` reviews (default two) from investigators outside the team.
 Configure that many outside each team.
+
+### `[accounts.NAME]`
+
+An account is one subscription or key of a provider. `[accounts.NAME]` of `agents.toml` describes it, `[account_env.NAME]`
+of `secrets.toml` holds its secret variables, and an agent or an investigator names it with `account = "NAME"`. A file
+without accounts loads and behaves as before. This version reads and checks the accounts; the runs do not use them yet.
+
+```toml
+[accounts.comp-claude]
+owner = "comp"
+
+[accounts.comp-claude.env]
+CLAUDE_CONFIG_DIR = "/home/you/.claude-comp"
+
+[investigators.comp-inv-opus]
+cli = "claude"
+model = "opus"
+account = "comp-claude"
+```
+
+| Key | Type | Default | Meaning |
+|---|---|---|---|
+| `owner` | lowercase letters and digits, starting with a letter, up to 32 bytes | required | whose account it is, such as `mateusz` or `comp`. An empty or missing owner, `Comp X` and `comp-x` are refused, naming the account |
+| `env` | table of variable names to texts | empty | variables of the environment that are not secret, such as `CLAUDE_CONFIG_DIR` or `CODEX_HOME`; a value is 1 to 4096 bytes without control characters |
+
+The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a letter, not ending with `-`.
+
+- **The name shows the owner.** An agent or an investigator with an account is named `<owner>-…`: with the account
+  `comp-claude` of owner `comp` the name is `comp-inv-opus`; `inv-opus`, `mateusz-inv-opus` and `compx-inv-opus` are
+  refused, each error naming the agent, the account and the owner. The account and the owner always come from the keys,
+  never from the name; agents without an account may have any name, and existing agents are not renamed.
+- **Every account is used.** An account that no agent or investigator names is refused, naming the account.
+- **The environment of a run**, later wins: the daemon's, `[agent_env]` of `secrets.toml`, the account's `env`, the
+  account's `[account_env.NAME]`. A variable is set in the `env` of an account or in its `[account_env.NAME]`, not in
+  both: `Settings::load` refuses the pair, naming the account and the variable and never a value. A
+  `[account_env.NAME]` without an `[accounts.NAME]` is refused too.
+- `max_runs` and `hold_at` are unknown keys until the versions that bring them.
+- The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
+
+The harness knows no provider: it only sets variables. Each provider reads its login from a place you can point it
+to; examples, each to be checked against the provider's terms before you use more than one subscription:
+
+| CLI | Variable | Example |
+|---|---|---|
+| Claude Code | `CLAUDE_CONFIG_DIR` (a directory with its own login), or `CLAUDE_CODE_OAUTH_TOKEN` in `[account_env.NAME]` | `env = { CLAUDE_CONFIG_DIR = "/home/you/.claude-comp" }` |
+| Codex | `CODEX_HOME` (a directory with its own `auth.json`) | `env = { CODEX_HOME = "/home/you/.codex-comp" }` |
+| OpenCode | the provider's key in `[account_env.NAME]`, such as `OPENROUTER_API_KEY` | `[account_env.comp-opencode]` with the key |
+| Antigravity | the variable its CLI reads for its login or key, if it has one: check its documentation | `[account_env.NAME]` with that variable |
 
 ### `[tiers]`
 
@@ -546,6 +596,9 @@ OPENROUTER_API_KEY = "..."
 
 [notification_env]                   # environment variables of the notification command only
 NTFY_TOKEN = "..."
+
+[account_env.comp-claude]            # secret variables of the account [accounts.comp-claude] of agents.toml
+CLAUDE_CODE_OAUTH_TOKEN = "..."
 ```
 
 - The file must be readable by its owner only: `Secrets::parse` takes the file's mode (`st_mode`, file type bits
@@ -557,6 +610,8 @@ NTFY_TOKEN = "..."
   is reached only by `expose()`, where the secret is handed to a process or a request. A `SecretsError::Parse` says
   where the fault is (line and column) and nothing else: TOML's own messages quote the offending line, which may be a
   secret, so they are dropped.
+- `[account_env.NAME]` holds the secret variables of the account `NAME` of `agents.toml` (see
+  [`[accounts.NAME]`](#accountsname)); a table without an account is refused when the home is loaded.
 - Secrets reach a process only through its environment, never its arguments.
 
 ## Decisions to review
