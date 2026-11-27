@@ -27,7 +27,10 @@ printf '%s' '[{"id":"F-8","ts":"2026-11-27T00:00:00Z","author":"other","task":"t
         assert_eq!(findings[0].text, "lesson");
         assert_eq!(
             std::fs::read_to_string(dir.path().join("args")).unwrap(),
-            "findings\n--repo\nexample\n--json\n"
+            format!(
+                "findings\n--dir\n{}\n--repo\nexample\n--json\n",
+                dir.path().join("bus").display()
+            )
         );
     }
 
