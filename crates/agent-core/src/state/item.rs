@@ -724,6 +724,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before a lead could return an item has none.
     #[serde(default)]
     rejections: Option<Vec<Rejection>>,
+    /// Optional automatic investigation; absent in older state files.
+    #[serde(default, rename = "conflict_investigation")]
+    _conflict_investigation: Option<ConflictInvestigation>,
 }
 
 impl<'de> Deserialize<'de> for ItemProgress {
@@ -776,6 +779,17 @@ impl<'de> Deserialize<'de> for ItemProgress {
         check_item_progress(&value).map_err(serde::de::Error::custom)?;
         Ok(value)
     }
+}
+
+/// An automatic conflict investigation, retained across daemon restarts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictInvestigation {
+    /// Pull request head for which the request was filed.
+    pub head: CommitId,
+    /// The request's bus id.
+    pub id: NonZeroU32,
+    /// Whether the investigator supplied a completed answer.
+    pub answered: bool,
 }
 
 /// An item's progress inside a team, to change through its operations only.
