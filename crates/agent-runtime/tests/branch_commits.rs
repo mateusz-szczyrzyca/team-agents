@@ -75,4 +75,30 @@ mod branch_commits {
         assert_eq!(error.base, base);
         assert!(matches!(error.source, GitError::Failed { .. }), "{error:?}");
     }
+
+    // Rule: the base is the remote-tracking branch, as for the checks and the commit guard: a local base that was never
+    // updated does not make the commits already merged into the base count as the work of the task.
+    #[tokio::test]
+    async fn the_commits_the_remote_base_has_are_not_the_work_of_the_branch_when_the_local_base_is_stale() {
+        let (_tmp, repo) = repository();
+        raw(&repo, &["switch", "-q", "-c", "merged"]);
+        raw(
+            &repo,
+            &["commit", "-q", "--allow-empty", "-m", "Merged", "-m", "Step: 9.9"],
+        );
+        raw(&repo, &["update-ref", "refs/remotes/origin/main", "merged"]);
+        raw(&repo, &["switch", "-q", "-c", "work"]);
+        raw(
+            &repo,
+            &["commit", "-q", "--allow-empty", "-m", "Mine", "-m", "Step: 1.1"],
+        );
+        let worktree = AbsolutePath::from_str(repo.to_str().unwrap()).unwrap();
+
+        let found = branch_commits(&worktree, &task(), &BranchName::from_str("main").unwrap())
+            .await
+            .unwrap();
+
+        let messages: Vec<&str> = found.iter().map(|commit| commit.message.as_str()).collect();
+        assert_eq!(messages, ["Mine\n\nStep: 1.1"]);
+    }
 }
