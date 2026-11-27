@@ -29,6 +29,8 @@ async fn a_task_whose_session_ends_without_a_status_goes_on_in_a_new_session_wit
         &rig.repo,
         &["for-each-ref", "--format=%(refname)", "refs/agents/snapshots/"],
     );
+    let snapshot = snapshots.lines().last().expect("a snapshot before the new session");
+    let kept = git(&rig.repo, &["show", &format!("{snapshot}:draft.txt")]);
     let state = rig
         .item_where("1.1", "merged after the new session", |phase| {
             matches!(phase, ItemPhase::Done { .. })
@@ -46,12 +48,8 @@ async fn a_task_whose_session_ends_without_a_status_goes_on_in_a_new_session_wit
     );
     assert!(briefing.contains("Do the first thing in the repository."), "{briefing}");
     assert!(briefing.contains("- draft.txt"), "{briefing}");
-    let snapshot = snapshots.lines().next().expect("a snapshot before the new session");
     assert!(briefing.contains(snapshot), "{briefing}");
-    assert_eq!(
-        git(&rig.repo, &["show", &format!("{snapshot}:draft.txt")]),
-        "draft of run 1"
-    );
+    assert_eq!(kept, "draft of run 1");
     let member = state.find_task(&tasks[0]).unwrap().member;
     let runs = member.runs();
     assert_eq!(runs.len(), 4);
