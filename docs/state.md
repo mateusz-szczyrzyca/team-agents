@@ -981,3 +981,12 @@ task IDs in queue-entry order; when the order matches team-creation order, `queu
 the limit with an agent that has runs going in two teams loads unchanged: both tasks finish, and the limit holds from
 the next start. On the socket, `MemberSummary` carries the optional `waits_for` (`{team, task}`) when a queued task
 waits for its agent's run in another task, omitted when absent.
+
+### Durable findings delivery
+
+Each task directory may contain a `findings-shown.json` file that records which findings from other tasks were already
+shown at the start of a run. The file contains a JSON object with a `shown` field listing the finding IDs that were
+displayed, such as `{"shown":["F-3","F-8"]}`. When absent, the list of shown findings is considered empty. Selected IDs are added and the file is written before the run starts. Each finding
+is shown at most once per task, even across daemon restarts, when it matches files the task touches. Own findings and
+resolved findings are excluded from this list. The selection respects the `[findings] keep_days`, `max_shown` and
+`max_chars` configuration settings that control which findings are shown and how many.

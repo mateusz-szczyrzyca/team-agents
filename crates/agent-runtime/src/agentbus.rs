@@ -33,6 +33,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::Instrument;
 
+mod findings;
 mod investigations;
 mod latest;
 mod unread;
@@ -150,6 +151,8 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// Open repository findings.
+    Findings,
     /// `inv-add`.
     InvAdd,
     /// `inv-next`.
@@ -263,6 +266,14 @@ pub enum AgentBusError {
         /// What the decoder said.
         source: serde_json::Error,
     },
+    /// A finding has an invalid addition time.
+    #[error("agentbus findings returned an invalid time for {id}")]
+    FindingTime {
+        /// Finding with the invalid timestamp.
+        id: agent_core::decide::findings::FindingId,
+        /// Timestamp parsing failure.
+        source: agent_core::local_time::TypedTimeError,
+    },
     /// The output is not in the format of the command.
     #[error("agentbus {command} printed something unexpected: {output:?}")]
     Unexpected {
@@ -286,6 +297,7 @@ impl AgentBusError {
             | Self::Killed { .. }
             | Self::OutputTooLong { .. }
             | Self::NotUtf8 { .. }
+            | Self::FindingTime { .. }
             | Self::Decode { .. }
             | Self::Unexpected { .. } => None,
         }

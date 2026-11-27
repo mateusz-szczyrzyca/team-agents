@@ -737,7 +737,7 @@ async fn three_part_split_stopped_member_before_b_merges_opens_c_for_lead() {
         &[
             investigator(
                 "inv-lead",
-                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,clean-done:DELIVERED: #3,sleep",
+                "ask,clean-done:DELIVERED: #1,clean-held-done:DELIVERED: #2,clean-held-done:DELIVERED: #3,sleep",
             ),
             normal("claude-1", "clean-done:already delivered,sleep"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
@@ -811,6 +811,7 @@ async fn three_part_split_stopped_member_before_b_merges_opens_c_for_lead() {
         .await
         .unwrap();
     rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-release-3"), "").unwrap();
 
     // Round 2 closes via PR 2, and round 3 opens for inv-lead on part c:
     rig.state_where("round 3 open for inv-lead on part c", |state| {
@@ -824,6 +825,8 @@ async fn three_part_split_stopped_member_before_b_merges_opens_c_for_lead() {
             }
     })
     .await;
+
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-release-4"), "").unwrap();
 
     // Team finishes after part c delivered by lead:
     let state = rig
@@ -1105,7 +1108,7 @@ async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead
         &[
             investigator(
                 "inv-lead",
-                "ask,clean-done:DELIVERED: #1,clean-done:DELIVERED: #2,clean-held-done:DELIVERED: #3,sleep",
+                "ask,clean-done:DELIVERED: #1,clean-held-done:DELIVERED: #2,clean-held-done:DELIVERED: #3,sleep",
             ),
             normal("claude-1", "clean-done:already delivered,sleep"),
             investigator("inv-r1", "done:VERDICT: APPROVE"),
@@ -1178,6 +1181,7 @@ async fn three_part_split_staged_stopped_member_before_b_merges_opens_c_for_lead
         .await
         .unwrap();
     rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-release-3"), "").unwrap();
 
     // NOW merge PR 2 by a human while member is stopped:
     rig.github.merged_by_a_human(2);
