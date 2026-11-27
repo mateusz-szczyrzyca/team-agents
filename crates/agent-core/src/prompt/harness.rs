@@ -18,6 +18,8 @@ pub enum HarnessPrompt {
     SerenaRemind,
     /// The role of the only agent of a task.
     RoleSolo,
+    /// Findings from other agents on paths the run touches.
+    Findings,
     /// The role of the coordinator of a team.
     RoleCoordinator,
     /// The role of a member of a team.
@@ -276,6 +278,7 @@ impl HarnessPrompt {
             ),
             Self::Serena => PromptSpec::new("harness/run/serena.md", Audience::Model, &[]),
             Self::SerenaRemind => PromptSpec::new("harness/run/serena-remind.md", Audience::Model, &["count"]),
+            Self::Findings => PromptSpec::new("harness/run/role-solo.md", Audience::Model, &[]),
             Self::RoleSolo => PromptSpec::new("harness/run/role-solo.md", Audience::Model, &[]),
             Self::RoleCoordinator => PromptSpec::new("harness/run/role-coordinator.md", Audience::Model, &[]),
             Self::RoleMember => PromptSpec::new("harness/run/role-member.md", Audience::Model, &[]),
