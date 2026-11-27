@@ -193,6 +193,12 @@ pub enum RunError {
         /// What the adapter refused.
         source: BuildRunError,
     },
+    /// The agent runs with an account that `agents.toml` no longer has.
+    #[error("the account {account} is not in the configuration")]
+    UnknownAccount {
+        /// The account.
+        account: agent_core::config::AccountName,
+    },
     /// A path is not UTF-8 text, which the adapters need.
     #[error("the path {path:?} is not UTF-8 text")]
     PathNotUtf8 {
@@ -512,11 +518,11 @@ impl RunEngine {
     pub async fn run_held_as(
         &self,
         job: RunJob,
-        _account: Option<&agent_core::config::AccountName>,
+        account: Option<&agent_core::config::AccountName>,
         cancel: &CancellationToken,
         hold: &WatchdogHold,
     ) -> Result<RunVerdict, RunError> {
-        self.run_held(job, cancel, hold).await
+        self.run_held_with(job, account, cancel, hold).await
     }
 
     /// Carries out `job` like [`RunEngine::run`], with the watchdog held off while `hold` is held: the run is never
@@ -530,11 +536,22 @@ impl RunEngine {
         cancel: &CancellationToken,
         hold: &WatchdogHold,
     ) -> Result<RunVerdict, RunError> {
+        self.run_held_with(job, None, cancel, hold).await
+    }
+
+    /// The run of [`RunEngine::run_held`] and [`RunEngine::run_held_as`], logged as one outside call.
+    async fn run_held_with(
+        &self,
+        job: RunJob,
+        account: Option<&agent_core::config::AccountName>,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<RunVerdict, RunError> {
         let started = std::time::Instant::now();
         let tool = job.cli.as_str();
         let span = model_cli_span(&job.task, &job.run, tool);
         let operation = async {
-            let result = self.run_held_lifecycle(job, cancel, hold).await;
+            let result = self.run_held_lifecycle(job, account, cancel, hold).await;
             let (exit_code, outcome) = match &result {
                 Ok(RunVerdict::Finished(run)) => {
                     let code = match run.finish.exit {
@@ -557,10 +574,11 @@ impl RunEngine {
     async fn run_held_lifecycle(
         &self,
         job: RunJob,
+        account: Option<&agent_core::config::AccountName>,
         cancel: &CancellationToken,
         hold: &WatchdogHold,
     ) -> Result<RunVerdict, RunError> {
-        let launch = launch::prepare(&self.parts, &job).await?;
+        let launch = launch::prepare(&self.parts, &job, account).await?;
         let stdout = launch.process.stdout_file.clone();
         let stderr = launch.process.stderr_file.clone();
         let head_before = self.head_of_worktree(&job).await;
