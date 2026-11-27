@@ -123,7 +123,7 @@ type Investigation struct {
 	Decision      string              `json:"decision,omitempty"`      // requester's decision after the result (record_decision)
 	Justification string              `json:"justification,omitempty"` // why the requester decided so, including how it verified the result
 	DecidedAt     Timestamp           `json:"decided_at,omitempty"`    // when the decision was recorded
-	Kind          InvestigationKind   `json:"kind,omitempty"`          // "" = investigation | "review" = PR review (agent run --team --verify)
+	Kind          InvestigationKind   `json:"kind,omitempty"`          // question (""), PR review ("review"), split or conflict
 	Item          string              `json:"item,omitempty"`          // task-list item for split and conflict requests
 	PRURL         string              `json:"pr_url,omitempty"`        // review only
 	PRNumber      int                 `json:"pr_number,omitempty"`     // review only

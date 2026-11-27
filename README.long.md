@@ -1328,6 +1328,13 @@ branch tip. Accepted, waiting-room and already-pending replies ask you to end yo
 the answer arrives as a message, which wakes the requester.
 Coordinators and members ask an investigator before writing a technical question for the human, following the
 exceptions in their role prompts.
+The optional `kind` argument defaults to `question`. Only the team's coordinator may request `split` or `conflict`,
+and both require an `item` argument. A split investigator reads the task-list item and code, then returns a complete
+proposal in a JSON block with parts within the configured line limit. The assignment records a task-allocation
+activity. The coordinator saves the answer's JSON as its own `split-proposal-<item>.json` and submits it through the
+normal split checks; the investigator writes no proposal file for it. Conflict execution is not available yet.
+Older bus states without these kinds or the optional item still load; legacy question and review kinds retain
+their meaning.
 
 ### Requests to workers
 
