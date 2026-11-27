@@ -100,7 +100,7 @@ impl Owner {
                 break;
             };
 
-            self.start_investigation(team_id, &req, &chosen, now).await?;
+            self.start_investigation(team_id, &req, &chosen).await?;
         }
 
         Ok(())
@@ -189,7 +189,6 @@ impl Owner {
         team_id: &TeamId,
         req: &Investigation,
         chosen: &InvestigatorName,
-        now: Timestamp,
     ) -> Result<(), OwnerError> {
         let task = TaskId::generate(&self.parts.clock, &mut self.parts.rng)?;
         let lead = self.lead_of(team_id)?;
@@ -211,6 +210,7 @@ impl Owner {
             .await
             .map_err(OwnerError::InvestigationGit)?;
 
+        let now = Timestamp::now(&self.parts.clock)?;
         let member = Member::new(task.clone(), Participant::Investigator(chosen.clone())).with_role(Role::Investigator);
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
