@@ -24,6 +24,7 @@ use agent_runtime::history::{LastCheckpoint, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{CheckpointFacts, checkpoint_state_variables};
 use agent_runtime::snapshot::{WorkSpan, take_checkpoint_snapshot, work_since};
+use agent_runtime::store::Home;
 
 use super::Owner;
 use super::checkpoint::{LOOK_SECONDS, LastCheckpoint as Kept};
@@ -348,7 +349,7 @@ impl Owner {
                     round: round.id(),
                     repo: team.repo(),
                 };
-                going.extend(self.going_jobs(&whose, &kept));
+                going.extend(going_jobs(self.parts.store.home(), &whose, &kept));
             }
         }
         for (facts, last) in going {
@@ -357,77 +358,6 @@ impl Owner {
             self.checkpoints.jobs.insert(task.clone(), facts);
             self.job_checkpoint(&task, CheckpointCause::DaemonStarted).await;
         }
-    }
-
-    /// The jobs `kept` (the checkpoints of the jobs of one round, oldest first) leaves going: each with the facts the
-    /// registry holds of a job and the last checkpoint it kept. A job whose last checkpoint ended it, or tells nothing of
-    /// what is meant or where its worktree started, is not going: the latter is logged.
-    fn going_jobs(&self, whose: &JobsOf<'_>, kept: &[LastCheckpoint]) -> Vec<(JobFacts, Kept)> {
-        let mut order: Vec<&TaskId> = Vec::new();
-        let mut seen: HashMap<&TaskId, Seen<'_>> = HashMap::new();
-        for checkpoint in kept {
-            let entry = seen.entry(&checkpoint.task).or_insert_with(|| {
-                order.push(&checkpoint.task);
-                Seen::default()
-            });
-            entry.take(checkpoint);
-        }
-        let home = self.parts.store.home();
-        let mut going = Vec::new();
-        for task in order {
-            let Some(seen) = seen.remove(task) else {
-                continue;
-            };
-            let Some(last) = seen.last else {
-                continue;
-            };
-            if is_an_end(last.cause) {
-                continue;
-            }
-            let (Some(start), Some(meant)) = (seen.start, seen.meant) else {
-                tracing::warn!(
-                    event = LogEvent::CheckpointFailed.as_str(),
-                    team = %whose.team,
-                    round = %whose.round,
-                    task = %task,
-                    cause = %CheckpointCause::DaemonStarted,
-                    error = "the first checkpoint of the job has no head, or none tells what is meant",
-                    "the job has no checkpoint at the start of the daemon"
-                );
-                continue;
-            };
-            let findings_file = match (last.job, last.pull_request, last.review_pass) {
-                (CheckpointJob::Review, Some(pr), Some(pass)) => Some(home.review_findings_file(task, pr, pass)),
-                _ => None,
-            };
-            let last_check = match last.job {
-                CheckpointJob::WorkerRequest => seen.done.and_then(last_check_of),
-                CheckpointJob::Review | CheckpointJob::Investigation | CheckpointJob::Item => None,
-            };
-            let facts = JobFacts {
-                team: whose.team.clone(),
-                round: whose.round.clone(),
-                job: last.job,
-                tier: last.tier,
-                task: task.clone(),
-                worktree: home.worktree_dir(whose.repo, task),
-                meant: meant.to_owned(),
-                start: start.clone(),
-                pull_request: last.pull_request,
-                review_pass: last.review_pass,
-                findings_file,
-                findings_seen: String::new(),
-                last_check,
-            };
-            going.push((
-                facts,
-                Kept {
-                    head: last.head.clone(),
-                    snapshot: seen.snapshot.map(str::to_owned),
-                },
-            ));
-        }
-        going
     }
 
     /// Hands the job of the task `from` over to the task `to`: `to` gets a `holder_changed` checkpoint that tells what the
@@ -716,6 +646,76 @@ async fn read_findings(file: &Path) -> Result<String, std::io::Error> {
     }
 }
 
+/// The jobs `kept` (the checkpoints of the jobs of one round, oldest first) leaves going: each with the facts the
+/// registry holds of a job and the last checkpoint it kept. A job whose last checkpoint ended it, or tells nothing of
+/// what is meant or where its worktree started, is not going: the latter is logged.
+fn going_jobs(home: &Home, whose: &JobsOf<'_>, kept: &[LastCheckpoint]) -> Vec<(JobFacts, Kept)> {
+    let mut order: Vec<&TaskId> = Vec::new();
+    let mut seen: HashMap<&TaskId, Seen<'_>> = HashMap::new();
+    for checkpoint in kept {
+        let entry = seen.entry(&checkpoint.task).or_insert_with(|| {
+            order.push(&checkpoint.task);
+            Seen::default()
+        });
+        entry.take(checkpoint);
+    }
+    let mut going = Vec::new();
+    for task in order {
+        let Some(seen) = seen.remove(task) else {
+            continue;
+        };
+        let Some(last) = seen.last else {
+            continue;
+        };
+        if is_an_end(last.cause) {
+            continue;
+        }
+        let (Some(start), Some(meant)) = (seen.start, seen.meant) else {
+            tracing::warn!(
+                event = LogEvent::CheckpointFailed.as_str(),
+                team = %whose.team,
+                round = %whose.round,
+                task = %task,
+                cause = %CheckpointCause::DaemonStarted,
+                error = "the first checkpoint of the job has no head, or none tells what is meant",
+                "the job has no checkpoint at the start of the daemon"
+            );
+            continue;
+        };
+        let findings_file = match (last.job, last.pull_request, last.review_pass) {
+            (CheckpointJob::Review, Some(pr), Some(pass)) => Some(home.review_findings_file(task, pr, pass)),
+            _ => None,
+        };
+        let last_check = match last.job {
+            CheckpointJob::WorkerRequest => seen.done.and_then(last_check_of),
+            CheckpointJob::Review | CheckpointJob::Investigation | CheckpointJob::Item => None,
+        };
+        let facts = JobFacts {
+            team: whose.team.clone(),
+            round: whose.round.clone(),
+            job: last.job,
+            tier: last.tier,
+            task: task.clone(),
+            worktree: home.worktree_dir(whose.repo, task),
+            meant: meant.to_owned(),
+            start: start.clone(),
+            pull_request: last.pull_request,
+            review_pass: last.review_pass,
+            findings_file,
+            findings_seen: String::new(),
+            last_check,
+        };
+        going.push((
+            facts,
+            Kept {
+                head: last.head.clone(),
+                snapshot: seen.snapshot.map(str::to_owned),
+            },
+        ));
+    }
+    going
+}
+
 /// Which job a run takes over, and whose checkpoint it starts from: the checkpoint of its own task, which the hand-over
 /// of an earlier holder wrote ([`Owner::job_handed_over`]) or the task's own earlier run left.
 #[derive(Debug, Clone, Copy)]
@@ -849,3 +849,6 @@ pub(super) async fn job_briefing(
     let values = values.with("checkpoint", checkpoint.trim_end())?;
     Ok(Some(texts.render(prompt, &values)?.trim_end().to_owned()))
 }
+
+#[cfg(test)]
+mod tests;
