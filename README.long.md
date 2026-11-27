@@ -969,7 +969,7 @@ gated and pushed, and the merge is tried again; a change to files the task does 
 the passes are used up, the daemon asks an investigator once for that item and pull request head. A completed answer
 gives the lead one extra pass with the proposed resolution. If the request or that pass fails, the lead asks you once
 in its questions file. A new head may receive a new investigation. Set `[merge] investigator_pass = false` to keep
-the direct human fallback; with `conflict_passes = 0` as well, you are told at once. The
+the direct human fallback. With `conflict_passes = 0`, you are told at once regardless of `investigator_pass`. The
 `merge_conflict_investigated` log event records the item and request ID. A conflict pass that fails during publication does not consume
 a pass from the budget; successful publication accounts for the pass once, surviving daemon restarts. Exhausted
 split rounds whose resolutions were never published resume merge attempts automatically once gated work is ready.

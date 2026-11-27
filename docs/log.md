@@ -393,7 +393,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `worktree_switch_refused` | `warn` | Before a run, the worktree was not put on the branch of the item: it has uncommitted changes to tracked files, or `git switch` failed. The run starts anyway, and its prompt tells the lead to commit and switch; with `task`, `from`, `to` and, when the switch failed, `error`. Stored in daemon history from schema 30. |
 | `publish_off_branch` | `warn` | The harness was to publish an item's branch, but the task's worktree had another branch out and no gate had passed at the tip of the item's branch: nothing was pushed, and the lead was sent back to switch to the branch and run the gate. Fields: `team`, `task`, `branch`, `checked_out`. |
 | `investigation_started` | `info` | A queued request starts a new investigator task: `id`, `investigator`, `task`, `from_task`. |
-| `investigation_answered` | `info` | A completed answer is saved and delivered: `id`, `investigator`, `chars`. |
+| `investigation_answered` | `info` | A completed answer is saved and delivered: `id`, `investigator`, `chars`. Automatic conflict answers are consumed by the merge round and do not emit this event; their requests emit `merge_conflict_investigated`. |
 | `merge_conflict_investigated` | `info` | The daemon files a conflict investigation after the lead passes are spent: `item`, `id`. |
 | `investigation_kind_unknown` | `warn` | An unsupported request kind is failed without starting a task, once per request: `id`, `kind`. |
 | `investigation_requeued` | `info` | An unsuccessful attempt is requeued privately: `id`, `investigator`, `reason`. |

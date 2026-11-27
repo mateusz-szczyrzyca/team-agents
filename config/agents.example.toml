@@ -336,7 +336,7 @@ context_percent = 80
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
 # asked to merge the base into its branch, at most `conflict_passes` times per round; an investigator then helps once before you are asked.
-#   conflict_passes   ordinary lead passes per round on a merge conflict (default: 3)
+#   conflict_passes   ordinary lead passes per round on a merge conflict (default: 3); 0 tells you at once regardless of investigator_pass
 #   investigator_pass   ask an investigator after those passes, then give the lead one extra pass (default: true)
 
 [merge]
