@@ -60,6 +60,7 @@ pub mod files;
 pub mod history;
 pub mod ids;
 pub mod kinds;
+pub mod limit_reading;
 pub mod local_time;
 pub mod log;
 pub mod notice_status;
