@@ -27,8 +27,9 @@ mod checkpoint;
 mod event;
 
 pub use checkpoint::{
-    CheckpointCause, CheckpointContent, CheckpointJob, CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput,
-    checkpoint_content,
+    CheckResult, CheckpointCause, CheckpointContent, CheckpointJob, CommitLine, Counts, FindingLine, JobWork,
+    LIST_LIMIT, Next, ReviewedItem, StateInput, checkpoint_content, investigation_meant, job_content, request_meant,
+    review_meant,
 };
 pub use event::{CheckOutcome, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, RecordKind, SplitDecision};
 

@@ -282,7 +282,13 @@ impl Owner {
                 | CheckpointCause::RunEnded
                 | CheckpointCause::RoundOverdue
                 | CheckpointCause::HolderChanged
-                | CheckpointCause::DaemonStarted => {}
+                | CheckpointCause::DaemonStarted
+                | CheckpointCause::RequestStarted
+                | CheckpointCause::RequestChecked
+                | CheckpointCause::ReviewStarted
+                | CheckpointCause::FindingsWritten
+                | CheckpointCause::InvestigationStarted
+                | CheckpointCause::InvestigationAnswered => {}
             }
             *state
         };

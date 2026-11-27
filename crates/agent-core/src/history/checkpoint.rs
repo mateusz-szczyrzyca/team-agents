@@ -10,8 +10,10 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 use super::HistoryEvent;
 use crate::kinds::{Keyword, UnknownKeyword};
 
+mod job;
 mod state;
 
+pub use job::{CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, request_meant, review_meant};
 pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, checkpoint_content};
 
 /// What a checkpoint is for: the kind of work whose state it keeps.
@@ -41,6 +43,13 @@ pub enum CheckpointJob {
     Review,
     /// An investigation.
     Investigation,
+}
+
+impl Default for CheckpointJob {
+    /// The job of a record that names none: those written before the other jobs had checkpoints are all items.
+    fn default() -> Self {
+        Self::Review
+    }
 }
 
 impl Keyword for CheckpointJob {
@@ -112,6 +121,18 @@ pub enum CheckpointCause {
     HolderChanged,
     /// The daemon started and found the worktree of a task of an open round changed since its last checkpoint.
     DaemonStarted,
+    /// A worker started serving a request.
+    RequestStarted,
+    /// The check of a worker's request ran.
+    RequestChecked,
+    /// A reviewer started its review.
+    ReviewStarted,
+    /// The reviewer's findings file has findings that the last checkpoint did not have.
+    FindingsWritten,
+    /// An investigator started an investigation.
+    InvestigationStarted,
+    /// An investigator answered the question of its investigation.
+    InvestigationAnswered,
 }
 
 impl Keyword for CheckpointCause {
