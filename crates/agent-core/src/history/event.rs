@@ -803,6 +803,13 @@ impl HistoryEvent {
             | Self::FindingNotConfirmed { why, .. } => vec![("why", why)],
             Self::Lost { detail, .. } => vec![("detail", detail)],
             Self::FixPassStarted { findings, .. } => vec![("findings", findings)],
+            Self::Checkpoint {
+                content: Some(content), ..
+            } => vec![
+                ("meant", &mut content.meant),
+                ("done", &mut content.done),
+                ("left", &mut content.left),
+            ],
             Self::QuestionAsked { text, .. } | Self::QuestionAnswered { text, .. } => vec![("text", text)],
             Self::Gate { .. }
             | Self::PullPushed { .. }
@@ -815,7 +822,7 @@ impl HistoryEvent {
             | Self::Controlled { .. }
             | Self::SerenaReminded { .. }
             | Self::RoundClosed { .. }
-            | Self::Checkpoint { .. }
+            | Self::Checkpoint { content: None, .. }
             | Self::TeamEnded {} => Vec::new(),
         }
     }

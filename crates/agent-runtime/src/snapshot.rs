@@ -3,11 +3,11 @@
 
 use agent_core::config::AbsolutePath;
 use agent_core::history::SnapshotRecord;
-use agent_core::ids::{RoundId, TaskId};
+use agent_core::ids::{BranchName, RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::state::Timestamp;
 
-use crate::git::{CheckpointSnapshot, CommitIdentity, Git, GitError};
+use crate::git::{CheckpointSnapshot, CommitIdentity, CommitMessage, Git, GitError, Revision};
 
 /// The name the commits of snapshots have: a snapshot is the harness's commit, not an agent's.
 const SNAPSHOT_NAME: &str = "team-agents";
@@ -94,6 +94,45 @@ pub async fn take_checkpoint_snapshot(
             task: task.clone(),
             source,
         })
+}
+
+/// Why the commits of a task's branch could not be read.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot read the commits of the branch of task {task} past {base}")]
+pub struct BranchCommitsError {
+    /// The task whose worktree was read.
+    pub task: TaskId,
+    /// The branch the task's branch was forked from.
+    pub base: BranchName,
+    /// What git said.
+    #[source]
+    pub source: GitError,
+}
+
+/// The commits of the branch in the worktree at `worktree` of `task` that `origin/<base>` does not have, oldest first,
+/// each with its whole message: what the work of the task has committed. The base is the remote-tracking branch, as for
+/// the checks and the commit guard: a local base is never updated, and the commits merged since would count as work.
+///
+/// # Errors
+/// [`BranchCommitsError`] when git cannot find where the branch left `base` or cannot read the commits.
+pub async fn branch_commits(
+    worktree: &AbsolutePath,
+    task: &TaskId,
+    base: &BranchName,
+) -> Result<Vec<CommitMessage>, BranchCommitsError> {
+    let identity = CommitIdentity::new(SNAPSHOT_NAME.to_owned(), SNAPSHOT_EMAIL.to_owned(), None);
+    let git = Git::new(worktree.clone(), identity);
+    let failed = |source| BranchCommitsError {
+        task: task.clone(),
+        base: base.clone(),
+        source,
+    };
+    let head = git.rev_parse(&Revision::Head).await.map_err(failed)?;
+    let forked = git
+        .merge_base(&Revision::Head, &Revision::RemoteBranch(base.clone()))
+        .await
+        .map_err(failed)?;
+    git.range_messages(&forked, &head).await.map_err(failed)
 }
 
 /// Why the snapshot references of a round could not be removed.

@@ -1,6 +1,7 @@
 //! The commands that talk to the daemon.
 
 pub(crate) mod answer;
+pub(crate) mod checkpoints;
 pub(crate) mod control;
 pub(crate) mod daemon;
 pub(crate) mod debug;
