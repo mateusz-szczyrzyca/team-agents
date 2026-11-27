@@ -756,6 +756,54 @@ pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a
     }
 }
 
+/// What a review request says of the findings of the earlier passes: their open ones, or the disputes about them; none
+/// on the first pass or when the pull request has no ledger.
+fn open_findings_section(
+    texts: &AutopilotPrompts,
+    verification: &Verification<'_>,
+) -> Result<Option<String>, SectionError> {
+    if verification.pass <= 1 || verification.findings.is_none() {
+        return Ok(None);
+    }
+    let values = Variables::new().with(
+        "findings",
+        super::findings::verification_text(texts, verification.findings)?,
+    )?;
+    Ok(Some(texts.render(
+        if verification.findings.is_some_and(|l| l.disputes().is_some()) {
+            AutopilotPrompt::ReviewDisputes
+        } else {
+            AutopilotPrompt::ReviewOpenFindings
+        },
+        &values,
+    )?))
+}
+
+/// What a reviewer's request says of its job: the file it writes its findings to as it has them, so that a reviewer that
+/// replaces it starts from them, and, when it replaces one, the briefing of that one's last checkpoint.
+async fn review_job_sections(
+    ctx: &Context<'_>,
+    found: &TaskRef<'_>,
+    pull_request: PrNumber,
+    pass: u32,
+) -> Result<Vec<String>, SectionError> {
+    let team = found.team;
+    let task = found.member.task();
+    let file = ctx.home.review_findings_file(task, pull_request, pass);
+    let file_values = Variables::new().with("file", file.display().to_string())?;
+    let mut sections = vec![ctx.texts.render(HarnessPrompt::ReviewFindingsFile, &file_values)?];
+    let rounds = team.open_rounds().map(|round| round.id().clone()).collect();
+    let taken_over = TakenOver::Review {
+        task,
+        pull_request,
+        pass,
+    };
+    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
+        sections.push(briefing);
+    }
+    Ok(sections)
+}
+
 /// The request for a review that the reviewer `found` has pending, with the items of the pull request.
 pub(super) async fn review_request(
     ctx: &Context<'_>,
@@ -832,20 +880,7 @@ pub(super) async fn review_request(
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
-    if verification.pass > 1 && verification.findings.is_some() {
-        let values = Variables::new().with(
-            "findings",
-            super::findings::verification_text(texts, verification.findings)?,
-        )?;
-        sections.push(texts.render(
-            if verification.findings.is_some_and(|l| l.disputes().is_some()) {
-                AutopilotPrompt::ReviewDisputes
-            } else {
-                AutopilotPrompt::ReviewOpenFindings
-            },
-            &values,
-        )?);
-    }
+    sections.extend(open_findings_section(texts, &verification)?);
     let harness = PromptTexts {
         harness: ctx.texts,
         rules: ctx.rules,
@@ -855,20 +890,7 @@ pub(super) async fn review_request(
             sections.extend(item_sections(&harness, item)?);
         }
     }
-    // A reviewer writes its findings down as it has them, so that a reviewer that replaces it starts from them.
-    let pass = u32::try_from(verification.pass)?;
-    let file = ctx.home.review_findings_file(task, pr.number, pass);
-    let file_values = Variables::new().with("file", file.display().to_string())?;
-    sections.push(ctx.texts.render(HarnessPrompt::ReviewFindingsFile, &file_values)?);
-    let rounds = team.open_rounds().map(|round| round.id().clone()).collect();
-    let taken_over = TakenOver::Review {
-        task,
-        pull_request: pr.number,
-        pass,
-    };
-    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
-        sections.push(briefing);
-    }
+    sections.extend(review_job_sections(ctx, found, pr.number, u32::try_from(verification.pass)?).await?);
     Ok(Some(
         sections
             .iter()
