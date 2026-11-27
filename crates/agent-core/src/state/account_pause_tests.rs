@@ -116,3 +116,32 @@ fn an_unknown_key_of_a_paused_account_is_refused() {
 
     assert_eq!(error.classify(), Category::Data);
 }
+
+#[test]
+fn a_rate_limit_with_a_reset_is_refused() {
+    let error = serde_json::from_str::<Limit>(r#"{"kind":"rate_limit","reset_in_nanoseconds":5}"#).unwrap_err();
+
+    assert_eq!(error.classify(), Category::Data);
+}
+
+#[test]
+fn a_quota_reset_longer_than_a_duration_is_refused() {
+    let too_long = i128::from(i64::MAX) * 1_000_000_000 + 1_000_000_000;
+    let json = format!(r#"{{"kind":"quota","reset_in_nanoseconds":{too_long}}}"#);
+
+    let error = serde_json::from_str::<Limit>(&json).unwrap_err();
+
+    assert_eq!(error.classify(), Category::Data);
+}
+
+#[test]
+fn a_quota_reset_of_one_nanosecond_is_read() {
+    let limit = serde_json::from_str::<Limit>(r#"{"kind":"quota","reset_in_nanoseconds":1}"#).unwrap();
+
+    assert_eq!(
+        limit,
+        Limit::Quota {
+            reset_in: Some(Duration::nanoseconds(1))
+        }
+    );
+}
