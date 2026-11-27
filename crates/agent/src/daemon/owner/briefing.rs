@@ -378,7 +378,7 @@ impl Owner {
         // worktree is as it was kept.
         let snapshot = match self.cut_snapshots.remove(task) {
             Some(reference) if reason == Trouble::DaemonDown => reference,
-            Some(_) | None => match self.checkpoint_snapshot(&git, task, &checkpoints).await {
+            Some(_) | None => match self.checkpoint_snapshot(&git, &round, task, &checkpoints).await {
                 Some(reference) => reference,
                 None => self.snapshot(&worktree, &round, task).await?,
             },
@@ -454,7 +454,13 @@ impl Owner {
     /// The reference of the snapshot a checkpoint of `task` kept, when the worktree is as that snapshot holds it; `None`
     /// when no checkpoint of the task kept one that matches, and a new snapshot is to be taken. A worktree that cannot be
     /// compared is logged as a checkpoint that failed and gets the new snapshot.
-    async fn checkpoint_snapshot(&self, git: &Git, task: &TaskId, found: &RoundCheckpoints) -> Option<String> {
+    async fn checkpoint_snapshot(
+        &self,
+        git: &Git,
+        round: &RoundId,
+        task: &TaskId,
+        found: &RoundCheckpoints,
+    ) -> Option<String> {
         let mut kept: Vec<&str> = Vec::new();
         for checkpoint in [found.newest.as_ref(), found.told.as_ref()].into_iter().flatten() {
             let Some(reference) = checkpoint.snapshot.as_deref() else {
@@ -470,6 +476,7 @@ impl Owner {
                 Ok(false) => {}
                 Err(error) => tracing::warn!(
                     event = LogEvent::CheckpointFailed.as_str(),
+                    round = %round,
                     task = %task,
                     cause = "briefing_snapshot",
                     error = %error_chain(&error),
