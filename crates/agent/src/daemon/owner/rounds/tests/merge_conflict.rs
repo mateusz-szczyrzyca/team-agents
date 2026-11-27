@@ -1095,3 +1095,36 @@ async fn merge_conflict_investigated_is_logged_with_item_and_id() {
     assert_eq!(entries[0].fields().get("item"), Some(&serde_json::json!("1.1")));
     assert_eq!(entries[0].fields().get("id"), Some(&serde_json::json!(1)));
 }
+
+#[tokio::test]
+async fn the_human_is_asked_when_the_extra_published_tip_still_conflicts() {
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:inv-done:Resolve the conflict",
+        "work,merge-base,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.wait_for("the extra conflict run", || rig.runs(&task) >= 5).await;
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    let state = rig
+        .state_where("human fallback or an unwanted second investigation", |state| {
+            let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+            matches!(
+                item.merge_conflict(),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. })
+            ) || serde_json::to_value(item).unwrap()["conflict_investigation"]["id"] == 2
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(
+        matches!(
+            item.merge_conflict(),
+            Some(agent_core::state::MergeConflict::AskingHuman { .. })
+        ),
+        "{item:?}"
+    );
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
