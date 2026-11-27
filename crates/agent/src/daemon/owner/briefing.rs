@@ -1041,7 +1041,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
 
 /// The plan in the worktree; `None` when there is none or it does not read. A plan that does not read is logged and left
 /// out: the new session reads the file itself.
-async fn read_plan(worktree: &AbsolutePath, task: &TaskId) -> Option<Plan> {
+pub(super) async fn read_plan(worktree: &AbsolutePath, task: &TaskId) -> Option<Plan> {
     let read = read_text_file(&worktree.as_path().join(PLAN_FILE), MAX_TASK_LIST_BYTES).await;
     let parsed = match read {
         Ok(None) => return None,
@@ -1077,7 +1077,21 @@ fn standing_judgements(
     judged: &HashMap<ItemId, JudgementRecord>,
     plans_by_run: &HashMap<RunId, Plan>,
 ) -> Vec<(String, JudgementState)> {
-    let mut standing: Vec<(String, JudgementState)> = judged
+    let mut standing: Vec<(String, JudgementState)> = standing_states(plan, judged, plans_by_run)
+        .into_iter()
+        .map(|(step, state)| (step.to_string(), state))
+        .collect();
+    standing.sort_by(|a, b| a.0.cmp(&b.0));
+    standing
+}
+
+/// The judgements that still hold for the steps of `plan`, as [`standing_judgements`] keeps them, by step, in no order.
+pub(super) fn standing_states(
+    plan: &Plan,
+    judged: &HashMap<ItemId, JudgementRecord>,
+    plans_by_run: &HashMap<RunId, Plan>,
+) -> Vec<(ItemId, JudgementState)> {
+    judged
         .iter()
         .filter(|(id, record)| {
             let judged_step = record
@@ -1088,10 +1102,8 @@ fn standing_judgements(
             // The harness itself judges a step again when its text is not what it was at the last judgement.
             judged_step.is_some_and(|before| plan.step(id) == Some(before))
         })
-        .map(|(step, record)| (step.to_string(), record.state))
-        .collect();
-    standing.sort_by(|a, b| a.0.cmp(&b.0));
-    standing
+        .map(|(step, record)| (*step, record.state))
+        .collect()
 }
 
 /// The mark of a step in the plan's own syntax; the briefing's text says what each mark means.
