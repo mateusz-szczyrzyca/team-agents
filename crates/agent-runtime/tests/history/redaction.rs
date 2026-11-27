@@ -205,3 +205,40 @@ fn same_prefix_and_nested_secrets_redact_the_longest_match() {
         ActivityEvent::Text("before [REDACTED] middle [REDACTED] and [REDACTED] after".to_owned())
     );
 }
+
+#[test]
+fn the_secrets_of_an_account_are_redacted() {
+    let w = super::support::complete(4);
+    let secrets = Secrets::parse(
+        "[account_env.comp-claude]\nCLAUDE_CODE_OAUTH_TOKEN = 'MARKER-7f3a'\n",
+        0o600,
+    )
+    .unwrap();
+    let store = Memory::default();
+    let stored = Arc::clone(&store.0);
+    let started = History::start_with_secrets(
+        store,
+        Setup {
+            capacity: DEFAULT_QUEUE,
+            reporter: Arc::new(Reports::default()),
+        },
+        secrets,
+    )
+    .unwrap();
+    started.history.record(Record::Step(Box::new(agent_core::history::Step {
+        run: w.runs[0].start.run.clone(),
+        number: 1.try_into().unwrap(),
+        at: w.team.at,
+        event: ActivityEvent::Text("token MARKER-7f3a was printed".to_owned()),
+    })));
+    started.writer.close().unwrap();
+    let got = stored.lock().unwrap();
+    assert_eq!(got.len(), 1);
+    let Record::Step(step) = &got[0] else {
+        panic!("{:?}", got[0])
+    };
+    assert_eq!(
+        step.event,
+        ActivityEvent::Text("token [REDACTED] was printed".to_owned())
+    );
+}
