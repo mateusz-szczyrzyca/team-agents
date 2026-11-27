@@ -969,12 +969,10 @@ impl State {
         if held_by == holder {
             return Err(HandOverError::SameHolder { task: task.clone() });
         }
-        // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
-        // left are the ones the crew allows it.
-        match choice {
-            Choice::Harness | Choice::Human => {}
-        }
-        if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
+        // A task is never given to a lower tier by the harness; a human swap allows any tier.
+        if choice == Choice::Harness
+            && crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier())
+        {
             return Err(HandOverError::LowerTier {
                 task: task.clone(),
                 holder: holder.tier(),
