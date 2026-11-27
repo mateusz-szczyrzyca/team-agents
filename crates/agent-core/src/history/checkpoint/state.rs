@@ -64,6 +64,8 @@ pub enum Next {
     WaitForHuman,
     /// The pull request is approved and waits for its merge.
     WaitForMerge,
+    /// The item is done: its pull request is merged.
+    Nothing,
 }
 
 /// The facts a checkpoint tells.
@@ -403,6 +405,7 @@ fn next_line(input: &StateInput<'_>, open: usize) -> String {
         ),
         Next::WaitForHuman => "next: wait for the human's instruction; read the human's messages".to_owned(),
         Next::WaitForMerge => "next: wait for the merge".to_owned(),
+        Next::Nothing => String::new(),
     }
 }
 

@@ -344,3 +344,9 @@ fn the_counts_are_read_from_the_first_lines_of_the_parts() {
     };
     assert_eq!(plain.counts(), None);
 }
+
+// Rule: an item whose pull request is merged has nothing next.
+#[test]
+fn the_next_line_of_a_merged_item_says_that_nothing_is_left_to_do() {
+    assert_eq!(next_line(Next::Nothing), "next: nothing; the pull request is merged");
+}
