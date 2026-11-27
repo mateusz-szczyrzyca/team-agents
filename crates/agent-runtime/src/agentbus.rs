@@ -27,6 +27,7 @@ use agent_core::config::{AbsolutePath, Program, RepoName};
 use agent_core::ids::{AgentName, BranchName, ItemId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::repo_path::RepoPath;
+use agent_core::state::PrNumber;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -1127,6 +1128,27 @@ pub struct BusStatus {
     pub reservations: Vec<String>,
 }
 
+/// A lead's request to investigate a conflict on an item pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewConflictRequest {
+    /// Agent that asks for help.
+    pub from_agent: AgentName,
+    /// Lead task that owns the request.
+    pub from_task: TaskId,
+    /// Repository of the item.
+    pub repo: RepoName,
+    /// Branch of the requester.
+    pub branch: BranchName,
+    /// Task-list item whose pull request conflicts.
+    pub item: ItemId,
+    /// Specific conflict question.
+    pub question: String,
+    /// Pull request URL.
+    pub pr_url: String,
+    /// Pull request number.
+    pub pr_number: PrNumber,
+}
+
 /// The bus of one `AGENTS_HOME`, run through the `agentbus` command.
 #[derive(Debug, Clone)]
 pub struct AgentBus {
@@ -1721,6 +1743,14 @@ impl AgentBus {
         let args = Args::new().flag("--id", id.to_string());
         let output = self.run(command, args, None).await?;
         decode_json(command, &output)
+    }
+
+    /// Files a conflict investigation and returns its new bus id.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] if the command fails or prints an invalid id.
+    pub async fn inv_add_conflict(&self, _req: &NewConflictRequest) -> Result<NonZeroU32, AgentBusError> {
+        Err(unexpected(BusCommand::InvGet, ""))
     }
 
     /// Lists open investigations (pending or in progress).
