@@ -150,3 +150,48 @@ fn a_round_with_only_changes_of_holder_tells_no_checkpoint() {
 
     assert_eq!(told(&path, HOLDER), None);
 }
+
+/// The JSON members of a checkpoint that kept the snapshot `number` of the round.
+fn snapshot_member(number: u32) -> String {
+    format!(r#","snapshot":"refs/agents/snapshots/{ROUND}/{HOLDER}/c{number}""#)
+}
+
+#[test]
+fn the_end_of_a_run_that_left_the_worktree_as_the_checkpoint_before_kept_it_is_skipped() {
+    let (_dir, path) = database();
+    checkpoint(
+        &path,
+        HOLDER,
+        "2026-11-26T09:01:00Z",
+        "round_overdue",
+        &snapshot_member(1),
+    );
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "run_ended", &snapshot_member(1));
+    checkpoint(
+        &path,
+        HOLDER,
+        "2026-11-26T09:03:00Z",
+        "holder_changed",
+        &snapshot_member(1),
+    );
+
+    assert_eq!(told(&path, HOLDER).unwrap().cause, CheckpointCause::RoundOverdue);
+}
+
+#[test]
+fn the_end_of_a_run_that_changed_the_worktree_since_the_checkpoint_before_is_told() {
+    let (_dir, path) = database();
+    checkpoint(&path, HOLDER, "2026-11-26T09:01:00Z", "commit", &snapshot_member(1));
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "run_ended", &snapshot_member(2));
+
+    assert_eq!(told(&path, HOLDER).unwrap().cause, CheckpointCause::RunEnded);
+}
+
+#[test]
+fn the_end_of_a_run_with_no_snapshot_is_told() {
+    let (_dir, path) = database();
+    checkpoint(&path, HOLDER, "2026-11-26T09:01:00Z", "commit", "");
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "run_ended", "");
+
+    assert_eq!(told(&path, HOLDER).unwrap().cause, CheckpointCause::RunEnded);
+}
