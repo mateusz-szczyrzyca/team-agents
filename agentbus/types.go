@@ -314,7 +314,9 @@ const (
 )
 
 // Valid reports whether k is a finding category.
-func (k FindingKind) Valid() bool { return true }
+func (k FindingKind) Valid() bool {
+	return k == FindingFlakyTest || k == FindingTrap || k == FindingEnvironment
+}
 
 // UnmarshalJSON implements json.Unmarshaler; failures contain a *ValueError.
 func (k *FindingKind) UnmarshalJSON(data []byte) error {
