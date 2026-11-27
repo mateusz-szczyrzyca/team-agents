@@ -1342,6 +1342,7 @@ const NO_TEAMS: &str = "no teams\n";
 /// What `agent status --running` writes when no round goes on.
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
+mod accounts;
 mod investigators;
 mod members;
 pub(crate) mod pool;
