@@ -41,7 +41,7 @@ mod snapshot;
 
 pub use bring_over::{BringOver, Merged, Written};
 pub use changes::WorkChanges;
-pub use range::StagedAgainst;
+pub use range::{CommitMessage, StagedAgainst};
 pub use snapshot::{CheckpointSnapshot, Snapshot, SnapshotOrigin};
 
 /// How long a local git command may run before its group is killed.

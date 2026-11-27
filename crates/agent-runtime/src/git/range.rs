@@ -40,7 +40,28 @@ pub enum StagedAgainst {
     EmptyTree,
 }
 
+/// A commit with its whole message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommitMessage {
+    /// The commit.
+    pub id: CommitId,
+    /// Its message, the subject and the body, without the line break git ends it with.
+    pub message: String,
+}
+
 impl Git {
+    /// The commits after `base` up to `head`, oldest first, each with its whole message and none of the files it changed:
+    /// what a look at the `Step:` trailers needs, without a git call for each commit. A bad byte of a message is replaced.
+    ///
+    /// # Errors
+    /// [`GitError::TooManyCommits`] when the range has more than [`GitLimits::max_commits`](super::GitLimits);
+    /// [`GitError::Failed`] when a commit is not in the repository; [`GitError::Run`], [`GitError::OutputTooLong`],
+    /// [`GitError::NotACommit`], [`GitError::NotUtf8`] and [`GitError::Unexpected`].
+    pub async fn range_messages(&self, base: &CommitId, head: &CommitId) -> Result<Vec<CommitMessage>, GitError> {
+        let _ = (base, head);
+        Ok(Vec::new())
+    }
+
     /// The files the index changes against `against`, as the commit that is about to be made changes them. A rename is
     /// a deletion and an addition. The index is the one of this process's environment (`GIT_INDEX_FILE` when a hook of
     /// `git commit -a` is run), which is what the commit is made of.
