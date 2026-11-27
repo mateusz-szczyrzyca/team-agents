@@ -1,0 +1,19 @@
+# THIS REVIEW WAS STARTED BEFORE YOU
+
+A reviewer started the review of pull request #7, pass 2, and is gone. The pass keeps its number. The findings it had written are your leads: check each against the pull request, keep what holds, drop what does not, and add what it missed.
+
+## Where the review stands
+
+## Checkpoint: findings_written at 2026-11-27T04:00:00Z, head 0123abc
+
+### What is to be done
+R1. Review pull request #7.
+
+### What is done
+Findings written so far: 1
+1. [MAJOR] ERR-3 a.rs:4 — a panic → return an error
+
+### What is left
+next: finish the review of pass 2 and submit it with a verdict
+
+This is where the review stands. Go on from it: do what is left, do not do again what is done.
