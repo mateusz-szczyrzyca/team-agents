@@ -165,3 +165,59 @@ fn the_reason_is_kept_in_the_state_and_read_back() {
     assert!(text.contains(r#""kind":"no_requirement""#), "{text}");
     assert!(text.contains(r#""R1""#), "{text}");
 }
+
+#[test]
+fn only_the_first_run_of_a_task_ties_its_plan_to_the_requirements() {
+    let task: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
+    let mut member = Member::new(task, Participant::Normal("codex-1".parse().unwrap()));
+    assert!(!member.plan().unwrap().requirements_tied());
+    let written = serde_json::to_value(&member).unwrap();
+    assert_eq!(
+        written["plan"],
+        serde_json::json!({"sent_back": 0, "granted": 0, "stage": "open"})
+    );
+
+    member
+        .begin_run(
+            "run-20261111-153002-r1r1".parse().unwrap(),
+            "2026-11-11T15:30:02Z".parse().unwrap(),
+            None,
+        )
+        .unwrap();
+
+    assert!(member.plan().unwrap().requirements_tied());
+}
+
+#[test]
+fn a_task_whose_first_run_started_before_stays_untied_when_a_later_run_starts() {
+    let task: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
+    let mut first = Member::new(task, Participant::Normal("codex-1".parse().unwrap()));
+    first
+        .begin_run(
+            "run-20261111-153002-r1r1".parse().unwrap(),
+            "2026-11-11T15:30:02Z".parse().unwrap(),
+            None,
+        )
+        .unwrap();
+    first
+        .end_run(
+            "2026-11-11T15:31:02Z".parse().unwrap(),
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    let mut wire = serde_json::to_value(&first).unwrap();
+    wire["plan"].as_object_mut().unwrap().remove("requirements_tied");
+    let mut member: Member = serde_json::from_value(wire).unwrap();
+
+    member
+        .begin_run(
+            "run-20261111-153003-r2r2".parse().unwrap(),
+            "2026-11-11T15:32:00Z".parse().unwrap(),
+            None,
+        )
+        .unwrap();
+
+    assert!(!member.plan().unwrap().requirements_tied());
+}
