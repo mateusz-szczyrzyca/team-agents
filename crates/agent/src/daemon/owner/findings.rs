@@ -1,7 +1,7 @@
 //! Optional findings selected and recorded before a model run starts.
 
 use agent_core::config::{AbsolutePath, Config, InvalidValue, RepoName};
-use agent_core::decide::findings::{InvalidRepoPath, RepoPath, item_paths, render_findings, select_findings};
+use agent_core::decide::findings::{Finding, InvalidRepoPath, RepoPath, item_paths, render_findings, select_findings};
 use agent_core::ids::{InvalidBranchName, InvalidName, TaskId, TeamId};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
@@ -14,6 +14,7 @@ use agent_runtime::git::{ChangedFilesError, CommitIdentity, Git};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
 use agent_runtime::store::Home;
 use std::path::PathBuf;
+use tracing::Instrument as _;
 
 /// Inputs shared by owner and pooled-worker prompt preparation.
 pub(super) struct Delivery<'a> {
@@ -87,23 +88,6 @@ enum FindingsError {
 }
 
 impl Delivery<'_> {
-    /// Adds a section only after its IDs have been saved. Failure is a specified optional fallback.
-    pub(super) async fn for_paths(
-        &self,
-        team: &TeamId,
-        task: &TaskId,
-        repo: &RepoName,
-        paths: &[RepoPath],
-    ) -> Option<String> {
-        match self.section(team, task, repo, paths).await {
-            Ok(section) => section,
-            Err(error) => {
-                unavailable(team, task, &error);
-                None
-            }
-        }
-    }
-
     /// Uses the step files rather than unrelated changes in the worker's checkout.
     pub(super) async fn for_request(
         &self,
@@ -113,13 +97,17 @@ impl Delivery<'_> {
         request: agent_runtime::agentbus::RequestId,
     ) -> Option<String> {
         let result: Result<Option<String>, FindingsError> = async {
+            let findings = self.bus.findings_in(repo, self.zone).await?;
+            if findings.is_empty() {
+                return Ok(None);
+            }
             let work = self.bus.helper_work(request).await?;
             let paths = work
                 .files
                 .iter()
                 .map(|path| RepoPath::parse(path.as_str()))
                 .collect::<Result<Vec<_>, _>>()?;
-            self.section(team, task, repo, &paths).await
+            self.section(team, task, &findings, &paths).await
         }
         .await;
         match result {
@@ -131,21 +119,20 @@ impl Delivery<'_> {
         }
     }
 
-    /// Loads only open findings, renders them and saves their IDs before returning the section.
+    /// Selects from open findings, renders them and saves their IDs before returning the section.
     async fn section(
         &self,
         team: &TeamId,
         task: &TaskId,
-        repo: &RepoName,
+        findings: &[Finding],
         paths: &[RepoPath],
     ) -> Result<Option<String>, FindingsError> {
-        let findings = self.bus.findings_in(repo, self.zone).await?;
         let directory = self.home.task_dir(task);
         let record = directory.join("findings-shown.json");
         let mut shown = ShownFindings::read(&record).await?;
         let limits = self.config.findings();
         let selected = select_findings(
-            &findings,
+            findings,
             paths,
             shown.ids(),
             task,
@@ -185,12 +172,20 @@ pub(super) async fn for_owner(ctx: &super::start::Context<'_>, found: &TaskRef<'
         clock: ctx.clock,
         zone,
     };
-    match owner_paths(ctx, found, &bus).await {
-        Ok(paths) => {
-            delivery
-                .for_paths(found.team.id(), found.member.task(), found.team.repo(), &paths)
-                .await
+    let result: Result<Option<String>, FindingsError> = async {
+        let findings = bus.findings_in(found.team.repo(), zone).await?;
+        if findings.is_empty() {
+            return Ok(None);
         }
+        let paths = owner_paths(ctx, found, &bus).await?;
+        delivery
+            .section(found.team.id(), found.member.task(), &findings, &paths)
+            .await
+    }
+    .instrument(tracing::info_span!("findings", team = %found.team.id(), task = %found.member.task()))
+    .await;
+    match result {
+        Ok(section) => section,
         Err(error) => {
             unavailable(found.team.id(), found.member.task(), &error);
             None
