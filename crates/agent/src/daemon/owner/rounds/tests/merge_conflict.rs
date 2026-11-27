@@ -856,7 +856,7 @@ async fn spent_conflict_passes(
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let task = tasks[0].clone();
     for pass in 1..=3 {
-        rig.wait_for("next conflict run", || rig.runs(&task) >= pass + 1).await;
+        rig.wait_for("next conflict run", || rig.runs(&task) > pass).await;
         std::fs::write(rig.repo.join("base-file.txt"), format!("base pass {pass}\n")).unwrap();
         git(&rig.repo, &["add", "base-file.txt"]);
         git(&rig.repo, &["commit", "-q", "-m", "Move the base for the next pass"]);
