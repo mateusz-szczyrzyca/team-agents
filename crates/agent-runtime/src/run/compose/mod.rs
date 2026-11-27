@@ -142,8 +142,18 @@ pub enum ComposeError {
 pub fn compose(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<String, ComposeError> {
     let mut sections = match input.kind {
         PromptKind::First => first_sections(texts, input)?,
-        PromptKind::Resume(reason) => vec![resume_section(texts, reason)?],
+        PromptKind::Resume(reason) => vec![resume_section(texts, reason, input.session_prompt)?],
     };
+    if input.kind == PromptKind::Resume(ResumeReason::Reported) {
+        if input.item_changed
+            && let Some(item) = input.item
+        {
+            sections.extend(numbered_item_sections(texts, item)?);
+        }
+        if input.role == Role::Coordinator {
+            sections.extend(team_item_sections(texts, input.team_items)?);
+        }
+    }
     if let Some(checkpoint) = input.checkpoint {
         let values = Variables::new().with("checkpoint", checkpoint)?;
         sections.push(texts.harness.render(HarnessPrompt::Checkpoint, &values)?);
@@ -269,14 +279,22 @@ fn sections_of(texts: &PromptTexts<'_>, item: &Item, numbering: Numbering) -> Re
 }
 
 /// What a resumed run is told about its interruption.
-fn resume_section(texts: &PromptTexts<'_>, reason: ResumeReason) -> Result<String, ComposeError> {
+fn resume_section(
+    texts: &PromptTexts<'_>,
+    reason: ResumeReason,
+    session_prompt: Option<&Path>,
+) -> Result<String, ComposeError> {
     let section = match reason {
         ResumeReason::Hang { after } => {
             let minutes = after.as_duration().as_secs() / SECS_PER_MINUTE;
             let values = Variables::new().with("minutes", minutes.to_string())?;
             texts.harness.render(HarnessPrompt::ResumeHang, &values)?
         }
-        ResumeReason::Reported => String::new(),
+        ResumeReason::Reported => {
+            let path = session_prompt.map_or_else(String::new, |path| path.display().to_string());
+            let values = Variables::new().with("session_prompt", path)?;
+            texts.harness.render(HarnessPrompt::ResumeReported, &values)?
+        }
         ResumeReason::Restart => texts.harness.render(HarnessPrompt::ResumeRestart, &Variables::new())?,
         ResumeReason::TurnLimit => texts
             .harness
