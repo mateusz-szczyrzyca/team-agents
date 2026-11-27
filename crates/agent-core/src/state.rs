@@ -34,6 +34,7 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+#[path = "state/account_hold/tests.rs"]
 mod account_hold_tests;
 #[cfg(test)]
 mod account_pause_tests;

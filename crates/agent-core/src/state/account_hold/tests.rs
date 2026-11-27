@@ -12,7 +12,7 @@ fn task(text: &str) -> TaskId {
 
 /// The state of the item before this one: it has no held task, and a paused account.
 fn state_with_a_paused_account() -> State {
-    let mut state = State::from_json(include_str!("../../tests/fixtures/state-before-account-pauses.json"))
+    let mut state = State::from_json(include_str!("../../../tests/fixtures/state-before-account-pauses.json"))
         .expect("a state of main loads");
     let account: AccountName = "comp-claude".parse().unwrap();
     let pause = AccountPause {
