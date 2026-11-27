@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.135.0 · agent-core 0.131.0 · agent-runtime 0.119.0 — 27.11.2026 — PR pending
+## agent 0.136.0 · agent-core 0.133.0 · agent-runtime 0.120.0 — 27.11.2026 — PR #324
 
 ### New features
 - [agent-core] [agent-runtime] The requirements of an item are numbered when the item is given to an agent: the bullets of its `Expected result:` are `R1`, `R2`, ... and its checks `K1`, `K2`, ...; an item with neither has one requirement, `R1`, its title. The prompt shows each with its number.
@@ -19,6 +19,25 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent-core] `state.json` can hold a plan reason `no_requirement` and a `requirements_tied` marker of a plan; older states load unchanged, and an older `agent` cannot read a state that has them.
+
+## agent-core 0.132.0 — 27.11.2026 — PR #327
+
+### Enhancements
+- [agent-core] Coordinators and members ask an investigator before they ask you a technical question.
+
+## agent 0.135.0 · agent-core 0.131.0 · agent-runtime 0.119.0 — 27.11.2026 — PR #321
+
+### New features
+- [agent] Team investigation requests now start a free investigator in a separate worktree at the requester's branch tip. Completed answers are saved and sent directly to the requester, waking its task; investigation work stays local.
+- [agent-core] [agent-runtime] Investigation starts, answers and unknown request kinds are recorded in the daemon log and history. Existing history is preserved on upgrade.
+
+### Bug fixes
+- [agent] Failed investigations retry with another investigator once, keep unfinished text private, and notify the requester after a second failure, timeout or human stop. Requests from ended tasks are closed without a message; active assignments recover after restart.
+- [agent] A failed investigation with no eligible replacement now notifies its requester. Worktree setup no longer consumes the answer deadline, and failure cleanup and notice delivery can resume after restart.
+- [agent-core] Investigators at a provider's limit wait for their cooldown before receiving another request.
+
+### Configuration
+- [agent-core] new: `[investigations] answer_minutes` (default `30`, range `10..=1440`) — maximum time for an investigator's current attempt, excluding time in the queue.
 
 ## agent 0.134.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 26.11.2026 — PR pending
 

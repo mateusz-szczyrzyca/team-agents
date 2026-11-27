@@ -602,3 +602,7 @@ These are choices the plan left open, made in `agent-core`. Each is cheap to cha
 | `AGENT_WEB_LISTEN`, `AGENT_WEB_USERS` | `[web]` `listen`, `allowed_logins` |
 | `secrets.env` | `secrets.toml` |
 | per-repository gate (in each repository's own files) | `[repos.NAME]` `gate`, `base_branch` |
+
+### Investigation deadline
+
+`[investigations] answer_minutes` defaults to `30` and accepts whole minutes from `10` through `1440`. The deadline starts when the current investigator task is created; time waiting for an investigator does not count. A missed deadline ends the request and tells its requester to decide or ask the human.

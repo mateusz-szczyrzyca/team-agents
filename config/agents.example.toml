@@ -102,6 +102,10 @@ asleep_minutes = 5
 # that many runs end without the agent reading the message, it is not woken for it again (the message stays unread
 # until the agent's next run reads it) and a warning is logged; 0 never wakes an agent for a message.
 
+[investigations]
+# Whole minutes from the current investigator task creation, excluding queue time; 10..=1440.
+answer_minutes = 30
+
 [limits]
 # Remove teams after this many minutes without a run or new commit; 0 disables removal.
 # Count from the later of last activity and current daemon startup; downtime never counts.

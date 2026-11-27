@@ -1,0 +1,674 @@
+//! Failed investigation attempts retain private text and retry a different investigator.
+
+use std::os::unix::fs::PermissionsExt;
+
+use agent_core::kinds::Role;
+use agent_core::state::{InvestigationRecord, Member, RunEnd};
+use agent_core::status::RunOutcome;
+
+use super::fixture::{Daemon, pair_state};
+use crate::fixtures::{at, investigator, task, team_id};
+
+async fn first_failure(end: RunEnd) {
+    let dir = tempfile::tempdir().unwrap();
+    let bus = dir.path().join("bus");
+    std::fs::write(&bus, "#!/bin/sh\nset -eu\nroot=$(dirname \"$0\")\ncase \"$1\" in\ninv-list) printf '#1 running\\n';;\ninv-get) cat \"$root/request.json\";;\n*) printf '%s\\n' \"$@\" >> \"$root/calls\";;\nesac\n").unwrap();
+    std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let file = dir.path().join("answer.md");
+    std::fs::write(&file, "# Investigation\n").unwrap();
+    let request = serde_json::json!({"id":1,"from_agent":"claude-2","from_task":task(2),"branch":"main","question":"help","status":"running","inv_task":task(3),"file":file});
+    std::fs::write(dir.path().join("request.json"), serde_json::to_vec(&request).unwrap()).unwrap();
+    let mut state = pair_state();
+    state
+        .add_reviewer(
+            &team_id(0),
+            Member::new(task(3), investigator("inv-1")).with_role(Role::Investigator),
+        )
+        .unwrap();
+    state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .record_investigation(InvestigationRecord {
+            id: std::num::NonZeroU32::MIN,
+            task: task(3),
+            started: at(0),
+            failed_with: vec![],
+        });
+    let daemon = Daemon::new(&state, Some(&bus));
+    configure_another_investigator(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(&task(3), &located, &end, Some("Private unfinished résumé"))
+        .await
+        .unwrap();
+    let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap_or_default();
+    assert!(calls.contains("queued"), "{calls}");
+    assert!(!calls.contains("send"), "{calls}");
+    let text = std::fs::read_to_string(file).unwrap();
+    assert!(text.contains("## Unfinished answer of inv-1 ("), "{text}");
+    assert!(text.contains("Private unfinished résumé"), "{text}");
+    assert_eq!(
+        owner.parts.state.team(&team_id(0)).unwrap().investigations()[0].failed_with,
+        vec!["inv-1".parse().unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn first_failed_status_requeues_the_request() {
+    first_failure(RunEnd::Reported {
+        outcome: RunOutcome::Failed,
+    })
+    .await;
+}
+#[tokio::test]
+async fn first_cut_off_answer_is_private_and_requeued() {
+    first_failure(RunEnd::NoStatus { exit_code: Some(0) }).await;
+}
+#[tokio::test]
+async fn first_hung_investigator_requeues_the_request() {
+    first_failure(RunEnd::Hung).await;
+}
+#[tokio::test]
+async fn first_turn_limit_requeues_the_request() {
+    first_failure(RunEnd::TurnLimit).await;
+}
+#[tokio::test]
+async fn first_rate_limit_requeues_the_request() {
+    first_failure(RunEnd::RateLimited).await;
+}
+#[tokio::test]
+async fn first_quota_refusal_requeues_the_request() {
+    first_failure(RunEnd::QuotaExhausted { resets_at: None }).await;
+}
+
+/// An isolated bus boundary whose calls can be inspected without a running daemon.
+struct Attempt {
+    dir: tempfile::TempDir,
+    bus: std::path::PathBuf,
+    state: agent_core::state::State,
+}
+
+impl Attempt {
+    fn new() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let bus = dir.path().join("bus");
+        std::fs::write(&bus, "#!/bin/sh\nset -eu\nroot=$(dirname \"$0\")\ncase \"$1\" in\ninv-list) printf '#1 open\\n';;\nsend) printf '%s\\n' \"$@\" >> \"$root/calls\"; printf '[#1 sent]\\n';;\ninv-get) cat \"$root/request.json\";;\n*) printf '%s\\n' \"$@\" >> \"$root/calls\";;\nesac\n").unwrap();
+        std::fs::set_permissions(&bus, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let mut state = pair_state();
+        state
+            .add_reviewer(
+                &team_id(0),
+                Member::new(task(3), investigator("inv-1")).with_role(Role::Investigator),
+            )
+            .unwrap();
+        state
+            .team_mut(&team_id(0))
+            .unwrap()
+            .record_investigation(InvestigationRecord {
+                id: std::num::NonZeroU32::MIN,
+                task: task(3),
+                started: at(0),
+                failed_with: vec![],
+            });
+        let attempt = Self { dir, bus, state };
+        attempt.request("running", Some(&task(3)));
+        attempt
+    }
+
+    fn request(&self, status: &str, assigned: Option<&agent_core::ids::TaskId>) {
+        let request = serde_json::json!({"id":1,"from_agent":"claude-2","from_task":task(2),"branch":"main","question":"help","status":status,"inv_task":assigned,"file":self.dir.path().join("answer.md")});
+        std::fs::write(
+            self.dir.path().join("request.json"),
+            serde_json::to_vec(&request).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn calls(&self) -> String {
+        match std::fs::read_to_string(self.dir.path().join("calls")) {
+            Ok(text) => text,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => panic!("bus calls: {error}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn the_same_request_failing_a_second_time_notifies_the_requester() {
+    let mut attempt = Attempt::new();
+    attempt
+        .state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .record_investigation(InvestigationRecord {
+            id: std::num::NonZeroU32::MIN,
+            task: task(3),
+            started: at(0),
+            failed_with: vec!["inv-other".parse().unwrap()],
+        });
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(&task(3), &located, &RunEnd::Hung, Some("private"))
+        .await
+        .unwrap();
+    let calls = attempt.calls();
+    assert!(calls.contains("failed"), "{calls}");
+    assert!(calls.contains("send"), "{calls}");
+    assert!(calls.contains("decide yourself"), "{calls}");
+    assert!(calls.contains("questions file"), "{calls}");
+    assert!(!calls.contains("private"), "{calls}");
+}
+
+#[tokio::test]
+async fn a_human_stop_fails_without_a_retry() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(&task(3), &located, &RunEnd::Stopped, None)
+        .await
+        .unwrap();
+    assert!(attempt.calls().contains("stopped by the human"));
+    assert!(!attempt.calls().contains("queued"));
+}
+
+#[tokio::test]
+async fn an_ended_requester_fails_without_a_message() {
+    let mut attempt = Attempt::new();
+    attempt.state.remove_team(&team_id(0)).unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.reconcile_investigations().await.unwrap();
+    assert!(attempt.calls().contains("the requester's task ended"));
+    assert!(!attempt.calls().contains("send"));
+}
+
+#[tokio::test]
+async fn a_restart_requeues_an_assignment_without_a_live_task() {
+    let attempt = Attempt::new();
+    attempt.request("starting", Some(&task(9)));
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.reconcile_investigations().await.unwrap();
+    assert!(attempt.calls().contains("queued"));
+}
+
+#[tokio::test]
+async fn a_restart_preserves_an_assignment_with_a_live_task() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.reconcile_investigations().await.unwrap();
+    assert_eq!(attempt.calls(), "");
+}
+
+#[tokio::test]
+async fn an_answer_timeout_stops_the_run_and_fails_without_retry() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    owner.cancels.insert(task(3), cancel.clone());
+    daemon.clock.advance(time::Duration::minutes(30));
+    owner.reconcile_investigations().await.unwrap();
+    assert!(attempt.calls().contains("no answer in 30 minutes"));
+    assert!(cancel.is_cancelled());
+    assert!(!attempt.calls().contains("queued"));
+}
+
+#[tokio::test]
+async fn time_in_the_queue_does_not_count_toward_answer_minutes() {
+    let attempt = Attempt::new();
+    attempt.request("queued", None);
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    daemon.clock.advance(time::Duration::minutes(40));
+    owner.reconcile_investigations().await.unwrap();
+    assert_eq!(attempt.calls(), "");
+    owner
+        .parts
+        .state
+        .team_mut(&team_id(0))
+        .unwrap()
+        .record_investigation(InvestigationRecord {
+            id: std::num::NonZeroU32::MIN,
+            task: task(3),
+            started: agent_core::state::Timestamp::now(&owner.parts.clock).unwrap(),
+            failed_with: vec![],
+        });
+    attempt.request("running", Some(&task(3)));
+    owner.reconcile_investigations().await.unwrap();
+    assert_eq!(attempt.calls(), "");
+}
+
+#[tokio::test]
+async fn an_investigators_quota_refusal_does_not_pause_its_task_or_change_its_agent() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let end = RunEnd::QuotaExhausted { resets_at: None };
+    let settled = crate::daemon::settle::settle(Role::Investigator, &end, None, None);
+    let (status, notice) = owner
+        .settled_status(
+            super::Ended {
+                task: &task(3),
+                located: &located,
+                now: at(0),
+                settled,
+                progress: agent_runtime::run::Progress::Nothing,
+                end,
+                used_tool: false,
+            },
+            &mut vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(status, agent_core::status::TaskStatus::Failed);
+    assert!(notice.is_none());
+    assert_eq!(owner.locate(&task(3)).unwrap().agent, "inv-1");
+}
+
+#[tokio::test]
+async fn a_restart_requeues_an_assignment_whose_task_has_finished() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let mut events = vec![];
+    owner
+        .move_to(
+            &task(3),
+            &team_id(0),
+            agent_core::status::TaskStatus::Running,
+            &mut events,
+        )
+        .unwrap();
+    owner
+        .move_to(
+            &task(3),
+            &team_id(0),
+            agent_core::status::TaskStatus::Failed,
+            &mut events,
+        )
+        .unwrap();
+    owner.reconcile_investigations().await.unwrap();
+    assert!(attempt.calls().contains("queued"), "{}", attempt.calls());
+}
+
+#[tokio::test]
+async fn a_complete_answer_preserves_private_attempts_only_in_the_file() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    configure_another_investigator(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::NoStatus { exit_code: Some(0) },
+            Some("private résumé"),
+        )
+        .await
+        .unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+            Some("complete solution\nSTATUS: DONE"),
+        )
+        .await
+        .unwrap();
+    let answer = std::fs::read_to_string(attempt.dir.path().join("answer.md")).unwrap();
+    assert!(answer.contains("private résumé"), "{answer}");
+    assert!(answer.contains("complete solution"), "{answer}");
+    let calls = attempt.calls();
+    assert!(!calls.contains("private résumé"), "{calls}");
+    assert!(calls.contains("complete solution"), "{calls}");
+}
+
+#[tokio::test]
+async fn removing_the_requesters_team_fails_its_open_requests_without_messaging() {
+    use agent_core::protocol::{Client, RemoveRequest};
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let checkout = attempt.dir.path().join("checkout");
+    std::fs::create_dir_all(&checkout).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .current_dir(&checkout)
+            .args(["-c", "user.name=t", "-c", "user.email=t@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    };
+    git(&["init", "-q", "-b", "main"]);
+    git(&["commit", "--allow-empty", "-qm", "initial"]);
+    for n in [1, 2] {
+        let found = attempt.state.find_task(&task(n)).unwrap();
+        let branch = super::start::work_branch(found.team, found.member).unwrap();
+        let path = daemon.home.worktree_dir(found.team.repo(), &task(n));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git(&[
+            "worktree",
+            "add",
+            "-qb",
+            branch.as_str(),
+            path.to_str().unwrap(),
+            "main",
+        ]);
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner
+        .remove_request(
+            &Client::Cli,
+            RemoveRequest {
+                team: team_id(0),
+                force: false,
+            },
+        )
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(owner.parts.state.team(&team_id(0)).is_none());
+    let calls = attempt.calls();
+    assert!(calls.contains("the requester's task ended"), "{calls}");
+    assert!(!calls.contains("send"), "{calls}");
+}
+
+#[tokio::test]
+async fn a_classified_provider_pause_is_discarded_for_an_investigator() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let end = RunEnd::QuotaExhausted { resets_at: None };
+    let settled = crate::daemon::settle::settle(
+        Role::Investigator,
+        &end,
+        Some(&agent_core::decide::outcome::Pause {
+            until: at(59),
+            reason: agent_core::decide::outcome::PauseReason::Quota,
+            kind: agent_core::decide::refusal::Kind::Quota,
+            evidence: "quota exhausted".to_owned(),
+        }),
+        None,
+    );
+    let (status, notice) = owner
+        .settled_status(
+            super::Ended {
+                task: &task(3),
+                located: &located,
+                now: at(0),
+                settled,
+                progress: agent_runtime::run::Progress::Nothing,
+                end,
+                used_tool: false,
+            },
+            &mut vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(status, agent_core::status::TaskStatus::Failed);
+    assert!(notice.is_none());
+    assert_eq!(owner.locate(&task(3)).unwrap().agent, "inv-1");
+}
+
+/// Retry scenarios need a candidate other than the investigator that just failed.
+fn configure_another_investigator(daemon: &Daemon) {
+    use std::io::Write;
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(daemon.home.config_file())
+        .unwrap();
+    writeln!(config, "\n[investigators.inv-2]\ncli = \"claude\"").unwrap();
+}
+
+#[tokio::test]
+async fn a_first_failure_with_one_configured_investigator_ends_with_a_notice() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::Reported {
+                outcome: RunOutcome::Failed,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let calls = attempt.calls();
+    assert!(calls.contains("failed"), "{calls}");
+    assert!(calls.contains("no other configured investigator"), "{calls}");
+    assert!(calls.contains("send"), "{calls}");
+    assert!(!calls.contains("queued"), "{calls}");
+}
+
+#[tokio::test]
+async fn unfinished_answers_and_failure_notices_use_readable_end_names() {
+    for (end, label) in [
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Failed,
+            },
+            "reported FAILED",
+        ),
+        (RunEnd::NoStatus { exit_code: Some(1) }, "no status"),
+        (RunEnd::QuotaExhausted { resets_at: None }, "quota exhausted"),
+        (RunEnd::RateLimited, "rate limited"),
+        (RunEnd::Hung, "hung"),
+        (RunEnd::TurnLimit, "turn limit"),
+    ] {
+        let mut attempt = Attempt::new();
+        attempt
+            .state
+            .team_mut(&team_id(0))
+            .unwrap()
+            .record_investigation(InvestigationRecord {
+                id: std::num::NonZeroU32::MIN,
+                task: task(3),
+                started: at(0),
+                failed_with: vec!["inv-other".parse().unwrap()],
+            });
+        let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let located = owner.locate(&task(3)).unwrap();
+        owner
+            .investigation_ended(&task(3), &located, &end, Some("private"))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(attempt.dir.path().join("answer.md")).unwrap(),
+            format!("\n## Unfinished answer of inv-1 ({label})\n\nprivate\n"),
+        );
+        assert!(attempt.calls().contains(label), "{}", attempt.calls());
+    }
+}
+
+/// Models slow workspace setup without sleeping or depending on elapsed wall time.
+#[derive(Debug)]
+struct WorkspaceClock {
+    /// Git creates this directory only while adding the detached investigator worktree.
+    worktrees: std::path::PathBuf,
+}
+
+impl agent_core::ids::Clock for WorkspaceClock {
+    fn now(&self) -> time::UtcDateTime {
+        if self.worktrees.exists() {
+            at(2400).as_utc()
+        } else {
+            at(0).as_utc()
+        }
+    }
+}
+
+#[tokio::test]
+async fn delayed_workspace_setup_does_not_consume_the_answer_window() {
+    let mut attempt = Attempt::new();
+    attempt.state = pair_state();
+    attempt.request("queued", None);
+    std::fs::write(
+        &attempt.bus,
+        r#"#!/bin/sh
+set -eu
+root=$(dirname "$0")
+case "$1" in
+inv-list) if [ ! -f "$root/assigned" ]; then printf '#1 queued\n'; fi;;
+inv-get|inv-next) cat "$root/request.json";;
+inv-set) touch "$root/assigned";;
+esac
+"#,
+    )
+    .unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let found = attempt.state.find_task(&task(1)).unwrap();
+    let checkout = daemon.home.worktree_dir(found.team.repo(), &task(1));
+    std::fs::create_dir_all(&checkout).unwrap();
+    for args in [
+        vec!["init", "-q", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .current_dir(&checkout)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.parts.clock = agent_runtime::clock::SharedClock::new(WorkspaceClock {
+        worktrees: checkout.join(".git/worktrees"),
+    });
+    owner.serve_investigations(&team_id(0)).await.unwrap();
+    let records = owner.parts.state.team(&team_id(0)).unwrap().investigations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].started, at(2400));
+}
+
+/// Models a bus that saves a terminal transition even when its announcement fails.
+fn recoverable_failure_bus(attempt: &Attempt) {
+    std::fs::write(
+        &attempt.bus,
+        r#"#!/bin/sh
+set -eu
+root=$(dirname "$0")
+case "$1" in
+inv-list) if [ ! -f "$root/closed" ]; then printf '#1 running\n'; fi;;
+inv-get) cat "$root/request.json";;
+send)
+    printf '%s\n' "$@" >> "$root/calls"
+    if [ -f "$root/fail-send" ]; then exit 1; fi
+    printf '[#1 sent]\n';;
+inv-set)
+    printf '%s\n' "$@" >> "$root/calls"
+    touch "$root/closed"
+    if [ -f "$root/fail-terminal" ]; then exit 1; fi;;
+esac
+"#,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn failure_notice_is_retried_after_restart_when_delivery_fails() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    std::fs::write(attempt.dir.path().join("fail-send"), "").unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+    assert!(matches!(result, Err(super::OwnerError::Bus { .. })));
+    drop(owner);
+    drop(sinks);
+    std::fs::remove_file(attempt.dir.path().join("fail-send")).unwrap();
+    std::fs::write(attempt.dir.path().join("calls"), "").unwrap();
+
+    let (mut restarted, _sinks) = daemon.bare_owner().await;
+    restarted.reconcile_investigations().await.unwrap();
+
+    let calls = attempt.calls();
+    assert!(calls.contains("send"), "{calls}");
+    assert!(
+        calls.contains("no other configured investigator can answer this request"),
+        "{calls}"
+    );
+    assert!(calls.contains("failed"), "{calls}");
+    assert!(!calls.contains("queued"), "{calls}");
+    assert_eq!(
+        daemon.state().find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Stopped
+    );
+}
+
+#[tokio::test]
+async fn a_failed_terminal_announcement_happens_after_cleanup_and_notice() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    std::fs::write(attempt.dir.path().join("fail-terminal"), "").unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    owner.cancels.insert(task(3), cancel.clone());
+    let located = owner.locate(&task(3)).unwrap();
+
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+
+    assert!(matches!(result, Err(super::OwnerError::Bus { .. })));
+    assert!(cancel.is_cancelled());
+    assert_eq!(
+        daemon.state().find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Stopped
+    );
+    let calls = attempt.calls();
+    assert!(calls.find("send").unwrap() < calls.find("inv-set").unwrap(), "{calls}");
+    assert!(attempt.dir.path().join("closed").exists());
+    drop(owner);
+    drop(sinks);
+    std::fs::write(attempt.dir.path().join("calls"), "").unwrap();
+    let (mut restarted, _sinks) = daemon.bare_owner().await;
+    restarted.reconcile_investigations().await.unwrap();
+    assert_eq!(attempt.calls(), "");
+}
+
+#[tokio::test]
+async fn failure_intent_must_be_durable_before_cleanup_or_notification() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let state_path = daemon.home.state_file();
+    std::fs::remove_file(&state_path).unwrap();
+    std::fs::create_dir(&state_path).unwrap();
+
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+
+    assert!(matches!(result, Err(super::OwnerError::Store(_))));
+    assert_eq!(attempt.calls(), "");
+    assert_eq!(
+        owner.parts.state.find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Queued
+    );
+}

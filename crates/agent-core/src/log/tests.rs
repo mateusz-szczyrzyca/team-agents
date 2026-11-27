@@ -200,6 +200,23 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Warn,
         ),
         (LogEvent::PublishOffBranch, "publish_off_branch", LogLevel::Warn),
+        (LogEvent::InvestigationStarted, "investigation_started", LogLevel::Info),
+        (
+            LogEvent::InvestigationAnswered,
+            "investigation_answered",
+            LogLevel::Info,
+        ),
+        (
+            LogEvent::InvestigationKindUnknown,
+            "investigation_kind_unknown",
+            LogLevel::Warn,
+        ),
+        (
+            LogEvent::InvestigationRequeued,
+            "investigation_requeued",
+            LogLevel::Info,
+        ),
+        (LogEvent::InvestigationFailed, "investigation_failed", LogLevel::Info),
         (LogEvent::CheckpointFailed, "checkpoint_failed", LogLevel::Warn),
     ];
 
@@ -449,4 +466,12 @@ fn log_entry_try_new_accepts_valid_parts_and_refuses_every_broken_invariant() {
 fn closed_delivery_has_its_own_warning_event() {
     assert_eq!(LogEvent::DeliveryClosed.as_str(), "delivery_closed");
     assert_eq!(LogEvent::DeliveryClosed.level(), LogLevel::Warn);
+}
+
+#[test]
+fn investigation_failures_have_stable_info_events() {
+    for name in ["investigation_requeued", "investigation_failed"] {
+        let event = LogEvent::ALL.iter().find(|event| event.as_str() == name);
+        assert_eq!(event.map(|event| event.level()), Some(LogLevel::Info), "{name}");
+    }
 }

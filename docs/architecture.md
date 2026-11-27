@@ -46,7 +46,7 @@ The workspace exists with its four crates; the other files of this list arrive w
 | Module | Types |
 |---|---|
 | `ids` | `AgentName`, `InvestigatorName` (normal and worker agents, investigators), `TeamId`, `TaskId`, `RunId` (`team-`/`task-`/`run-YYYYMMDD-HHMMSS-xxxx`, UTC, generated from an injected `Clock` and `Rng`), `ItemId` (`2.3`), `BranchName` (literal git branch names, with the bounds below) |
-| `kinds` | `CliKind` (`claude`, `codex`, `gemini`, `opencode`), `Tier` (`normal`, `worker`, `investigator`), `Role` (`solo`, `coordinator`, `member`, `worker`, `reviewer`) |
+| `kinds` | `CliKind` (`claude`, `codex`, `gemini`, `opencode`), `Tier` (`normal`, `worker`, `investigator`), `Role` (`solo`, `coordinator`, `member`, `worker`, `reviewer`, `investigator`) |
 | `status` | `RunOutcome` (`DONE`, `QUESTIONS`, `FAILED`, `SLEEPING`, `EXCLUDED`), `ReviewVerdict` (`APPROVE`, `REQUEST_CHANGES`), `TaskStatus` and `ItemStatus` with their transition tables |
 | `notice_status` | `NoticeStatus` (`Questions`, `Decision`, `Failed`, `Hung`, `Paused`, `Approved`, `NotMerged`, `Closed`, `NotPublished`, `NoVerdict`, `Merged`, `Asleep`, `Done`) with its icon and label (`strum`) |
 
@@ -1743,3 +1743,8 @@ newest round, so a task whose round closed is briefed too), and `briefing-last-m
 from the outcome file of the last run, or from the history when the run has none: then, when the history cut it at
 `max_text_bytes`, a catalog note (`briefing-message-cut.md`) names the limit. A last message that cannot be read fails the start.
 
+Team investigation requests are served by `owner/investigations.rs` after opinions are requested in a round.
+The daemon claims requests only for live tasks of that team, selects a free investigator by activity recency,
+and creates a separate task detached at the requester branch tip. Completed answers are written to the bus request
+file and delivered as direct task messages; these worktrees are never published. Unsupported kinds are failed
+once. Standalone investigation requests and failure recovery remain outside this lifecycle.

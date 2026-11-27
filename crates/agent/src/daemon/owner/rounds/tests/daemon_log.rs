@@ -855,6 +855,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::RequestRefused,
             LogEvent::WorktreeSwitchRefused,
             LogEvent::PublishOffBranch,
+            LogEvent::InvestigationKindUnknown,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::warn!(
@@ -886,6 +887,10 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::TaskAgentChanged,
             LogEvent::TaskWaitForFreeAgent,
             LogEvent::WorktreeSwitched,
+            LogEvent::InvestigationStarted,
+            LogEvent::InvestigationAnswered,
+            LogEvent::InvestigationRequeued,
+            LogEvent::InvestigationFailed,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1473,6 +1478,8 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     super::checkpoints_tests::record_checkpoint_failed(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
+    super::investigations_tests::record_investigation_events(&mut observed).await;
+    super::investigations_tests::record_investigation_failure_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

@@ -300,6 +300,38 @@ fi
 init
 read_messages
 case $action in
+  inv-add:*)
+    branch=$(git symbolic-ref --short HEAD)
+    "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add:}" --kind "" > /dev/null
+    result 'Asked investigation.\nSTATUS: SLEEPING'
+    ;;
+  inv-review-hold)
+    # Complete a held review with a verdict before accepting an investigation.
+    while [[ ! -f .fake-continue ]]; do
+      sleep 0.05
+    done
+    head=$(git rev-parse HEAD)
+    result "VERDICT: APPROVE\nSUMMARY: commit \`$head\`\nSTATUS: DONE"
+    ;;
+  inv-retry:*)
+    # Only the first investigator fails; its replacement supplies a complete answer.
+    if mkdir "$home/.fake-investigation-attempt"; then
+      case ${action#inv-retry:} in
+        failed) result 'Private résumé\nSTATUS: FAILED' ;;
+        sleeping) result 'Private résumé\nSTATUS: SLEEPING' ;;
+        nostatus) result 'Private résumé' ;;
+        quota) printf '%s\n' 'quota exhausted' >&2; exit 1 ;;
+        rate) printf '%s\n' 'rate limit exceeded' >&2; exit 1 ;;
+        turn) printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session" ;;
+        hung) while :; do sleep 1; done ;;
+        *) exit 64 ;;
+      esac
+    else
+      result 'Complete commands\nSTATUS: DONE'
+    fi
+    ;;
+  inv-fail) result 'Private résumé\nSTATUS: FAILED' ;;
+  inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)
     # OpenCode's first launch after the configuration switch fails without tools; the next session works.
     if [[ $n == 2 ]]; then status=FAILED; else status=SLEEPING; fi
