@@ -305,3 +305,21 @@ fn item_paths_keeps_tokens_longer_than_the_bus_input_limit() {
     let raw = format!("docs/{}", "a".repeat(201));
     assert_eq!(item_paths(&format!("`{raw}`")), vec![RepoPath(raw)]);
 }
+
+#[test]
+fn rendering_replaces_line_breaks_so_each_finding_occupies_one_line() {
+    for separator in ["\n", "\r\n", "\r", "\u{0085}", "\u{2028}", "\u{2029}"] {
+        let mut note = finding(1, &["docs"]);
+        note.text = format!("First line{separator}Second line");
+        let selected = [Selected {
+            finding: &note,
+            score: 2,
+        }];
+        let rendered = render_findings(&selected, Zone::Utc);
+        assert_eq!(
+            rendered,
+            "- F-1 [trap] docs — First line Second line (agent-a, 2026-10-01)"
+        );
+        assert_eq!(rendered.lines().count(), 1);
+    }
+}
