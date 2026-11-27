@@ -172,6 +172,64 @@ pub enum FailureKind {
     Internal,
 }
 
+/// Why a swap of a task to another agent was refused.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
+#[serde(tag = "stub_refusal", rename_all = "snake_case", deny_unknown_fields)]
+pub enum SwapRefusal {
+    /// The agent is not configured.
+    #[error("unknown agent {agent}: it is not in agents.toml")]
+    UnknownAgent {
+        /// The agent name.
+        agent: AgentName,
+    },
+    /// The task is already held by this agent.
+    #[error("{task} is already held by {agent}")]
+    SameHolder {
+        /// The task.
+        task: TaskId,
+        /// The agent holding it.
+        agent: AgentName,
+    },
+    /// The agent is already in the team.
+    #[error("{agent} is already in {team} as {task}")]
+    InTeam {
+        /// The agent name.
+        agent: AgentName,
+        /// The team.
+        team: TeamId,
+        /// The task in that team.
+        task: TaskId,
+    },
+    /// The agent has a run going in another task.
+    #[error("{agent} runs {task} now; swap when it is free")]
+    InRun {
+        /// The agent name.
+        agent: AgentName,
+        /// The task.
+        task: TaskId,
+    },
+    /// A worker cannot hold a task of a team.
+    #[error("{agent} is a worker of [tiers] workers: give it no task of a team")]
+    Worker {
+        /// The agent name.
+        agent: AgentName,
+    },
+    /// A worker or reviewer task cannot be swapped.
+    #[error("{task} is a {role}'s task: swap takes a solo, coordinator or member task")]
+    Role {
+        /// The task.
+        task: TaskId,
+        /// The role.
+        role: Role,
+    },
+    /// The task is done or in a closed team.
+    #[error("{task} is done: nothing to swap")]
+    Done {
+        /// The task.
+        task: TaskId,
+    },
+}
+
 /// What `remove` took away with a team, and what it could not take away: the answer names each of them.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

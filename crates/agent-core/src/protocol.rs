@@ -14,6 +14,10 @@ pub(crate) mod finding_map;
 mod reply;
 mod request;
 
+#[cfg(test)]
+#[path = "protocol/tests.rs"]
+mod swap_tests;
+
 use std::fmt;
 
 use serde::de::DeserializeOwned;
@@ -22,13 +26,13 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 pub use event::{ControlAction, Event, EventKind};
 pub use reply::{
     Failure, FailureKind, ItemCounts, MemberSummary, Outcome, PlanStepSummary, Removal, Reply, Response, Returned,
-    ReviewPass, RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, TeamSummary, Versions,
+    ReviewPass, RoundDetail, RoundItem, RoundTask, RunElsewhere, SharedAgent, SwapRefusal, TeamSummary, Versions,
     mark_runs_elsewhere,
 };
 pub use request::{
     AgentList, AgentListError, AnswerInput, AnswerList, AnswerListError, AnswerRequest, Client, Command,
     ControlRequest, GateRequest, MAX_ANSWERS, MAX_RUN_AGENTS, MAX_SAY_BYTES, RemoveRequest, Request, RequestId,
-    RunRequest, SayError, SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, Target,
+    RunRequest, SayError, SayRequest, SayText, ShowRequest, StatusRequest, SubscribeRequest, SwapRequest, Target,
 };
 
 /// The legacy protocol version, retained for strict clients predating split execution.
