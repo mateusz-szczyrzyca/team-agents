@@ -42,11 +42,7 @@ see that it is wrong, call `finding_resolve` with its id and the reason.";
 #[test]
 fn solo_worker_and_reviewer_role_texts_contain_the_findings_paragraph() {
     for name in ["role-solo.md", "role-worker.md", "role-reviewer.md"] {
-        let text = ROLE_TEXTS
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, t)| *t)
-            .unwrap();
+        let text = ROLE_TEXTS.iter().find(|(n, _)| *n == name).map(|(_, t)| *t).unwrap();
         assert!(
             text.contains(FINDINGS_PARAGRAPH),
             "{name} does not contain the findings paragraph"
