@@ -17,7 +17,7 @@ pub(crate) use delivery::DeliveryDaemonError;
 mod human;
 mod merges;
 mod opinions;
-mod prompts;
+pub(in crate::daemon::owner) mod prompts;
 mod publish;
 pub(crate) use publish::PublishQuestionError;
 mod replace;

@@ -544,6 +544,7 @@ impl Owner {
                 self.remind_of_context(&task).await;
                 self.cut_overdue_round(&task);
             }
+            self.look_at_jobs(team).await;
             if look.changed {
                 self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
                 self.save().await?;

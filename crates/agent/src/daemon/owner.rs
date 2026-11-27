@@ -18,6 +18,7 @@ mod fixture;
 mod gate;
 mod history;
 mod idle;
+mod job_checkpoint;
 #[cfg(test)]
 mod investigation_failure_tests;
 mod investigations;
@@ -2243,6 +2244,7 @@ impl Owner {
                 .send(&from, &to, &Outgoing::Chat { text })
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
+            self.job_ended(task, CheckpointCause::InvestigationAnswered).await;
             tracing::info!(
                 event = LogEvent::InvestigationAnswered.as_str(),
                 team = %located.team,
@@ -2251,6 +2253,7 @@ impl Owner {
                 chars = answer.chars().count(),
             );
         } else {
+            self.job_ended(task, CheckpointCause::RunEnded).await;
             self.requeue_investigation(&inv, located, end, message).await?;
         }
         self.look_at(&located.team);

@@ -5,7 +5,8 @@ use std::num::NonZeroUsize;
 
 use agent_core::decide::investigator::Activity;
 use agent_core::ids::{AgentName, InvestigatorName, ItemId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::history::{CheckpointCause, CheckpointJob, investigation_meant};
+use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::state::{InvestigationRecord, ItemPhase, Member, Participant, PullRequest, RunEnd, Team, Timestamp};
 use agent_core::status::TaskStatus;
@@ -13,6 +14,7 @@ use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind, I
 use agent_runtime::git::Revision;
 
 use super::Owner;
+use super::job_checkpoint::JobFacts;
 use crate::daemon::owner::OwnerError;
 use crate::daemon::review::investigator_of;
 
@@ -273,6 +275,24 @@ impl Owner {
             task = %task,
             from_task = %req.from_task,
         );
+        if let Some((_, round)) = self.checkpoint_round_of(&req.from_task) {
+            let facts = JobFacts {
+                team: team_id.clone(),
+                round,
+                job: CheckpointJob::Investigation,
+                tier: Tier::Investigator,
+                task: task.clone(),
+                worktree: self.parts.store.home().worktree_dir(&lead.repo, &task),
+                meant: investigation_meant(&req.question),
+                start: head,
+                pull_request: None,
+                review_pass: None,
+                findings_file: None,
+                findings_seen: String::new(),
+                last_check: None,
+            };
+            self.job_started(facts, CheckpointCause::InvestigationStarted).await;
+        }
         self.look_at(team_id);
         Ok(())
     }

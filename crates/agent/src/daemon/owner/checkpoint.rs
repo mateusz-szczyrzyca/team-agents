@@ -32,7 +32,7 @@ use super::commit_reminder::watched_run;
 use super::snapshots::validate_worktree_path;
 
 /// The seconds between two looks at the worktree of one task for a new commit.
-const LOOK_SECONDS: i64 = 60;
+pub(super) const LOOK_SECONDS: i64 = 60;
 
 /// How long the owner waits for the writer of the history to have a checkpoint's record, while the writer keeps up: a
 /// few milliseconds, as the writer is a thread that is already running.
@@ -115,9 +115,9 @@ pub(super) enum Queued {
 #[derive(Debug, Clone, Default)]
 pub(super) struct LastCheckpoint {
     /// The tip of the worktree's branch then.
-    head: Option<CommitId>,
+    pub(super) head: Option<CommitId>,
     /// The reference of the snapshot, when one was taken.
-    snapshot: Option<String>,
+    pub(super) snapshot: Option<String>,
 }
 
 /// What the owner knows of the pull request of a round from its checkpoints.
@@ -139,9 +139,12 @@ pub(super) struct Checkpoints {
     pulls: Mutex<HashMap<RoundId, PullState>>,
     /// What the last checkpoint of each task in each round kept; the snapshot of the next one is compared with it. A
     /// reference of one round is never the base of the snapshot of another.
-    last: HashMap<(RoundId, TaskId), LastCheckpoint>,
+    pub(super) last: HashMap<(RoundId, TaskId), LastCheckpoint>,
+    /// The jobs that are no item of a round (a worker's request, a review, an investigation) with a task that keeps
+    /// checkpoints, by that task.
+    pub(super) jobs: HashMap<TaskId, super::job_checkpoint::JobFacts>,
     /// When each task was last looked at for a new commit.
-    looked_at: HashMap<TaskId, Timestamp>,
+    pub(super) looked_at: HashMap<TaskId, Timestamp>,
     /// The rounds that have a checkpoint of their opening, queued or in the history.
     opened: HashSet<RoundId>,
     /// Whether the last wait for the history's writer ended without its answer: the writer is stuck or far behind, and the
@@ -467,7 +470,7 @@ impl Owner {
 
     /// Waits until the history's writer has what was handed in before, for a limited time, and logs the first time that
     /// the writer does not answer in it.
-    async fn wait_for_history(&mut self, round: &RoundId) {
+    pub(super) async fn wait_for_history(&mut self, round: &RoundId) {
         let limit = if self.checkpoints.stalled {
             STALLED_FLUSH_WAIT
         } else {
@@ -752,7 +755,7 @@ impl Owner {
     }
 
     /// Logs that the clock gave no time for the checkpoint of `cause`, which is therefore not taken.
-    fn clock_failed(team: &TeamId, round: &RoundId, cause: CheckpointCause, error: &str) {
+    pub(super) fn clock_failed(team: &TeamId, round: &RoundId, cause: CheckpointCause, error: &str) {
         tracing::warn!(
             event = LogEvent::CheckpointFailed.as_str(),
             team = %team,
