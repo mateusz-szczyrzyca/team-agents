@@ -270,7 +270,7 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
                 .with("part_limit", ctx.settings.config.split().part_limit.to_string())?
                 .with("question", &inv.question)?;
             let text = ctx.texts.render(HarnessPrompt::InvestigationSplit, &values)?;
-            return with_briefing(ctx, found, &inv.question, text).await;
+            return with_briefing(ctx, found, text).await;
         }
         if let agent_runtime::agentbus::InvestigationKind::Conflict { item } = inv.kind {
             let pr = super::super::investigations::conflict_pull_request(found.team, item)
@@ -289,7 +289,7 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
                 .with("base", configured.base_branch.as_str())?
                 .with("question", &inv.question)?;
             let text = ctx.texts.render(HarnessPrompt::InvestigationConflict, &values)?;
-            return with_briefing(ctx, found, &inv.question, text).await;
+            return with_briefing(ctx, found, text).await;
         }
         let values = Variables::new()
             .with("investigation_id", inv.id.to_string())?
@@ -298,24 +298,18 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
             .with("question", &inv.question)?
             .with("context", &inv.context)?;
         let text = ctx.texts.render(HarnessPrompt::InvestigationRequest, &values)?;
-        with_briefing(ctx, found, &inv.question, text).await
+        with_briefing(ctx, found, text).await
     } else {
         Ok(None)
     }
 }
 
 /// The prompt of an investigation, with the briefing of the checkpoint of the investigator that tried it before, when one did.
-async fn with_briefing(
-    ctx: &Context<'_>,
-    found: &TaskRef<'_>,
-    question: &str,
-    text: String,
-) -> Result<Option<Addition>, SectionError> {
+async fn with_briefing(ctx: &Context<'_>, found: &TaskRef<'_>, text: String) -> Result<Option<Addition>, SectionError> {
     let mut text = text.trim_end().to_owned();
     let rounds = found.team.open_rounds().map(|round| round.id().clone()).collect();
     let taken_over = TakenOver::Investigation {
         task: found.member.task(),
-        meant: &agent_core::history::investigation_meant(question),
     };
     if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
         text.push_str("\n\n");

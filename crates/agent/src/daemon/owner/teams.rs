@@ -1599,6 +1599,8 @@ impl Owner {
                 let history = self.parts.store.home().history_file();
                 let taken_over = super::job_checkpoint::TakenOver::Request { task: &worker_task };
                 let rounds = vec![workspace.record().requester_round.clone()];
+                self.job_handed_over(&worker_task, &worker_task, team.id(), rounds.clone())
+                    .await;
                 if let Some(briefing) =
                     super::job_checkpoint::job_briefing(&self.parts.texts, history, rounds, taken_over).await?
                 {

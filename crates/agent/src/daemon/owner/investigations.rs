@@ -240,11 +240,11 @@ impl Owner {
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
             .map_err(OwnerError::InvestigationMember)?;
-        let failed_with = next
+        let earlier = next
             .team(team_id)
-            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id))
-            .map(|record| record.failed_with.clone())
-            .unwrap_or_default();
+            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id));
+        let failed_with = earlier.map(|record| record.failed_with.clone()).unwrap_or_default();
+        let tried_before = earlier.map(|record| record.task.clone());
         next.team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?
             .record_investigation(InvestigationRecord {
@@ -291,6 +291,11 @@ impl Owner {
                 findings_seen: String::new(),
                 last_check: None,
             };
+            if let Some(before) = &tried_before {
+                // A second try starts from what the first investigator left, and says so in its own checkpoints.
+                self.job_handed_over(before, &task, team_id, vec![facts.round.clone()])
+                    .await;
+            }
             self.job_started(facts, CheckpointCause::InvestigationStarted).await;
         }
         self.look_at(team_id);
