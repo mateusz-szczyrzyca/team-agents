@@ -131,6 +131,10 @@ const LOOKUP_EMAIL: &str = "agent@localhost.invalid";
 /// The environment variable the gate command's programs are looked up through.
 const PATH_VARIABLE: &str = "PATH";
 
+/// The variable that makes `tools/test-lock.sh` wait in line for the machine's test lock instead of refusing at once:
+/// a gate the daemon runs waits for another test run to end rather than fail for it.
+const TEST_LOCK_WAIT_VARIABLE: &str = "TEST_LOCK_WAIT";
+
 /// Why a gate could not be run or recorded.
 #[derive(Debug, thiserror::Error)]
 enum GateError {
@@ -607,10 +611,14 @@ impl Service {
             source,
         })?;
         let value = if self.build.incremental { "1" } else { "0" };
+        let wait = EnvName::from_str(TEST_LOCK_WAIT_VARIABLE).map_err(|source| GateError::EnvName {
+            name: TEST_LOCK_WAIT_VARIABLE,
+            source,
+        })?;
         Ok(ProcessSpec {
             program: job.command.program().clone(),
             args: job.command.args().as_slice().to_vec(),
-            env: BTreeMap::from([(name, path), (incremental, value.to_owned())]),
+            env: BTreeMap::from([(name, path), (incremental, value.to_owned()), (wait, "1".to_owned())]),
             working_dir: job.worktree.clone(),
             // One file for both streams, as `> log 2>&1` makes it: both are opened for appending.
             stdout_file: log.to_path_buf(),
