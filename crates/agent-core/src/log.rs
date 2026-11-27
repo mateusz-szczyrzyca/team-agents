@@ -220,11 +220,6 @@ pub enum LogEvent {
     /// No agent is free to take over a task whose agent was refused by its provider; the task stays paused until the
     /// earliest return of a refused candidate.
     TaskWaitForFreeAgent,
-    /// The first run of an account that its provider refused pauses every task of every agent of that account until the
-    /// same reset.
-    AccountPaused,
-    /// The pause of an account ended: its paused tasks are queued again and its agents take new runs.
-    AccountResumed,
     /// A queued task waits for its agent, which runs another task at its limit of runs; the task starts when that run ends.
     TaskWaitsForAgent,
     /// What the harness keeps for a worker's request cannot be used: its file is damaged, unreadable or holds another
@@ -363,9 +358,7 @@ impl LogEvent {
             | Self::InvestigationAnswered
             | Self::InvestigationRequeued
             | Self::InvestigationFailed
-            | Self::TaskWaitForFreeAgent
-            | Self::AccountPaused
-            | Self::AccountResumed => LogLevel::Info,
+            | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }

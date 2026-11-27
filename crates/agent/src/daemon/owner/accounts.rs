@@ -118,13 +118,15 @@ impl Owner {
                 let paused = 1 + self.pause_queued_tasks(task, &account, until, now).await?;
                 let agents = self.agents_of(&account);
                 let reason = reason_of(&limit);
-                tracing::info!(
-                    event = LogEvent::AccountPaused.as_str(),
+                tracing::debug!(
+                    event = LogEvent::DecisionTaken.as_str(),
+                    decision = "account",
                     account = %account,
                     until = %until,
                     reason = %reason,
                     agents = %agents.join(","),
                     tasks = paused,
+                    result = "pause",
                     "an account is paused: no run of its agents starts before its pause ends"
                 );
                 let notice = notify.then(|| {
@@ -221,10 +223,12 @@ impl Owner {
             })
             .count();
         self.parts.state.record_account_pause(account.clone(), None);
-        tracing::info!(
-            event = LogEvent::AccountResumed.as_str(),
+        tracing::debug!(
+            event = LogEvent::DecisionTaken.as_str(),
+            decision = "account",
             account = %account,
             tasks = tasks,
+            result = "resume",
             "the pause of an account ended: its tasks are queued again"
         );
     }
