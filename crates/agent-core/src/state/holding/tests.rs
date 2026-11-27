@@ -3,7 +3,7 @@
 
 use crate::ids::{AgentName, InvestigatorName, TaskId};
 use crate::kinds::Role;
-use crate::state::{HandOverError, Holding, Participant, State, Timestamp};
+use crate::state::{Choice, HandOverError, Holding, Participant, State, Timestamp};
 use crate::status::TaskStatus;
 
 /// The failed member's task of the 1.1 fixture: `codex-1`, a member of a team led by `inv-opus`.
@@ -33,7 +33,9 @@ fn investigator(name: &str) -> Participant {
 fn a_task_handed_over_to_an_agent_outside_the_team_is_held_by_it_and_the_state_loads_again() {
     let mut state = old_state();
 
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
 
     let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
     let member = loaded.find_task(&task()).unwrap().member;
@@ -51,7 +53,7 @@ fn a_task_handed_over_to_an_agent_outside_the_team_is_held_by_it_and_the_state_l
 fn a_task_is_not_handed_over_to_the_agent_that_holds_it() {
     let mut state = old_state();
 
-    let refused = state.hand_over_task(&task(), normal("codex-1"), at());
+    let refused = state.hand_over_task(&task(), normal("codex-1"), Choice::Harness, at());
 
     assert_eq!(refused, Err(HandOverError::SameHolder { task: task() }));
 }
@@ -61,7 +63,7 @@ fn a_task_is_not_handed_over_to_an_agent_of_its_own_team() {
     for agent in ["inv-opus", "inv-codex"] {
         let mut state = old_state();
 
-        let refused = state.hand_over_task(&task(), investigator(agent), at());
+        let refused = state.hand_over_task(&task(), investigator(agent), Choice::Harness, at());
 
         assert_eq!(
             refused,
@@ -86,7 +88,7 @@ fn a_task_in_the_middle_of_a_run_is_not_handed_over() {
             .unwrap();
     }
 
-    let refused = state.hand_over_task(&task(), normal("claude-9"), at());
+    let refused = state.hand_over_task(&task(), normal("claude-9"), Choice::Harness, at());
 
     assert_eq!(refused, Err(HandOverError::InRun { task: task() }));
 }
@@ -99,18 +101,18 @@ fn a_task_that_is_not_in_the_state_or_is_a_workers_or_a_reviewers_is_not_handed_
     let reviewer: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
 
     assert_eq!(
-        state.hand_over_task(&unknown, normal("claude-9"), at()),
+        state.hand_over_task(&unknown, normal("claude-9"), Choice::Harness, at()),
         Err(HandOverError::NoTask { task: unknown })
     );
     assert_eq!(
-        state.hand_over_task(&worker, normal("claude-9"), at()),
+        state.hand_over_task(&worker, normal("claude-9"), Choice::Harness, at()),
         Err(HandOverError::Role {
             task: worker,
             role: Role::Worker,
         })
     );
     assert_eq!(
-        state.hand_over_task(&reviewer, investigator("inv-kimi"), at()),
+        state.hand_over_task(&reviewer, investigator("inv-kimi"), Choice::Harness, at()),
         Err(HandOverError::Role {
             task: reviewer,
             role: Role::Reviewer,
@@ -138,7 +140,7 @@ fn a_task_is_not_handed_over_to_an_agent_of_a_lower_tier_and_the_state_still_loa
     for (task, holder, lower, held) in cases {
         let mut state = old_state();
 
-        let refused = state.hand_over_task(&task, holder, at());
+        let refused = state.hand_over_task(&task, holder, Choice::Harness, at());
 
         assert_eq!(
             refused,
@@ -156,7 +158,9 @@ fn a_task_is_not_handed_over_to_an_agent_of_a_lower_tier_and_the_state_still_loa
 fn a_members_task_may_be_handed_over_to_an_investigator_and_the_state_loads_again() {
     let mut state = old_state();
 
-    state.hand_over_task(&task(), investigator("inv-kimi"), at()).unwrap();
+    state
+        .hand_over_task(&task(), investigator("inv-kimi"), Choice::Harness, at())
+        .unwrap();
 
     let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
     assert_eq!(
@@ -168,7 +172,9 @@ fn a_members_task_may_be_handed_over_to_an_investigator_and_the_state_loads_agai
 /// The state of the 1.1 fixture with its failed member handed over to `claude-9` and its session begun for it.
 fn handed_over_and_begun() -> State {
     let mut state = old_state();
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
     let begun = state
         .begin_holder_session(&task(), crate::decide::ladder::Trouble::NoStatus, at())
         .unwrap();
@@ -203,7 +209,9 @@ fn a_hand_over_is_not_counted_as_a_new_session_of_the_agent() {
     state
         .renew_task(&task(), crate::decide::ladder::Trouble::NoStatus, at())
         .unwrap();
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
 
     state
         .begin_holder_session(&task(), crate::decide::ladder::Trouble::NoStatus, at())
@@ -239,8 +247,12 @@ fn a_task_is_known_on_its_teams_bus_by_the_agent_it_was_first_given_to() {
     let mut state = old_state();
     assert_eq!(state.find_task(&task()).unwrap().member.bus_agent(), &normal("codex-1"));
 
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
-    state.hand_over_task(&task(), investigator("inv-kimi"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
+    state
+        .hand_over_task(&task(), investigator("inv-kimi"), Choice::Harness, at())
+        .unwrap();
 
     let member = state.find_task(&task()).unwrap().member;
     assert_eq!(member.agent(), &investigator("inv-kimi"));
@@ -418,7 +430,9 @@ fn handing_a_task_to_a_split_replacement_does_not_resume_the_previous_holders_se
     let mut state = old_state();
     assert!(state.find_task(&task()).unwrap().member.last_session().is_some());
 
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
 
     let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
     let member = loaded.find_task(&task()).unwrap().member;
@@ -432,7 +446,9 @@ fn handing_a_task_to_a_split_replacement_does_not_resume_the_previous_holders_se
 fn replacement_run_keeps_earlier_history_but_only_resumes_its_own_session() {
     let mut state = old_state();
     let earlier = state.find_task(&task()).unwrap().member.runs().len();
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
     let session = "replacement-session".parse().unwrap();
     let (_, mut member) = state.find_task_mut(&task()).unwrap();
     member
@@ -454,7 +470,9 @@ fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_deb
     state
         .owe_lead(&task(), crate::decide::ladder::Trouble::NoStatus, at())
         .unwrap();
-    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    state
+        .hand_over_task(&task(), normal("claude-9"), Choice::Harness, at())
+        .unwrap();
     let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
     let member = loaded.find_task(&task()).unwrap().member;
     assert!(
@@ -462,4 +480,93 @@ fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_deb
         "a replacement owns the work instead of leaving it owed to the lead"
     );
     assert_eq!(member.renewals().map(crate::state::Renewals::used), Some(0));
+}
+
+#[test]
+fn human_swap_to_lower_tier_is_applied() {
+    let mut state = old_state();
+    let worker = Participant::Worker("worker-9".parse::<AgentName>().unwrap());
+
+    assert_eq!(
+        state.hand_over_task(&task(), worker.clone(), Choice::Human, at()),
+        Ok(())
+    );
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.agent(), &worker);
+}
+
+#[test]
+fn harness_handover_to_lower_tier_is_still_refused() {
+    let mut state = old_state();
+    let worker = Participant::Worker("worker-9".parse::<AgentName>().unwrap());
+
+    let refused = state.hand_over_task(&task(), worker, Choice::Harness, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::LowerTier {
+            task: task(),
+            holder: crate::kinds::Tier::Worker,
+            held: crate::kinds::Tier::Normal,
+        })
+    );
+}
+
+#[test]
+fn human_swap_same_holder_refused() {
+    let mut state = old_state();
+
+    let refused = state.hand_over_task(&task(), normal("codex-1"), Choice::Human, at());
+
+    assert_eq!(refused, Err(HandOverError::SameHolder { task: task() }));
+}
+
+#[test]
+fn human_swap_in_team_refused() {
+    let mut state = old_state();
+
+    let refused = state.hand_over_task(&task(), investigator("inv-opus"), Choice::Human, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::InTeam {
+            task: task(),
+            agent: "inv-opus".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn human_swap_in_run_refused() {
+    let mut state = old_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run("run-20261121-000000-a1a1".parse().unwrap(), at(), None)
+            .unwrap();
+    }
+
+    let refused = state.hand_over_task(&task(), normal("claude-9"), Choice::Human, at());
+
+    assert_eq!(refused, Err(HandOverError::InRun { task: task() }));
+}
+
+#[test]
+fn human_swap_of_reviewer_task_refused() {
+    let mut state = old_state();
+    let reviewer: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+
+    let refused = state.hand_over_task(&reviewer, investigator("inv-kimi"), Choice::Human, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::Role {
+            task: reviewer,
+            role: Role::Reviewer,
+        })
+    );
 }

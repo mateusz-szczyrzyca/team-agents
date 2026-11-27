@@ -7,6 +7,15 @@ use super::values::Timestamp;
 use crate::ids::TaskId;
 use crate::kinds::{Role, Tier};
 
+/// How a new holder of a task was chosen: by the harness (which enforces tier progression) or by a human (who may choose any tier).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Choice {
+    /// The harness chose the agent: a task is never given to a lower tier.
+    Harness,
+    /// A human chose the agent (e.g. with `agent swap`): any tier is allowed.
+    Human,
+}
+
 /// A hand-over of one task from one agent to another.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

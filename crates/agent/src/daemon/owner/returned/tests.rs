@@ -173,10 +173,20 @@ fn team_replace_state() -> State {
         )
         .unwrap();
     state
-        .hand_over_task(&task(1), crate::fixtures::investigator("inv-new"), at(32))
+        .hand_over_task(
+            &task(1),
+            crate::fixtures::investigator("inv-new"),
+            agent_core::state::Choice::Harness,
+            at(32),
+        )
         .unwrap();
     state
-        .hand_over_task(&task(2), crate::fixtures::normal("claude-2"), at(32))
+        .hand_over_task(
+            &task(2),
+            crate::fixtures::normal("claude-2"),
+            agent_core::state::Choice::Harness,
+            at(32),
+        )
         .unwrap();
     state
         .team_mut(&team_id(0))

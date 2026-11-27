@@ -828,7 +828,12 @@ async fn refusal_candidate_case(case: &str) {
         }
         "provider" => {
             state
-                .hand_over_task(&task(1), crate::fixtures::investigator("inv-a"), at(0))
+                .hand_over_task(
+                    &task(1),
+                    crate::fixtures::investigator("inv-a"),
+                    agent_core::state::Choice::Harness,
+                    at(0),
+                )
                 .unwrap();
             (1, "\"inv-b\", \"inv-c\"", "inv-c")
         }
@@ -1056,7 +1061,12 @@ async fn refusal_investigator_holder_waits(mut state: agent_core::state::State, 
     use crate::daemon::settle::Settled;
     use agent_core::decide::outcome::{Pause, PauseReason};
     state
-        .hand_over_task(&task(number), crate::fixtures::investigator("inv-a"), at(0))
+        .hand_over_task(
+            &task(number),
+            crate::fixtures::investigator("inv-a"),
+            agent_core::state::Choice::Harness,
+            at(0),
+        )
         .unwrap();
     state.record_limit_refusals(task(number), 1);
     let daemon = Daemon::new(&state, None);

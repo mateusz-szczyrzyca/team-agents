@@ -470,11 +470,17 @@ async fn team_replace_roster_names_the_current_coordinator_and_member() {
         .hand_over_task(
             &task_id(1),
             crate::fixtures::investigator("inv-new"),
+            agent_core::state::Choice::Harness,
             crate::fixtures::at(1),
         )
         .unwrap();
     state
-        .hand_over_task(&task_id(2), crate::fixtures::normal("claude-2"), crate::fixtures::at(2))
+        .hand_over_task(
+            &task_id(2),
+            crate::fixtures::normal("claude-2"),
+            agent_core::state::Choice::Harness,
+            crate::fixtures::at(2),
+        )
         .unwrap();
     let prompt = shaped(&texts, state.team(&id).unwrap(), 2, None, true);
     assert!(prompt.contains("inv-new"), "{prompt}");

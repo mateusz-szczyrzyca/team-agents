@@ -182,7 +182,12 @@ async fn not_found_settles_the_pending_operation() {
     rig.stop().await.unwrap();
     let mut state = rig.state();
     state
-        .hand_over_task(&task, crate::fixtures::normal("claude-2"), at(1))
+        .hand_over_task(
+            &task,
+            crate::fixtures::normal("claude-2"),
+            agent_core::state::Choice::Harness,
+            at(1),
+        )
         .unwrap();
     let from: agent_core::ids::AgentName = "claude-1".parse().unwrap();
     let to: agent_core::ids::AgentName = "claude-2".parse().unwrap();
@@ -252,7 +257,12 @@ async fn team_replace_closed_team_keeps_the_operation_pending() {
 async fn team_replace_legacy_handover_is_migrated_after_loading_state_without_pending_field() {
     let mut state = crate::fixtures::team_state();
     state
-        .hand_over_task(&task(2), crate::fixtures::normal("claude-2"), at(1))
+        .hand_over_task(
+            &task(2),
+            crate::fixtures::normal("claude-2"),
+            agent_core::state::Choice::Harness,
+            at(1),
+        )
         .unwrap();
     let mut legacy: serde_json::Value = serde_json::from_str(&state.to_json().unwrap()).unwrap();
     legacy.as_object_mut().unwrap().remove("pending_team_replaces");

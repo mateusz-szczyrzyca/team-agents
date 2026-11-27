@@ -46,6 +46,8 @@ pub enum Trouble {
     RoundOverdue,
     /// The human started the task anew with `agent renew`; no run went bad.
     Human,
+    /// A human swapped the task's agent with `agent swap`; no run went bad.
+    Swap,
 }
 
 /// How many sessions of a task were started anew, and the limit `[replacement] new_sessions`.
@@ -98,7 +100,8 @@ pub fn next_step(
         | Trouble::ContextBound
         | Trouble::Failed
         | Trouble::RoundOverdue
-        | Trouble::Human => false,
+        | Trouble::Human
+        | Trouble::Swap => false,
     };
     if retried {
         return LadderStep::SameSession;

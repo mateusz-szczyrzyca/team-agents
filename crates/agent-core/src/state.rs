@@ -64,7 +64,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
-pub use holding::{HandOverError, Holding};
+pub use holding::{Choice, HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, ConflictInvestigation, FixPass, FixingWithoutFixPass, InvalidAdvance,
     InvalidReviews, ItemMut, ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection,
@@ -932,13 +932,21 @@ impl State {
     }
 
     /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
+    /// Hands `task` over to `holder`, chosen by `choice` at `at`: only for an agent outside the team, of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.
     ///
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
-    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
-    pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+    /// `choice` is [`Choice::Harness`] and `holder` is of a lower tier than the agent that holds it, `holder` is in its
+    /// team, or a run of it is going.
+    pub fn hand_over_task(
+        &mut self,
+        task: &TaskId,
+        holder: Participant,
+        choice: Choice,
+        at: Timestamp,
+    ) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
             .teams
@@ -963,6 +971,9 @@ impl State {
         }
         // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
         // left are the ones the crew allows it.
+        match choice {
+            Choice::Harness | Choice::Human => {}
+        }
         if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
             return Err(HandOverError::LowerTier {
                 task: task.clone(),
