@@ -252,3 +252,205 @@ async fn findings_lookup_preserves_registered_tasks_and_eventual_launch() {
     rig.stop().await.unwrap();
     assert_eq!(launched.find_task(&tasks[0]).unwrap().member.runs().len(), 1);
 }
+
+#[tokio::test]
+async fn findings_for_investigator_match_requesters_worktree() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add-mod:Help with src/lib.rs,sleep"),
+            investigator("inv-1", "inv-done:Here is the solution to your issue"),
+            investigator("inv-2", "inv-done:Here is the solution to your issue"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    std::fs::create_dir(rig.repo.join("src")).unwrap();
+    std::fs::write(rig.repo.join("src/lib.rs"), "base").unwrap();
+    git(&rig.repo, &["add", "src/lib.rs"]);
+    git(&rig.repo, &["commit", "-m", "Source"]);
+    git(&rig.repo, &["push", "origin", "main"]);
+
+    let other_author: TaskId = "task-20261120-000000-aaaa".parse().unwrap();
+    write_finding(&rig, &other_author, false);
+
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+
+    let inv_state = rig
+        .state_where("investigator task is Done", |state| {
+            state.team(&team).is_some_and(|t| {
+                t.reviewers()
+                    .iter()
+                    .any(|m| m.role() == Some(agent_core::kinds::Role::Investigator) && m.status() == TaskStatus::Done)
+            })
+        })
+        .await;
+
+    let inv_task = inv_state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(agent_core::kinds::Role::Investigator))
+        .unwrap()
+        .task()
+        .clone();
+
+    let prompt = rig.prompt(&inv_task, 1).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        prompt.contains("## Findings of other agents on the files of your work"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("- F-1 [trap] src/lib.rs — Use the checked helper"),
+        "{prompt}"
+    );
+}
+
+fn add_worker(rig: &Rig, name: &str, scenario: &str) {
+    let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let root = rig.home.root().display();
+    let table = format!(
+        "[agents.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"{scenario}\", \"--as\", \"{name}\", \"--home\", \"{root}\", \
+         \"--bus-bin\", \"{}\", \"--bus-dir\", \"{root}/bus\"]\n",
+        crate::daemon::owner::fixture::agentbus_binary().display(),
+    );
+    let with_tier = text.replace(
+        "[tiers]\nnormal = [",
+        &format!("[tiers]\nworkers = [\"{name}\"]\nnormal = ["),
+    );
+    std::fs::write(rig.home.config_file(), format!("{table}{with_tier}")).unwrap();
+}
+
+fn delegate_step(rig: &Rig, task: &TaskId, files: &str) {
+    let accept = rig.home.root().join("accepting-agent");
+    std::fs::write(
+        &accept,
+        format!(
+            "#!/bin/sh\nprintf 'ACCEPTED\\nStep 1.1 Write it\\nRequest files: {files}\\nRequest check: exists {files}\\nDo: Write it.\\n'\n",
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&accept, std::os::unix::fs::PermissionsExt::from_mode(0o700)).unwrap();
+
+    let plan = rig.home.root().join("plan.md");
+    std::fs::write(&plan, "1. Work\n[>] 1.1 Write it\n").unwrap();
+
+    let worktree = rig.worktree(task);
+    let call = serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "tools/call",
+        "params": {
+            "name": "delegate",
+            "arguments": {
+                "goal": "write it",
+                "workdir": worktree,
+                "steps": "write it",
+                "returns": "the file",
+                "for": "1.1",
+                "files": files,
+                "check": format!("exists {files}"),
+                "do": "Write it."
+            }
+        }
+    });
+
+    let mut child = std::process::Command::new(crate::daemon::owner::fixture::agentbus_binary())
+        .args(["serve", "--agent", "claude-1", "--task", task.as_str(), "--dir"])
+        .arg(rig.home.root().join("bus"))
+        .arg("--home")
+        .arg(rig.home.root())
+        .args(["--repo", "example", "--branch"])
+        .arg(format!("agents/claude-1/{task}"))
+        .arg("--worktree")
+        .arg(&worktree)
+        .arg("--plan")
+        .arg(&plan)
+        .arg("--agent-cmd")
+        .arg(&accept)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    std::io::Write::write_all(&mut child.stdin.take().unwrap(), call.to_string().as_bytes()).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let answer = String::from_utf8(output.stdout).unwrap();
+    assert!(answer.contains("Request H1 accepted"), "{answer}");
+}
+
+#[tokio::test]
+async fn findings_for_delegated_worker_match_step_files_only() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-1", "sleep"),
+            investigator("inv-2", "sleep"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    std::fs::create_dir(rig.repo.join("src")).unwrap();
+    std::fs::write(rig.repo.join("src/lib.rs"), "base").unwrap();
+    git(&rig.repo, &["add", "src/lib.rs"]);
+    git(&rig.repo, &["commit", "-m", "Source"]);
+    git(&rig.repo, &["push", "origin", "main"]);
+
+    add_worker(&rig, "glm-1", "sleep,sleep");
+
+    let other_author: TaskId = "task-20261120-000000-aaaa".parse().unwrap();
+    write_finding(&rig, &other_author, false);
+
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1", "glm-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    rig.status_is(&tasks[2], TaskStatus::Waiting).await;
+
+    delegate_step(&rig, &tasks[1], "src/lib.rs");
+
+    let worker_task = &tasks[2];
+    rig.state_where("worker running delegated task", |state| {
+        state
+            .find_task(worker_task)
+            .is_some_and(|found| found.member.runs().len() == 2)
+    })
+    .await;
+    rig.status_is(worker_task, TaskStatus::Waiting).await;
+
+    let prompt = rig.prompt(worker_task, 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(
+        prompt.contains("## Findings of other agents on the files of your work"),
+        "{prompt}"
+    );
+    assert!(
+        prompt.contains("- F-1 [trap] src/lib.rs — Use the checked helper"),
+        "{prompt}"
+    );
+}

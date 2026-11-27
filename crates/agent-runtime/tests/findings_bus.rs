@@ -82,3 +82,30 @@ printf '%s' '[{"id":"F-1","ts":"2026-11-27 12:30:00","author":"other","task":"ta
     let expected = "2026-11-27T10:30:00Z".parse::<agent_core::state::Timestamp>().unwrap();
     assert!(matches!(&rows, Ok(rows) if rows[0].added_at == expected), "{rows:?}");
 }
+
+#[tokio::test]
+async fn findings_rejects_invalid_timestamp() {
+    use agent_core::local_time::Zone;
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bus");
+    std::fs::write(&bin, r#"#!/bin/sh
+printf '%s' '[{"id":"F-1","ts":"not-a-timestamp","author":"other","task":"task-20261127-112701-abcd","kind":"trap","paths":["src/lib.rs"],"text":"lesson"}]'
+"#).unwrap();
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let bus = agent_runtime::agentbus::AgentBus::new(
+        bin.to_str().unwrap().parse().unwrap(),
+        dir.path().to_str().unwrap().parse().unwrap(),
+    );
+    let result = bus
+        .findings_in(
+            &"example".parse().unwrap(),
+            Zone::Fixed(time::UtcOffset::from_hms(2, 0, 0).unwrap()),
+        )
+        .await;
+    let expected_id = "F-1".parse::<agent_core::decide::findings::FindingId>().unwrap();
+    assert!(
+        matches!(result, Err(agent_runtime::agentbus::AgentBusError::FindingTime { id, .. }) if id == expected_id),
+        "{result:?}"
+    );
+}

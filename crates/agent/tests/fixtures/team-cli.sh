@@ -46,6 +46,8 @@
 #   merge-base-other  like `merge-base`, and then commits a file of its own, `resolved.txt`, which the task does not allow
 #   lead-gated      integrates like `integrate`, or commits a fix when the prompt is a fix pass; waits for the daemon's gate
 #   late:TEXT       waits until the other reviewer of the pass has its verdict in `state.json`, then ends with TEXT and STATUS: DONE
+#   inv-add:QUESTION  adds the investigation of QUESTION to the bus and ends with STATUS: SLEEPING
+#   inv-add-mod:QUESTION  modifies src/lib.rs in the worktree, adds the investigation of QUESTION, and ends with STATUS: SLEEPING
 #   worker-investigation-integrate:NAME:QUESTION  integrates like `integrate`, asks for the workers of `ask-worker:NAME`, adds the
 #                   investigation of QUESTION as `inv-add:QUESTION` does, and ends with STATUS: DONE: both are going when the round goes to review
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
@@ -336,6 +338,12 @@ case $action in
   inv-add:*)
     branch=$(git symbolic-ref --short HEAD)
     "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add:}" --kind "" > /dev/null
+    result 'Asked investigation.\nSTATUS: SLEEPING'
+    ;;
+  inv-add-mod:*)
+    echo "modified" >> src/lib.rs
+    branch=$(git symbolic-ref --short HEAD)
+    "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add-mod:}" --kind "" > /dev/null
     result 'Asked investigation.\nSTATUS: SLEEPING'
     ;;
   inv-review-hold)
