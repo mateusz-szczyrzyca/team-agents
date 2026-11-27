@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.127.0 — 27.11.2026 — PR pending
+## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.128.0 — 27.11.2026 — PR #338
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A worker's request, a review and an investigation now keep checkpoints like a round's own work: what is meant, what is done in relation to it and what is left, taken after each step, each local commit, the end of a run and the start of the daemon.
@@ -19,6 +19,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent-core] A checkpoint written by an earlier version, with no job, is read as the checkpoint of an item.
+
+## agent-runtime 0.127.0 — 27.11.2026 — PR pending
+
+### Enhancements
+- [agent-runtime] [agentbus] The daemon can file a conflict investigation for an item with `agentbus inv-add --kind conflict --item 2.3`.
 
 ## agent-runtime 0.126.0 — 27.11.2026 — PR #336
 

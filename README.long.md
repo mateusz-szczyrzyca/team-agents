@@ -1317,8 +1317,10 @@ Each team's optional `investigations` records store the request `id`, current `t
 ID so recovery preserves the original decision, including after a cancellation reports a stopped run. Old state
 without these fields still loads; empty lists and maps are omitted.
 
-`agentbus inv-add` accepts question and review requests. Request splits and conflicts through
+`agentbus inv-add` accepts question, review and conflict requests. Request splits through
 `request_investigation`, which requires and validates their item identifiers.
+
+`agentbus inv-add --kind conflict --item <item>` accepts a conflict request for an item and prints the new request id.
 
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
