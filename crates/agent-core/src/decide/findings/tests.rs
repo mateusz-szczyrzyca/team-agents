@@ -290,3 +290,18 @@ fn selection_keeps_future_findings_and_stops_at_an_oversized_first_text() {
         vec![]
     );
 }
+
+#[test]
+fn run_paths_accept_whitespace_and_long_paths_and_match_ancestors() {
+    for raw in ["docs/user guide.md".to_owned(), format!("docs/{}", "é".repeat(201))] {
+        let parsed = RepoPath::parse(&raw);
+        assert_eq!(parsed, Ok(RepoPath(raw.clone())));
+        assert_eq!(score(&finding(1, &["docs"]), &[parsed.expect("valid run path")]), 2);
+    }
+}
+
+#[test]
+fn item_paths_keeps_tokens_longer_than_the_bus_input_limit() {
+    let raw = format!("docs/{}", "a".repeat(201));
+    assert_eq!(item_paths(&format!("`{raw}`")), vec![RepoPath(raw)]);
+}
