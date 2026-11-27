@@ -1,0 +1,122 @@
+//! The numbering of an item's requirements and the text of their numbers.
+
+use super::*;
+use crate::task_list::TaskList;
+
+/// The only item of the list `text` makes, under a feature.
+fn item_of(body: &str) -> Item {
+    let text = format!("1. Feature\n[ ] 1.1 The title\n{body}");
+    TaskList::parse(&text).unwrap().items().next().unwrap().clone()
+}
+
+/// The requirements of `item` as `(number, text)` pairs.
+fn pairs(item: &Item) -> Vec<(String, String)> {
+    item.requirements()
+        .into_iter()
+        .map(|requirement| (requirement.id.to_string(), requirement.text))
+        .collect()
+}
+
+/// `(number, text)` pairs written as literals.
+fn expected(rows: &[(&str, &str)]) -> Vec<(String, String)> {
+    rows.iter()
+        .map(|(id, text)| ((*id).to_owned(), (*text).to_owned()))
+        .collect()
+}
+
+#[test]
+fn three_bullets_and_two_checks_are_r1_to_r3_and_k1_k2() {
+    let item = item_of(
+        "    Expected result:\n    - first\n    - second\n    - third\n    Checks:\n    - K1. one\n    - K2. two\n",
+    );
+    assert_eq!(
+        pairs(&item),
+        expected(&[
+            ("R1", "first"),
+            ("R2", "second"),
+            ("R3", "third"),
+            ("K1", "one"),
+            ("K2", "two"),
+        ])
+    );
+}
+
+#[test]
+fn nested_bullets_and_continuation_lines_stay_inside_their_requirement() {
+    let item = item_of("    Expected result:\n    - first\n      - nested\n      more of it\n    - second\n");
+    assert_eq!(
+        pairs(&item),
+        expected(&[("R1", "first\n  - nested\n  more of it"), ("R2", "second")])
+    );
+}
+
+#[test]
+fn a_check_line_without_a_number_gets_the_next_free_one() {
+    let item = item_of("    Checks:\n    - K1. one\n    - two\n    - K3: three\n    - four\n");
+    assert_eq!(
+        pairs(&item),
+        expected(&[("K1", "one"), ("K2", "two"), ("K3", "three"), ("K4", "four")])
+    );
+}
+
+#[test]
+fn an_unnumbered_check_does_not_take_a_number_a_later_line_names() {
+    let item = item_of("    Checks:\n    - one\n    - K1. two\n");
+    assert_eq!(pairs(&item), expected(&[("K2", "one"), ("K1", "two")]));
+}
+
+#[test]
+fn a_number_named_twice_is_kept_by_the_first_line_only() {
+    let item = item_of("    Checks:\n    - K1. one\n    - K1. two\n");
+    assert_eq!(pairs(&item), expected(&[("K1", "one"), ("K2", "two")]));
+}
+
+#[test]
+fn checks_that_are_not_bullets_are_one_line_each() {
+    let item = item_of("    Checks:\n    run it\n    K2. run that\n");
+    assert_eq!(pairs(&item), expected(&[("K1", "run it"), ("K2", "run that")]));
+}
+
+#[test]
+fn an_item_with_no_parts_has_its_title_as_r1() {
+    let item = item_of("    Only a description.\n");
+    assert_eq!(pairs(&item), expected(&[("R1", "The title")]));
+}
+
+#[test]
+fn an_expected_result_with_no_bullets_is_one_requirement() {
+    let item = item_of("    Expected result:\n    It works.\n    All of it.\n    Checks:\n    - K1. run\n");
+    assert_eq!(
+        pairs(&item),
+        expected(&[("R1", "It works.\nAll of it."), ("K1", "run")])
+    );
+}
+
+#[test]
+fn an_item_with_checks_only_still_has_its_title_as_r1() {
+    let item = item_of("    Checks:\n    - K1. run\n");
+    assert_eq!(pairs(&item), expected(&[("R1", "The title"), ("K1", "run")]));
+}
+
+#[test]
+fn a_number_is_read_from_its_text_and_written_back() {
+    for text in ["R1", "R12", "K2", "K65535"] {
+        let id: RequirementId = text.parse().unwrap();
+        assert_eq!(id.to_string(), text);
+    }
+    let id: RequirementId = "K2".parse().unwrap();
+    assert_eq!((id.kind(), id.number().get()), (RequirementKind::Check, 2));
+}
+
+#[test]
+fn a_text_that_is_not_a_number_of_a_requirement_is_refused() {
+    for text in [
+        "", "R", "R0", "R01", "r1", "X1", "R1 ", " R1", "R-1", "R65536", "RR1", "1", "R1.2",
+    ] {
+        assert_eq!(
+            text.parse::<RequirementId>(),
+            Err(InvalidRequirementId { value: text.to_owned() }),
+            "{text:?}"
+        );
+    }
+}
