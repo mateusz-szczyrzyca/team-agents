@@ -67,6 +67,23 @@ pub struct RoundCheckpoint {
     pub draft: bool,
 }
 
+/// The newest checkpoint of a round for a holder, with what it says of the work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastCheckpoint {
+    /// When it was taken.
+    pub at: agent_core::state::Timestamp,
+    /// The task whose worktree the checkpoint keeps.
+    pub task: TaskId,
+    /// The step it was taken after.
+    pub cause: agent_core::history::CheckpointCause,
+    /// The tip of the worktree's branch; `None` when git could not say.
+    pub head: Option<agent_core::state::CommitId>,
+    /// The reference of the snapshot; `None` when it could not be taken.
+    pub snapshot: Option<String>,
+    /// What is meant, done and left; `None` for a checkpoint that kept no account of the work.
+    pub content: Option<agent_core::history::CheckpointContent>,
+}
+
 /// The newest runs of a task and whether older ones were left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewestRuns {
@@ -691,6 +708,66 @@ impl Reader {
                     draft,
                 });
             }
+        }
+        Ok(found)
+    }
+
+    /// The newest checkpoint of `round` that keeps the worktree of `task`, or, when the task has none in the round, the
+    /// newest of the round: its account of the work is the round's, whoever held it. `None` when the round has no
+    /// checkpoint.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_checkpoint_of_round(
+        &self,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Option<LastCheckpoint>, ReadError> {
+        Ok(newest_for(self.round_checkpoints(round)?, task, |_| true))
+    }
+
+    /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
+    /// except that a change of holder and the end of a run that left the worktree as the checkpoint before it kept it are
+    /// skipped. They are taken at the take-over itself and tell the same work as the checkpoint before them.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_told_checkpoint_of_round(
+        &self,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Option<LastCheckpoint>, ReadError> {
+        let all = self.round_checkpoints(round)?;
+        let told = tells_the_work(&all);
+        Ok(newest_for(told, task, |_| true))
+    }
+
+    /// Every checkpoint of `round` with what it says of the work, oldest first.
+    fn round_checkpoints(&self, round: &RoundId) -> Result<Vec<LastCheckpoint>, ReadError> {
+        let mut found = Vec::new();
+        for stored in self.round_records(round)? {
+            let agent_core::history::Record::Event(event) = stored.record else {
+                continue;
+            };
+            let agent_core::history::HistoryEvent::Checkpoint {
+                task,
+                cause,
+                head,
+                snapshot,
+                content,
+                ..
+            } = event.event
+            else {
+                continue;
+            };
+            found.push(LastCheckpoint {
+                at: event.at,
+                task,
+                cause,
+                head,
+                snapshot,
+                content,
+            });
         }
         Ok(found)
     }
@@ -1586,4 +1663,45 @@ fn read_daemon_log_rounds(snapshot: &Transaction<'_>, log_id: i64) -> Result<Vec
         rounds.push(here.value("round", RoundId::from_str(&round_text))?);
     }
     Ok(rounds)
+}
+
+/// The newest of `checkpoints` (oldest first) that `wanted` accepts and that keeps the worktree of `task`, else the
+/// newest that `wanted` accepts: the account of the work is the round's, whoever held it.
+fn newest_for(
+    checkpoints: Vec<LastCheckpoint>,
+    task: &TaskId,
+    wanted: impl Fn(&LastCheckpoint) -> bool,
+) -> Option<LastCheckpoint> {
+    let mut accepted = checkpoints
+        .into_iter()
+        .filter(|found| wanted(found))
+        .collect::<Vec<_>>();
+    let own = accepted.iter().rposition(|found| found.task == *task);
+    match own {
+        Some(position) => Some(accepted.swap_remove(position)),
+        None => accepted.pop(),
+    }
+}
+
+/// The checkpoints of `all` (oldest first) that tell the work: all but a change of holder and the end of a run that
+/// keeps the snapshot and says what the task's last told checkpoint before it says, which changed nothing.
+fn tells_the_work(all: &[LastCheckpoint]) -> Vec<LastCheckpoint> {
+    use agent_core::history::CheckpointCause;
+    let mut told: Vec<LastCheckpoint> = Vec::new();
+    // The position in `told` of the last told checkpoint of each task: one pass, no search back.
+    let mut last_of_task: HashMap<&TaskId, usize> = HashMap::new();
+    for found in all {
+        let unchanged = found.snapshot.is_some()
+            && last_of_task
+                .get(&found.task)
+                .and_then(|position| told.get(*position))
+                .is_some_and(|earlier| earlier.snapshot == found.snapshot && earlier.content == found.content);
+        let adds_nothing =
+            found.cause == CheckpointCause::HolderChanged || (found.cause == CheckpointCause::RunEnded && unchanged);
+        if !adds_nothing {
+            last_of_task.insert(&found.task, told.len());
+            told.push(found.clone());
+        }
+    }
+    told
 }

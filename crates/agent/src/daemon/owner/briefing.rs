@@ -22,11 +22,11 @@ use agent_core::task_list::MAX_TASK_LIST_BYTES;
 use agent_runtime::agentbus::{Completeness, UnreadMessage, UnreadMessagesError};
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision};
 use agent_runtime::harness_prompts::HarnessPrompts;
-use agent_runtime::history::{JudgementRecord, ReadError, Reader};
+use agent_runtime::history::{JudgementRecord, LastCheckpoint, ReadError, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{
     Briefing, BriefingAnswer, BriefingCommit, BriefingMessage, BriefingNotes, BriefingReview, BriefingRun,
-    BriefingStep, ComposeError, PlanHeadings, briefing_variables_with,
+    BriefingStep, CheckpointFacts, ComposeError, PlanHeadings, briefing_variables_with, checkpoint_state_variables,
 };
 use agent_runtime::run::outcome::read_outcome;
 use agent_runtime::snapshot::{SnapshotError, take_snapshot};
@@ -132,9 +132,10 @@ pub(super) fn lead_last_message_paragraph(
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
 
-/// The variables of the briefing that tell the pull request of the task's item and its review, which a lead's text leaves
-/// out: the lead is told the work of a member, not the review of its own.
-const REVIEW_VARIABLES: [&str; 3] = ["pull_request", "review_state", "findings"];
+/// The variables of the briefing that a lead's text leaves out: the pull request of the task's item and its review (the
+/// lead is told the work of a member, not the review of its own), and the checkpoint, which the lead is given in a
+/// paragraph of its own.
+const REVIEW_VARIABLES: [&str; 4] = ["pull_request", "review_state", "findings", "checkpoint"];
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
@@ -230,6 +231,21 @@ pub(super) enum BriefingProblem {
     /// The judgements of the steps cannot be read from the history.
     #[error("cannot read the step judgements of the task")]
     Judgements(#[source] OwnerError),
+    /// The checkpoints of the task's round cannot be read from the history.
+    #[error("cannot read the checkpoints of round {round}")]
+    Checkpoints {
+        /// The round.
+        round: RoundId,
+        /// What the history refused.
+        #[source]
+        source: Box<ReadError>,
+    },
+    /// The reader of the history's checkpoints cannot be joined.
+    #[error("cannot join the reader of the checkpoints of the task's round")]
+    CheckpointsJoin(#[source] tokio::task::JoinError),
+    /// The last checkpoint of the round cannot be told.
+    #[error("cannot tell the last checkpoint of the round")]
+    CheckpointText(#[source] ComposeError),
     /// The folder of the task cannot be read for its question files.
     #[error("cannot read the question files of task {task} in {path}")]
     AnswersDir {
@@ -254,13 +270,42 @@ pub(super) enum BriefingProblem {
     },
 }
 
+/// What a new session of a task is briefed with: the facts the runs left and the last checkpoint of its round, told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Gathered {
+    /// The facts of the work the runs left.
+    pub(super) draft: BriefingDraft,
+    /// The last checkpoint of the task's round, rendered; `None` when the round has none.
+    pub(super) checkpoint: Option<String>,
+}
+
+impl Gathered {
+    /// The facts as a run is made ready with them, with `review` the pull request of the task's item and its review.
+    pub(super) fn briefed<'a>(&'a self, review: &'a ReviewFacts) -> Briefed<'a> {
+        Briefed {
+            draft: &self.draft,
+            review,
+            checkpoint: self.checkpoint.as_deref(),
+        }
+    }
+}
+
+/// The checkpoints of a round that a briefing looks at.
+#[derive(Debug, Default)]
+struct RoundCheckpoints {
+    /// The newest checkpoint of the task, or of the round when the task has none: whatever its cause.
+    newest: Option<LastCheckpoint>,
+    /// The newest checkpoint that tells how the work stands: the newest but for a change of holder.
+    told: Option<LastCheckpoint>,
+}
+
 impl Owner {
     /// The facts of the briefing of `task` when the run it starts now is the first of a new session the ladder started
     /// it in, with the snapshot of its worktree taken and recorded first; `None` for any other run.
     ///
     /// # Errors
     /// [`BriefingProblem`] when a fact cannot be read.
-    pub(super) async fn briefing_facts(&mut self, task: &TaskId) -> Result<Option<BriefingDraft>, BriefingProblem> {
+    pub(super) async fn briefing_facts(&mut self, task: &TaskId) -> Result<Option<Gathered>, BriefingProblem> {
         let no_task = || BriefingProblem::NoTask { task: task.clone() };
         let found = self.parts.state.find_task(task).ok_or_else(no_task)?;
         let Some(renewals) = found.member.renewals().filter(|_| found.member.awaits_new_session()) else {
@@ -275,7 +320,7 @@ impl Owner {
     ///
     /// # Errors
     /// [`BriefingProblem`] when a fact cannot be read.
-    async fn gather_facts(&mut self, task: &TaskId, reason: Trouble) -> Result<Option<BriefingDraft>, BriefingProblem> {
+    async fn gather_facts(&mut self, task: &TaskId, reason: Trouble) -> Result<Option<Gathered>, BriefingProblem> {
         let no_task = || BriefingProblem::NoTask { task: task.clone() };
         let found = self.parts.state.find_task(task).ok_or_else(no_task)?;
         let (team, member) = (found.team, found.member);
@@ -321,11 +366,22 @@ impl Owner {
         // The bus retargets unread messages to the replacement before its run starts.
         let git = Git::new(worktree.clone(), CommitIdentity::for_agent(config.git(), &agent));
         let reader = (agent, team.id().clone());
-        // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from; nothing has
-        // touched the worktree since.
+        // What the runs of the task did is read before anything of the checkpoints: a history that cannot be read fails the
+        // start with the error of the runs.
+        let read = read_plan(&worktree, task).await;
+        let history = self.gather_history(task, read.as_ref()).await?;
+        // The checkpoints queued by the steps before are taken first: the last one is what the new holder is told.
+        self.flush_checkpoints().await;
+        let checkpoints = self.round_checkpoints(&round, task).await?;
+        // The snapshot a restart took of the cut run's worktree is the one the new session is briefed from, as nothing has
+        // touched the worktree since. A snapshot the last checkpoint of the task kept stands in for a new one while the
+        // worktree is as it was kept.
         let snapshot = match self.cut_snapshots.remove(task) {
             Some(reference) if reason == Trouble::DaemonDown => reference,
-            Some(_) | None => self.snapshot(&worktree, &round, task).await?,
+            Some(_) | None => match self.checkpoint_snapshot(&git, &round, task, &checkpoints).await {
+                Some(reference) => reference,
+                None => self.snapshot(&worktree, &round, task).await?,
+            },
         };
         let head = git.rev_parse(&Revision::Head).await?;
         let forked = git.merge_base(&Revision::Head, &Revision::Branch(base.clone())).await?;
@@ -336,7 +392,6 @@ impl Owner {
             .into_iter()
             .map(|change| change.path.to_string())
             .collect();
-        let read = read_plan(&worktree, task).await;
         let plan = read.as_ref().map(steps_of);
         let unread = self
             .parts
@@ -347,21 +402,107 @@ impl Owner {
                 task,
             })
             .await?;
-        let history = self.gather_history(task, read.as_ref()).await?;
-        Ok(Some(BriefingDraft {
-            facts: BriefingFacts {
-                reason,
-                base,
-                branch,
-                commits,
-                uncommitted,
-                plan,
-                messages: unread.shown,
-                completeness: unread.completeness,
-                snapshot,
+        let checkpoint = checkpoints
+            .told
+            .as_ref()
+            .map(|told| self.told_checkpoint(told))
+            .transpose()?;
+        Ok(Some(Gathered {
+            draft: BriefingDraft {
+                facts: BriefingFacts {
+                    reason,
+                    base,
+                    branch,
+                    commits,
+                    uncommitted,
+                    plan,
+                    messages: unread.shown,
+                    completeness: unread.completeness,
+                    snapshot,
+                },
+                history,
             },
-            history,
+            checkpoint,
         }))
+    }
+
+    /// The newest checkpoints of `round` for `task` that its history has; none when no daemon has written it yet.
+    ///
+    /// # Errors
+    /// [`BriefingProblem::Checkpoints`] or [`BriefingProblem::CheckpointsJoin`] when the history cannot be read.
+    async fn round_checkpoints(&self, round: &RoundId, task: &TaskId) -> Result<RoundCheckpoints, BriefingProblem> {
+        let path = self.parts.store.home().history_file();
+        if !path.exists() {
+            return Ok(RoundCheckpoints::default());
+        }
+        let (round_id, task_id) = (round.clone(), task.clone());
+        let read = tokio::task::spawn_blocking(move || {
+            let reader = Reader::open(&path)?;
+            Ok::<_, ReadError>(RoundCheckpoints {
+                newest: reader.last_checkpoint_of_round(&round_id, &task_id)?,
+                told: reader.last_told_checkpoint_of_round(&round_id, &task_id)?,
+            })
+        })
+        .await
+        .map_err(BriefingProblem::CheckpointsJoin)?;
+        read.map_err(|source| BriefingProblem::Checkpoints {
+            round: round.clone(),
+            source: Box::new(source),
+        })
+    }
+
+    /// The reference of the snapshot a checkpoint of `task` kept, when the worktree is as that snapshot holds it; `None`
+    /// when no checkpoint of the task kept one that matches, and a new snapshot is to be taken. A worktree that cannot be
+    /// compared is logged as a checkpoint that failed and gets the new snapshot.
+    async fn checkpoint_snapshot(
+        &self,
+        git: &Git,
+        round: &RoundId,
+        task: &TaskId,
+        found: &RoundCheckpoints,
+    ) -> Option<String> {
+        let mut kept: Vec<&str> = Vec::new();
+        for checkpoint in [found.newest.as_ref(), found.told.as_ref()].into_iter().flatten() {
+            let Some(reference) = checkpoint.snapshot.as_deref() else {
+                continue;
+            };
+            if checkpoint.task == *task && !kept.contains(&reference) {
+                kept.push(reference);
+            }
+        }
+        for reference in kept {
+            match git.worktree_matches_snapshot(reference).await {
+                Ok(true) => return Some(reference.to_owned()),
+                Ok(false) => {}
+                Err(error) => tracing::warn!(
+                    event = LogEvent::CheckpointFailed.as_str(),
+                    round = %round,
+                    task = %task,
+                    cause = "briefing_snapshot",
+                    error = %error_chain(&error),
+                    "the worktree cannot be compared with the snapshot of the last checkpoint: a new snapshot is taken"
+                ),
+            }
+        }
+        None
+    }
+
+    /// `checkpoint`, told as `checkpoint-state.md` tells a checkpoint.
+    ///
+    /// # Errors
+    /// [`BriefingProblem::CheckpointText`] when the text cannot be filled.
+    fn told_checkpoint(&self, checkpoint: &LastCheckpoint) -> Result<String, BriefingProblem> {
+        let values = checkpoint_state_variables(&CheckpointFacts {
+            cause: checkpoint.cause,
+            at: checkpoint.at,
+            head: checkpoint.head.as_ref(),
+            content: checkpoint.content.as_ref(),
+        })
+        .map_err(|source| BriefingProblem::CheckpointText(source.into()))?;
+        self.parts
+            .texts
+            .render(HarnessPrompt::CheckpointState, &values)
+            .map_err(|source| BriefingProblem::CheckpointText(source.into()))
     }
 
     /// The open round the next run of `task` works for: the newest open round of its runs, or, for a task that never ran,
@@ -551,7 +692,10 @@ impl Owner {
         for (task, trouble) in owed {
             self.leads_being_told.insert(task.clone());
             let briefing = match self.gather_facts(&task, trouble).await {
-                Ok(Some(draft)) => match self.lead_briefing_text(&draft, &task).await {
+                Ok(Some(gathered)) => match self
+                    .lead_briefing_text(&gathered.draft, gathered.checkpoint.as_deref(), &task)
+                    .await
+                {
                     Ok(text) => Some(text),
                     Err(error) => {
                         tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
@@ -591,13 +735,29 @@ impl Owner {
         }
     }
 
-    /// The briefing of `task`'s work for its lead: the facts `draft` holds and, when the history knows one, what the member's
-    /// last run said at its end, whole. A message that cannot be read is left out and logged: the lead still has the rest.
+    /// The briefing of `task`'s work for its lead: the facts `draft` holds, the last `checkpoint` of the member's round when
+    /// it has one and, when the history knows one, what the member's last run said at its end, whole. A message that
+    /// cannot be read is left out and logged: the lead still has the rest.
     ///
     /// # Errors
     /// [`ComposeError`] when a text cannot be filled.
-    async fn lead_briefing_text(&self, draft: &BriefingDraft, task: &TaskId) -> Result<String, ComposeError> {
+    async fn lead_briefing_text(
+        &self,
+        draft: &BriefingDraft,
+        checkpoint: Option<&str>,
+        task: &TaskId,
+    ) -> Result<String, ComposeError> {
         let mut text = draft.render_for_lead(&self.parts.texts, task)?;
+        if let Some(checkpoint) = checkpoint {
+            let values = Variables::new().with("checkpoint", checkpoint)?;
+            text.push_str("\n\n");
+            text.push_str(
+                &self
+                    .parts
+                    .texts
+                    .render(HarnessPrompt::LeadBriefingCheckpoint, &values)?,
+            );
+        }
         match self.last_final_message(task).await {
             Ok(Some(message)) => {
                 text.push_str("\n\n");
@@ -635,6 +795,8 @@ pub(super) struct Briefed<'a> {
     pub(super) draft: &'a BriefingDraft,
     /// The pull request of the task's item and its review.
     pub(super) review: &'a ReviewFacts,
+    /// The last checkpoint of the task's round, told; `None` when the round has none.
+    pub(super) checkpoint: Option<&'a str>,
 }
 
 /// The facts of a briefing: what the task's own record gives (its facts) and what its history and question files give.
@@ -690,7 +852,7 @@ impl BriefingDraft {
     /// [`ComposeError`] when the text of the briefing cannot be filled.
     #[cfg(test)]
     pub(super) fn render(&self, texts: &HarnessPrompts, task: &TaskId, prompt: &str) -> Result<String, ComposeError> {
-        self.render_reviewed(texts, task, prompt, &ReviewFacts::default())
+        self.render_reviewed(texts, task, prompt, &ReviewFacts::default(), None)
     }
 
     /// The briefing of `task`, whose own prompt is `prompt`, with the pull request and review `review` of its item, rendered
@@ -704,9 +866,10 @@ impl BriefingDraft {
         task: &TaskId,
         prompt: &str,
         review: &ReviewFacts,
+        checkpoint: Option<&str>,
     ) -> Result<String, ComposeError> {
         self.facts
-            .render_with(texts, task, prompt, &self.history, &review.as_review())
+            .render_with(texts, task, prompt, (&self.history, &review.as_review()), checkpoint)
     }
 
     /// What a lead given the work of `task` is told the runs of the task left, rendered through `texts`.
@@ -729,8 +892,8 @@ impl BriefingFacts {
             texts,
             task,
             prompt,
-            &BriefingHistory::default(),
-            &BriefingReview::default(),
+            (&BriefingHistory::default(), &BriefingReview::default()),
+            None,
         )
     }
 
@@ -743,10 +906,10 @@ impl BriefingFacts {
         texts: &HarnessPrompts,
         task: &TaskId,
         prompt: &str,
-        history: &BriefingHistory,
-        review: &BriefingReview<'_>,
+        (history, review): (&BriefingHistory, &BriefingReview<'_>),
+        checkpoint: Option<&str>,
     ) -> Result<String, ComposeError> {
-        let values = self.variables(texts, task, prompt, (history, review))?;
+        let values = self.variables(texts, task, prompt, (history, review, checkpoint))?;
         Ok(texts.render(HarnessPrompt::Briefing, &values)?)
     }
 
@@ -761,7 +924,7 @@ impl BriefingFacts {
         task: &TaskId,
         history: &BriefingHistory,
     ) -> Result<String, ComposeError> {
-        let all = self.variables(texts, task, "", (history, &BriefingReview::default()))?;
+        let all = self.variables(texts, task, "", (history, &BriefingReview::default(), None))?;
         let mut values = Variables::new();
         // The lead's briefing has neither the task's prompt nor the item's pull request.
         for name in all
@@ -781,7 +944,7 @@ impl BriefingFacts {
         texts: &HarnessPrompts,
         task: &TaskId,
         prompt: &str,
-        (history, review): (&BriefingHistory, &BriefingReview<'_>),
+        (history, review, checkpoint): (&BriefingHistory, &BriefingReview<'_>, Option<&str>),
     ) -> Result<Variables, ComposeError> {
         let commits: Vec<String> = self.commits.iter().map(|commit| commit.id.to_string()).collect();
         let listed: Vec<BriefingCommit<'_>> = self
@@ -872,6 +1035,7 @@ impl BriefingFacts {
                 not_done: &not_done,
             },
             review: *review,
+            checkpoint,
         };
         Ok(briefing_variables_with(&facts, &notes)?)
     }

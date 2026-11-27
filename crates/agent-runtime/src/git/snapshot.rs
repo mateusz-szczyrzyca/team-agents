@@ -235,17 +235,9 @@ impl Git {
         })
     }
 
-    /// Builds the tree of the worktree in a scratch index in `scratch`, commits it on `head` and points the next reference
-    /// of the task at the commit. Returns the commit and the bytes of its files.
-    async fn write_snapshot(
-        &self,
-        scratch: &Path,
-        head: &CommitId,
-        round: &RoundId,
-        task: &TaskId,
-        (kind, number): (SnapshotKind, u32),
-        previous: Option<&str>,
-    ) -> Result<Written, GitError> {
+    /// Builds the tree of the worktree in a scratch index in `scratch` on `head`, and returns the overrides that make git
+    /// work on the scratch directory and the tree's hash. The worktree's own index and files are not touched.
+    async fn build_scratch_tree(&self, scratch: &Path, head: &CommitId) -> Result<(Vec<OsString>, String), GitError> {
         let index_path = scratch.join("index");
         let index = index_path.to_str().ok_or_else(|| GitError::Scratch {
             source: ScratchError::NotText(index_path.clone()),
@@ -277,6 +269,39 @@ impl Git {
         let tree = scratch_git
             .scratch_text(GitOperation::WriteTree, &overrides, &[arg("write-tree")])
             .await?;
+        Ok((overrides, tree))
+    }
+
+    /// Whether the worktree holds, on the same head, the tree the snapshot under `reference` holds: nothing was changed
+    /// since it was taken. A reference that names nothing is no match. Nothing is written to the repository but the
+    /// objects of the tree, which the next snapshot would write as well.
+    ///
+    /// # Errors
+    /// The errors of [`Git::snapshot`] that read the head and the worktree.
+    pub async fn worktree_matches_snapshot(&self, reference: &str) -> Result<bool, GitError> {
+        let head = self.rev_parse(&Revision::Head).await?;
+        let scratch = make_scratch().await?;
+        let built = self.build_scratch_tree(scratch.path(), &head).await;
+        close_scratch(scratch).await;
+        let (_overrides, tree) = built?;
+        let held_tree = self.resolve_quietly(&format!("{reference}^{{tree}}")).await?;
+        let held_head = self.resolve_quietly(&format!("{reference}^1")).await?;
+        Ok(held_tree.as_deref() == Some(tree.as_str()) && held_head.as_deref() == Some(head.to_string().as_str()))
+    }
+
+    /// Builds the tree of the worktree in a scratch index in `scratch`, commits it on `head` and points the next reference
+    /// of the task at the commit. Returns the commit and the bytes of its files.
+    async fn write_snapshot(
+        &self,
+        scratch: &Path,
+        head: &CommitId,
+        round: &RoundId,
+        task: &TaskId,
+        (kind, number): (SnapshotKind, u32),
+        previous: Option<&str>,
+    ) -> Result<Written, GitError> {
+        let (overrides, tree) = self.build_scratch_tree(scratch, head).await?;
+        let head_text = head.to_string();
         if let Some(previous) = previous
             && let Some((commit, earlier)) = self
                 .reusable_snapshot(previous, kind, (round, task), &tree, head)

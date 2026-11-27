@@ -32,7 +32,7 @@ pub use log::{HistoryLayer, Scoped, ensure_scoped_callsites, install_panic_hook,
 pub use migrate::Migration;
 pub use notes::Noting;
 pub use plans::{PlanRead, PlanRecord};
-pub use reader::{NewestRuns, Reader, RoundCheckpoint, RoundPrompt, RunRow, Stored};
+pub use reader::{LastCheckpoint, NewestRuns, Reader, RoundCheckpoint, RoundPrompt, RunRow, Stored};
 pub use usage::RunUsageRecord;
 
 pub use reader::query::{LogFilter, LogWindow};

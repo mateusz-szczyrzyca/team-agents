@@ -1304,9 +1304,7 @@ impl Owner {
                 self.parts.zone,
                 &mut self.parts.rng,
                 &task,
-                briefing
-                    .as_ref()
-                    .map(|draft| briefing::Briefed { draft, review: &review }),
+                briefing.as_ref().map(|gathered| gathered.briefed(&review)),
                 last_message.as_ref(),
             )
             .await

@@ -65,6 +65,10 @@
 #   script:NAME     runs the bash script `fake-scripts/NAME.sh` of the home the configuration names, in the worktree, then
 #                   records the gate as `work` does and ends with STATUS: DONE: a test writes the script, which commits
 #                   whatever the run is to have done
+#   script-nostatus:NAME  runs the script of `script:NAME`, and ends without a STATUS line, as a session that went bad after
+#                   its work
+#   script-failed-tool:NAME  runs the script of `script:NAME`, records a tool call as `fail-tool` does and ends with
+#                   STATUS: FAILED: a declared failure after real work
 #   work-stream:NAME  like `work`, and prints the lines of `fake-scripts/NAME.jsonl` (a stream of Claude Code's JSON, which a
 #                   test writes, e.g. the usage of a model call) before it ends with STATUS: DONE
 #   work-if-briefed:N1|N2|...  like `work`, when the prompt holds each needle N1, N2, ... (each a line of text the test names); else ends
@@ -1038,6 +1042,15 @@ case $action in
     bash "$home/fake-scripts/${action#script:}.sh"
     record_gate
     result 'Did the scripted work.\nSTATUS: DONE'
+    ;;
+  script-nostatus:*)
+    bash "$home/fake-scripts/${action#script-nostatus:}.sh"
+    result 'I think that is all.'
+    ;;
+  script-failed-tool:*)
+    bash "$home/fake-scripts/${action#script-failed-tool:}.sh"
+    printf '%s\n' '{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"t1","name":"mcp__agentbus__read_messages","input":{}}]}}'
+    result 'I could not do it.\nSTATUS: FAILED'
     ;;
   stream:*)
     cat "$home/fake-scripts/${action#stream:}.jsonl"
