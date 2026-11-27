@@ -27,7 +27,7 @@ use agent_runtime::process::error_chain;
 use agent_runtime::snapshot::{branch_commits, prune_snapshots, take_checkpoint_snapshot};
 
 use super::Owner;
-use super::briefing::{read_plan, standing_states};
+use super::briefing::{standing_states, try_read_plan};
 use super::commit_reminder::watched_run;
 use super::snapshots::validate_worktree_path;
 
@@ -610,7 +610,13 @@ impl Owner {
                 return None;
             }
         };
-        let plan = read_plan(&worktree, &facts.task).await;
+        let plan = match try_read_plan(&worktree).await {
+            Ok(plan) => plan,
+            Err(error) => {
+                failed(&error_chain(&error));
+                return None;
+            }
+        };
         let judgements: BTreeMap<ItemId, JudgementState> = match &plan {
             Some(plan) => {
                 let (_, plans_by_run) = self.earlier_plans(&facts.task, None).await;
