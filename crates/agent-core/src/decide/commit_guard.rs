@@ -233,8 +233,10 @@ const SCISSORS: &str = " ------------------------ >8 ------------------------";
 /// for a message with no trailer or one whose trailer does not read as a step ID.
 #[must_use]
 pub fn step_of_message(message: &str) -> Option<ItemId> {
-    let _ = message;
-    None
+    trailer_block(message)
+        .filter_map(step_trailer)
+        .filter_map(|text| text.parse::<ItemId>().ok())
+        .last()
 }
 
 /// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
