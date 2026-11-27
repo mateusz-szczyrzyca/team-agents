@@ -36,7 +36,7 @@ mod investigations;
 mod latest;
 mod unread;
 
-pub use investigations::{InvTransition, Investigation, InvestigationKind};
+pub use investigations::{InvTransition, Investigation, InvestigationKind, InvestigationStatus};
 pub use latest::{LatestMessageError, MessageNote};
 pub use unread::{
     Completeness, MAX_MESSAGES, MAX_TEXT_CHARS, Reader, Said, UnreadMessage, UnreadMessages, UnreadMessagesError,

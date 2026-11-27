@@ -5,7 +5,11 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod investigations;
+pub use investigations::Investigations;
 mod idle;
+#[cfg(test)]
+mod investigation_tests;
 pub use idle::IdleMinutes;
 mod commit_reminder;
 pub use commit_reminder::{CommitReminder, DEFAULT_CONTEXT_PERCENT, DEFAULT_CUT_AFTER, DEFAULT_LINES, DEFAULT_MINUTES};
@@ -990,6 +994,8 @@ pub struct Config {
     watchdog: Watchdog,
     /// The limit pauses.
     limits: Limits,
+    /// Timeout for investigation answers.
+    investigations: Investigations,
     /// The free space thresholds.
     disk: Disk,
     /// The snapshots of worktrees.
@@ -1112,6 +1118,9 @@ struct RawConfig {
     /// See [`Config::limits`].
     #[serde(default)]
     limits: Limits,
+    /// Investigation timeout policy, defaulted for older configurations.
+    #[serde(default)]
+    investigations: Investigations,
     /// See [`Config::disk`].
     #[serde(default)]
     disk: Disk,
@@ -1194,6 +1203,7 @@ impl RawConfig {
             build,
             watchdog,
             limits,
+            investigations,
             disk,
             snapshot,
             restart,
@@ -1259,6 +1269,7 @@ impl RawConfig {
             build,
             watchdog,
             limits,
+            investigations,
             disk,
             snapshot,
             restart,
@@ -1496,7 +1507,13 @@ impl Config {
         &self.watchdog
     }
 
-    /// The pauses of quotas and rate limits.
+    /// The deadline for an investigator to answer a request.
+    #[must_use]
+    pub fn investigations(&self) -> &Investigations {
+        &self.investigations
+    }
+
+    /// The provider limit pauses.
     #[must_use]
     pub fn limits(&self) -> &Limits {
         &self.limits

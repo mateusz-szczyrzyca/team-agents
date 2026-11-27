@@ -116,9 +116,53 @@ pub fn free_for_request(
     config
         .investigators()
         .keys()
-        .filter(|name| !occupied.contains(*name) && !refused.contains(name) && !has_paused_task(state, name))
+        .filter(|name| {
+            !occupied.contains(*name)
+                && !refused.contains(name)
+                && !has_paused_task(state, name)
+                && !provider_cooling_down(state, config, name, now)
+        })
         .cloned()
         .collect()
+}
+
+/// The newest run controls provider cooldown, regardless of which task used the investigator.
+fn provider_cooling_down(
+    state: &crate::state::State,
+    config: &crate::config::Config,
+    name: &InvestigatorName,
+    now: Timestamp,
+) -> bool {
+    use crate::state::{RunEnd, RunState};
+    let newest = state
+        .teams()
+        .iter()
+        .flat_map(|team| {
+            team.crew()
+                .roster()
+                .into_iter()
+                .map(|(_, member)| member)
+                .chain(team.reviewers())
+        })
+        .filter(|member| investigator_of(member) == Some(name))
+        .flat_map(crate::state::Member::runs)
+        .max_by_key(|run| run.started_at());
+    let Some(run) = newest else {
+        return false;
+    };
+    let RunState::Ended { at, end } = run.state() else {
+        return false;
+    };
+    let elapsed = (now.as_utc() - at.as_utc()).whole_seconds();
+    let elapsed = u128::from(elapsed.max(0).unsigned_abs());
+    match end {
+        RunEnd::QuotaExhausted { resets_at: Some(reset) } => *reset > now,
+        RunEnd::QuotaExhausted { resets_at: None } => {
+            elapsed < u128::from(config.limits().quota_pause_minutes.as_duration().as_secs())
+        }
+        RunEnd::RateLimited => elapsed < u128::from(config.limits().rate_limit_pause_minutes.as_duration().as_secs()),
+        RunEnd::Reported { .. } | RunEnd::NoStatus { .. } | RunEnd::Hung | RunEnd::TurnLimit | RunEnd::Stopped => false,
+    }
 }
 
 /// The investigators of `config` that their provider refused at `now`: they review nothing until their return.

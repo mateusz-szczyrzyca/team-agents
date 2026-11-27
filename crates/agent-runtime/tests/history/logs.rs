@@ -835,3 +835,28 @@ fn a_history_of_version_ten_keeps_its_log_and_takes_every_event_of_the_daemon_on
     expected.sort_by(|left, right| left.1.cmp(&right.1));
     assert_eq!(events, expected);
 }
+
+#[test]
+fn investigation_failure_events_survive_history_storage() {
+    let (_dir, path, mut db) = database();
+    for name in ["investigation_requeued", "investigation_failed"] {
+        let event = LogEvent::ALL.iter().find(|event| event.as_str() == name).copied();
+        assert_ne!(event, None, "{name}");
+        db.write_logs(&[LogRecord {
+            at: at(10, 0),
+            module: "agent::daemon::owner".to_owned(),
+            event: event.unwrap(),
+            team: None,
+            task: None,
+            message: name.to_owned(),
+            fields: BTreeMap::from([("id".to_owned(), json!(1)), ("reason".to_owned(), json!("unfinished"))]),
+            cut: Cut::default(),
+        }])
+        .unwrap();
+    }
+    let entries = Reader::open(&path).unwrap().daemon_logs().unwrap();
+    assert_eq!(
+        entries.iter().map(|entry| entry.event().as_str()).collect::<Vec<_>>(),
+        vec!["investigation_requeued", "investigation_failed"]
+    );
+}

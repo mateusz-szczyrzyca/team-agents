@@ -469,3 +469,46 @@ async fn delivery_bus_failure_keeps_owner_running_and_retries_the_saved_notice()
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
     assert!(messages.contains("PR #1 was closed without merging"), "{messages}");
 }
+
+#[tokio::test]
+async fn investigation_polling_keeps_the_round_available_during_a_bus_outage() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "sleep"),
+            investigator("inv-r2", "sleep"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            super::rig::ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.stop().await.unwrap();
+    let mut step = stepped(&rig).await;
+    let actual = step.owner.parts.bus.clone();
+    let missing = rig.home.root().join("unavailable-investigation-bus");
+    step.owner.parts.bus = AgentBus::new(
+        missing.to_str().unwrap().parse().unwrap(),
+        rig.home.absolute_root().clone(),
+    );
+
+    let result = step.owner.pull_requests(&team, &mut Look::default()).await;
+    assert!(
+        matches!(result, Ok(())),
+        "round polling must survive a bus outage: {result:?}"
+    );
+
+    step.owner.parts.bus = actual;
+    step.owner.pull_requests(&team, &mut Look::default()).await.unwrap();
+    drop(step.owner);
+    crate::daemon::history::close(step.writer).await;
+}
