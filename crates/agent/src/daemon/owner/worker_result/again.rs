@@ -106,7 +106,7 @@ impl Owner {
                 let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                     continue;
                 };
-                if self.is_in_active_crew(name) || paused.contains(name) {
+                if self.is_in_active_crew(name) || (paused.is_empty() && paused.contains(name)) {
                     continue;
                 }
                 let provider =

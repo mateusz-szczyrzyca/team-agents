@@ -1307,7 +1307,9 @@ impl Owner {
                 name: name.clone(),
                 provider,
                 capabilities,
-                busy: avail.busy || self.is_in_active_crew(name) || refused.contains(name),
+                busy: avail.busy
+                    || self.is_in_active_crew(name)
+                    || self.parts.state.refused_agents_at(now).contains(name),
                 runs: avail.runs,
                 unsettled: avail.unsettled,
             });
