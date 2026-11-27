@@ -287,6 +287,16 @@ mod account_pause_process {
             std::fs::write(path, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
         }
 
+        /// The tasks the pause of an account holds, as the state file records them.
+        fn held_tasks(&self) -> Vec<String> {
+            let state: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(self.home.join("state.json")).unwrap()).unwrap();
+            state["account_held_tasks"]
+                .as_array()
+                .map(|tasks| tasks.iter().map(|task| task.as_str().unwrap().to_owned()).collect())
+                .unwrap_or_default()
+        }
+
         /// The end of the pause of `account` that the state file records.
         fn pause_until(&self, account: &str) -> String {
             let state: serde_json::Value =
@@ -431,6 +441,21 @@ mod account_pause_process {
         world.status_where("the held tasks to run, their account has no pause", |_| {
             world.runs(&refused) == 2 && world.runs(&waiting) == 1
         });
+    }
+
+    #[test]
+    fn a_task_the_human_stops_is_no_longer_held_by_the_account() {
+        let mut world = World::new();
+        world.start();
+        let Paused { refused, waiting } = pause_the_account(&world);
+
+        let stopped = world.agent(&["stop", &waiting]);
+        assert!(stopped.status.success(), "{}", String::from_utf8_lossy(&stopped.stderr));
+
+        world.status_where("the task to be stopped", |status| line_of(status, &waiting).contains("stopped"));
+        let held = world.held_tasks();
+        assert!(!held.contains(&waiting), "{held:?}");
+        assert!(held.contains(&refused), "{held:?}");
     }
 
     #[test]
