@@ -565,3 +565,110 @@ esac
     assert_eq!(records.len(), 1);
     assert_eq!(records[0].started, at(2400));
 }
+
+/// Models a bus that saves a terminal transition even when its announcement fails.
+fn recoverable_failure_bus(attempt: &Attempt) {
+    std::fs::write(
+        &attempt.bus,
+        r#"#!/bin/sh
+set -eu
+root=$(dirname "$0")
+case "$1" in
+inv-list) if [ ! -f "$root/closed" ]; then printf '#1 running\n'; fi;;
+inv-get) cat "$root/request.json";;
+send)
+    printf '%s\n' "$@" >> "$root/calls"
+    if [ -f "$root/fail-send" ]; then exit 1; fi
+    printf '[#1 sent]\n';;
+inv-set)
+    printf '%s\n' "$@" >> "$root/calls"
+    touch "$root/closed"
+    if [ -f "$root/fail-terminal" ]; then exit 1; fi;;
+esac
+"#,
+    )
+    .unwrap();
+}
+
+#[tokio::test]
+async fn failure_notice_is_retried_after_restart_when_delivery_fails() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    std::fs::write(attempt.dir.path().join("fail-send"), "").unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+    assert!(matches!(result, Err(super::OwnerError::Bus { .. })));
+    drop(owner);
+    drop(sinks);
+    std::fs::remove_file(attempt.dir.path().join("fail-send")).unwrap();
+    std::fs::write(attempt.dir.path().join("calls"), "").unwrap();
+
+    let (mut restarted, _sinks) = daemon.bare_owner().await;
+    restarted.reconcile_investigations().await.unwrap();
+
+    let calls = attempt.calls();
+    assert!(calls.contains("send"), "{calls}");
+    assert!(
+        calls.contains("no other configured investigator can answer this request"),
+        "{calls}"
+    );
+    assert!(calls.contains("failed"), "{calls}");
+    assert!(!calls.contains("queued"), "{calls}");
+    assert_eq!(
+        daemon.state().find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Stopped
+    );
+}
+
+#[tokio::test]
+async fn a_failed_terminal_announcement_happens_after_cleanup_and_notice() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    std::fs::write(attempt.dir.path().join("fail-terminal"), "").unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, sinks) = daemon.bare_owner().await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    owner.cancels.insert(task(3), cancel.clone());
+    let located = owner.locate(&task(3)).unwrap();
+
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+
+    assert!(matches!(result, Err(super::OwnerError::Bus { .. })));
+    assert!(cancel.is_cancelled());
+    assert_eq!(
+        daemon.state().find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Stopped
+    );
+    let calls = attempt.calls();
+    assert!(calls.find("send").unwrap() < calls.find("inv-set").unwrap(), "{calls}");
+    assert!(attempt.dir.path().join("closed").exists());
+    drop(owner);
+    drop(sinks);
+    std::fs::write(attempt.dir.path().join("calls"), "").unwrap();
+    let (mut restarted, _sinks) = daemon.bare_owner().await;
+    restarted.reconcile_investigations().await.unwrap();
+    assert_eq!(attempt.calls(), "");
+}
+
+#[tokio::test]
+async fn failure_intent_must_be_durable_before_cleanup_or_notification() {
+    let attempt = Attempt::new();
+    recoverable_failure_bus(&attempt);
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let state_path = daemon.home.state_file();
+    std::fs::remove_file(&state_path).unwrap();
+    std::fs::create_dir(&state_path).unwrap();
+
+    let result = owner.investigation_ended(&task(3), &located, &RunEnd::Hung, None).await;
+
+    assert!(matches!(result, Err(super::OwnerError::Store(_))));
+    assert_eq!(attempt.calls(), "");
+    assert_eq!(
+        owner.parts.state.find_task(&task(3)).unwrap().member.status(),
+        agent_core::status::TaskStatus::Queued
+    );
+}
