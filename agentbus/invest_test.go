@@ -109,3 +109,7 @@ func TestInvAddItemWithReviewKindFails(t *testing.T) {
 func TestInvAddSplitIsStillRefused(t *testing.T) {
 	invAddFailsWith(t, CmdInvAddInvalidKind, "--kind", "split", "--item", "2.3")
 }
+
+func TestInvAddEmptyItemWithReviewKindFails(t *testing.T) {
+	invAddFailsWith(t, CmdInvAddInvalidItem, "--kind", "review", "--item", "")
+}
