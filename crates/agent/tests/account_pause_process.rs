@@ -452,7 +452,9 @@ mod account_pause_process {
         let stopped = world.agent(&["stop", &waiting]);
         assert!(stopped.status.success(), "{}", String::from_utf8_lossy(&stopped.stderr));
 
-        world.status_where("the task to be stopped", |status| line_of(status, &waiting).contains("stopped"));
+        world.status_where("the task to be stopped", |status| {
+            line_of(status, &waiting).contains("stopped")
+        });
         let held = world.held_tasks();
         assert!(!held.contains(&waiting), "{held:?}");
         assert!(held.contains(&refused), "{held:?}");
@@ -465,7 +467,11 @@ mod account_pause_process {
         let Paused { refused, waiting } = pause_the_account(&world);
 
         let unpaused = world.agent(&["unpause", &waiting]);
-        assert!(unpaused.status.success(), "{}", String::from_utf8_lossy(&unpaused.stderr));
+        assert!(
+            unpaused.status.success(),
+            "{}",
+            String::from_utf8_lossy(&unpaused.stderr)
+        );
 
         let held = world.held_tasks();
         assert!(!held.contains(&waiting), "{held:?}");
