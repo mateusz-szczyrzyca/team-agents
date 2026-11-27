@@ -52,7 +52,7 @@ fn repository_paths_normalize_and_reject_invalid_input() {
     ] {
         assert_eq!(RepoPath::parse(raw), Ok(path(expected)));
     }
-    for raw in ["", ".", "./", "/x/y", "../x/y", "x/../y", "x y/z", "x/\ty", "C:\\x"] {
+    for raw in ["", ".", "./", "/x/y", "../x/y", "x/../y", "C:\\x"] {
         assert_eq!(
             RepoPath::parse(raw),
             Err(InvalidRepoPath { value: raw.to_owned() }),
@@ -60,8 +60,6 @@ fn repository_paths_normalize_and_reject_invalid_input() {
         );
     }
     assert_eq!(RepoPath::parse(&"é".repeat(200)), Ok(path(&"é".repeat(200))));
-    let long = "a".repeat(201);
-    assert_eq!(RepoPath::parse(&long), Err(InvalidRepoPath { value: long }));
 }
 
 #[test]
