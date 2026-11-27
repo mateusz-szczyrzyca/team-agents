@@ -296,7 +296,14 @@ impl Owner {
                         MergeRefusalKind::Conflict => Refusal::Conflict,
                         MergeRefusalKind::Other => Refusal::Other,
                     };
-                    let decided = after_refusal(refusal, budget);
+                    let decided = after_refusal(
+                        refusal,
+                        budget,
+                        agent_core::decide::merge_refusal::InvestigatorPass {
+                            enabled: false,
+                            filed_for_head: false,
+                        },
+                    );
                     agent_runtime::history::log_decision(
                         "after_refusal",
                         &format!("pr={}, refusal={refusal:?}, budget={budget:?}", pr.number),
@@ -308,9 +315,11 @@ impl Owner {
                             self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));
                             Ok(Merge::Waits)
                         }
-                        after @ (AfterRefusal::LeadMergesBase | AfterRefusal::AskHuman) => Ok(Merge::Conflict {
+                        after @ (AfterRefusal::LeadMergesBase
+                        | AfterRefusal::AskHuman
+                        | AfterRefusal::AskInvestigator) => Ok(Merge::Conflict {
                             step: match after {
-                                AfterRefusal::AskHuman => ConflictStep::AskHuman,
+                                AfterRefusal::AskHuman | AfterRefusal::AskInvestigator => ConflictStep::AskHuman,
                                 AfterRefusal::LeadMergesBase | AfterRefusal::TellHuman => ConflictStep::MergeBase,
                             },
                             head: head.clone(),
