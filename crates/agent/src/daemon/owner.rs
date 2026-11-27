@@ -18,11 +18,11 @@ mod fixture;
 mod gate;
 mod history;
 mod idle;
-mod job_checkpoint;
 #[cfg(test)]
 mod investigation_failure_tests;
 mod investigations;
 mod item_branch;
+mod job_checkpoint;
 mod last_step;
 #[cfg(test)]
 mod launch_tests;

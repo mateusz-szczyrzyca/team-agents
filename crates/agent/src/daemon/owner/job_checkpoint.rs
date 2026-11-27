@@ -17,6 +17,7 @@ use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::state::{CommitId, PhaseKind, PrNumber, Timestamp};
 use agent_runtime::git::{CommitIdentity, Git, Revision};
+use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::{LastCheckpoint, Reader};
 use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::{CheckpointFacts, checkpoint_state_variables};
@@ -26,7 +27,6 @@ use super::Owner;
 use super::checkpoint::{LOOK_SECONDS, LastCheckpoint as Kept};
 use super::rounds::prompts::SectionError;
 use super::snapshots::validate_worktree_path;
-use super::start::Context;
 
 /// What the owner knows of a job that keeps checkpoints, from its start.
 #[derive(Debug, Clone)]
@@ -224,10 +224,9 @@ impl Owner {
         facts.findings_seen.clone_from(&findings);
         let work = match facts.job {
             CheckpointJob::WorkerRequest => JobWork::Request {
-                last_check: check.as_ref().map(|(passed, line)| CheckResult {
-                    passed: *passed,
-                    line,
-                }),
+                last_check: check
+                    .as_ref()
+                    .map(|(passed, line)| CheckResult { passed: *passed, line }),
                 commits: &commits,
                 changed: &work.changed,
             },
@@ -291,10 +290,13 @@ impl Owner {
             }
         }
         let head = match validate_worktree_path(&facts.worktree) {
-            Ok(worktree) => Git::new(worktree, CommitIdentity::new(LOOK_NAME.to_owned(), LOOK_EMAIL.to_owned(), None))
-                .rev_parse(&Revision::Head)
-                .await
-                .map_err(|error| error_chain(&error)),
+            Ok(worktree) => Git::new(
+                worktree,
+                CommitIdentity::new(LOOK_NAME.to_owned(), LOOK_EMAIL.to_owned(), None),
+            )
+            .rev_parse(&Revision::Head)
+            .await
+            .map_err(|error| error_chain(&error)),
             Err(error) => Err(error),
         };
         match head {
@@ -401,11 +403,12 @@ fn earlier_checkpoint(
 /// # Errors
 /// [`SectionError`] when the briefing cannot be rendered.
 pub(super) async fn job_briefing(
-    ctx: &Context<'_>,
+    texts: &HarnessPrompts,
+    history: PathBuf,
     rounds: Vec<RoundId>,
     taken_over: TakenOver<'_>,
 ) -> Result<Option<String>, SectionError> {
-    let path = ctx.home.history_file();
+    let path = history;
     if !path.exists() {
         return Ok(None);
     }
@@ -452,7 +455,7 @@ pub(super) async fn job_briefing(
         content: kept.content.as_ref(),
     })
     .map_err(SectionError::Variable)?;
-    let checkpoint = ctx.texts.render(HarnessPrompt::CheckpointState, &state)?;
+    let checkpoint = texts.render(HarnessPrompt::CheckpointState, &state)?;
     let (prompt, values) = match named {
         TakenOver::Request { .. } => (HarnessPrompt::BriefingWorker, Variables::new()),
         TakenOver::Review { pull_request, pass, .. } => (
@@ -464,7 +467,7 @@ pub(super) async fn job_briefing(
         TakenOver::Investigation { .. } => (HarnessPrompt::BriefingInvestigation, Variables::new()),
     };
     let values = values.with("checkpoint", checkpoint.trim_end())?;
-    Ok(Some(ctx.texts.render(prompt, &values)?.trim_end().to_owned()))
+    Ok(Some(texts.render(prompt, &values)?.trim_end().to_owned()))
 }
 
 /// [`TakenOver`] without borrows, to cross into a blocking task.
@@ -482,9 +485,7 @@ impl OwnedTakenOver {
     fn of(taken_over: &TakenOver<'_>) -> Self {
         match taken_over {
             TakenOver::Request { .. } => Self::Request,
-            TakenOver::Review {
-                pull_request, pass, ..
-            } => Self::Review(*pull_request, *pass),
+            TakenOver::Review { pull_request, pass, .. } => Self::Review(*pull_request, *pass),
             TakenOver::Investigation { meant, .. } => Self::Investigation((*meant).to_owned()),
         }
     }

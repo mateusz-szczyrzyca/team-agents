@@ -152,6 +152,15 @@ pub(super) struct Checkpoints {
     stalled: bool,
 }
 
+impl Checkpoints {
+    /// Notes the result of the check of the request `task` is working on, for its next checkpoint.
+    pub(super) fn note_check(&mut self, task: &TaskId, passed: bool, line: &str) {
+        if let Some(facts) = self.jobs.get_mut(task) {
+            facts.last_check = Some((passed, line.to_owned()));
+        }
+    }
+}
+
 /// The first seven characters of a commit's hash: how a checkpoint names a commit.
 fn short(hash: &str) -> String {
     hash.chars().take(SHORT_HASH).collect()

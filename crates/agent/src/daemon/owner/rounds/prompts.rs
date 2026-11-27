@@ -314,7 +314,7 @@ async fn with_briefing(
         task: found.member.task(),
         meant: &agent_core::history::investigation_meant(question),
     };
-    if let Some(briefing) = job_briefing(ctx, rounds, taken_over).await? {
+    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
         text.push_str("\n\n");
         text.push_str(&briefing);
     }

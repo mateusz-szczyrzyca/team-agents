@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 use agent_core::decide::investigator::Activity;
-use agent_core::ids::{AgentName, InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::history::{CheckpointCause, CheckpointJob, investigation_meant};
+use agent_core::ids::{AgentName, InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::state::{InvestigationRecord, ItemPhase, Member, Participant, PullRequest, RunEnd, Team, Timestamp};
