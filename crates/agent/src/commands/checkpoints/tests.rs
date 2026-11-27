@@ -220,9 +220,9 @@ fn json_prints_the_checkpoint_records_one_object_a_line() {
 
     assert_eq!(status, ExitCode::SUCCESS);
     let values: Vec<serde_json::Value> = out.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    let causes: Vec<&str> = values.iter().map(|value| value["cause"].as_str().unwrap()).collect();
+    let causes: Vec<&str> = values.iter().map(|value| value["record"]["cause"].as_str().unwrap()).collect();
     assert_eq!(causes, ["round_opened", "commit", "pull_ready"]);
-    assert!(values.iter().all(|value| value["event"] == "checkpoint"), "{values:?}");
+    assert!(values.iter().all(|value| value["record"]["event"] == "checkpoint"), "{values:?}");
 }
 
 // Rule: a round with no checkpoint says so and succeeds; one the history does not know exits as `agent log` does.
@@ -251,7 +251,7 @@ fn a_round_with_no_checkpoint_says_so_and_an_unknown_target_exits_three() {
         (status, out.as_str()),
         (ExitCode::SUCCESS, "No checkpoints for round-20261127-040100-q1w2.\n")
     );
-    for unknown in ["round-20261127-049999-zzzz", "task-20261127-049999-zzzz"] {
+    for unknown in ["round-20261127-045959-zzzz", "task-20261127-045959-zzzz"] {
         let (status, out, err) = run(dir.path(), &[unknown]);
         assert_eq!((status, out.as_str()), (ExitCode::from(3), ""), "{unknown}");
         assert!(err.contains("the history has no"), "{err}");
