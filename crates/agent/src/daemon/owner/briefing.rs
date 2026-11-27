@@ -683,7 +683,10 @@ impl Owner {
         for (task, trouble) in owed {
             self.leads_being_told.insert(task.clone());
             let briefing = match self.gather_facts(&task, trouble).await {
-                Ok(Some(gathered)) => match self.lead_briefing_text(&gathered.draft, &task).await {
+                Ok(Some(gathered)) => match self
+                    .lead_briefing_text(&gathered.draft, gathered.checkpoint.as_deref(), &task)
+                    .await
+                {
                     Ok(text) => Some(text),
                     Err(error) => {
                         tracing::warn!(event = LogEvent::HistoryRecordIncomplete.as_str(), task = %task,
@@ -723,13 +726,29 @@ impl Owner {
         }
     }
 
-    /// The briefing of `task`'s work for its lead: the facts `draft` holds and, when the history knows one, what the member's
-    /// last run said at its end, whole. A message that cannot be read is left out and logged: the lead still has the rest.
+    /// The briefing of `task`'s work for its lead: the facts `draft` holds, the last `checkpoint` of the member's round when
+    /// it has one and, when the history knows one, what the member's last run said at its end, whole. A message that
+    /// cannot be read is left out and logged: the lead still has the rest.
     ///
     /// # Errors
     /// [`ComposeError`] when a text cannot be filled.
-    async fn lead_briefing_text(&self, draft: &BriefingDraft, task: &TaskId) -> Result<String, ComposeError> {
+    async fn lead_briefing_text(
+        &self,
+        draft: &BriefingDraft,
+        checkpoint: Option<&str>,
+        task: &TaskId,
+    ) -> Result<String, ComposeError> {
         let mut text = draft.render_for_lead(&self.parts.texts, task)?;
+        if let Some(checkpoint) = checkpoint {
+            let values = Variables::new().with("checkpoint", checkpoint)?;
+            text.push_str("\n\n");
+            text.push_str(
+                &self
+                    .parts
+                    .texts
+                    .render(HarnessPrompt::LeadBriefingCheckpoint, &values)?,
+            );
+        }
         match self.last_final_message(task).await {
             Ok(Some(message)) => {
                 text.push_str("\n\n");
