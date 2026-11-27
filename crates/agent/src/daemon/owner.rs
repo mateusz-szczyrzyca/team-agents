@@ -3550,6 +3550,11 @@ impl Owner {
             source,
         })?;
         self.parts.state.sync_queued();
+        // A task that goes on to anything but a pause is not held by the pause of its account any more: the human
+        // stopped or resumed it, or its run goes on.
+        if status != TaskStatus::Paused {
+            self.parts.state.release_task_from_account(task);
+        }
         let span = tracing::error_span!("task", team = %team, rounds = %rounds, task = %task);
         {
             let _entered = span.enter();
