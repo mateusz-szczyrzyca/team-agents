@@ -1,0 +1,21 @@
+# THIS REQUEST WAS STARTED BEFORE YOU
+
+A worker started this request and its run ended before the request was finished. You work in the worktree it worked in: what it committed is in it. The request is the one given above.
+
+## Where the request stands
+
+## Checkpoint: commit at 2026-11-27T04:00:00Z, head 0123abc
+
+### What is to be done
+R1. Count the headings.
+K1. test -s docs/count.txt
+
+### What is done
+Commits: 1
+- a1b2c3d
+
+### What is left
+K1 has not passed yet.
+next: make the check pass and commit
+
+This is where the request stands. Go on from it: do what is left, do not do again what is done.

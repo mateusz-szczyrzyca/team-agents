@@ -1,0 +1,19 @@
+# THIS INVESTIGATION WAS TRIED BEFORE YOU
+
+Another investigator started this investigation and its run ended without an answer. What it left in its worktree is yours; its unfinished words are not given to you.
+
+## Where the investigation stands
+
+## Checkpoint: run_ended at 2026-11-27T04:00:00Z, head 0123abc
+
+### What is to be done
+R1. Answer the question: Why?
+
+### What is done
+Commits: 0
+Changed files: notes.md
+
+### What is left
+next: answer the question
+
+This is where the investigation stands. Go on from it: do what is left, do not do again what is done.

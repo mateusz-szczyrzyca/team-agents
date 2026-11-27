@@ -1,0 +1,3 @@
+## Your findings file
+
+Write each finding to `/tmp/review-pr7-pass2-findings.md` as soon as you have it: append it there in the format of the report's FINDINGS, one numbered finding after the other. It is a working note. If you are cut off or replaced, the reviewer after you starts from the findings in it and does not do again what you did. Your final message is still the whole report.

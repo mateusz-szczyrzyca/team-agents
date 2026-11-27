@@ -73,6 +73,17 @@ pub enum HarnessPrompt {
     /// The section a lead's briefing of a member's work holds when the member's round has a checkpoint: where the work
     /// stands, with what is done and what is left per requirement.
     LeadBriefingCheckpoint,
+    /// What a worker that takes over a request is told besides the request: where the worker before it left the work, from
+    /// its last checkpoint.
+    BriefingWorker,
+    /// What a reviewer that takes over a review is told: the findings the reviewer before it had written, from its last
+    /// checkpoint.
+    BriefingReview,
+    /// What an investigator that tries an investigation again is told: what the first one left in its worktree, from its
+    /// last checkpoint.
+    BriefingInvestigation,
+    /// The paragraph that names a reviewer's findings file, appended to the request of a review.
+    ReviewFindingsFile,
     /// The paragraph a briefing opens with when its session outgrew its agent's bound: why the session is new, with the
     /// context in tokens that ended the old one.
     BriefingContext,
@@ -212,6 +223,10 @@ impl HarnessPrompt {
         Self::LeadBriefing,
         Self::LeadBriefingLastMessage,
         Self::LeadBriefingCheckpoint,
+        Self::BriefingWorker,
+        Self::BriefingReview,
+        Self::BriefingInvestigation,
+        Self::ReviewFindingsFile,
         Self::BriefingContext,
         Self::BriefingContextUnknown,
         Self::BriefingLastMessage,
@@ -360,6 +375,20 @@ impl HarnessPrompt {
                 Audience::Model,
                 &["checkpoint"],
             ),
+            Self::BriefingWorker => PromptSpec::new("harness/run/briefing-worker.md", Audience::Model, &["checkpoint"]),
+            Self::BriefingReview => PromptSpec::new(
+                "harness/run/briefing-review.md",
+                Audience::Model,
+                &["pull_request", "pass", "checkpoint"],
+            ),
+            Self::BriefingInvestigation => PromptSpec::new(
+                "harness/run/briefing-investigation.md",
+                Audience::Model,
+                &["checkpoint"],
+            ),
+            Self::ReviewFindingsFile => {
+                PromptSpec::new("harness/run/review-findings-file.md", Audience::Model, &["file"])
+            }
             Self::BriefingMessagesLeftOut => {
                 PromptSpec::new("harness/run/briefing-messages-left-out.md", Audience::Model, &[])
             }

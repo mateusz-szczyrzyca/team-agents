@@ -102,5 +102,7 @@ mod worker_wait;
 
 mod checkpoints;
 #[cfg(test)]
+mod job_checkpoint;
+#[cfg(test)]
 mod last_checkpoint;
 mod task_agent_changed;

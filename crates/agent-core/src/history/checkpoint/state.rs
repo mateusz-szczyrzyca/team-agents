@@ -323,7 +323,7 @@ impl<'a> Told<'a> {
 }
 
 /// `lines` with all but the first [`LIST_LIMIT`] of them replaced by the number left out.
-fn cut(mut lines: Vec<String>) -> Vec<String> {
+pub(super) fn cut(mut lines: Vec<String>) -> Vec<String> {
     if let Some(left_out) = lines.len().checked_sub(LIST_LIMIT).filter(|left_out| *left_out > 0) {
         lines.truncate(LIST_LIMIT);
         lines.push(format!("{left_out} more left out"));
@@ -332,7 +332,7 @@ fn cut(mut lines: Vec<String>) -> Vec<String> {
 }
 
 /// What a finding says in one line: its words, whatever its line breaks.
-fn one_line(text: &str) -> String {
+pub(super) fn one_line(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 

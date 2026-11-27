@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use agent_core::history::{CheckpointCause, HistoryEvent, Record};
+use agent_core::history::{CheckpointCause, CheckpointJob, HistoryEvent, Record};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{Client, Command, ControlRequest, Reply, Target};
 use agent_core::state::MergeMode;
@@ -49,7 +49,7 @@ fn has_checkpoint(rig: &Rig, team: &TeamId, wanted: CheckpointCause) -> bool {
         .unwrap()
         .into_iter()
         .any(|stored| match stored.record {
-            Record::Event(event) => matches!(event.event, HistoryEvent::Checkpoint { cause, .. } if cause == wanted),
+            Record::Event(event) => matches!(event.event, HistoryEvent::Checkpoint { job: CheckpointJob::Item, cause, .. } if cause == wanted),
             _ => false,
         })
 }

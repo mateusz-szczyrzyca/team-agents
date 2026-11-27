@@ -22,6 +22,7 @@ mod idle;
 mod investigation_failure_tests;
 mod investigations;
 mod item_branch;
+mod job_checkpoint;
 mod last_step;
 #[cfg(test)]
 mod launch_tests;
@@ -1412,6 +1413,9 @@ impl Owner {
         self.record_run_start(task, &plan, &rounds, reason, now);
         // The checkpoint of the opening is taken from the worktree as it is before the engine starts the agent in it.
         self.checkpoint_round_opened(task).await;
+        if located.role == Role::Reviewer {
+            self.review_job_started(task, &located.team).await;
+        }
         // What the history queued before the run started (the start of a fix pass, an answer to a finding) is taken and
         // durable before the agent can change the worktree.
         self.flush_checkpoints().await;
@@ -2138,16 +2142,23 @@ impl Owner {
         {
             self.read_delivery_claim(task, &located.team, message).await?;
         }
-        if located.role == Role::Reviewer
-            && held == plan::PlanHeld::No
-            && matches!(
-                end,
-                RunEnd::Reported {
-                    outcome: RunOutcome::Done
-                }
-            )
-        {
-            self.review_ended(task, located, message).await?;
+        if located.role == Role::Reviewer {
+            let submitted = held == plan::PlanHeld::No
+                && matches!(
+                    end,
+                    RunEnd::Reported {
+                        outcome: RunOutcome::Done
+                    }
+                );
+            if submitted {
+                self.review_ended(task, located, message).await?;
+            }
+            let cause = if submitted {
+                CheckpointCause::ReviewSubmitted
+            } else {
+                CheckpointCause::RunEnded
+            };
+            self.job_ended(task, cause).await;
         }
         if located.role == Role::Investigator {
             return self.investigation_ended(task, located, end, message).await;
@@ -2228,6 +2239,7 @@ impl Owner {
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
             if let Some(team) = self.automatic_conflict_team(&inv) {
+                self.job_ended(task, CheckpointCause::InvestigationAnswered).await;
                 self.look_at(&team);
                 return Ok(());
             }
@@ -2247,6 +2259,7 @@ impl Owner {
                 .send(&from, &to, &Outgoing::Chat { text })
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
+            self.job_ended(task, CheckpointCause::InvestigationAnswered).await;
             tracing::info!(
                 event = LogEvent::InvestigationAnswered.as_str(),
                 team = %located.team,
@@ -2255,10 +2268,12 @@ impl Owner {
                 chars = answer.chars().count(),
             );
         } else if let Some(team) = self.automatic_conflict_team(&inv) {
+            self.job_ended(task, CheckpointCause::RunEnded).await;
             self.fail_investigation(&inv, "the conflict investigator's run failed", Some(located))
                 .await?;
             self.look_at(&team);
         } else {
+            self.job_ended(task, CheckpointCause::RunEnded).await;
             self.requeue_investigation(&inv, located, end, message).await?;
         }
         self.look_at(&located.team);
