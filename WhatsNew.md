@@ -9,6 +9,12 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.148.0 · agent-core 0.147.0 · agent-runtime 0.136.0 — 27.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task.
+- [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
+
 ## agent 0.147.0 · agent-core 0.146.0 · agent-runtime 0.135.0 — 27.11.2026 — PR pending
 
 ### New features
