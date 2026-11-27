@@ -163,19 +163,59 @@ impl Activity {
         }
     }
 
-    /// The line of the agents their provider refused at the time of the status, read from the state of the daemon; `None`
-    /// when no state is written yet or no agent is refused.
+    /// The state of the daemon and the time of the status, read once; `None` when no state is written yet.
     ///
     /// # Errors
-    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
-    pub(crate) async fn refused_line(&self) -> Result<Option<String>, StatusError> {
+    /// [`StatusError::Refusals`] when the state file exists but cannot be read, [`StatusError::Clock`] when the time
+    /// cannot be read.
+    async fn state_now(&self) -> Result<Option<(agent_core::state::State, Timestamp)>, StatusError> {
         let state = match load_debug_state(&self.home).await {
             Ok(state) => state,
             Err(DebugRuntimeError::Missing { .. }) => return Ok(None),
             Err(source) => return Err(StatusError::Refusals(source)),
         };
         let now = Timestamp::now(&self.clock).map_err(StatusError::Clock)?;
-        Ok(refusals::refused_line(&state.refusals_at(now), self.zone))
+        Ok(Some((state, now)))
+    }
+
+    /// The line of the agents their provider refused at the time of the status, read from the state of the daemon; `None`
+    /// when no state is written yet or no agent is refused.
+    ///
+    /// # Errors
+    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the status reads both lines with `provider_lines`; the tests of the line use this one"
+        )
+    )]
+    pub(crate) async fn refused_line(&self) -> Result<Option<String>, StatusError> {
+        Ok(self
+            .state_now()
+            .await?
+            .and_then(|(state, now)| refusals::refused_line(&state.refusals_at(now), self.zone)))
+    }
+
+    /// The lines of the accounts that are paused at the time of the status and the line of the agents their provider
+    /// refused, read from the state of the daemon once; `None` when nothing is paused or refused.
+    ///
+    /// # Errors
+    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
+    pub(crate) async fn provider_lines(&self) -> Result<Option<String>, StatusError> {
+        let Some((state, now)) = self.state_now().await? else {
+            return Ok(None);
+        };
+        let accounts = accounts::account_lines(state.account_pauses(), now, self.zone);
+        let agents = refusals::refused_line(&state.refusals_at(now), self.zone);
+        Ok(match (accounts, agents) {
+            (None, None) => None,
+            (accounts, agents) => Some(format!(
+                "{}{}",
+                accounts.unwrap_or_default(),
+                agents.unwrap_or_default()
+            )),
+        })
     }
 
     /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
@@ -406,7 +446,7 @@ async fn listing_text(
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.refused_line().await?;
+    let refused = activity.provider_lines().await?;
     let text = render_with_requests(
         &listing.teams,
         View::Full,
@@ -443,7 +483,7 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.refused_line().await?;
+    let refused = activity.provider_lines().await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -1342,6 +1382,7 @@ const NO_TEAMS: &str = "no teams\n";
 /// What `agent status --running` writes when no round goes on.
 const NO_OPEN_ROUNDS: &str = "no team has an open round\n";
 
+mod accounts;
 mod investigators;
 mod members;
 pub(crate) mod pool;

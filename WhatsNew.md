@@ -9,6 +9,13 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
+
+### New features
+- [agent] [agent-core] When a provider refuses a run of an agent that has an account (quota or rate limit), every task of every agent of that account is paused at once until the same reset, without a run of its own, and you get one notification (`Account comp-claude is paused until ...`, naming its agents) instead of one per task. At the reset all of them are queued again. Agents of other accounts, also of another account of the same owner, run on; agents without an account are judged one by one, as before.
+- [agent] `agent status` shows a line per paused account: `account comp-claude paused until 15:30 (quota)`.
+- [agent-core] `state.json` keeps which tasks the pause of an account holds (`account_held_tasks`, written only when there are any), so that a restart of the daemon keeps the pause and its reset and never wakes a task you paused yourself.
+
 ## agent-core 0.147.0 — 27.11.2026 — PR pending
 
 ### Enhancements

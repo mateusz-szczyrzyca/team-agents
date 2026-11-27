@@ -5,6 +5,7 @@
 //! applies the end of each run to its task, wakes paused tasks when their time comes and publishes what happens as
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
+mod accounts;
 mod answers;
 mod bound;
 mod briefing;
@@ -108,7 +109,7 @@ use self::teams::{BUS_SENDER, Outbound, Served};
 use super::control::{Halt, Steer, after_halt, halted_status};
 use super::gate::GateQueue;
 use super::history::health_to_tell;
-use super::notice::{Notice, NoticeContext, TaskWords, item_line};
+use super::notice::{AccountPausedNotice, Notice, NoticeContext, TaskWords, item_line};
 use super::notifier::Delivery;
 use super::questions;
 use super::questions::watch::{Report, Saves, Watcher};
@@ -253,6 +254,15 @@ pub(crate) enum OwnerError {
     /// The renewal of a task that the ladder starts in a new session cannot be recorded.
     #[error("the ladder's new session cannot be recorded")]
     Renewal(#[from] agent_core::state::RenewTaskError),
+    /// The end of the pause of an account cannot be computed.
+    #[error("the pause of an account cannot be computed")]
+    AccountPause(#[from] agent_core::decide::outcome::ClassifyError),
+    /// The pause of an account that was found paused is not in the state.
+    #[error("the pause of account {account} is not in the state")]
+    LostAccountPause {
+        /// The account whose pause is missing.
+        account: agent_core::config::AccountName,
+    },
     /// A task that must be in the state is not.
     #[error("task {task} is not in the state")]
     LostTask {
@@ -947,6 +957,7 @@ impl Owner {
         for (at, task) in recovery.wakes {
             self.wakes.insert(task, at);
         }
+        self.wake_held_tasks(now);
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
@@ -1046,6 +1057,8 @@ impl Owner {
         let refused = self.parts.state.refused_agents_at(now);
         let queued: Vec<Queued> = waiting
             .into_iter()
+            // No run of an account starts while its pause lasts; the tasks wait in the queue, not failed.
+            .filter(|item| !self.account_is_paused(item.agent.as_str(), now))
             .filter(|item| {
                 !(refused.contains(&item.agent)
                     && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
@@ -2419,14 +2432,22 @@ impl Owner {
                     // The refusal was handled by a change of agent or a wait for a free one.
                     (handled.status, Some(handled.notice))
                 } else {
-                    self.wakes.insert(task.clone(), pause.until);
-                    let notice = Notice::Paused {
-                        until: pause.until,
-                        reason: pause.reason,
-                        kind: pause.kind,
-                        evidence: pause.evidence,
-                    };
-                    (TaskStatus::Paused, Some(notice))
+                    match self.pause_account(task, located, &end, now).await? {
+                        accounts::AccountHandled::Paused { until, notice } => {
+                            self.wakes.insert(task.clone(), until);
+                            (TaskStatus::Paused, notice)
+                        }
+                        accounts::AccountHandled::NotAnAccount => {
+                            self.wakes.insert(task.clone(), pause.until);
+                            let notice = Notice::Paused {
+                                until: pause.until,
+                                reason: pause.reason,
+                                kind: pause.kind,
+                                evidence: pause.evidence,
+                            };
+                            (TaskStatus::Paused, Some(notice))
+                        }
+                    }
                 }
             }
             Settled::Hung => self.hung(task, located.role, progress)?,
@@ -3081,6 +3102,7 @@ impl Owner {
     /// Queues the paused tasks whose time has come.
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
+        self.resume_accounts(now);
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {
             let Some(found) = self.parts.state.find_task(&task) else {
@@ -3089,6 +3111,7 @@ impl Owner {
             };
             if found.member.status() != TaskStatus::Paused {
                 self.wakes.remove(&task);
+                self.parts.state.release_task_from_account(&task);
                 continue;
             }
             let located = self.locate(&task)?;
@@ -3112,6 +3135,7 @@ impl Owner {
                 continue;
             }
             self.wakes.remove(&task);
+            self.parts.state.release_task_from_account(&task);
             let mut events = Vec::new();
             self.move_to(&task, &located.team, TaskStatus::Queued, &mut events)?;
             self.commit(&task, &located, now, events, notice).await?;
@@ -3526,6 +3550,11 @@ impl Owner {
             source,
         })?;
         self.parts.state.sync_queued();
+        // A task that goes on to anything but a pause is not held by the pause of its account any more: the human
+        // stopped or resumed it, or its run goes on.
+        if status != TaskStatus::Paused {
+            self.parts.state.release_task_from_account(task);
+        }
         let span = tracing::error_span!("task", team = %team, rounds = %rounds, task = %task);
         {
             let _entered = span.enter();
