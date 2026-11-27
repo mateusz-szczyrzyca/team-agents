@@ -7,7 +7,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use agent_core::config::Language;
-use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record, SequencedRecord};
+use agent_core::history::{CheckpointCause, CheckpointContent, CheckpointJob, HistoryEvent, Record, SequencedRecord};
 use agent_core::ids::{InvalidId, RoundId, TaskId};
 use agent_core::prompt::{HarnessPrompt, VariablesError};
 use agent_core::state::{CommitId, PrNumber, Timestamp};
@@ -174,6 +174,8 @@ impl CheckpointsError {
 struct Row {
     /// When it was taken.
     at: Timestamp,
+    /// What kind of work the checkpoint keeps.
+    job: CheckpointJob,
     /// The step it follows.
     cause: CheckpointCause,
     /// The pull request of the round then, when there was one.
@@ -199,6 +201,7 @@ impl Row {
         let HistoryEvent::Checkpoint {
             round,
             task,
+            job,
             cause,
             pull_request,
             head,
@@ -217,6 +220,7 @@ impl Row {
         };
         wanted.then(|| Self {
             at: event.at,
+            job: *job,
             cause: *cause,
             pull_request: *pull_request,
             draft: *draft,
@@ -240,8 +244,15 @@ impl Row {
             ),
             None => ("n/a".to_owned(), "n/a".to_owned()),
         };
+        // The line of an item's checkpoint is the one it always was: only a job names itself.
+        let job = match self.job {
+            CheckpointJob::Item => String::new(),
+            CheckpointJob::WorkerRequest | CheckpointJob::Review | CheckpointJob::Investigation => {
+                format!("  job {}", self.job)
+            }
+        };
         format!(
-            "{}  {}  PR {pull}  head {}  pass {}  done {done}  left {left}  snapshot {}",
+            "{}  {}  PR {pull}  head {}  pass {}  done {done}  left {left}  snapshot {}{job}",
             self.at,
             self.cause,
             self.head.as_ref().map_or_else(
