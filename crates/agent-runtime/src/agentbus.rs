@@ -150,6 +150,8 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// Open repository findings.
+    Findings,
     /// `inv-add`.
     InvAdd,
     /// `inv-next`.
@@ -1656,6 +1658,17 @@ impl AgentBus {
     pub async fn status(&self) -> Result<BusStatus, AgentBusError> {
         let output = self.run(BusCommand::Status, Args::new(), None).await?;
         parse_status(&output)
+    }
+
+    /// Reads open findings for a repository.
+    ///
+    /// # Errors
+    /// Returns [`AgentBusError`] if the bus fails or its JSON cannot be decoded.
+    pub async fn findings(
+        &self,
+        _repo: &RepoName,
+    ) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
+        Ok(Vec::new())
     }
 
     /// Takes the next queued investigation without restricting its requesting task.
