@@ -37,9 +37,7 @@ fn swap_request_round_trips() {
 #[test]
 fn every_swap_refusal_round_trips() {
     let refusals = [
-        SwapRefusal::UnknownAgent {
-            agent: agent("glm-9"),
-        },
+        SwapRefusal::UnknownAgent { agent: agent("glm-9") },
         SwapRefusal::SameHolder {
             task: task(),
             agent: agent("claude-1"),
@@ -53,9 +51,7 @@ fn every_swap_refusal_round_trips() {
             agent: agent("claude-2"),
             task: task(),
         },
-        SwapRefusal::Worker {
-            agent: agent("glm-1"),
-        },
+        SwapRefusal::Worker { agent: agent("glm-1") },
         SwapRefusal::Role {
             task: task(),
             role: Role::Reviewer,
@@ -65,10 +61,7 @@ fn every_swap_refusal_round_trips() {
 
     for refusal in &refusals {
         let json = serde_json::to_string(refusal).expect("refusal serializes to json");
-        assert!(
-            json.contains("\"refusal\":"),
-            "expected refusal tag in {json}"
-        );
+        assert!(json.contains("\"refusal\":"), "expected refusal tag in {json}");
         let back: SwapRefusal = serde_json::from_str(&json).expect("refusal deserializes from json");
         assert_eq!(refusal, &back);
     }
