@@ -303,9 +303,6 @@ impl Owner {
         log_initial_lifecycle(&formed);
         self.record_team_start(&request, &id);
         self.publish_team_started(&id, &tasks, started)?;
-        // Finish optional prompt queries before acknowledging an immediately available launch.
-        // The normal queue still enforces disk, agent and process limits.
-        self.start_queued().await?;
         Ok(Ok(Reply::Started {
             team: id,
             tasks,
