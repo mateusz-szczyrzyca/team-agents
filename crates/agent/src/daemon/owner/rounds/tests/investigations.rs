@@ -878,3 +878,56 @@ async fn a_split_request_records_a_task_allocation() {
         .collect();
     assert_eq!(requests, vec![&ActivityRequest::TaskAllocation]);
 }
+
+#[tokio::test]
+async fn a_split_completion_reports_the_task_allocation() {
+    use agent_core::state::{ActivityEnd, ActivityOutcome, ActivityRequest};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-split,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "inv-done:Complete split proposal"),
+            investigator("inv-r2", "inv-done:Complete split proposal"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.wait_for("coordinator receives completed allocation", || rig.runs(&tasks[0]) >= 2)
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let investigator = team
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(Role::Investigator))
+        .unwrap();
+    assert_eq!(investigator.status(), TaskStatus::Done);
+    let activity = team
+        .activities()
+        .iter()
+        .find(|a| a.task() == investigator.task())
+        .unwrap();
+    assert_eq!(activity.request(), &ActivityRequest::TaskAllocation);
+    assert!(
+        matches!(
+            activity.outcome(),
+            ActivityOutcome::Finished {
+                end: ActivityEnd::Reported,
+                ..
+            }
+        ),
+        "{:?}",
+        activity.outcome()
+    );
+}
