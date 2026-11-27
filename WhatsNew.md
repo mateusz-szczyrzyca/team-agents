@@ -9,6 +9,15 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.138.0 · agent-core 0.135.0 · agent-runtime 0.122.0 — 27.11.2026 — PR #329
+
+### New features
+- [agent] `agent checkpoints <round|task>` lists the checkpoints of a round or a task, oldest first, one line each; `--show [N]` prints one checkpoint in full (the last without N) and `--json` prints them as JSON lines.
+- [agent] [agent-core] [agent-runtime] Every checkpoint now says what is meant (the task, the item and its numbered requirements), what is done per requirement (its state, its steps and the commits with their `Step:` trailer, the findings resolved, the review passes passed) and what is left (the requirements not met, the open findings and what to do next).
+
+### Enhancements
+- [agent-core] [agent-runtime] A checkpoint of a task with a plan that has no `For:` lines lists its steps and its commits under "not tied to a requirement".
+
 ## agent 0.137.0 · agent-core 0.134.0 · agent-runtime 0.121.0 — 27.11.2026 — PR #328
 
 ### New features
