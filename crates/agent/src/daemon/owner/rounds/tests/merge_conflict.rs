@@ -1245,3 +1245,45 @@ pub(super) async fn record_merge_conflict_investigated(
     assert_eq!(row.run(), None);
     observed.insert(agent_core::log::LogEvent::MergeConflictInvestigated);
 }
+
+#[tokio::test]
+async fn a_failed_conflict_request_allows_merge_after_the_human_answers() {
+    use agent_core::protocol::{AnswerInput, AnswerList, AnswerRequest, Client, Command, Reply};
+    use agent_core::questions::Verdict;
+    use agent_core::status::TaskStatus;
+    use std::num::NonZeroU32;
+
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:inv-fail",
+        "work,merge-base,merge-base,merge-base,ask-here,work,work,work",
+        true,
+    )
+    .await;
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.github.answer_merges(MergeAnswer::Allow);
+    let answers = AnswerList::try_from(vec![AnswerInput {
+        question: NonZeroU32::MIN,
+        verdict: Verdict::from_text("ok").unwrap().unwrap(),
+    }])
+    .unwrap();
+    let reply = crate::client::Connection::connect(&rig.home.socket_file())
+        .await
+        .unwrap()
+        .request(
+            Client::Cli,
+            Command::Answer(AnswerRequest {
+                task: task.clone(),
+                number: NonZeroU32::MIN,
+                answers,
+            }),
+        )
+        .await
+        .unwrap();
+    assert!(matches!(reply, Reply::Applied { .. }), "{reply:?}");
+    rig.item_where("1.1", "done after the human answered", |phase| {
+        matches!(phase, ItemPhase::Done { .. })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
