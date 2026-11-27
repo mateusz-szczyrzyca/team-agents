@@ -611,6 +611,7 @@ func cmdInvAdd(args []string) {
 	dir := fs.String("dir", defaultDir(), "state directory")
 	queueMax := fs.Int("queue-max", 3, "queue limit")
 	kind := fs.String("kind", string(KindReview), "request kind")
+	item := fs.String("item", "", "task-list item for a conflict request")
 	fromAgent := fs.String("from-agent", "", "requesting agent")
 	fromTask := fs.String("from-task", "", "requesting task")
 	repo := fs.String("repo", "", "repository")
@@ -624,8 +625,18 @@ func cmdInvAdd(args []string) {
 	invSlots = *slots
 	k, verr := parseEnum[InvestigationKind](*kind, "investigation kind")
 	exitOn(fromValue(CmdInvAddInvalidKind, verr).asError())
-	if k == KindSplit || k == KindConflict {
+	if k == KindSplit {
 		exitOn(fromValue(CmdInvAddInvalidKind, valueErr("inv-add does not support kind %q; use request_investigation with an item", k)).asError())
+	}
+	if k == KindConflict {
+		if *item == "" {
+			exitOn(fromValue(CmdInvAddMissingItem, valueErr("conflict requests require --item")).asError())
+		}
+		if !validInvestigationItem(*item) {
+			exitOn(fromValue(CmdInvAddInvalidItem, valueErr("invalid conflict item %q", *item)).asError())
+		}
+	} else if *item != "" {
+		exitOn(fromValue(CmdInvAddInvalidItem, valueErr("--item is only supported for conflict requests")).asError())
 	}
 	b := &Bus{dir: *dir}
 	var out cliWriter
@@ -635,7 +646,7 @@ func cmdInvAdd(args []string) {
 		st.NextInvID++
 		inv := &Investigation{
 			ID: st.NextInvID, FromAgent: *fromAgent, FromTask: *fromTask, Repo: *repo, Branch: *branch,
-			Question: *question, Created: Now(), Kind: k, PRURL: *prURL, PRNumber: *prNum, Status: InvQueued,
+			Question: *question, Created: Now(), Kind: k, Item: *item, PRURL: *prURL, PRNumber: *prNum, Status: InvQueued,
 			File: filepath.Join(*tasksDir, *fromTask, "investigations", fmt.Sprintf("inv-%d.md", st.NextInvID)),
 		}
 		if queued >= capacity(st, *queueMax) {
