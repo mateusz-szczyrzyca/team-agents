@@ -145,7 +145,7 @@ fn provider_cooling_down(
                 .chain(team.reviewers())
         })
         .filter(|member| investigator_of(member) == Some(name))
-        .flat_map(|member| member.runs())
+        .flat_map(crate::state::Member::runs)
         .max_by_key(|run| run.started_at());
     let Some(run) = newest else {
         return false;
