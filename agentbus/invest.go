@@ -258,6 +258,11 @@ const (
 // is full the request is either parked in the waiting room (wait=true) or rejected, and the agent must
 // record a decision. A rejected request without a decision is reused on retry.
 func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
+	return s.requestInvestigationKind(question, context, wait, "", "")
+}
+
+// requestInvestigationKind parses optional MCP arguments while preserving legacy question calls.
+func (s *Server) requestInvestigationKind(question, context string, wait bool, kind, item string) (string, *RequestInvestigationError) {
 	if s.investigations == investigationsOff {
 		return "", opErr(RequestInvestigationNotAllowed, "%s", investigationNotAllowedMessage)
 	}
@@ -268,8 +273,24 @@ func (s *Server) requestInvestigation(question, context string, wait bool) (stri
 	if question == "" {
 		return "", opErr(RequestInvestigationMissingQuestion, "%s", missing("question"))
 	}
+	if kind == "question" {
+		kind = ""
+	}
+	k, verr := parseEnum[InvestigationKind](kind, "investigation kind")
+	if verr != nil {
+		return "", fromValue(RequestInvestigationInvalidKind, verr)
+	}
+	item = strings.TrimSpace(item)
 	var msg string
 	err := transact(s.bus, RequestInvestigationStorage, func(st *State) *RequestInvestigationError {
+		if k == KindSplit || k == KindConflict {
+			if _, check := s.requireLead(st); check != leadOK {
+				return opErr(RequestInvestigationNotLead, "only the team's lead can request a split or conflict investigation")
+			}
+			if item == "" {
+				return opErr(RequestInvestigationMissingItem, "%s", missing("item"))
+			}
+		}
 		s.touch(st)
 		s.bus.promote(st, s.queueMax)
 
@@ -305,6 +326,7 @@ func (s *Server) requestInvestigation(question, context string, wait bool) (stri
 			inv.record(recordRetried(Now(), wait))
 		}
 		inv.Question, inv.Context = question, strings.TrimSpace(context)
+		inv.Kind, inv.Item = k, item
 		inv.record(recordQuestion(inv.Question, inv.Context))
 
 		switch {
@@ -397,6 +419,8 @@ func invToolDefs(role Role) []map[string]any {
 				"the result arrives automatically. If the queue is full: solve it yourself (record_decision with a justification) or retry with wait_if_full=true.",
 			"inputSchema": map[string]any{"type": "object", "required": []string{"question"}, "properties": map[string]any{
 				"question":     str("The specific question / problem to investigate"),
+				"kind":         map[string]any{"type": "string", "enum": []string{"question", "split", "conflict"}, "default": "question", "description": "Split and conflict requests are for the team lead only"},
+				"item":         str("Task-list item; required for split and conflict requests"),
 				"context":      str("What you already know and checked, hypotheses, relevant files, commands, logs"),
 				"wait_if_full": map[string]any{"type": "boolean", "description": "true = wait in the waiting room when the queue is full"},
 			}},
