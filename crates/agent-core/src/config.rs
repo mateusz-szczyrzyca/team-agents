@@ -5,6 +5,11 @@
 //! refused (`deny_unknown_fields`), every value is parsed into its type (the newtypes of this module), and the lists of agents are
 //! checked against each other. The type does no I/O; whoever reads the file passes its text in.
 
+mod accounts;
+#[cfg(test)]
+#[path = "config/accounts/tests.rs"]
+mod accounts_tests;
+pub use accounts::{Account, AccountError, AccountName, AccountSecretsError, EnvValue, OwnerName};
 mod investigations;
 pub use investigations::Investigations;
 mod idle;
@@ -120,6 +125,9 @@ const DEFAULT_GATE_TIMEOUT_MINUTES: NonZeroU32 = NonZeroU32::new(30).unwrap();
 /// Why an `agents.toml` text is not a valid [`Config`].
 #[derive(Debug, thiserror::Error)]
 pub enum ConfigError {
+    /// The accounts of `[accounts.NAME]` or an agent's `account` are refused.
+    #[error(transparent)]
+    Account(#[from] AccountError),
     /// A findings configuration number is outside its bounds.
     #[error(transparent)]
     Findings(#[from] InvalidFindings),
@@ -276,6 +284,9 @@ pub struct AgentConfig {
     /// The capabilities the agent declares (e.g. for worker pool matching); empty when none are declared.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The `[accounts.NAME]` the agent runs with; without one the agent runs with the environment of every run.
+    #[serde(default)]
+    pub account: Option<AccountName>,
 }
 
 /// One investigator of `[investigators.NAME]`.
@@ -304,6 +315,9 @@ pub struct InvestigatorConfig {
     /// The capabilities the agent declares (e.g. for worker pool matching); empty when none are declared.
     #[serde(default)]
     pub capabilities: Vec<String>,
+    /// The `[accounts.NAME]` the agent runs with; without one the agent runs with the environment of every run.
+    #[serde(default)]
+    pub account: Option<AccountName>,
 }
 
 /// One repository of `[repos.NAME]`: what the harness needs to know to work on it.
@@ -994,6 +1008,8 @@ pub struct Config {
     workers: Vec<AgentName>,
     /// The investigators, by name.
     investigators: BTreeMap<InvestigatorName, InvestigatorConfig>,
+    /// The accounts, by name.
+    accounts: BTreeMap<AccountName, Account>,
     /// The programs.
     binaries: Binaries,
     /// Cargo cache policy for managed processes.
@@ -1113,6 +1129,9 @@ struct RawConfig {
     /// The `[investigators.NAME]` tables.
     #[serde(default)]
     investigators: BTreeMap<InvestigatorName, InvestigatorConfig>,
+    /// The `[accounts.NAME]` tables.
+    #[serde(default)]
+    accounts: BTreeMap<AccountName, accounts::RawAccount>,
     /// The `[tiers]` table.
     #[serde(default)]
     tiers: RawTiers,
@@ -1208,6 +1227,7 @@ impl RawConfig {
             language,
             agents,
             investigators,
+            accounts,
             tiers: RawTiers {
                 normal,
                 workers: worker_names,
@@ -1249,21 +1269,8 @@ impl RawConfig {
         check_tiers(&normal, &worker_names, &agents, &investigators)?;
         // The key is checked after the lists, so that the first thing a file is refused for is a list that does not
         // fit its agents; no file written before these keys had them, so no existing configuration is refused.
-        for (name, agent) in &agents {
-            check_context(ContextKey::Agent, name.as_str(), agent.context)?;
-            check_output(ContextKey::Agent, name.as_str(), agent.context, agent.output)?;
-            check_capabilities(ContextKey::Agent, name.as_str(), &agent.capabilities)?;
-        }
-        for (name, investigator) in &investigators {
-            check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
-            check_output(
-                ContextKey::Investigator,
-                name.as_str(),
-                investigator.context,
-                investigator.output,
-            )?;
-            check_capabilities(ContextKey::Investigator, name.as_str(), &investigator.capabilities)?;
-        }
+        check_agent_keys(&agents, &investigators)?;
+        let accounts = accounts::check(accounts, &agents, &investigators)?;
         // Files predating this key keep loading; team creation still checks their default against its roster.
         if let Some(required) = review.min_first_full_reviews
             && required.get() > investigators.len()
@@ -1279,6 +1286,7 @@ impl RawConfig {
             normal,
             workers: worker_names,
             investigators,
+            accounts,
             binaries,
             build,
             watchdog,
@@ -1308,6 +1316,29 @@ impl RawConfig {
             repos,
         })
     }
+}
+
+/// Checks the `context`, `output` and `capabilities` of every agent and investigator, agents first, name by name.
+fn check_agent_keys(
+    agents: &BTreeMap<AgentName, AgentConfig>,
+    investigators: &BTreeMap<InvestigatorName, InvestigatorConfig>,
+) -> Result<(), ConfigError> {
+    for (name, agent) in agents {
+        check_context(ContextKey::Agent, name.as_str(), agent.context)?;
+        check_output(ContextKey::Agent, name.as_str(), agent.context, agent.output)?;
+        check_capabilities(ContextKey::Agent, name.as_str(), &agent.capabilities)?;
+    }
+    for (name, investigator) in investigators {
+        check_context(ContextKey::Investigator, name.as_str(), investigator.context)?;
+        check_output(
+            ContextKey::Investigator,
+            name.as_str(),
+            investigator.context,
+            investigator.output,
+        )?;
+        check_capabilities(ContextKey::Investigator, name.as_str(), &investigator.capabilities)?;
+    }
+    Ok(())
 }
 
 /// Checks that `[workers] tries` asks for at least one try: a request with none is never served.
@@ -1449,7 +1480,8 @@ impl Config {
     /// valid TOML or not the format of the file; [`ConfigError::UnknownName`], [`ConfigError::DuplicateName`],
     /// [`ConfigError::NameInTwoLists`] and [`ConfigError::AgentInNoList`] for lists that do not fit the agents;
     /// [`ConfigError::PlanRole`] and [`ConfigError::PlanRoleTwice`] for a `[plan] roles` list that names a role
-    /// without a plan or a role twice.
+    /// without a plan or a role twice; [`ConfigError::Account`] for accounts or an agent's `account` that are
+    /// refused (see [`AccountError`]).
     pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
         if text.len() > MAX_CONFIG_BYTES {
             return Err(ConfigError::TooLarge {
@@ -1496,6 +1528,22 @@ impl Config {
     #[must_use]
     pub fn investigators(&self) -> &BTreeMap<InvestigatorName, InvestigatorConfig> {
         &self.investigators
+    }
+
+    /// The accounts of `[accounts.NAME]`, by name; empty in a file that defines none.
+    #[must_use]
+    pub fn accounts(&self) -> &BTreeMap<AccountName, Account> {
+        &self.accounts
+    }
+
+    /// Checks the `[account_env.NAME]` tables of `secrets` against the accounts of this configuration.
+    ///
+    /// # Errors
+    /// [`AccountSecretsError::NoAccount`] for a table of an account that `agents.toml` does not define;
+    /// [`AccountSecretsError::VariableTwice`] for a variable that is in an account's `env` and in its table of
+    /// `secrets.toml`. The errors name the account and the variable, never a value.
+    pub fn check_account_env(&self, secrets: &Secrets) -> Result<(), AccountSecretsError> {
+        accounts::check_secrets(self, secrets)
     }
 
     /// The investigator named `name`, if there is one.

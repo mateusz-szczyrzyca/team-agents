@@ -65,3 +65,15 @@ fn review_daemon_redacts_decoded_json_secrets_in_text_and_bytes() {
         );
     }
 }
+
+#[test]
+fn cuts_the_secrets_of_every_account() {
+    let secrets = Secrets::parse(
+        "[account_env.comp-claude]\nCLAUDE_CODE_OAUTH_TOKEN = 'MARKER-7f3a'\n[account_env.mateusz-claude]\nOTHER = 'MARKER-9b2c'\n",
+        0o600,
+    )
+    .unwrap();
+    let cut = SecretsCut::new(&secrets, []);
+
+    assert_eq!(cut.redact(b"a MARKER-7f3a b MARKER-9b2c c"), b"a <cut> b <cut> c");
+}

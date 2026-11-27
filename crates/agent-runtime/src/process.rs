@@ -311,6 +311,9 @@ impl Supervisor {
         command
             .args(&spec.args)
             .envs(spec.env.iter().map(|(name, value)| (name.as_str(), value)))
+            // The inherited `PWD` names the daemon's directory; a CLI that reads it before `getcwd` (opencode) would
+            // work there instead of in its worktree (issue #352).
+            .env("PWD", spec.working_dir.as_path())
             .current_dir(spec.working_dir.as_path())
             .stdin(Stdio::null())
             .stdout(stdout)
@@ -880,6 +883,23 @@ mod tests {
 
         let printed = read(&dir.path().join("out"));
         assert_eq!(Path::new(printed.trim_end()), dir.path().canonicalize().unwrap());
+    }
+
+    // Rule: `PWD` names the working directory, not the directory of the daemon. A CLI that takes its directory from
+    // `PWD` before `getcwd` (opencode) otherwise works in the daemon's directory (issue #352). `printenv`, not a
+    // shell: a shell repairs a wrong `PWD` when it starts.
+    #[tokio::test]
+    async fn pwd_names_the_working_directory_not_the_daemons() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut process = supervisor()
+            .spawn(&spec(dir.path(), "printenv", &["PWD"]))
+            .await
+            .unwrap();
+        process.wait().await.unwrap();
+
+        let printed = read(&dir.path().join("out"));
+        assert_eq!(Path::new(printed.trim_end()), dir.path());
     }
 
     // Rule: the variables of the spec are added to the environment, and the others stay.

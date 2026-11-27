@@ -239,6 +239,15 @@ after building a new version, restart it.
 repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 [`docs/configuration.md`](docs/configuration.md); the template is
 [`config/agents.example.toml`](config/agents.example.toml). A key the reference does not know is an error.
+
+**Accounts.** `[accounts.NAME]` of `agents.toml` (an `owner`, optional `env`), `[account_env.NAME]` of `secrets.toml` and
+`account = "NAME"` of an agent or an investigator describe more than one subscription or key. This version reads and
+checks them; no run uses them yet. An agent with an account is named `<owner>-…`; an account that no agent names, an
+agent that names a missing account, a name without its owner, a variable set in both `env` and `[account_env.NAME]`
+and an `[account_env.NAME]` without an account are refused when the home is loaded, naming the
+account and never a value; the values of `[account_env.NAME]` are cut from `agent debug` bundles and the history.
+Files without accounts load as before. See [`docs/configuration.md`](docs/configuration.md), `[accounts.NAME]`.
+
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
 ## Usage
