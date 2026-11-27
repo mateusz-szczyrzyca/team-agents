@@ -109,8 +109,9 @@ pub struct BranchCommitsError {
     pub source: GitError,
 }
 
-/// The commits of the branch in the worktree at `worktree` of `task` that `base` does not have, oldest first, each with
-/// its whole message: what the work of the task has committed.
+/// The commits of the branch in the worktree at `worktree` of `task` that `origin/<base>` does not have, oldest first,
+/// each with its whole message: what the work of the task has committed. The base is the remote-tracking branch, as for
+/// the checks and the commit guard: a local base is never updated, and the commits merged since would count as work.
 ///
 /// # Errors
 /// [`BranchCommitsError`] when git cannot find where the branch left `base` or cannot read the commits.
@@ -128,7 +129,7 @@ pub async fn branch_commits(
     };
     let head = git.rev_parse(&Revision::Head).await.map_err(failed)?;
     let forked = git
-        .merge_base(&Revision::Head, &Revision::Branch(base.clone()))
+        .merge_base(&Revision::Head, &Revision::RemoteBranch(base.clone()))
         .await
         .map_err(failed)?;
     git.range_messages(&forked, &head).await.map_err(failed)
