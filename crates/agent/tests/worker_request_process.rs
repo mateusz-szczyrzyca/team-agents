@@ -4749,4 +4749,77 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
         assert_eq!(records.len(), 1, "{records:?}");
         assert_eq!(field(&records[0], "outcome"), "brought");
     }
+
+    #[test]
+    fn a_request_whose_worker_failed_after_a_commit_is_started_again_from_the_checkpoint_of_that_work() {
+        let mut world = World::new_custom(
+            &[
+                AgentDef {
+                    name: "claude-1",
+                    kind: "agent",
+                    scenario: "ask-worker:member,sleep",
+                    cli: "claude",
+                    model: None,
+                    capabilities: &[],
+                },
+                AgentDef {
+                    name: "w-di",
+                    kind: "worker",
+                    scenario: "opencode-script:commit-then-fail",
+                    cli: "opencode",
+                    model: Some("deepinfra/glm"),
+                    capabilities: &[],
+                },
+            ],
+            None,
+        );
+        world.script(
+            "commit-then-fail",
+            r#"
+if [[ ! -f .fake-interrupted ]]; then
+    mkdir -p docs
+    printf '%s\n' 'retained partial work' > docs/partial.txt
+    git add docs
+    git -c user.name=Worker -c user.email=worker@example.com commit -q -m 'Write the partial work'
+    touch .fake-interrupted
+    exit 1
+fi
+printf '%s\n' 'the walkthrough' > docs/guide.md
+git add docs
+git -c user.name=Worker -c user.email=worker@example.com commit -qm 'Complete retained work'
+"#,
+        );
+        let request = MEMBER_REQUEST.replace(
+            "\"files\":\"docs/guide.md\"",
+            "\"files\":\"docs/guide.md, docs/partial.txt\"",
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        world.ended(task(&tasks, "claude-1"), 1);
+        world.request_is("1", "done");
+
+        // A worktree is gone once its request is brought over: the stand-in keeps the prompt of every run beside the repository.
+        let member_tree = world.worktree(task(&tasks, "claude-1"));
+        let common = Command::new("git")
+            .args(["rev-parse", "--git-common-dir"])
+            .current_dir(&member_tree)
+            .output()
+            .unwrap();
+        let records = member_tree
+            .join(String::from_utf8(common.stdout).unwrap().trim())
+            .join("fake-records");
+        let prompt = std::fs::read_dir(&records)
+            .unwrap()
+            .filter_map(|entry| std::fs::read_to_string(entry.unwrap().path().join(".fake-prompt-2")).ok())
+            .find(|prompt| prompt.contains("# THIS REQUEST WAS STARTED BEFORE YOU"))
+            .expect("the second run of the worker is briefed from the checkpoint");
+        assert!(prompt.contains("Commits: 1"), "{prompt}");
+        assert!(prompt.contains("docs/partial.txt"), "{prompt}");
+        assert!(prompt.contains("K1. exists docs/guide.md"), "{prompt}");
+        assert_eq!(
+            world.file(task(&tasks, "claude-1"), "docs/partial.txt"),
+            "retained partial work\n"
+        );
+    }
 }
