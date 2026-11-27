@@ -220,7 +220,11 @@ fn encode_failed_reason<T: Serialize>(message: &T) -> Result<String, EncodeError
 
 /// Serializes protocol-ten messages carrying the swap command.
 fn encode_swap<T: Serialize>(message: &T) -> Result<String, EncodeError> {
-    encode(message)
+    let mut value = serde_json::to_value(message).map_err(|source| EncodeError { source })?;
+    if let Some(protocol) = value.get_mut("protocol") {
+        *protocol = serde_json::Value::from(SWAP_PROTOCOL_VERSION);
+    }
+    encode(&value)
 }
 
 /// Checks the wire boundary before decoding a supported format into the shared domain types.
@@ -281,6 +285,16 @@ fn decode_negotiated<T: DeserializeOwned>(line: &str, max: usize) -> Result<(T, 
             }
             serde_json::from_value(value)
                 .map(|message| (message, ReplyFormat::FailedReason))
+                .map_err(|source| ProtocolError::Malformed { source })
+        }
+        version if version == u64::from(SWAP_PROTOCOL_VERSION) => {
+            let mut value: serde_json::Value =
+                serde_json::from_str(line).map_err(|source| ProtocolError::Malformed { source })?;
+            if let Some(protocol) = value.get_mut("protocol") {
+                *protocol = serde_json::Value::from(PROTOCOL_VERSION);
+            }
+            serde_json::from_value(value)
+                .map(|message| (message, ReplyFormat::Swap))
                 .map_err(|source| ProtocolError::Malformed { source })
         }
         found => Err(UnsupportedVersion { found }.into()),
