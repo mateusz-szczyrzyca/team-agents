@@ -435,6 +435,9 @@ impl Rig {
         daemon.abort();
         let ended = daemon.await.expect_err("an aborted daemon does not return");
         assert!(ended.is_cancelled(), "{ended:?}");
+        // A killed daemon leaves its socket behind; `start` waits for the socket of the daemon it starts, so the stale one
+        // must go, or `start` returns before that daemon has taken the lock and begun.
+        std::fs::remove_file(self.home.socket_file()).unwrap();
     }
 
     /// Stops the daemon, waits up to `patience` for it to end and returns how it ended: for a daemon whose stop has more
