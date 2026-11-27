@@ -307,6 +307,24 @@ mod account_environment {
         assert_eq!(seen["ACCOUNT_SECRET"], "<unset>");
     }
 
+    // Rule: an agent that names an account the configuration does not have is refused before its CLI starts.
+    #[tokio::test]
+    async fn a_run_naming_an_unknown_account_is_refused_and_starts_no_process() {
+        let rig = rig(&config_text(&fake_cli(), ""), &secrets_text("", ""), None).await;
+        let absent: AccountName = "mateusz-claude".parse().unwrap();
+
+        let error = rig
+            .run("env-names AGENT_ENV", Some(&absent))
+            .await
+            .expect_err("the account is not in the configuration");
+
+        let RunError::UnknownAccount { account } = error else {
+            panic!("expected UnknownAccount, got {error:?}");
+        };
+        assert_eq!(account, absent);
+        assert!(!rig.tree.path().join(".fake-env-names").exists());
+    }
+
     /// Log lines a test keeps.
     #[derive(Clone, Default)]
     struct Kept(Arc<Mutex<Vec<u8>>>);
