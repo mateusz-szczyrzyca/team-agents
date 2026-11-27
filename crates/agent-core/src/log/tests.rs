@@ -223,6 +223,8 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
         ),
         (LogEvent::InvestigationFailed, "investigation_failed", LogLevel::Info),
         (LogEvent::CheckpointFailed, "checkpoint_failed", LogLevel::Warn),
+        (LogEvent::FindingsShown, "findings_shown", LogLevel::Info),
+        (LogEvent::FindingsUnavailable, "findings_unavailable", LogLevel::Warn),
     ];
 
     assert_eq!(LogEvent::ALL.len(), expected.len());

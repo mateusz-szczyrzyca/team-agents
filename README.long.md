@@ -1435,8 +1435,30 @@ highest numeric ID. `[findings] max_shown` (default `8`, range `1–20`) limits 
 range `500–10000`) limits the sum of the texts' character lengths by removing findings from the end. Repository-wide
 environment findings match every run. Run paths may contain spaces or exceed the bus finding-input path limit;
 backtick path extraction still excludes tokens containing whitespace. Finding text line breaks become spaces in the
-rendered section, so each finding occupies one line. These settings and the findings prompt are available for the daemon wiring
-to follow separately; this support does not yet inject findings into run prompts.
+rendered section, so each finding occupies one line.
+
+### Durable findings delivery
+
+At the start of each new or resumed run, findings from other tasks on files the run touches are shown once in a dedicated
+section of the prompt. These findings help the agent avoid repeating mistakes or rediscovering issues that other tasks
+have already found. The agent's own findings and findings that are already resolved are excluded from this list.
+
+Run paths combine committed and uncommitted changes against the merge base with `origin/main`, including untracked
+and deleted files, with existing repository paths named in backticks in the item's text. Investigators use the branch
+of the task they answer; reviewers use the branch under review. Workers use the files assigned to their step.
+
+If the bus query or delivery bookkeeping fails, the daemon logs `findings_unavailable` and starts the run without the
+section. Selected IDs are saved before the run starts; `findings_shown` records their IDs and relevance scores.
+
+The findings are selected according to the `[findings]` configuration section: `keep_days` controls which findings are
+fresh enough to be considered (default 30 days, range 0-365 days), `max_shown` limits how many findings are displayed
+(default 8, range 1-20), and `max_chars` limits the total character count of all findings text (default 3000,
+range 500-10000). The selection algorithm prioritizes path relevance, then recency and numeric finding ID.
+
+The selected findings are shown only once per task, even across daemon restarts. The harness records which findings
+were shown in a task file (`findings-shown.json`) so that they won't be repeated in subsequent runs of the same task.
+This ensures that agents get helpful context at the start of their work without being repeatedly reminded of the same
+information.
 
 ### Requests to workers
 

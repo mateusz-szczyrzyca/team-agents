@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `36` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `37` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -914,3 +914,5 @@ round links, search entries and daemon logs. Older daemons refuse the upgraded h
 daemon.
 
 History version 36 admits the `merge_conflict_investigated` information event. Its migration (`036-merge-conflict-investigated.sql`) preserves daemon logs, round links, search entries and cursors. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older daemon.
+
+History version 37 admits `findings_shown` (info) and `findings_unavailable` (warn). Its forward-only migration preserves daemon logs, round links, search entries and cursors. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older daemon.

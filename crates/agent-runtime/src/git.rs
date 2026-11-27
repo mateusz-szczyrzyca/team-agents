@@ -31,6 +31,8 @@ pub use activity::CommitTimeError;
 mod base;
 mod bring_over;
 mod changes;
+mod findings;
+pub use findings::ChangedFilesError;
 mod delivery;
 pub use delivery::{DeliveryGitError, DeliveryRead};
 #[cfg(test)]

@@ -1138,3 +1138,7 @@ mod job_checkpoints_tests;
 #[cfg(test)]
 #[path = "rounds/tests/job_handover.rs"]
 mod job_handover_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/findings.rs"]
+mod findings_tests;

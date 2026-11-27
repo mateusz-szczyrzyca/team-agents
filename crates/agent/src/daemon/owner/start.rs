@@ -241,13 +241,14 @@ async fn compose_run_prompt(
 ///
 /// # Errors
 /// [`StartProblem`] when a text of the installation does not take the values given it.
-fn with_run_sections(
+async fn with_run_sections(
     ctx: &Context<'_>,
     found: &TaskRef<'_>,
     kind: PromptKind,
     prompt: String,
     briefing: Option<Briefed<'_>>,
     last_message: Option<&LastMessage>,
+    zone: agent_core::local_time::Zone,
 ) -> Result<String, StartProblem> {
     let (team, role, member, task) = (found.team, found.role, found.member, found.member.task());
     let prompt = with_plan(ctx, role, member, kind, prompt)?;
@@ -261,6 +262,10 @@ fn with_run_sections(
         Some(briefed) => briefed
             .draft
             .render_reviewed(ctx.texts, task, &prompt, briefed.review, briefed.checkpoint)?,
+        None => prompt,
+    };
+    let prompt = match super::findings::for_owner(ctx, found, zone).await {
+        Some(section) => format!("{}\n\n{section}", prompt.trim_end()),
         None => prompt,
     };
     // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.
@@ -450,7 +455,7 @@ pub(super) async fn plan(
     let prompt = compose(&texts, &input)?;
     let prompt = with_commit_order(ctx, kind, prompt)?;
     let (prompt, addition) = compose_run_prompt(ctx, &texts, &found, &working, kind, prompt, zone).await?;
-    let prompt = with_run_sections(ctx, &found, kind, prompt, briefing, last_message)?;
+    let prompt = with_run_sections(ctx, &found, kind, prompt, briefing, last_message, zone).await?;
     let run = RunId::generate(ctx.clock, rng)?;
     let (mode, recorded_session) = if let Some(session_id) = session {
         (RunMode::Resume { session_id }, member.last_session().cloned())
