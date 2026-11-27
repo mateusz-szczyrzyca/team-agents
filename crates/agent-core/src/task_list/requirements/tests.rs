@@ -164,3 +164,44 @@ fn an_item_without_the_parts_has_nothing_numbered() {
     let item = item_of("    Only a description.\n");
     assert_eq!((item.expected_numbered(), item.checks_numbered()), (None, None));
 }
+
+/// The number of lines one more than a 16-bit number can hold.
+const PAST_SIXTEEN_BITS: usize = 65_536;
+
+// Rule: no bullet of an expected result is dropped, however many an item has.
+#[test]
+fn every_bullet_of_the_expected_result_is_a_requirement_past_65535() {
+    let body = format!("    Expected result:\n{}", "    - x\n".repeat(PAST_SIXTEEN_BITS));
+    let item = item_of(&body);
+
+    let requirements = item.requirements();
+
+    assert_eq!(requirements.len(), PAST_SIXTEEN_BITS);
+    assert_eq!(
+        requirements
+            .last()
+            .map(|requirement| requirement.id.to_string())
+            .as_deref(),
+        Some("R65536")
+    );
+    let numbered = item.expected_numbered().unwrap();
+    assert_eq!(numbered.lines().count(), PAST_SIXTEEN_BITS);
+    assert!(numbered.ends_with("R65536. x"), "{}", &numbered[numbered.len() - 20..]);
+}
+
+// Rule: no check line is dropped either, and the unnumbered ones go on from the last number.
+#[test]
+fn every_check_line_is_a_requirement_past_65535() {
+    let body = format!("    Checks:\n{}", "    - x\n".repeat(PAST_SIXTEEN_BITS));
+    let item = item_of(&body);
+
+    let requirements = item.requirements();
+
+    let checks: Vec<String> = requirements
+        .iter()
+        .filter(|requirement| requirement.id.kind() == RequirementKind::Check)
+        .map(|requirement| requirement.id.to_string())
+        .collect();
+    assert_eq!(checks.len(), PAST_SIXTEEN_BITS);
+    assert_eq!(checks.last().map(String::as_str), Some("K65536"));
+}
