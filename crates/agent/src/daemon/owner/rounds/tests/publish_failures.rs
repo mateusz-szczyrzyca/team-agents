@@ -2785,6 +2785,14 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
         false,
     )
     .await;
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{}\n[merge]\ninvestigator_pass = false\n",
+            std::fs::read_to_string(rig.home.config_file()).unwrap()
+        ),
+    )
+    .unwrap();
     let branch = "agents/codex-1/task-20261122-120000-1.1a";
     let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
     let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
