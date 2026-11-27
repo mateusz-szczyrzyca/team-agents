@@ -243,11 +243,23 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 **Accounts.** `[accounts.NAME]` of `agents.toml` (an `owner`, optional `env`), `[account_env.NAME]` of `secrets.toml` and
 `account = "NAME"` of an agent or an investigator describe more than one subscription or key. A run of an agent with an account gets
 the account's variables in its environment, over `[agent_env]` (the daemon's environment, `[agent_env]`, the account's
-`env`, the account's secrets: the later wins); the quota of an account is not shared between its agents yet. An agent with an account is named `<owner>-…`; an account that no agent names, an
+`env`, the account's secrets: the later wins); the quota of an account is its agents' together: see "The pause of an account" below. An agent with an account is named `<owner>-…`; an account that no agent names, an
 agent that names a missing account, a name without its owner, a variable set in both `env` and `[account_env.NAME]`
 and an `[account_env.NAME]` without an account are refused when the home is loaded, naming the
 account and never a value; the values of `[account_env.NAME]` are cut from `agent debug` bundles and the history.
 Files without accounts load as before. See [`docs/configuration.md`](docs/configuration.md), `[accounts.NAME]`.
+
+**The pause of an account.** When the provider refuses a run of an agent that has an account — an exhausted quota or a rate
+limit — the daemon pauses the account: every queued task of every agent of the account, and the task of the refused run, is
+paused until the same moment (the reset the provider named, or `[limits] quota_pause_minutes` / `rate_limit_pause_minutes`),
+without a run of its own, and you get one notification, `Account NAME is paused until ...`, that names the account's agents.
+No run of the account starts while the pause lasts, also not one of a task started after it: it waits queued. A run of the
+account that is going finishes; if it is refused too, its task is paused until the same reset, without another notification. At
+the reset the paused tasks are queued again. Another account — also another account of the same owner — and agents without an
+account are not touched. `agent status` shows a line per paused account: `account comp-claude paused until 15:30 (quota)` (the
+date too when the reset is more than a day away). The pause is in `state.json` (`accounts`, `account_held_tasks`): a restart of
+the daemon keeps it and its reset. The pause and its end are `decision_taken` records with `decision` `account`
+([`docs/log.md`](docs/log.md)).
 
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
