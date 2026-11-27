@@ -187,7 +187,11 @@ fn trailer_block(message: &str) -> impl Iterator<Item = &str> {
         .take_while(|line| !line.trim().is_empty())
         .collect();
     block.reverse();
-    if !block.iter().enumerate().all(|(index, line)| is_trailer_line(line, index)) {
+    if !block
+        .iter()
+        .enumerate()
+        .all(|(index, line)| is_trailer_line(line, index))
+    {
         block.clear();
     }
     block.into_iter()
@@ -215,9 +219,8 @@ fn is_trailer_line(line: &str, index: usize) -> bool {
     if index > 0 && line.starts_with(char::is_whitespace) {
         return true;
     }
-    line.split_once(':').is_some_and(|(token, _)| {
-        !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
-    })
+    line.split_once(':')
+        .is_some_and(|(token, _)| !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
 }
 
 /// The comment character of git's message file when the configuration does not say another.
