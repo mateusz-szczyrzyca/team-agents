@@ -12,6 +12,9 @@ use crate::state::RunEnd;
 mod tests;
 
 /// What the provider's refusal showed about its limit.
+///
+/// Written to the state as `{"kind": "rate_limit"}` or `{"kind": "quota", "reset_in_nanoseconds": N}` (the key is
+/// absent without a reset; `N` is positive).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Limit {
     /// A rate limit or an overload: the provider names no reset.
@@ -21,6 +24,104 @@ pub enum Limit {
         /// The time until the reset the provider named, strictly positive when present.
         reset_in: Option<Duration>,
     },
+}
+
+/// The kind of a [`Limit`] as it is written.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum LimitKind {
+    /// A [`Limit::RateLimit`].
+    RateLimit,
+    /// A [`Limit::Quota`].
+    Quota,
+}
+
+/// How a [`Limit`] is written: its kind and, for a quota with a named reset, how far away the reset was in nanoseconds.
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LimitWire {
+    /// Which limit.
+    kind: LimitKind,
+    /// How far away the named reset was; absent without one. A rate limit has none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    reset_in_nanoseconds: Option<i128>,
+}
+
+/// Why a written limit is no [`Limit`].
+#[derive(Debug, thiserror::Error)]
+enum LimitWireError {
+    /// A rate limit names no reset.
+    #[error("a rate limit has no reset")]
+    RateLimitWithReset,
+    /// The reset of a quota is not strictly positive.
+    #[error("the reset of a quota must be positive, not {nanoseconds} nanoseconds")]
+    NotPositive {
+        /// What was written.
+        nanoseconds: i128,
+    },
+    /// The reset is further away than a duration can be.
+    #[error("the reset of a quota, {nanoseconds} nanoseconds, is longer than a duration can be")]
+    TooLong {
+        /// What was written.
+        nanoseconds: i128,
+    },
+}
+
+/// Nanoseconds in a second.
+const NANOSECONDS_PER_SECOND: i128 = 1_000_000_000;
+
+/// The duration of a strictly positive number of `nanoseconds`.
+fn positive_duration(nanoseconds: i128) -> Result<Duration, LimitWireError> {
+    if nanoseconds <= 0 {
+        return Err(LimitWireError::NotPositive { nanoseconds });
+    }
+    let too_long = |_| LimitWireError::TooLong { nanoseconds };
+    let seconds = i64::try_from(nanoseconds.div_euclid(NANOSECONDS_PER_SECOND)).map_err(too_long)?;
+    let rest = i32::try_from(nanoseconds.rem_euclid(NANOSECONDS_PER_SECOND)).map_err(too_long)?;
+    Ok(Duration::new(seconds, rest))
+}
+
+impl From<Limit> for LimitWire {
+    fn from(limit: Limit) -> Self {
+        match limit {
+            Limit::RateLimit => Self {
+                kind: LimitKind::RateLimit,
+                reset_in_nanoseconds: None,
+            },
+            Limit::Quota { reset_in } => Self {
+                kind: LimitKind::Quota,
+                reset_in_nanoseconds: reset_in.map(Duration::whole_nanoseconds),
+            },
+        }
+    }
+}
+
+impl TryFrom<LimitWire> for Limit {
+    type Error = LimitWireError;
+
+    fn try_from(wire: LimitWire) -> Result<Self, Self::Error> {
+        match (wire.kind, wire.reset_in_nanoseconds) {
+            (LimitKind::RateLimit, None) => Ok(Self::RateLimit),
+            (LimitKind::RateLimit, Some(_)) => Err(LimitWireError::RateLimitWithReset),
+            (LimitKind::Quota, None) => Ok(Self::Quota { reset_in: None }),
+            (LimitKind::Quota, Some(nanoseconds)) => Ok(Self::Quota {
+                reset_in: Some(positive_duration(nanoseconds)?),
+            }),
+        }
+    }
+}
+
+impl serde::Serialize for Limit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        LimitWire::from(*self).serialize(serializer)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Limit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let wire = LimitWire::deserialize(deserializer)?;
+        Self::try_from(wire).map_err(serde::de::Error::custom)
+    }
 }
 
 /// The facts of one refused run, as the daemon has them after the run ended.

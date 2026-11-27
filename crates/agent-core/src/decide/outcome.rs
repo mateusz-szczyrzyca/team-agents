@@ -502,15 +502,7 @@ impl Limit {
         let now = context.now.as_utc();
         let structured = self.window.filter(|reset| *reset > now);
         let reset = structured.or_else(|| reset_time(&self.lines, now, context.local_offset));
-        let wait = match reset {
-            Some(reset) => (reset - now).min(MAX_PAUSE),
-            None => self.default_pause(context.limits)?,
-        };
-        let until = now
-            .checked_add(wait)
-            .and_then(|end| end.checked_add(RESET_MARGIN))
-            .ok_or(ClassifyError::PauseOverflow { now: context.now })
-            .and_then(|end| recorded(end, context.now))?;
+        let until = pause_until(context.now, reset.map(|reset| reset - now), self.reason, context.limits)?;
         let end = match self.reason {
             PauseReason::Quota => RunEnd::QuotaExhausted {
                 resets_at: reset.map(|reset| recorded(reset, context.now)).transpose()?,
@@ -531,15 +523,40 @@ impl Limit {
             }),
         })
     }
+}
 
-    /// How long this limit pauses a task when the CLI does not say when it ends: the configured default.
-    fn default_pause(&self, limits: &Limits) -> Result<Duration, ClassifyError> {
-        let minutes = match self.reason {
-            PauseReason::Quota => limits.quota_pause_minutes,
-            PauseReason::RateLimit => limits.rate_limit_pause_minutes,
-        };
-        Duration::try_from(minutes.as_duration()).map_err(|source| ClassifyError::DefaultPauseTooLong { source })
-    }
+/// When a pause that starts at `now` ends: `reset_in` later when the provider named a reset, at most [`MAX_PAUSE`],
+/// otherwise the configured pause of `reason`; [`RESET_MARGIN`] later in both cases. The one rule of every pause a limit
+/// causes: a task's pause and an account's pause end at the same time for the same limit.
+///
+/// # Errors
+/// [`ClassifyError`] when the pause would end after the year 9999 or at a time a timestamp cannot hold, or when the
+/// configured pause is not a duration.
+pub fn pause_until(
+    now: Timestamp,
+    reset_in: Option<Duration>,
+    reason: PauseReason,
+    limits: &Limits,
+) -> Result<Timestamp, ClassifyError> {
+    let wait = match reset_in {
+        Some(reset_in) => reset_in.min(MAX_PAUSE),
+        None => configured_pause(reason, limits)?,
+    };
+    let until = now
+        .as_utc()
+        .checked_add(wait)
+        .and_then(|end| end.checked_add(RESET_MARGIN))
+        .ok_or(ClassifyError::PauseOverflow { now })?;
+    recorded(until, now)
+}
+
+/// How long a limit of `reason` pauses when the provider does not say when it ends: the configured default.
+fn configured_pause(reason: PauseReason, limits: &Limits) -> Result<Duration, ClassifyError> {
+    let minutes = match reason {
+        PauseReason::Quota => limits.quota_pause_minutes,
+        PauseReason::RateLimit => limits.rate_limit_pause_minutes,
+    };
+    Duration::try_from(minutes.as_duration()).map_err(|source| ClassifyError::DefaultPauseTooLong { source })
 }
 
 /// `evidence` with the structured reset `reset` added in the machine's local time: ` · resets YYYY-MM-DD HH:MM:SS`. The evidence

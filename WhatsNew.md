@@ -14,6 +14,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### New features
 - [agent] [agent-runtime] A run of an agent that names an account gets the account's variables in its environment: the daemon's, `[agent_env]`, the account's `env`, the account's `[account_env.NAME]` — the later wins. Two agents of one CLI with two accounts in one team each see only their own account's login. An agent without an account runs as before. The quota of an account is not shared between its agents yet.
 
+## agent-core 0.145.0 — 27.11.2026 — PR #359
+
+### Enhancements
+- [agent-core] The state can hold the pause of an account (`accounts` in `state.json`, written only when an account is paused), and a new rule says when a refused run pauses its account: the first refused run pauses it until the reset (or the configured pause), a later one finds it paused, an old pause is expired. Nothing records a pause yet, so no run changes.
+
 ## agent-core 0.144.0 · agent-runtime 0.133.0 — 27.11.2026 — PR #355
 
 ### Enhancements
