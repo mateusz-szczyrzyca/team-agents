@@ -417,3 +417,13 @@ queue the lead with the human's instructions while the item stays blocked on its
 The no-tool events above require history schema 21. Opening a version-20 history migrates it forward, preserving
 existing events, round links, search entries and the log cursor. Older daemons refuse the newer history; retain a
 backup before upgrading if a downgrade is needed. The event names and levels are stable monitoring interfaces.
+
+### Findings delivery events
+
+At the start of each new or resumed run, the daemon may emit structured log events about findings from other tasks
+that were shown to the agent. These events are recorded in both the daemon's stderr log and in `history.db`.
+
+| Event | Level | Meaning |
+|---|---|---|
+| `findings_shown` | `info` | Records which findings from other tasks were shown at the start of a run. Fields: `task` (the task ID that was shown the findings), `ids` (array of finding IDs such as `["F-3", "F-8"]`), `scores` (array of relevance scores for each finding, matching the order of `ids`). |
+| `findings_unavailable` | `warn` | Indicates that findings from other tasks could not be retrieved or processed for display. Fields: `task` (the task that was affected), `error` (a description of what went wrong). The run continues normally without the findings section. |
