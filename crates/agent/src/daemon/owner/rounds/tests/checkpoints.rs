@@ -9,7 +9,7 @@ use agent_core::history::CheckpointCause::{
     Commit, FindingAnswered, FixPassStarted, PullApproved, PullMerged, PullOpened, PullPushed, PullReady,
     ReviewSubmitted, RoundOpened, RunEnded,
 };
-use agent_core::history::{CheckpointCause, HistoryEvent, Record};
+use agent_core::history::{CheckpointCause, CheckpointJob, HistoryEvent, Record};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
 use agent_core::state::{CommitId, ItemPhase, MergeMode};
@@ -56,6 +56,7 @@ fn checkpoints(rig: &Rig, team: &TeamId) -> Vec<Taken> {
     for stored in reader.team_records(team).unwrap() {
         if let Record::Event(event) = stored.record
             && let HistoryEvent::Checkpoint {
+                job: CheckpointJob::Item,
                 cause,
                 head,
                 snapshot,
@@ -448,6 +449,7 @@ fn holders(rig: &Rig, team: &TeamId) -> Vec<Held> {
     for stored in reader.team_records(team).unwrap() {
         if let Record::Event(event) = stored.record
             && let HistoryEvent::Checkpoint {
+                job: CheckpointJob::Item,
                 cause,
                 task,
                 pull_request,
