@@ -21,9 +21,9 @@ grep -qxF '.fake-*' "$exclude" || printf '%s\n' '.fake-*' >> "$exclude"
 printf 'one\n' > kept.txt
 git add kept.txt
 git -c user.name=Fixture -c user.email=fixture@example.com commit -q -m 'Add kept.txt'
-printf 'three\n' > staged.txt
 mkdir -p .agent
-printf 'Do the work.\n\n1. Work\n[>] 1.1 Finish the thing\n    Check: reviewer\n' > .agent/plan.md
+printf 'Do it.\n\n1. Work\n[ ] 1.1 Finish the thing\n    For: R1\n' > .agent/plan.md
+printf 'three\n' > staged.txt
 for _ in $(seq 1 600); do
   [[ -f .fake-continue ]] && break
   sleep 0.05
