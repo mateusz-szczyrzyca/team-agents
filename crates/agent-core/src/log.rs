@@ -254,6 +254,16 @@ pub enum LogEvent {
     /// The harness was to publish an item's branch while the lead's worktree had another branch out and no gate had passed at
     /// the tip of the item's branch: nothing was pushed, and the lead was sent back to switch and run the gate.
     PublishOffBranch,
+    /// An investigator starts a new task for a queued request.
+    InvestigationStarted,
+    /// The investigator's complete answer is delivered to the requester.
+    InvestigationAnswered,
+    /// An investigation with an unsupported kind is failed without starting a task.
+    InvestigationKindUnknown,
+    /// An unfinished investigation is queued for a different investigator.
+    InvestigationRequeued,
+    /// An investigation ends without an answer.
+    InvestigationFailed,
     /// A checkpoint of a round could not be taken or recorded: the round goes on without it.
     CheckpointFailed,
 }
@@ -304,6 +314,7 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
             | Self::PublishOffBranch
+            | Self::InvestigationKindUnknown
             | Self::CheckpointFailed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
@@ -340,6 +351,10 @@ impl LogEvent {
             | Self::CommitCut
             | Self::TaskHandedOver
             | Self::TaskAgentChanged
+            | Self::InvestigationStarted
+            | Self::InvestigationAnswered
+            | Self::InvestigationRequeued
+            | Self::InvestigationFailed
             | Self::TaskWaitForFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }

@@ -333,6 +333,15 @@ A member's **role** is its place in the crew — it is not stored twice. Roles a
 `worker` and, for the reviewers of a team, `reviewer` (an investigator outside the crew). An investigation task
 is retained beside reviewers with an explicit `"role": "investigator"`; an absent role still means `reviewer` there.
 Reviewer entries accept only absent, `reviewer`, or `investigator` roles; crew roles are rejected.
+The optional team `investigations` array contains records with `id`, `task`, `started` and `failed_with`.
+`started` is the current attempt's task-creation timestamp and resets when another investigator is assigned;
+`failed_with` excludes unsuccessful investigators for this request. Missing records load as an empty list,
+and an empty list is omitted when saving, preserving old state compatibility. The optional
+`investigation_failures` map stores the first terminal failure reason under its bus request ID. It is saved
+before cleanup or notification, allowing an open request to resume those actions after restart. Decisions
+remain with the team after closure; closed bus requests are not reconciled. Missing or empty maps are
+compatible with old state, and an empty map is omitted when saving.
+
 Multiple investigation tasks may retain the same investigator name, each with its own task ID. Their durable activity
 has request kind `investigation`, and a completed task records a reported outcome. A participant is written
 `{"tier": "normal" | "worker" | "investigator", "name": "codex-1"}`; the names of the three tiers share one namespace,

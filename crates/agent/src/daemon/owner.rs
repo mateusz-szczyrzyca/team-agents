@@ -18,6 +18,9 @@ mod fixture;
 mod gate;
 mod history;
 mod idle;
+#[cfg(test)]
+mod investigation_failure_tests;
+mod investigations;
 mod item_branch;
 mod last_step;
 #[cfg(test)]
@@ -66,6 +69,7 @@ use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, T
 use agent_core::kinds::{CliKind, Role, Tier};
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
+use agent_core::prompt::{TeamPrompt, Variables, VariablesError};
 
 use agent_core::protocol::{
     Client, Command, Event, EventKind, Failure, FailureKind, PlanStepSummary, Reply, RoundDetail, RoundTask, Target,
@@ -76,7 +80,7 @@ use agent_core::state::{
     SessionId, State, StateOpenRoundError, Team, Timestamp,
 };
 use agent_core::status::{InvalidTransition, RunOutcome, TaskStatus};
-use agent_runtime::agentbus::{AgentBus, AgentBusError, Outgoing, Recipient};
+use agent_runtime::agentbus::{AgentBus, AgentBusError, InvTransition, Outgoing, Recipient};
 use agent_runtime::clock::SharedClock;
 use agent_runtime::disk::GIBIBYTE;
 use agent_runtime::harness_prompts::HarnessPrompts;
@@ -416,6 +420,29 @@ pub(crate) enum OwnerError {
     /// Existing step judgements in `history.db` could not be read.
     #[error(transparent)]
     PlanJudgementsRead(#[from] plan::PlanJudgementsError),
+    /// Preparing the investigation worktree failed.
+    #[error("cannot prepare the investigation worktree")]
+    InvestigationWorkspace(#[source] rounds::InvestigationWorkspaceError),
+    /// Resolving or detaching the investigation revision failed.
+    #[error("cannot resolve or detach the investigation revision")]
+    InvestigationGit(#[source] agent_runtime::git::GitError),
+    /// The investigator task could not be added to its team.
+    #[error("cannot add the investigator task")]
+    InvestigationMember(#[source] agent_core::state::AddReviewerError),
+    /// A record file could not be written.
+    #[error("the record file {path} cannot be written")]
+    WriteRecord {
+        /// The path.
+        path: PathBuf,
+        /// The error.
+        source: std::io::Error,
+    },
+    /// A team prompt could not be rendered.
+    #[error("cannot render a team prompt")]
+    TeamText(#[from] agent_runtime::team_prompts::RenderTeamTextError),
+    /// A variable of a template is not valid.
+    #[error("a variable of a template is not valid")]
+    Variable(#[from] VariablesError),
     /// The bus refused a message of the harness.
     #[error("the bus refused a message of the harness")]
     Bus {
@@ -1628,6 +1655,10 @@ impl Owner {
                 None,
                 &mut events,
             )?;
+            if located.role == Role::Investigator {
+                self.move_to(task, &located.team, TaskStatus::Queued, &mut events)?;
+                return self.commit(task, &located, now, events, None).await;
+            }
             // The stop is the daemon's own cut: a new session begins before the endings without a status are counted, so
             // the cut is no retry of the session it ends.
             self.begin_session_after_stop(task, &located)?;
@@ -1660,6 +1691,9 @@ impl Owner {
         self.move_to(task, &located.team, halted_status(halt), &mut events)?;
         self.hangs.remove(task);
         self.commit(task, &located, now, events, None).await?;
+        if located.role == Role::Investigator {
+            return self.investigation_ended(task, &located, &RunEnd::Stopped, None).await;
+        }
         self.after_run(task, &located, &RunEnd::Stopped, None)
     }
 
@@ -1792,10 +1826,11 @@ impl Owner {
         // notice of a pause that nobody waits for.
         let halt = self.halts.remove(task);
         let overruled = halt.filter(|_| {
-            matches!(
-                settled,
-                Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
-            )
+            located.role == Role::Investigator
+                || matches!(
+                    settled,
+                    Settled::Paused(_) | Settled::Hung | Settled::TurnLimit | Settled::NoStatus { .. }
+                )
         });
         let end = if overruled.is_some() {
             RunEnd::Stopped
@@ -2116,6 +2151,9 @@ impl Owner {
         {
             self.review_ended(task, located, message).await?;
         }
+        if located.role == Role::Investigator {
+            return self.investigation_ended(task, located, end, message).await;
+        }
         self.retry_unanswered_opinion(task, located, end).await?;
         if held == plan::PlanHeld::Yes {
             // The run said DONE but goes back for its plan, or waits for the human: nobody is told it is done.
@@ -2123,6 +2161,102 @@ impl Owner {
             return Ok(());
         }
         self.after_run(task, located, end, message)
+    }
+
+    /// Handles the end of an investigator run: records the answer, updates bus status, sends message to requester.
+    async fn investigation_ended(
+        &mut self,
+        task: &TaskId,
+        located: &Located,
+        end: &RunEnd,
+        message: Option<&str>,
+    ) -> Result<(), OwnerError> {
+        let open = self
+            .parts
+            .bus
+            .inv_open()
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        let Some(inv) = open.into_iter().find(|i| i.inv_task.as_ref() == Some(task)) else {
+            return Ok(());
+        };
+        if !self.is_investigation_requester_live(&inv) {
+            return self.fail_investigation(&inv, "the requester's task ended", None).await;
+        }
+        if matches!(
+            end,
+            RunEnd::Reported {
+                outcome: RunOutcome::Done
+            }
+        ) {
+            let answer = message.unwrap_or_default();
+            let has_unfinished = self.parts.state.team(&located.team).is_some_and(|team| {
+                team.investigations()
+                    .iter()
+                    .any(|record| record.id == inv.id && !record.failed_with.is_empty())
+            });
+            let mut file = tokio::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .append(has_unfinished)
+                .truncate(!has_unfinished)
+                .open(&inv.file)
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: inv.file.clone(),
+                    source,
+                })?;
+            tokio::io::AsyncWriteExt::write_all(&mut file, answer.as_bytes())
+                .await
+                .map_err(|source| OwnerError::WriteRecord {
+                    path: inv.file.clone(),
+                    source,
+                })?;
+            file.sync_all().await.map_err(|source| OwnerError::WriteRecord {
+                path: inv.file.clone(),
+                source,
+            })?;
+            let summary: String = answer
+                .lines()
+                .map(str::trim)
+                .find(|line| !line.is_empty())
+                .unwrap_or("")
+                .chars()
+                .take(200)
+                .collect();
+            self.parts
+                .bus
+                .inv_set(inv.id, &InvTransition::Done { summary })
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            let from: AgentName = located.agent.parse()?;
+            let to = Recipient::Task {
+                agent: inv.from_agent.clone(),
+                task: inv.from_task.clone(),
+            };
+            let values = Variables::new()
+                .with("investigation_id", inv.id.to_string())?
+                .with("investigator", located.agent.as_str())?
+                .with("file", inv.file.display().to_string())?
+                .with("answer", answer)?;
+            let text = self.parts.team_texts.render(TeamPrompt::InvestigationAnswer, &values)?;
+            self.parts
+                .bus
+                .send(&from, &to, &Outgoing::Chat { text })
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            tracing::info!(
+                event = LogEvent::InvestigationAnswered.as_str(),
+                team = %located.team,
+                id = %inv.id,
+                investigator = %located.agent,
+                chars = answer.chars().count(),
+            );
+        } else {
+            self.requeue_investigation(&inv, located, end, message).await?;
+        }
+        self.look_at(&located.team);
+        Ok(())
     }
 
     /// Replaces a failed opinion while preserving ordinary task settlement.
@@ -2196,6 +2330,20 @@ impl Owner {
             end,
             used_tool,
         } = ended;
+        if located.role == Role::Investigator {
+            self.hangs.remove(task);
+            let status = if matches!(
+                end,
+                RunEnd::Reported {
+                    outcome: RunOutcome::Done
+                }
+            ) {
+                TaskStatus::Done
+            } else {
+                TaskStatus::Failed
+            };
+            return Ok((status, None));
+        }
         // The troubles of the ladder: a task whose last step went bad with one may be asked about instead of failing.
         let trouble = match settled {
             Settled::NoStatus { .. } => Some(Trouble::NoStatus),
@@ -2909,7 +3057,7 @@ impl Owner {
                 && let Some(agent_core::state::RunState::Ended { at, end }) =
                     found.member.runs().last().map(agent_core::state::Run::state)
                 && let Some(limit) = limit_of(end, *at)
-                && located.role != Role::Reviewer
+                && !matches!(located.role, Role::Reviewer | Role::Investigator)
                 && decide(&self.refusal_facts(limit, self.parts.state.limit_refusals(&task).max(1)))
                     == Decision::ChangeAgent
                 && let Some(handled) = self.handle_change_agent(&task, &located, &agent, until, now)?

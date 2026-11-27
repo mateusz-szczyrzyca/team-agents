@@ -1,4 +1,4 @@
-PRAGMA user_version = 34;
+PRAGMA user_version = 35;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -356,7 +356,7 @@ CREATE TABLE daemon_logs (
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
         'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry',
-        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed'
+        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed', 'investigation_started', 'investigation_answered', 'investigation_requeued', 'investigation_failed', 'investigation_kind_unknown'
     )),
     team TEXT,
     task TEXT,
@@ -377,14 +377,14 @@ CREATE TABLE daemon_logs (
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-            'worker_request_damaged', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed'
+            'worker_request_damaged', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed', 'investigation_kind_unknown'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',
             'daemon_started', 'daemon_stop_requested', 'daemon_stopped', 'request_delegated', 'questions_answered',
             'control_used', 'serena_reminded', 'checks_decided', 'reviews_requested', 'review_report_late', 'notification_sent',
             'questions_file_opened', 'build_directory_removed', 'github_step_resumed', 'task_handed_over',
-            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched'
+            'task_waits_for_agent', 'run_no_tool_retry', 'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'investigation_started', 'investigation_answered', 'investigation_requeued', 'investigation_failed'
         ))
         OR (level = 'debug' AND event IN ('decision_taken', 'outside_call_completed', 'peer_gone'))
     )
@@ -421,5 +421,4 @@ CREATE INDEX daemon_logs_by_time ON daemon_logs((substr(at,1,19)||'.'||substr(CA
 CREATE TRIGGER daemon_logs_cursor AFTER INSERT ON daemon_logs BEGIN
  UPDATE history_cursors SET value = max(value, new.id) WHERE name = 'daemon_logs';
 END;
-
 

@@ -59,6 +59,8 @@ pub enum TeamPrompt {
     Wake,
     /// The answer of an investigation delivered to the requester on the bus.
     InvestigationAnswer,
+    /// A failed investigation and the requester's next steps.
+    InvestigationFailed,
     /// What a worker is told when it is given a request of a member.
     Delegation,
     /// What a worker is told, after the delegation, when the request was given to another worker before and that result was
@@ -168,6 +170,7 @@ impl TeamPrompt {
         Self::TierCoordinator,
         Self::Wake,
         Self::InvestigationAnswer,
+        Self::InvestigationFailed,
         Self::Delegation,
         Self::DelegationAgain,
         Self::MemberFinished,
@@ -282,6 +285,11 @@ impl TeamPrompt {
                 "harness/team/investigation-answer.md",
                 Audience::Model,
                 &["investigation_id", "investigator", "file", "answer"],
+            ),
+            Self::InvestigationFailed => PromptSpec::new(
+                "harness/team/investigation-failed.md",
+                Audience::Model,
+                &["investigation_id", "reason"],
             ),
             Self::Delegation => delegation_spec(),
             Self::MemberFinished => PromptSpec::new(

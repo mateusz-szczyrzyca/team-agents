@@ -1255,7 +1255,7 @@ daemon the first gate of each task runs again. Details: [`docs/architecture.md`]
 ### Compatibility and upgrades
 
 Each version reads what an older one wrote: the state (`state.json`, schema 15 now) is migrated when the daemon loads
-it, and the history (`history.db`, schema 34 now) when the daemon opens it for writing — `agent log` reads an older
+it, and the history (`history.db`, schema 35 now) when the daemon opens it for writing — `agent log` reads an older
 history as it is. A version that adds a field, a log event or a table migrates forward and keeps every record. The way
 back is closed: **an older daemon refuses a state or a history of a newer schema**, so keep a copy of `state.json` and
 `history.db` before an upgrade if you may need to return. The CLI and the daemon talk over `agent.sock` with protocol
@@ -1265,11 +1265,37 @@ installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](W
 changes and what you must do (**Action:**); [`docs/state.md`](docs/state.md) and [`docs/history.md`](docs/history.md)
 have the formats.
 
-Investigator request support is being introduced in stages. Team state can retain an `investigator` task role
-beside reviewer tasks and record its investigation activity; older state without the role field still loads.
-History schema 33 accepts investigator runs. Investigation log events will arrive with their daemon emitters
-in a follow-up migration. The request and answer prompts are installed, but this release does not start queued
-investigations or deliver their answers.
+Team tasks can queue investigation requests. When an investigator is free, the daemon selects the least recently
+used eligible investigator and creates a new task in the requester's team, detached at the requester's branch tip.
+Its prompt asks for instructions and exact commands, forbids pushing, opening pull requests or messaging others,
+and ends with `STATUS: DONE` or `STATUS: FAILED`. The daemon saves a completed answer in the request's file,
+marks the request done, and sends the whole answer directly to the requester, waking its task. Investigation
+work stays local; it is not published. Requests wait while all investigators are busy, and another team's requests
+remain for that team. Unknown request kinds are failed once and logged as `investigation_kind_unknown`.
+
+Team state retains the `investigator` task role beside reviewer tasks and records investigation activity; older
+state without the role field still loads. History schema 33 accepts investigator runs. Schema 35 adds
+`investigation_started`, `investigation_answered` and `investigation_kind_unknown`, preserving existing logs,
+round links, search entries and cursors. It also accepts `investigation_requeued` and `investigation_failed`.
+
+An unsuccessful attempt is closed and retried once with a different investigator. If no other configured
+investigator is eligible after excluding previous failures and the requester, the request fails immediately
+and the requester receives the failure notice. A temporarily busy investigator can still take a later retry. Any unfinished answer stays
+in the request file under `## Unfinished answer of <investigator> (<end>)`; it is never sent to the requester
+or included in the replacement's prompt. A second failure, a human stop, or expiry of
+`[investigations] answer_minutes` (default `30`, allowed `10..=1440`) ends the request and tells the requester
+to decide or ask the human in its questions file. The deadline starts when the current investigator task is
+created, after worktree setup; queue and setup time do not count. Ended requesters and removed teams fail their requests without a message.
+Provider refusals close the attempt instead of pausing, switching agents or retrying the same task; an
+investigator remains unavailable until its provider cooldown ends. After restart, live assignments continue,
+and requests with no live assigned task return to the queue. Failure decisions are saved before stopping
+the investigator and sending the notice; the bus request closes after both succeed. A restart retries
+unfinished cleanup or delivery. A crash after sending but before closing may deliver the notice again.
+
+Each team's optional `investigations` records store the request `id`, current `task`, `started` timestamp and
+`failed_with` investigator names. The optional `investigation_failures` map retains failure reasons by request
+ID so recovery preserves the original decision, including after a cancellation reports a stopped run. Old state
+without these fields still loads; empty lists and maps are omitted.
 
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
@@ -1300,7 +1326,8 @@ Explicit `on` grants the tools to a team task regardless of its agent tier.
 Use `request_investigation` only when an investigator would help. Commit first: the investigator starts from your
 branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with `STATUS: SLEEPING`;
 the answer arrives as a message, which wakes the requester.
-Coordinators and members ask an investigator before writing a technical question for the human, following the exceptions in their role prompts.
+Coordinators and members ask an investigator before writing a technical question for the human, following the
+exceptions in their role prompts.
 
 ### Requests to workers
 
