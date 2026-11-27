@@ -155,7 +155,7 @@ pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
         return StepVerdict::Allowed;
     }
     let steps = || plan.steps().map(Step::id).collect::<Vec<_>>();
-    let named: Vec<&str> = message.lines().filter_map(step_trailer).collect();
+    let named: Vec<&str> = trailer_block(message).filter_map(step_trailer).collect();
     if named.is_empty() {
         return StepVerdict::Refused(StepRefusal::Missing { steps: steps() });
     }
@@ -172,6 +172,18 @@ pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
             steps: steps(),
         })
     }
+}
+
+/// The lines of the trailer block of `message`: its last paragraph, after the blank lines and the comment lines of the
+/// editor at its end. A `Step:` line that the body goes on after is not in it.
+fn trailer_block(message: &str) -> impl Iterator<Item = &str> {
+    let lines: Vec<&str> = message
+        .lines()
+        .rev()
+        .skip_while(|line| line.trim().is_empty() || line.starts_with('#'))
+        .take_while(|line| !line.trim().is_empty())
+        .collect();
+    lines.into_iter().rev()
 }
 
 /// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
