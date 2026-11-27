@@ -455,3 +455,44 @@ async fn a_first_failure_with_one_configured_investigator_ends_with_a_notice() {
     assert!(calls.contains("send"), "{calls}");
     assert!(!calls.contains("queued"), "{calls}");
 }
+
+#[tokio::test]
+async fn unfinished_answers_and_failure_notices_use_readable_end_names() {
+    for (end, label) in [
+        (
+            RunEnd::Reported {
+                outcome: RunOutcome::Failed,
+            },
+            "reported FAILED",
+        ),
+        (RunEnd::NoStatus { exit_code: Some(1) }, "no status"),
+        (RunEnd::QuotaExhausted { resets_at: None }, "quota exhausted"),
+        (RunEnd::RateLimited, "rate limited"),
+        (RunEnd::Hung, "hung"),
+        (RunEnd::TurnLimit, "turn limit"),
+    ] {
+        let mut attempt = Attempt::new();
+        attempt
+            .state
+            .team_mut(&team_id(0))
+            .unwrap()
+            .record_investigation(InvestigationRecord {
+                id: std::num::NonZeroU32::MIN,
+                task: task(3),
+                started: at(0),
+                failed_with: vec!["inv-other".parse().unwrap()],
+            });
+        let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+        let (mut owner, _sinks) = daemon.bare_owner().await;
+        let located = owner.locate(&task(3)).unwrap();
+        owner
+            .investigation_ended(&task(3), &located, &end, Some("private"))
+            .await
+            .unwrap();
+        assert_eq!(
+            std::fs::read_to_string(attempt.dir.path().join("answer.md")).unwrap(),
+            format!("\n## Unfinished answer of inv-1 ({label})\n\nprivate\n"),
+        );
+        assert!(attempt.calls().contains(label), "{}", attempt.calls());
+    }
+}
