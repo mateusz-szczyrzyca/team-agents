@@ -870,7 +870,7 @@ async fn a_run_resumed_after_a_replacement_with_a_known_size_says_nothing_of_it(
 
 #[tokio::test]
 async fn a_new_session_keeps_its_whole_prompt_and_a_changed_item_is_sent_on_resume() {
-    let mut rig = rig_with_agent(normal("claude-1", "stream:first,hold"), 42_000).await;
+    let mut rig = rig_with_agent(normal("claude-1", "work-stream:first,hold"), 42_000).await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let prompt = rig.prompt(&tasks[0], 2).await;
     rig.stop().await.unwrap();
