@@ -186,7 +186,7 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         ("pull_request", &review.pull_request),
         ("review_state", &review.review_state),
         ("findings", &review.findings),
-        ("checkpoint", ""),
+        ("checkpoint", notes.checkpoint.map_or(NO_CHECKPOINT, str::trim_end)),
     ];
     pairs
         .iter()
@@ -231,6 +231,9 @@ fn plan_text(steps: &[BriefingStep<'_>], judgements: &[(&str, JudgementState)], 
     .collect::<Vec<_>>()
     .join("\n")
 }
+
+/// What the briefing says where a round has no checkpoint yet.
+const NO_CHECKPOINT: &str = "No checkpoint yet.";
 
 /// The mark of a step done, in the plan's own syntax.
 const DONE_MARK: &str = "[x]";
