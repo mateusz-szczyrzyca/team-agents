@@ -74,7 +74,9 @@ human, failed, sleeping.
 The documents: [`docs/architecture.md`](docs/architecture.md) (the layout and the process model),
 [`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md) (what is kept and how old states
 are read), [`docs/history.md`](docs/history.md), [`docs/log.md`](docs/log.md), [`docs/task-list.md`](docs/task-list.md),
-[`docs/plan.md`](docs/plan.md) (the form and verification of a task's plan of steps), [`docs/tdd.md`](docs/tdd.md).
+[`docs/plan.md`](docs/plan.md) (the form and verification of a task's plan of steps), [`docs/tdd.md`](docs/tdd.md),
+[`docs/daemon-overview.md`](docs/daemon-overview.md) (what the daemon watches and when it acts),
+[`docs/checkpoints.md`](docs/checkpoints.md) (how work survives a lost session).
 [`WhatsNew.md`](WhatsNew.md) says what each version brought.
 
 ## Security
@@ -1257,7 +1259,9 @@ A gate is run with `agent gate`, by an agent in its worktree (the human can run 
 The gates of all the tasks wait in one queue in the daemon and run one at a time on the machine, in the order they were
 asked; the command waits for its turn and then for the gate (at most 16 wait; the next is refused). The command is stopped,
 with everything it started, after `gate_timeout_minutes` (default 30, counted from the start of the gate, not from the
-wait) and is recorded as failed; stopping or pausing the task stops its gate too. The result is recorded with the commit
+wait) and is recorded as failed. The daemon runs the command with `TEST_LOCK_WAIT=1`, so a gate that finds the machine's
+test lock held by another test run waits in line for it instead of being refused; that wait is part of the gate's time. Only `tools/test-lock.sh` itself holds the lock, not the
+commands it runs, so a process a test leaves behind does not keep it once the gate is over; stopping or pausing the task stops its gate too. The result is recorded with the commit
 (`HEAD`) and whether the tree was clean, in `tasks/<task>/gate.json` and the task's activity log, and the full output is
 in `tasks/<task>/gate-<n>.log`. The preceding record is kept in `tasks/<task>/gate-previous.json` to disclose a
 second-run pass; older task directories without that optional file remain readable. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
@@ -1270,7 +1274,7 @@ last gate and the gate command has not changed, a gate that passed there is answ
 there twice in a row is answered with its last failure: the command says the same as that gate did, the new
 `gate-<n>.log` holds that gate's output and ends with a line `gate: not run again: ...` that says why and what to do (for
 a failure: fix the cause and commit, or, when the failure is not caused by the change, say so in the questions file and
-wait for the answer). A gate that the busy test lock refused (the command exits with 75 and says "another tests are running now") ran no check and does not count: it is neither a failure nor a pass of the commit, it does not reset the count of the failures before it, and the next gate runs. A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
+wait for the answer). A gate that the busy test lock still refused (a gate command that does not wait in line exits with 75 and says "another tests are running now") ran no check and does not count: it is neither a failure nor a pass of the commit, it does not reset the count of the failures before it, and the next gate runs. A new commit, a changed tree or a changed command runs the gate again. The daemon logs each such
 answer as `checks_decided` with `outcome` `gate_reused`, the `head`, the `gate` it repeats (`passed`, `failed` or
 `timed_out`) and the `failures` in a row. The daemon remembers the last gates in memory only: after a restart of the
 daemon the first gate of each task runs again. Details: [`docs/architecture.md`](docs/architecture.md), "The gate".

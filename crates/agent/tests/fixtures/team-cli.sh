@@ -46,6 +46,8 @@
 #   merge-base-other  like `merge-base`, and then commits a file of its own, `resolved.txt`, which the task does not allow
 #   lead-gated      integrates like `integrate`, or commits a fix when the prompt is a fix pass; waits for the daemon's gate
 #   late:TEXT       waits until the other reviewer of the pass has its verdict in `state.json`, then ends with TEXT and STATUS: DONE
+#   worker-investigation-integrate:NAME:QUESTION  integrates like `integrate`, asks for the workers of `ask-worker:NAME`, adds the
+#                   investigation of QUESTION as `inv-add:QUESTION` does, and ends with STATUS: DONE: both are going when the round goes to review
 #   work            commits a file in the worktree, records that the repository's gate passed at the new head (the file
 #                   `gate.json` in the task's directory in the home the configuration names) and ends with STATUS: DONE
 #   work-pushed     like `work`, and pushes the branch to origin itself before it ends
@@ -1179,6 +1181,20 @@ case $action in
     # wrote for the run: see `ask_worker`. The answers are in `.fake-delegate-N`, one line a call.
     ask_worker "${action#ask-worker:}"
     result 'Asked for a worker.\nSTATUS: SLEEPING'
+    ;;
+  worker-investigation-integrate:*)
+    # `worker-investigation-integrate:NAME:QUESTION`: integrates the branches of the members as `integrate` does, asks for
+    # workers as `ask-worker:NAME` does and adds an investigation of QUESTION as `inv-add:QUESTION` does, then records the
+    # gate and ends with STATUS: DONE: a lead whose request and investigation are going when its round goes to review.
+    spec=${action#worker-investigation-integrate:}
+    current=$(git rev-parse --abbrev-ref HEAD)
+    for other in $(git for-each-ref --format='%(refname:short)' 'refs/heads/agents/*/task-*-*.*'); do
+      [[ $other == "$current" ]] || git "${GIT_FIXTURE[@]}" merge --no-edit "$other" > /dev/null
+    done
+    ask_worker "${spec%%:*}"
+    "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$current" --tasks-dir "$home/tasks" --question "${spec#*:}" --kind "" > /dev/null
+    record_gate
+    result 'Integrated.\nSTATUS: DONE'
     ;;
   ask-worker-after:*)
     # Asks for workers as `ask-worker:NAME` does, once the test says so with `.fake-ask` in the worktree.

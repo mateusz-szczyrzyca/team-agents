@@ -9,10 +9,16 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-core 0.142.0 — 27.11.2026 — PR pending
+## agent 0.145.0 — 27.11.2026 — PR #349
+
+### Bug fixes
+- [agent] A gate that finds the machine's test lock held by another test run now waits in line for it. Before, it was refused at once ("another tests are running now"), was recorded as a failed gate, and its round waited until the agent asked again.
+- [agent] A process that a test left behind no longer keeps the machine's test lock after its test run or gate is over. Before, it held every later gate, for example after a daemon restart stopped a gate halfway.
+
+## agent-core 0.142.0 — 27.11.2026 — PR #342
 
 ### Enhancements
-- [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; daemon delivery follows separately.
+- [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; the daemon does not send them to runs in this version.
 
 ### Configuration
 - [agent-core] new: `[findings] keep_days` (default `30`) — how many days a finding is shown.
@@ -22,7 +28,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent 0.144.0 · agent-core 0.141.0 · agent-runtime 0.130.0 — 27.11.2026 — PR #346
 
 ### Bug fixes
-- [agent] [agent-core] [agent-runtime] A step a worker's one result did not serve is given back with "the worker's result does not serve step 5.3"; before, the requester read "neither result" and "do not send it a third time" after a single try. The old words stay for a step whose two results were both wrong.
+- [agent] [agent-core] [agent-runtime] A step given back after one worker's wrong result now says "the worker's result does not serve step 5.3"; before, it said "neither result" and "do not send it a third time". A step whose two results were both wrong keeps the old words.
 - [agent-core] A worker commits the files of its request also when the request says not to commit, and says so in its notes; before, it obeyed, and its work was thrown away. Members, coordinators and solo agents are told never to ask a worker for uncommitted edits.
 
 ## agent 0.143.0 · agent-core 0.140.0 · agent-runtime 0.129.0 — 27.11.2026 — PR #338
@@ -38,12 +44,12 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Enhancements
 - [agent-core] A checkpoint written by an earlier version, with no job, is read as the checkpoint of an item.
 
-## agentbus — 27.11.2026 — PR pending
+## agentbus — 27.11.2026 — PR #341
 
 ### New features
 - [agentbus] Agents can record findings about repository files with `finding_add`, close them with `finding_resolve`, and list open notes with `agentbus findings --repo <repo> --json`.
 
-## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.128.0 — 27.11.2026 — PR pending
+## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.128.0 — 27.11.2026 — PR #339
 
 ### Enhancements
 - [agent] [agent-core] [agent-runtime] After the lead's conflict passes, the daemon asks an investigator for a resolution and gives the lead one extra pass before asking the human.
@@ -51,7 +57,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Configuration
 - [agent-core] new: `[merge] investigator_pass` (default `true`) — ask an investigator once per item and pull request head after the ordinary conflict passes; `false` keeps the direct human fallback.
 
-## agent-runtime 0.127.0 — 27.11.2026 — PR pending
+## agent-runtime 0.127.0 — 27.11.2026 — PR #337
 
 ### Enhancements
 - [agent-runtime] [agentbus] The daemon can file a conflict investigation for an item with `agentbus inv-add --kind conflict --item 2.3`.
@@ -73,7 +79,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Bug fixes
 - [agent-runtime] A checkpoint whose texts the history cut (`[history] max_text_bytes`) can be read again, so that a new session starts.
 
-## agent 0.140.0 · agent-core 0.137.0 · agent-runtime 0.124.0 — 27.11.2026 — PR pending
+## agent 0.140.0 · agent-core 0.137.0 · agent-runtime 0.124.0 — 27.11.2026 — PR #335
 
 ### Enhancements
 - [agent] [agent-core] [agent-runtime] A run that resumes its session after a report (the checks, a fix pass, a continuation) is sent only what happened since, not its whole task again; the first prompt of each session is kept in the task's directory as session-prompt.md.
@@ -128,7 +134,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Configuration
 - [agent-core] new: `[investigations] answer_minutes` (default `30`, range `10..=1440`) — maximum time for an investigator's current attempt, excluding time in the queue.
 
-## agent 0.134.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 26.11.2026 — PR pending
+## agent 0.134.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 26.11.2026 — PR #319
 
 ### New features
 - [agent] [agent-core] [agent-runtime] After every step of a round the daemon records a `checkpoint` in the history and keeps a snapshot of the holder's worktree under `refs/agents/snapshots/<round>/<task>/c<n>`: each local commit (also one that is never pushed), the pull request opened, pushed, ready, checked, approved, merged or closed, every review, fix pass and answer to a finding, a question and its answer, a merge refused for a conflict, the end of a run, a round cut by `[limits] round_minutes` (before the task is taken over), a hand-over, a renewal or a new session, and the start of the daemon. An agent cut before it pushed can be replaced from its last local commit. A snapshot of an unchanged worktree is reused; the references of a round are removed when it is merged or closed.
@@ -138,7 +144,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 - [agent] [agent-runtime] The daemon waits at most 2 seconds for the history to have a checkpoint's record: a history that is stuck (a database another process holds) is logged once and no longer holds a round up.
 - [agent] A checkpoint that cannot be taken (the worktree is gone, git or the disk fails) is logged as `checkpoint_failed` and recorded without a snapshot; the round goes on.
 
-## agent 0.133.0 — 26.11.2026 — PR pending
+## agent 0.133.0 — 26.11.2026 — PR #322
 
 ### Enhancements
 - [agent] [agentbus] Investigation tools are available only to team coordinators and members, including those using investigator-tier agents; other tasks and pool workers cannot call them.
@@ -151,11 +157,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent] [agent-core] Team state and activity history can retain investigator tasks separately from reviews; older state still loads.
-- [agent-core] Investigation request and answer prompts are available for the upcoming investigator workflow.
+- [agent-core] The texts of an investigation request and of its answer are in the prompt catalog; nothing sends them in this version.
 - [agent-runtime] History accepts investigator runs while preserving existing records.
 - [agent-runtime] [agentbus] `agentbus inv-next --task TASK` can select requests from specific tasks without claiming another team's requests; repeat the option for more tasks.
 
-## agent 0.131.0 · agent-core 0.128.0 — 26.11.2026 — PR pending
+## agent 0.131.0 · agent-core 0.128.0 — 26.11.2026 — PR #315
 
 ### Bug fixes
 - [agent] [agent-core] A round is no longer stopped and handed over for the time it waited for your answer: `round_minutes` counts only the time the agent could work.
@@ -514,7 +520,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## 0.87.0 — 24.11.2026 — PR #240
 
 ### Enhancements
-- [agent-runtime] Prepares a worker's task, branch and worktree at the requester's committed base, keeping the requester's uncommitted files untouched. New dispatch will use this in the next part.
+- [agent-runtime] Prepares a worker's task, branch and worktree at the requester's committed base, keeping the requester's uncommitted files untouched. Dispatch does not use it in this version.
 - [agent] Settles recorded worker requests outside the team crew: checks the result in its own worktree, brings over a valid commit, retries a wrong result, and releases the workspace. Failed cleanup is retried; malformed results are retained for inspection.
 
 ## 0.86.0 — 24.11.2026 — PR #239
@@ -547,7 +553,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## 0.83.0 — 24.11.2026 — PR #235
 
 ### Enhancements
-- [agent-core] Prepares the decision that will share the agents of `[tiers] workers` as one installation-wide pool. Nothing on a serving path uses it yet; a later part wires it in.
+- [agent-core] Adds the decision that shares the agents of `[tiers] workers` as one installation-wide pool; nothing on a serving path uses it in this version.
 
 ## 0.82.0 — 24.11.2026 — PR #231
 
@@ -629,7 +635,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## 0.75.0 — 23.11.2026 — PR #221
 
 ### New features
-- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements; automatic replacement follows in the next part. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running or queued work, rounds waiting for a free investigator, human pause or stop, provider reset waits and another team's pull-request merge protect a team; a sleeping team waiting for review verdicts or an open human question alone does not.
+- [agent] [agent-core] **Action:** The daemon removes teams with no work for two hours, checking at startup and once a minute. This release removes idle teams without starting replacements. Set `[limits] idle_team_minutes = 0` to keep the previous behavior. Running or queued work, rounds waiting for a free investigator, human pause or stop, provider reset waits and another team's pull-request merge protect a team; a sleeping team waiting for review verdicts or an open human question alone does not.
 - [agent] [agent-runtime] Before automatic removal, history records the last activity, items, split parts, round states and branches. Removal keeps the command's bundle safeguards and notification. A refusal keeps the team and names its branches in one notification; the daemon retries once a minute while the team remains idle, without repeating the refusal notice.
 
 ### Enhancements
@@ -637,7 +643,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Configuration
 - [agent-core] new: `[limits] idle_team_minutes` (default `120`) — minutes without work while the current daemon is running before automatic removal; downtime does not count and `0` disables it.
-- [agent-core] new: `[limits] idle_team_restarts` (default `1`) — reserved for the next part's replacement limit; it has no effect in this release.
+- [agent-core] new: `[limits] idle_team_restarts` (default `1`) — a limit of replacements of a removed team; it has no effect in this release.
 
 ## 0.74.0 — 23.11.2026 — PR #220
 
@@ -793,7 +799,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### New features
 - [agent] [agent-core] [agent-runtime] The daemon counts how often a team's lead sends an item's work back to the member. The lead says so with a line `RETURNED: 1.1` beside `STATUS:` in its final message (its role text prescribes it); the daemon counts the line only when the member's last run on the item ended `DONE` and the member is started again for it, and keeps what the lead told the member after the hand-over, whole, as the reason. A part of a split item is returned as `RETURNED: 1.1a` and has its own count; a return is saved with the end of the lead's run. An answer to a question, a bounce of the plan, a refused gate and a lead that writes no such line are never counted.
 - [agent] [agent-core] `agent status` shows the count on the member's line, `claude-1  waiting, returned 3 of 5`, and on the round's line when one more return reaches the limit. The count survives a restart; a state written before it loads with none.
-- [agent] [agent-core] **Action:** `[replacement] rejections = 5` is the limit the count is shown against; `0` shows the count with no limit. This version only counts and shows: it does not yet replace the agent at the limit.
+- [agent] [agent-core] **Action:** `[replacement] rejections = 5` is the limit the count is shown against; `0` shows the count with no limit. This version only counts and shows: it does not replace the agent at the limit.
 
 ## 0.60.0 — 22.11.2026 — PR #178
 
@@ -1119,7 +1125,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 
 ### Enhancements
 - [agent-core] Team state can retain complete split plans with lettered parts, deliverables, checks and dependencies.
-  Automatic execution of those parts will follow in the next part; answers do not activate splits yet.
+  In this version nothing runs those parts and answers do not activate splits.
 - [agent-core] **Action:** State files now use schema 13 and older states migrate automatically without changing
   their history. Keep a backup before upgrading: older binaries cannot read the upgraded state.
 
