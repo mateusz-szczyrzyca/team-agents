@@ -1296,9 +1296,12 @@ it, and the history (`history.db`, schema 35 now) when the daemon opens it for w
 history as it is. A version that adds a field, a log event or a table migrates forward and keeps every record. The way
 back is closed: **an older daemon refuses a state or a history of a newer schema**, so keep a copy of `state.json` and
 `history.db` before an upgrade if you may need to return. The CLI and the daemon talk over `agent.sock` with protocol
-negotiation (versions 3 to 8 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
-older protocol lacks; an older daemon refuses a command it does not know, such as `remove`. Restart the daemon after
-installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
+negotiation (versions 3 to 10 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
+older protocol lacks; an older daemon refuses a command declared with a newer protocol version with `UnsupportedVersion`,
+such as `swap` (protocol 10). The socket API introduces `Command::Swap(SwapRequest { task, agent })` and replies with
+`Reply::Applied` or structured `SwapRefusal` failure causes; the full `agent swap` CLI command is delivered in a later item.
+Existing state files and historical states without reason `swap` read as before; an older daemon cannot read a state
+holding reason `swap`. Restart the daemon after installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version
 changes and what you must do (**Action:**); [`docs/state.md`](docs/state.md) and [`docs/history.md`](docs/history.md)
 have the formats.
 
