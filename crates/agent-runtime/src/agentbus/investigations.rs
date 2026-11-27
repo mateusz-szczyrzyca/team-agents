@@ -3,7 +3,7 @@
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
-use agent_core::ids::{AgentName, BranchName, TaskId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId};
 use serde::{Deserialize, Deserializer};
 
 /// The kind of an investigation request.
@@ -12,6 +12,11 @@ pub enum InvestigationKind {
     /// A question from an agent (`""`).
     #[default]
     Question,
+    /// A coordinator asks for a split of a validated task-list item.
+    Split {
+        /// The parent item to divide.
+        item: ItemId,
+    },
     /// A PR review (`"review"`).
     Review,
     /// Any other kind that an earlier or later bus version wrote.
