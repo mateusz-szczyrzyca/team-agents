@@ -27,7 +27,7 @@ async fn rig() -> Rig {
             normal("codex-1", "sleep,sleep,sleep,sleep"),
         ],
         5,
-        true,
+        false,
     )
     .await;
     std::fs::create_dir(rig.repo.join("src")).unwrap();
