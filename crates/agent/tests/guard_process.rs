@@ -501,30 +501,42 @@ mod guard_process {
         world
     }
 
-    // Rule: a cherry-pick that keeps a message with no `Step:` trailer is refused like any other commit.
-    #[tokio::test]
-    async fn a_cherry_pick_whose_message_has_no_step_trailer_is_refused() {
-        let world = world_with_two_branches().await;
-
-        let refused = world.git(&world.worktree, &["cherry-pick", "other"]);
-
-        assert!(!refused.status.success());
-        assert!(
-            stderr(&refused).contains("This commit was not made."),
-            "{}",
-            stderr(&refused)
-        );
-        let abort = world.git(&world.worktree, &["cherry-pick", "--abort"]);
-        assert!(abort.status.success(), "{}", stderr(&abort));
+    /// A world in which `other` and `feature` each wrote `src/shared.rs` and `feature` wrote it again, before the plan
+    /// has `For:` lines; it is returned with the plan written.
+    async fn world_with_a_conflict() -> World {
+        let world = World::new(true).await;
+        let run = |args: &[&str]| {
+            let output = world.git(&world.worktree, args);
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        };
+        run(&["checkout", "-q", "-b", "other"]);
+        let other = world.commit("src/shared.rs", "fn o() {}\n", "Other work");
+        assert!(other.status.success(), "{}", stderr(&other));
+        run(&["checkout", "-q", "feature"]);
+        for (text, subject) in [("fn a() {}\n", "My work"), ("fn b() {}\n", "More of my work")] {
+            let made = world.commit("src/shared.rs", text, subject);
+            assert!(made.status.success(), "{}", stderr(&made));
+        }
+        write_plan(&world, true);
+        world
     }
 
-    // Rule: a revert, whose message git writes with no trailer, is refused until the agent adds one.
-    #[tokio::test]
-    async fn a_revert_whose_message_has_no_step_trailer_is_refused() {
-        let world = world_with_two_branches().await;
-        let before = world.count();
+    /// Resolves the conflict git stopped at and makes its commit with the message git prepared.
+    fn commit_the_resolution(world: &World) -> Output {
+        let added = world.git(&world.worktree, &["add", "-A"]);
+        assert!(added.status.success(), "{}", stderr(&added));
+        world.git(&world.worktree, &["commit", "-q", "--no-edit"])
+    }
 
-        let refused = world.git(&world.worktree, &["revert", "--no-edit", "HEAD"]);
+    // Rule: git runs no `commit-msg` hook for a plain cherry-pick, so a cherry-pick that stops at a conflict is asked
+    // for its step where the agent commits the resolution, with the message of the picked commit.
+    #[tokio::test]
+    async fn a_cherry_pick_resolution_whose_message_has_no_step_trailer_is_refused() {
+        let world = world_with_a_conflict().await;
+        let stopped = world.git(&world.worktree, &["cherry-pick", "other"]);
+        assert!(!stopped.status.success(), "{}", stderr(&stopped));
+
+        let refused = commit_the_resolution(&world);
 
         assert!(!refused.status.success());
         assert!(
@@ -532,9 +544,23 @@ mod guard_process {
             "{}",
             stderr(&refused)
         );
-        let abort = world.git(&world.worktree, &["revert", "--abort"]);
-        assert!(abort.status.success(), "{}", stderr(&abort));
-        assert_eq!(world.count(), before);
+    }
+
+    // Rule: the same holds for a revert that stops at a conflict, whose message git writes with no trailer.
+    #[tokio::test]
+    async fn a_revert_resolution_whose_message_has_no_step_trailer_is_refused() {
+        let world = world_with_a_conflict().await;
+        let stopped = world.git(&world.worktree, &["revert", "--no-edit", "HEAD~1"]);
+        assert!(!stopped.status.success(), "{}", stderr(&stopped));
+
+        let refused = commit_the_resolution(&world);
+
+        assert!(!refused.status.success());
+        assert!(
+            stderr(&refused).contains("This commit was not made."),
+            "{}",
+            stderr(&refused)
+        );
     }
 
     // Rule: a rebase that replays a commit whose message has no `Step:` trailer is refused at that commit.
@@ -542,7 +568,18 @@ mod guard_process {
     async fn a_rebase_that_replays_a_commit_with_no_step_trailer_is_refused() {
         let world = world_with_two_branches().await;
 
-        let refused = world.git(&world.worktree, &["rebase", "other"]);
+        let refused = world.git(
+            &world.worktree,
+            &[
+                "-c",
+                "core.editor=true",
+                "-c",
+                "sequence.editor=sed -i s/^pick/reword/",
+                "rebase",
+                "-i",
+                "other",
+            ],
+        );
 
         assert!(!refused.status.success());
         assert!(
