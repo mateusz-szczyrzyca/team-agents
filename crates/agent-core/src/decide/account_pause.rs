@@ -7,7 +7,7 @@
 
 use crate::config::{AccountName, Limits};
 use crate::decide::limit::Limit;
-use crate::decide::outcome::ClassifyError;
+use crate::decide::outcome::{ClassifyError, PauseReason, pause_until};
 use crate::state::{AccountPause, Timestamp};
 
 #[cfg(test)]
@@ -39,13 +39,26 @@ pub enum AccountPauseOutcome {
 /// [`ClassifyError`] when the pause would end after the year 9999 or at a time a timestamp cannot hold, or when the
 /// configured pause is not a duration.
 pub fn decide(
-    _limit: &Limit,
-    _limits: &Limits,
+    limit: &Limit,
+    limits: &Limits,
     account: Option<&AccountName>,
-    _paused: Option<&AccountPause>,
-    _now: Timestamp,
+    paused: Option<&AccountPause>,
+    now: Timestamp,
 ) -> Result<AccountPauseOutcome, ClassifyError> {
-    Ok(account.map_or(AccountPauseOutcome::AlreadyPaused, |_| {
-        AccountPauseOutcome::NotAnAccount
-    }))
+    if account.is_none() {
+        return Ok(AccountPauseOutcome::NotAnAccount);
+    }
+    if let Some(paused) = paused {
+        return Ok(if now < paused.until {
+            AccountPauseOutcome::AlreadyPaused
+        } else {
+            AccountPauseOutcome::Expired
+        });
+    }
+    let (reset_in, reason) = match *limit {
+        Limit::RateLimit => (None, PauseReason::RateLimit),
+        Limit::Quota { reset_in } => (reset_in, PauseReason::Quota),
+    };
+    let until = pause_until(now, reset_in, reason, limits)?;
+    Ok(AccountPauseOutcome::Pause { until, notify: true })
 }
