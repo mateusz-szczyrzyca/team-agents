@@ -282,3 +282,73 @@ async fn a_session_that_ends_three_times_without_a_status_goes_on_in_a_new_sessi
     assert_resumed(&briefing, &worktree, &standing);
     rig.stop().await.unwrap();
 }
+
+/// The texts the bus of `rig` keeps, every file of its directory read as text.
+fn bus_texts(rig: &Rig) -> String {
+    let mut texts = String::new();
+    let mut dirs = vec![rig.home.root().join("bus")];
+    while let Some(dir) = dirs.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if let Ok(text) = std::fs::read_to_string(&path) {
+                texts.push_str(&text);
+            }
+        }
+    }
+    texts
+}
+
+// Rule: the lead that is given the work of a member whose sessions went bad is told the last checkpoint of the member's
+// round, with what is done and what is left per requirement, as a new holder of the task would be.
+#[tokio::test]
+async fn the_lead_given_a_members_work_is_told_the_last_checkpoint() {
+    let mut rig = Rig::new(
+        &[
+            investigator("inv-lead", "sleep"),
+            normal("claude-1", "script-nostatus:midway"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        true,
+    )
+    .await;
+    configure(&rig, "[replacement]\nagents = [\"inv-lead\"]\n");
+    midway_script(&rig, "midway", false);
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
+        .await;
+    rig.status_is(&tasks[1], TaskStatus::Stopped).await;
+    rig.wait_for("the lead's text on the bus", || {
+        bus_texts(&rig).contains("WORK OF A MEMBER THAT IS GONE")
+    })
+    .await;
+    let bus = bus_texts(&rig);
+    let head = Standing::of(&rig.worktree(&tasks[1])).head;
+    rig.stop().await.unwrap();
+
+    // The bus keeps the text of a message as a JSON string: its line breaks are escaped.
+    let text = bus
+        .split("WORK OF A MEMBER THAT IS GONE")
+        .nth(1)
+        .unwrap_or_default()
+        .replace("\\n", "\n");
+    let text = text.as_str();
+    assert!(text.contains("## Checkpoint: "), "{text}");
+    let short: String = head.chars().take(7).collect();
+    let done = part(text, "### What is done\n");
+    assert!(
+        done.contains(&short),
+        "the commit {short} is not under What is done: {done}"
+    );
+    assert!(done.contains("R1 met"), "{done}");
+    let left = part(text, "### What is left\n");
+    assert!(left.contains("K1 not started — steps left: 1.2 (not done)"), "{left}");
+    assert!(!left.contains("R1"), "something done is listed as left: {left}");
+}
