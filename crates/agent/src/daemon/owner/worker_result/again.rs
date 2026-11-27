@@ -3,11 +3,13 @@
 
 use std::path::Path;
 
+use agent_core::decide::account_candidates::agents_of_paused_accounts;
 use agent_core::decide::pool::{PoolWorker, Requires, second_try_pool_elsewhere};
 use agent_core::decide::worker_result::{Elsewhere, worker_for_second_try};
 use agent_core::ids::{AgentName, TaskId, TeamId};
 use agent_core::kinds::CliKind;
 use agent_core::log::LogEvent;
+use agent_core::state::Timestamp;
 use agent_runtime::agentbus::{DelegationRequest, DelegationStatus, DelegationUpdate, RequestId};
 use agent_runtime::process::error_chain;
 use agent_runtime::worker_request::{Pending, Settlement, Try, read_try, write_try};
@@ -95,12 +97,16 @@ impl Owner {
                 self.parts.settings.config.limits(),
                 agent_core::kinds::Tier::Worker,
             );
+            // A worker of a paused account takes no request: it is no worker elsewhere either.
+            let Some(paused) = self.agents_of_paused_accounts_now(pending.request) else {
+                return Elsewhere::None;
+            };
             let mut pool_workers_data = Vec::new();
             for name in pool {
                 let Some(agent_conf) = self.parts.settings.config.agent(name) else {
                     continue;
                 };
-                if self.is_in_active_crew(name) {
+                if self.is_in_active_crew(name) || paused.contains(name) {
                     continue;
                 }
                 let provider =
@@ -148,6 +154,28 @@ impl Owner {
             };
 
             second_try_pool_elsewhere(&workers, &requires, &pending.worker, &failed_provider, run_limit)
+        }
+    }
+
+    /// The agents whose account is paused now; `None` when the clock gives no time, which is logged: no worker is offered
+    /// for the second try of `request` then.
+    fn agents_of_paused_accounts_now(&self, request: RequestId) -> Option<Vec<AgentName>> {
+        match Timestamp::now(&self.parts.clock) {
+            Ok(now) => Some(agents_of_paused_accounts(
+                &self.parts.state,
+                &self.parts.settings.config,
+                now,
+            )),
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::DaemonTaskFailed.as_str(),
+                    operation = "second_try",
+                    request = %request,
+                    error = %error_chain(&error),
+                    "the clock gives no time: no worker is offered for the second try"
+                );
+                None
+            }
         }
     }
 
