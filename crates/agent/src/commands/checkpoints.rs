@@ -8,7 +8,7 @@ use std::str::FromStr;
 
 use agent_core::config::Language;
 use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record, SequencedRecord};
-use agent_core::ids::{RoundId, TaskId};
+use agent_core::ids::{InvalidId, RoundId, TaskId};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_core::story::{Selection, json_lines};
@@ -45,17 +45,23 @@ impl std::fmt::Display for Target {
 pub(crate) struct InvalidTarget {
     /// What was written.
     pub(crate) text: String,
+    /// Why the id was refused.
+    #[source]
+    pub(crate) source: InvalidId,
 }
 
 impl FromStr for Target {
     type Err = InvalidTarget;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let invalid = || InvalidTarget { text: text.to_owned() };
+        let invalid = |source| InvalidTarget {
+            text: text.to_owned(),
+            source,
+        };
         if text.starts_with("round-") {
-            text.parse().map(Self::Round).map_err(|_| invalid())
+            text.parse().map(Self::Round).map_err(invalid)
         } else {
-            text.parse().map(Self::Task).map_err(|_| invalid())
+            text.parse().map(Self::Task).map_err(invalid)
         }
     }
 }
@@ -297,7 +303,11 @@ pub(crate) async fn checkpoints_in(
                 })
         }
         _ if taken.is_empty() => format!("No checkpoints for {}.\n", request.target),
-        Mode::Listing => taken.iter().map(|(_, row)| format!("{}\n", row.line())).collect(),
+        Mode::Listing => taken.iter().fold(String::new(), |mut text, (_, row)| {
+            text.push_str(&row.line());
+            text.push('\n');
+            text
+        }),
         Mode::Show(number) => {
             let index = number.map_or(taken.len(), NonZeroUsize::get);
             let Some((_, row)) = index.checked_sub(1).and_then(|index| taken.get(index)) else {

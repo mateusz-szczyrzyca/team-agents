@@ -312,6 +312,10 @@ struct CheckpointsArgs {
     target: commands::checkpoints::Target,
     /// Print checkpoint N (1 is the oldest; without N, the last) as an agent is told it, not the listing.
     #[arg(long, value_name = "N", num_args = 0..=1, conflicts_with = "json")]
+    #[expect(
+        clippy::option_option,
+        reason = "clap's optional value of an optional flag: absent, present without N, present with N"
+    )]
     show: Option<Option<std::num::NonZeroUsize>>,
     /// Print the checkpoints as JSON lines, as `agent log --json` prints its records.
     #[arg(long)]
