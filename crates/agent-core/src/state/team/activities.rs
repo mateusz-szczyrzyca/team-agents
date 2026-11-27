@@ -498,7 +498,7 @@ fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<Activit
         (TaskStatus::Done, last)
             if matches!(
                 entry.request,
-                ActivityRequest::TeamMember | ActivityRequest::Investigation
+                ActivityRequest::TeamMember | ActivityRequest::Investigation | ActivityRequest::TaskAllocation
             ) =>
         {
             (last.map_or(seen, |(at, _)| at), ActivityEnd::Reported)
