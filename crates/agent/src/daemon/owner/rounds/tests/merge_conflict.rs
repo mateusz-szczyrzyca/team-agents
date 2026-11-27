@@ -1178,3 +1178,70 @@ async fn a_verified_conflict_change_gets_an_investigation_and_the_extra_pass() {
     assert!(prompt.contains("pass 2 of 2"), "{prompt}");
     assert!(prompt.contains("Resolve the verified conflict"), "{prompt}");
 }
+
+/// Collects the new event from its real daemon cause for the exhaustive log test.
+pub(super) async fn record_merge_conflict_investigated(
+    observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>,
+) {
+    use agent_core::config::Secrets;
+    use agent_core::log::LogLevel;
+    use agent_runtime::history::{HistoryLayer, Reader};
+    use std::io::Write as _;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base,ask-here"),
+            investigator("inv-r1", "conflict-investigator:hold"),
+            investigator("inv-r2", "conflict-investigator:hold"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(rig.home.config_file())
+            .unwrap(),
+        "[merge]\nconflict_passes = 1"
+    )
+    .unwrap();
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    let layer = HistoryLayer::deferred(LogLevel::Info, rig.history_test_clock(), Secrets::default());
+    rig.start_with_log_layer(layer).await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.wait_for("the conflict pass", || rig.runs(&task) >= 2).await;
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    let state = rig
+        .state_where("investigation or human", |state| {
+            let Some(item) = state.teams().first().and_then(|team| team.item("1.1".parse().unwrap())) else {
+                return false;
+            };
+            serde_json::to_value(item)
+                .unwrap()
+                .get("conflict_investigation")
+                .is_some()
+                || matches!(
+                    item.merge_conflict(),
+                    Some(agent_core::state::MergeConflict::AskingHuman { .. })
+                )
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let entries: Vec<_> = logs
+        .iter()
+        .filter(|row| row.event().as_str() == "merge_conflict_investigated")
+        .collect();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0].fields().get("item"), Some(&serde_json::json!("1.1")));
+    assert_eq!(entries[0].fields().get("id"), Some(&serde_json::json!(1)));
+    let row = entries[0];
+    assert_eq!(row.level(), agent_core::log::LogLevel::Info);
+    assert_eq!(row.team(), Some(state.teams()[0].id()));
+    assert!(!row.rounds().is_empty());
+    assert_eq!(row.task(), None);
+    assert_eq!(row.run(), None);
+    observed.insert(agent_core::log::LogEvent::MergeConflictInvestigated);
+}
