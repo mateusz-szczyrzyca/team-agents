@@ -629,7 +629,7 @@ impl Default for Merge {
     fn default() -> Self {
         Self {
             conflict_passes: DEFAULT_CONFLICT_PASSES,
-            investigator_pass: false,
+            investigator_pass: true,
         }
     }
 }

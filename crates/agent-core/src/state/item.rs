@@ -539,6 +539,8 @@ pub struct ItemProgress {
     publish_question: Option<PublishQuestion>,
     /// The rejections the lead made since the agent that held the item last had none, oldest first; absent while none.
     rejections: Option<Vec<Rejection>>,
+    /// Automatic conflict request already filed for this item's pull request head.
+    conflict_investigation: Option<ConflictInvestigation>,
 }
 
 /// Borrowed reference adapter for serializing [`ItemProgress`] into wire/storage format.
@@ -587,6 +589,9 @@ struct ItemProgressWireRef<'a> {
     /// The rejections the lead made since the agent that held the item last had none.
     #[serde(skip_serializing_if = "Option::is_none")]
     rejections: Option<&'a Vec<Rejection>>,
+    /// Automatic conflict request, absent before the first investigation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_investigation: Option<&'a ConflictInvestigation>,
 }
 
 impl Serialize for ItemProgress {
@@ -610,6 +615,7 @@ impl Serialize for ItemProgress {
             conflict_accounted_head: accounted,
             conflict_provisional_head: provisional,
             merge_conflict: self.merge_conflict.as_ref(),
+            conflict_investigation: self.conflict_investigation.as_ref(),
             publish_tries: self.publish_tries,
             publish_question: self.publish_question.as_ref(),
             rejections: self.rejections.as_ref(),
@@ -725,8 +731,8 @@ struct ItemProgressWire {
     #[serde(default)]
     rejections: Option<Vec<Rejection>>,
     /// Optional automatic investigation; absent in older state files.
-    #[serde(default, rename = "conflict_investigation")]
-    _conflict_investigation: Option<ConflictInvestigation>,
+    #[serde(default)]
+    conflict_investigation: Option<ConflictInvestigation>,
 }
 
 impl<'de> Deserialize<'de> for ItemProgress {
@@ -772,6 +778,7 @@ impl<'de> Deserialize<'de> for ItemProgress {
             conflict_approved_head: wire.conflict_approved_head,
             conflict_head,
             merge_conflict: wire.merge_conflict,
+            conflict_investigation: wire.conflict_investigation,
             publish_tries: wire.publish_tries,
             publish_question,
             rejections: wire.rejections,
@@ -1441,6 +1448,7 @@ impl ItemProgress {
             conflict_approved_head: None,
             conflict_head: None,
             merge_conflict: None,
+            conflict_investigation: None,
             publish_tries: 0,
             publish_question: None,
             rejections: None,
