@@ -85,7 +85,8 @@ impl Settings {
     ///
     /// # Errors
     /// [`SettingsError`]: a missing configuration, a file that cannot be read, is not UTF-8 or is too long, a
-    /// configuration or a secrets file that its parser refuses (a secrets file that others can read among them).
+    /// configuration or a secrets file that its parser refuses (a secrets file that others can read among them), and
+    /// secrets of accounts that do not fit the configuration's accounts.
     pub async fn load(home: &Home) -> Result<Self, SettingsError> {
         let config_path = home.config_file();
         let config = read_text(&config_path, MAX_CONFIG_BYTES)
@@ -100,12 +101,18 @@ impl Settings {
         let secrets_path = home.secrets_file();
         let secrets = match read_text(&secrets_path, MAX_SECRETS_BYTES).await? {
             Some(file) => Secrets::parse(&file.text, file.mode).map_err(|source| SettingsError::Secrets {
-                path: secrets_path,
+                path: secrets_path.clone(),
                 source,
             })?,
             // No secrets file is the specified state of a home that needs none, such as a trial with fake CLIs.
             None => Secrets::default(),
         };
+        config
+            .check_account_env(&secrets)
+            .map_err(|source| SettingsError::AccountSecrets {
+                path: secrets_path,
+                source,
+            })?;
         Ok(Self { config, secrets })
     }
 }
