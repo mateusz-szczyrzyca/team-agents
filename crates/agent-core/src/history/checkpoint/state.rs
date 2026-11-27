@@ -7,12 +7,12 @@
 use std::collections::BTreeMap;
 use std::num::NonZeroU32;
 
-use super::CheckpointContent;
+use super::{CheckpointCause, CheckpointContent};
 use crate::ids::ItemId;
 use crate::plan::judge::JudgementState;
 use crate::plan::{Plan, StepState};
 use crate::review_findings::Severity;
-use crate::state::{FindingStatus, PrNumber};
+use crate::state::{FindingStatus, PhaseKind, PrNumber};
 use crate::task_list::requirements::{Requirement, RequirementId, RequirementKind};
 
 #[cfg(test)]
@@ -66,6 +66,17 @@ pub enum Next {
     WaitForMerge,
     /// The item is done: its pull request is merged.
     Nothing,
+}
+
+impl Next {
+    /// What comes next after a step of `cause` in a round whose item is in `phase`, with `passes_passed` review passes
+    /// behind it and `pull_request` open when there is one. The step decides first: a round that waits for the human
+    /// waits whatever its phase is.
+    #[must_use]
+    pub fn of(cause: CheckpointCause, phase: PhaseKind, passes_passed: u32, pull_request: Option<PrNumber>) -> Self {
+        let _ = (cause, phase, passes_passed, pull_request);
+        Self::Nothing
+    }
 }
 
 /// The facts a checkpoint tells.

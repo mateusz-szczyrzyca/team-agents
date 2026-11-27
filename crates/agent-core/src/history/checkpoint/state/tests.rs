@@ -350,3 +350,41 @@ fn the_counts_are_read_from_the_first_lines_of_the_parts() {
 fn the_next_line_of_a_merged_item_says_that_nothing_is_left_to_do() {
     assert_eq!(next_line(Next::Nothing), "next: nothing; the pull request is merged");
 }
+
+fn next_of(cause: CheckpointCause, phase: PhaseKind, passes: u32, pr: Option<PrNumber>) -> Next {
+    Next::of(cause, phase, passes, pr)
+}
+
+// Rule: the phase of the item decides what comes next, and a round that waits for the human says so in any phase.
+#[test]
+fn what_comes_next_follows_the_phase_of_the_item_and_a_wait_for_the_human() {
+    let pr = Some(pull_request());
+    let commit = CheckpointCause::Commit;
+    assert_eq!(next_of(commit, PhaseKind::Pending, 0, None), Next::HandOver);
+    assert_eq!(next_of(commit, PhaseKind::InProgress, 0, None), Next::HandOver);
+    assert_eq!(next_of(commit, PhaseKind::InProgress, 0, pr), Next::HandOver);
+    assert_eq!(
+        next_of(commit, PhaseKind::InReview, 0, pr),
+        Next::WaitForReviews { pass: 1 }
+    );
+    assert_eq!(
+        next_of(commit, PhaseKind::InReview, 2, pr),
+        Next::WaitForReviews { pass: 3 }
+    );
+    assert_eq!(
+        next_of(commit, PhaseKind::Fixing, 1, pr),
+        Next::Fix {
+            pull_request: pull_request()
+        }
+    );
+    assert_eq!(next_of(commit, PhaseKind::Fixing, 1, None), Next::HandOver);
+    assert_eq!(next_of(commit, PhaseKind::Approved, 2, pr), Next::WaitForMerge);
+    assert_eq!(
+        next_of(CheckpointCause::PullMerged, PhaseKind::Done, 2, pr),
+        Next::Nothing
+    );
+    for cause in [CheckpointCause::WaitsForHuman, CheckpointCause::QuestionAsked] {
+        assert_eq!(next_of(cause, PhaseKind::InProgress, 0, None), Next::WaitForHuman);
+        assert_eq!(next_of(cause, PhaseKind::InReview, 1, pr), Next::WaitForHuman);
+    }
+}
