@@ -87,11 +87,11 @@ Log: `<home>/tasks/<task-4>/gate-1.log`.
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
     took <duration>
     prompt: <n> lines, <n> bytes
-      # Working context
+      # YOUR SESSION GOES ON
       
-      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
-      The human does not answer live: you reach them only through a questions file (below).
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-4>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-5>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-5>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
@@ -117,11 +117,11 @@ STATUS: DONE
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
     took <duration>
     prompt: <n> lines, <n> bytes
-      # Working context
+      # YOUR SESSION GOES ON
       
-      You are agent **claude-1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
-      The human does not answer live: you reach them only through a questions file (below).
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-4>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-6>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-6>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
@@ -204,11 +204,11 @@ Write `allow` to let the round go to its review as it is; the harness records it
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/claude-1/<task-4>-1.1
     took <duration>
     prompt: <n> lines, <n> bytes
-      # THE HUMAN ANSWERED YOUR QUESTIONS (questions number 1)
+      # YOUR SESSION GOES ON
       
-      The human answered the questions you asked when you ended a run with `STATUS: QUESTIONS`. If you were started again
-      after that without these answers reaching you, they are given again now. Everything of this session still holds, the
-      rules of your first message included. Below is the file with their answers: each question has its verdict. A verdict
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-4>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-7>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-7>/claude-settings.json --resume <uuid> --scenario script:code-only,done,questions,done --as claude-1 --home <home> <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>

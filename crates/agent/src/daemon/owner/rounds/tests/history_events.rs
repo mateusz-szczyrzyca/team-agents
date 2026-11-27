@@ -826,7 +826,7 @@ async fn a_task_with_runs_in_two_rounds_links_second_round_events_only_to_the_se
     const TWO_APPROVALS: &str = "verify:VERDICT: APPROVE\\nSUMMARY: ok,verify:VERDICT: APPROVE\\nSUMMARY: ok";
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "gated,ask,gated"),
+            normal("claude-1", "gated,ask-here,gated"),
             investigator("inv-r1", TWO_APPROVALS),
             investigator("inv-r2", TWO_APPROVALS),
         ],

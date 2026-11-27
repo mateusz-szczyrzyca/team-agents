@@ -213,3 +213,26 @@ async fn each_fix_pass_has_a_findings_file_of_its_own() {
     assert_ne!(first, second);
     assert_eq!(first.parent(), second.parent());
 }
+
+#[tokio::test]
+async fn reported_fix_pass_resumes_with_findings_without_repeating_the_developer_rules() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work:99"),
+            investigator("inv-r1", "review-reasons"),
+            investigator("inv-r2", "review-reasons"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.notification_with("The lead's fix response was refused").await;
+    rig.stop().await.unwrap();
+    let prompt = rig.kept_prompt(&tasks[0], 2);
+    assert!(prompt.contains("THE REVIEWERS ASKED FOR CHANGES"), "{prompt}");
+    assert!(prompt.contains("# YOUR SESSION GOES ON"), "{prompt}");
+    assert!(!prompt.contains("# Rust developer rules"), "{prompt}");
+    assert!(!prompt.contains("## Your item"), "{prompt}");
+}

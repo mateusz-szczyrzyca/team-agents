@@ -4,7 +4,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-use agent_core::cli::{OutputParser, RunRequest};
+use agent_core::cli::{OutputParser, RunMode, RunRequest};
 use agent_core::config::{AbsolutePath, EnvName};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
@@ -151,6 +151,9 @@ async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
 
 /// Makes `job` ready: the prompt, the adapter's run, its files, what it keeps out of git, its process.
 pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch, RunError> {
+    if matches!(job.mode, RunMode::New { .. }) {
+        write_file(&parts.store.home().session_prompt_file(&job.task), &job.prompt).await?;
+    }
     let run_dir = parts.store.home().run_dir(&job.task, &job.run);
     let (prompt, prompt_in_file) = argument_prompt(parts, job, &run_dir).await?;
     let request = RunRequest {

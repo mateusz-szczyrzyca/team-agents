@@ -2223,3 +2223,23 @@ async fn a_refused_file_with_no_later_commit_goes_back_to_the_team_and_nothing_i
     assert!(kept.refused_of(&["1.1".parse().unwrap()]).contains(&existing()));
     assert!(!rig.home.questions_file(&tasks[0], NonZeroU32::new(2).unwrap()).exists());
 }
+
+#[tokio::test]
+async fn reported_checks_resume_without_repeating_the_developer_rules() {
+    let mut rig = checking_rig("script:edit-test,questions,done", 2, SILENT, SILENT).await;
+    scripts(&rig);
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Questions).await;
+    answer(&rig, &tasks[0], 1, "allow").await;
+    reviews_asked(&rig).await;
+    rig.stop().await.unwrap();
+    let prompt = rig.kept_prompt(&tasks[0], 3);
+    assert!(
+        prompt.contains("THE HUMAN ANSWERED THE QUESTIONS OF THE ROUND CHECKS"),
+        "{prompt}"
+    );
+    assert!(prompt.contains("# YOUR SESSION GOES ON"), "{prompt}");
+    assert!(!prompt.contains("# Rust developer rules"), "{prompt}");
+    assert!(!prompt.contains("## Your item"), "{prompt}");
+}

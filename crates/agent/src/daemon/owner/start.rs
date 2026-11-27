@@ -210,6 +210,13 @@ async fn compose_run_prompt(
     {
         Ok((prompt, None))
     } else {
+        // Team wake-ups, answers and autopilot corrections can replace their input. A reported resume's
+        // session reminder and changed assignment precede those notices even on those replacement paths.
+        let (reported, prompt) = if kind == PromptKind::Resume(ResumeReason::Reported) {
+            (Some(prompt), String::new())
+        } else {
+            (None, prompt)
+        };
         let answers = answers_text(ctx, found.member).await?;
         let prompt = team_prompt(ctx, texts, found, prompt, answers.as_deref())?;
         let (prompt, addition) = match ctx.autopilot {
@@ -219,6 +226,10 @@ async fn compose_run_prompt(
                 None => (prompt, None),
             },
             None => (prompt, None),
+        };
+        let prompt = match reported {
+            Some(reported) => format!("{}\n\n{}", reported.trim_end(), prompt.trim_start()),
+            None => prompt,
         };
         Ok((prompt, addition))
     }
@@ -348,6 +359,7 @@ fn with_commit_order(ctx: &Context<'_>, kind: PromptKind, prompt: String) -> Res
         PromptKind::First
         | PromptKind::Resume(
             ResumeReason::Hang { .. }
+            | ResumeReason::Reported
             | ResumeReason::Restart
             | ResumeReason::Limit
             | ResumeReason::TurnLimit
@@ -402,6 +414,8 @@ pub(super) async fn plan(
         prompt_kind_for_role(role, member, session.as_ref(), config)
     };
     let item = assigned_item(team, participant);
+    let item_changed = assigned_item_changed(member, team, item);
+    let session_prompt = ctx.home.session_prompt_file(task);
     let team_items = if role == Role::Coordinator {
         items_of_team(team)
     } else {
@@ -422,6 +436,8 @@ pub(super) async fn plan(
         number,
         brief: team.task_list().list().brief(),
         item,
+        item_changed,
+        session_prompt: Some(&session_prompt),
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,
@@ -644,7 +660,7 @@ fn prompt_kind_for_role(role: Role, member: &Member, session: Option<&SessionId>
 
 /// What the prompt of the next run tells: the whole task, or what interrupted the session it resumes.
 fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) -> PromptKind {
-    if session.is_none() {
+    if session.is_none() || replaced_by_bound(member) {
         return PromptKind::First;
     }
     let last_end = member.runs().last().and_then(|run| match run.state() {
@@ -661,11 +677,20 @@ fn prompt_kind(member: &Member, session: Option<&SessionId>, config: &Config) ->
         }),
         Some(RunEnd::QuotaExhausted { .. } | RunEnd::RateLimited) => PromptKind::Resume(ResumeReason::Limit),
         Some(RunEnd::TurnLimit) => PromptKind::Resume(ResumeReason::TurnLimit),
-        // Any other end (a failure the human lets the agent retry, a stop) gets the whole task again.
-        Some(RunEnd::Reported { .. } | RunEnd::NoStatus { exit_code: Some(_) } | RunEnd::Stopped) | None => {
-            PromptKind::First
-        }
+        Some(RunEnd::Reported { .. }) => PromptKind::Resume(ResumeReason::Reported),
+        // Stops and exhausted no-status retries get the whole task again.
+        Some(RunEnd::NoStatus { exit_code: Some(_) } | RunEnd::Stopped) | None => PromptKind::First,
     }
+}
+
+/// Whether the assignment differs from the last round of the previous run; no round needs the item again.
+fn assigned_item_changed(member: &Member, team: &Team, item: Option<&Item>) -> bool {
+    member
+        .runs()
+        .last()
+        .and_then(|run| run.rounds().last())
+        .and_then(|round| team.round(round))
+        .is_none_or(|round| round.item() != item.map(|item| item.id))
 }
 
 /// The item of the team that `participant` is working on, if it has one.

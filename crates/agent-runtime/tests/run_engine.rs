@@ -1199,4 +1199,41 @@ mod run_engine {
         let agent_output = env.recorded(".fake-agent");
         assert_eq!(agent_output.trim(), "from primary");
     }
+
+    #[tokio::test]
+    async fn session_prompts_are_saved_whole_only_when_a_new_session_starts() {
+        let env = env().await;
+        let path = env.home.task_dir(&env.task).join("session-prompt.md");
+        for (mode, prompt, expected) in [
+            (Env::new_session(), "First prompt: żółw", "First prompt: żółw"),
+            (
+                RunMode::Resume {
+                    session_id: SESSION.parse().unwrap(),
+                },
+                "Later changes",
+                "First prompt: żółw",
+            ),
+            (Env::new_session(), "Replacement session", "Replacement session"),
+        ] {
+            let mut job = env.job("done", mode);
+            job.prompt = prompt.to_owned();
+            let verdict = env.engine.run(job, &CancellationToken::new()).await.unwrap();
+            assert!(matches!(verdict, RunVerdict::Finished(_)), "{verdict:?}");
+            assert_eq!(
+                std::fs::read_to_string(&path).map_err(|error| error.kind()),
+                Ok(expected.to_owned())
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_unwritable_session_prompt_fails_before_the_cli_starts() {
+        let env = env().await;
+        let job = env.job("done", Env::new_session());
+        let path = env.home.task_dir(&env.task).join("session-prompt.md");
+        std::fs::create_dir_all(&path).unwrap();
+        let result = env.engine.run(job, &CancellationToken::new()).await;
+        assert!(matches!(result, Err(RunError::LayDown { path: failed, .. }) if failed == path));
+        assert!(!env.worktree.path().join(".fake-args").exists());
+    }
 }
