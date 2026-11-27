@@ -405,7 +405,7 @@ fn next_line(input: &StateInput<'_>, open: usize) -> String {
         ),
         Next::WaitForHuman => "next: wait for the human's instruction; read the human's messages".to_owned(),
         Next::WaitForMerge => "next: wait for the merge".to_owned(),
-        Next::Nothing => String::new(),
+        Next::Nothing => "next: nothing; the pull request is merged".to_owned(),
     }
 }
 
