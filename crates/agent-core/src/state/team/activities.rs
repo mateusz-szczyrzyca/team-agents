@@ -34,9 +34,9 @@ pub enum ActivityRequest {
         /// The permanent finding number.
         finding: NonZeroU32,
     },
-    /// Answer a question or explain a problem; no daemon workflow starts this yet.
+    /// Answer a question or explain a problem.
     Investigation,
-    /// Divide work or help integrate branches; no daemon workflow starts this yet.
+    /// Divide work or help integrate branches.
     TaskAllocation,
 }
 
@@ -278,7 +278,7 @@ impl Team {
         u32::try_from(most.saturating_sub(item.fix_passes().len())).unwrap_or(u32::MAX)
     }
 
-    /// Investigation assignments for reviewer tasks with role Investigator.
+    /// Reconstructs investigation assignments while preserving their requested activity.
     fn investigation_activities(&self, at: Timestamp) -> Vec<Activity> {
         let mut found = Vec::new();
         for reviewer in &self.reviewers {
@@ -288,18 +288,21 @@ impl Team {
             if reviewer.role() != Some(crate::kinds::Role::Investigator) {
                 continue;
             }
-            let existing_asked_at = self
-                .activities
-                .iter()
-                .find(|a| a.task == *reviewer.task() && a.request == ActivityRequest::Investigation)
-                .map(|a| a.asked_at);
-            let asked_at = existing_asked_at
+            let existing = self.activities.iter().find(|a| {
+                a.task == *reviewer.task()
+                    && matches!(
+                        a.request,
+                        ActivityRequest::Investigation | ActivityRequest::TaskAllocation
+                    )
+            });
+            let asked_at = existing
+                .map(|a| a.asked_at)
                 .unwrap_or_else(|| reviewer.runs().first().map_or(at, super::super::run::Run::started_at));
             found.push(Activity {
                 investigator: investigator.clone(),
                 task: reviewer.task().clone(),
                 rounds: Vec::new(),
-                request: ActivityRequest::Investigation,
+                request: existing.map_or(ActivityRequest::Investigation, |a| a.request.clone()),
                 asked_at,
                 outcome: ActivityOutcome::Working,
             });
@@ -513,6 +516,18 @@ fn terminal(member: &Member, entry: &Activity, now: Timestamp) -> Option<Activit
 }
 
 impl CheckedMut<'_, Team> {
+    /// Records a split assignment before its investigator starts.
+    pub fn record_task_allocation(&mut self, investigator: InvestigatorName, task: TaskId, at: Timestamp) {
+        self.value.activities.push(Activity {
+            investigator,
+            task,
+            rounds: Vec::new(),
+            request: ActivityRequest::TaskAllocation,
+            asked_at: at,
+            outcome: ActivityOutcome::Working,
+        });
+    }
+
     /// See [`Team::fail_activities_before_a_run`].
     pub fn fail_activities_before_a_run(&mut self, task: &TaskId, at: Timestamp) {
         self.value.fail_activities_before_a_run(task, at);

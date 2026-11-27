@@ -253,6 +253,15 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
         .into_iter()
         .find(|i| i.inv_task.as_ref() == Some(found.member.task()))
     {
+        if let agent_runtime::agentbus::InvestigationKind::Split { item } = inv.kind {
+            let values = Variables::new()
+                .with("item", item.to_string())?
+                .with("item_text", found.team.task_list().text())?
+                .with("part_limit", ctx.settings.config.split().part_limit.to_string())?
+                .with("question", &inv.question)?;
+            let text = ctx.texts.render(HarnessPrompt::InvestigationSplit, &values)?;
+            return Ok(Some(Addition::Replace(text.trim_end().to_owned())));
+        }
         let values = Variables::new()
             .with("investigation_id", inv.id.to_string())?
             .with("from_agent", inv.from_agent.as_str())?
