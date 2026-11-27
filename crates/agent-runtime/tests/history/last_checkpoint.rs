@@ -219,3 +219,23 @@ fn a_checkpoint_whose_texts_the_history_cut_is_read_with_its_content() {
         ("M", "D", "L")
     );
 }
+
+#[test]
+fn the_end_of_a_run_that_judged_the_steps_after_the_last_commit_is_told_though_the_worktree_is_the_same() {
+    let (_dir, path) = database();
+    let commit = format!(
+        r#"{},"content":{{"meant":"M","done":"D","left":"L"}}"#,
+        snapshot_member(1)
+    );
+    let ended = format!(
+        r#"{},"content":{{"meant":"M","done":"D and the step confirmed","left":"nothing"}}"#,
+        snapshot_member(1)
+    );
+    checkpoint(&path, HOLDER, "2026-11-26T09:01:00Z", "commit", &commit);
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "run_ended", &ended);
+
+    let found = told(&path, HOLDER).unwrap();
+
+    assert_eq!(found.cause, CheckpointCause::RunEnded);
+    assert_eq!(found.content.unwrap().done, "D and the step confirmed");
+}
