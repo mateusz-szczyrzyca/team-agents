@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Participant;
 use super::values::Timestamp;
-use crate::ids::TaskId;
+use crate::ids::{AgentName, TaskId};
 use crate::kinds::{Role, Tier};
 
 /// How a new holder of a task was chosen: by the harness (which enforces tier progression) or by a human (who may choose any tier).
@@ -66,6 +66,14 @@ pub enum HandOverError {
         holder: Tier,
         /// The tier of the agent that holds the task.
         held: Tier,
+    },
+    /// A worker serves requests rather than holding a solo, coordinator or member task.
+    #[error("worker {agent} cannot hold task {task}")]
+    Worker {
+        /// The task whose holder would be invalid.
+        task: TaskId,
+        /// The worker selected as the new holder.
+        agent: AgentName,
     },
     /// A run of the task is going: its agent still works on it.
     #[error("a run of task {task} is going")]

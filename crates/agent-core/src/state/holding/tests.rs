@@ -588,3 +588,22 @@ fn state_of_today_reads_as_before() {
         .expect("state before swap reads");
     assert!(before.find_task(&task()).is_some());
 }
+
+#[test]
+fn human_swap_to_worker_is_refused_without_changing_state() {
+    for task in [
+        task(),
+        "task-20261111-193001-k3x9".parse().unwrap(),
+        "task-20261111-193011-k3x9".parse().unwrap(),
+    ] {
+        let mut state = old_state();
+        let before = state.to_json().unwrap();
+        let worker: AgentName = "worker-9".parse().unwrap();
+
+        let refused = state.hand_over_task_as(&task, Participant::Worker(worker.clone()), Choice::Human, at());
+
+        assert_eq!(refused, Err(HandOverError::Worker { task, agent: worker }));
+        assert_eq!(state.to_json().unwrap(), before);
+        State::from_json(&before).expect("the unchanged state loads again");
+    }
+}
