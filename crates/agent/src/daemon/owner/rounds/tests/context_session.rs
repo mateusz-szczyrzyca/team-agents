@@ -870,14 +870,14 @@ async fn a_run_resumed_after_a_replacement_with_a_known_size_says_nothing_of_it(
 
 #[tokio::test]
 async fn a_new_session_keeps_its_whole_prompt_and_a_changed_item_is_sent_on_resume() {
-    let mut rig = rig_streaming(42_000).await;
+    let mut rig = rig_with_agent(normal("claude-1", "stream:first,hold"), 42_000).await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let prompt = rig.prompt(&tasks[0], 2).await;
     rig.stop().await.unwrap();
     let first = rig.kept_prompt(&tasks[0], 1);
     assert!(rig.home.task_dir(&tasks[0]).join("session-prompt.md").is_file());
     let saved = std::fs::read_to_string(rig.home.task_dir(&tasks[0]).join("session-prompt.md")).unwrap();
-    assert_eq!(saved, first);
+    assert_eq!(saved, first.strip_suffix('\n').unwrap());
     assert!(prompt.contains("# YOUR SESSION GOES ON"), "{prompt}");
     assert!(prompt.contains("## Your item: 1.2"), "{prompt}");
     assert!(!prompt.contains("# Rust developer rules"), "{prompt}");
@@ -885,13 +885,13 @@ async fn a_new_session_keeps_its_whole_prompt_and_a_changed_item_is_sent_on_resu
 
 #[tokio::test]
 async fn a_session_replaced_by_its_bound_overwrites_the_saved_whole_prompt() {
-    let mut rig = rig_streaming(200_000).await;
+    let mut rig = rig_with_agent(normal("claude-1", "stream:first,hold"), 200_000).await;
     let (_, tasks) = rig.run(&["claude-1"], CHAIN, MergeMode::Autopilot, None).await;
     let prompt = rig.prompt(&tasks[0], 2).await;
     rig.stop().await.unwrap();
     assert!(rig.home.task_dir(&tasks[0]).join("session-prompt.md").is_file());
     let saved = std::fs::read_to_string(rig.home.task_dir(&tasks[0]).join("session-prompt.md")).unwrap();
-    assert_eq!(saved, prompt);
+    assert_eq!(saved, prompt.strip_suffix('\n').unwrap());
     assert!(prompt.contains("# Working context"), "{prompt}");
     assert!(prompt.contains("# Rust developer rules"), "{prompt}");
     assert_ne!(saved, rig.kept_prompt(&tasks[0], 1));
