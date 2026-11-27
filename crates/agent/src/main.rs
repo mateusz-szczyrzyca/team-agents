@@ -128,6 +128,12 @@ const GUARD_COMMIT_ABOUT: &str = "Asked by the commit-msg hook of an agent's run
 /// The name of the command that tells the story of a round or a team from the history.
 const LOG: &str = "log";
 
+/// The name of the command that lists the checkpoints of a round or a task.
+const CHECKPOINTS: &str = "checkpoints";
+
+/// What `agent checkpoints` is for, as the help says.
+const CHECKPOINTS_ABOUT: &str = "Reads history directly, with no daemon needed. Lists the checkpoints of a round or a task, oldest first, one line each; --show [N] prints checkpoint N (the last by default) as an agent is told it; --json prints the records as JSON lines";
+
 /// The name of the hidden command the bus runs to check a request to a worker against the requester's plan.
 const DELEGATION_CHECK: &str = "_delegation-check";
 
@@ -194,6 +200,7 @@ fn command() -> clap::Command {
                 .hide(true),
         )
         .subcommand(LogArgs::augment_args(clap::Command::new(LOG)).about(LOG_ABOUT))
+        .subcommand(CheckpointsArgs::augment_args(clap::Command::new(CHECKPOINTS)).about(CHECKPOINTS_ABOUT))
         .subcommand(DebugArgs::augment_args(clap::Command::new(DEBUG)).about(DEBUG_ABOUT));
     // `augment_subcommands` gives the command the doc comment of `Steer` as its description: the description is kept.
     let about = with_run.get_about().cloned();
@@ -220,6 +227,8 @@ enum Invocation {
     GuardCommit(GuardCommitArgs),
     /// `log`.
     Log(LogArgs),
+    /// `checkpoints`.
+    Checkpoints(CheckpointsArgs),
     /// `debug`.
     Debug(DebugArgs),
     /// `_delegation-check`.
@@ -249,6 +258,9 @@ where
     }
     if let Some((LOG, log)) = matches.subcommand() {
         return Ok(Invocation::Log(LogArgs::from_arg_matches(log)?));
+    }
+    if let Some((CHECKPOINTS, checkpoints)) = matches.subcommand() {
+        return Ok(Invocation::Checkpoints(CheckpointsArgs::from_arg_matches(checkpoints)?));
     }
     if let Some((DELEGATION_CHECK, check)) = matches.subcommand() {
         return Ok(Invocation::DelegationCheck(DelegationCheckArgs::from_arg_matches(
@@ -290,6 +302,25 @@ struct RunArgs {
 struct GuardCommitArgs {
     /// The file that holds the message of the commit, which git gives its `commit-msg` hook.
     message_file: PathBuf,
+}
+
+/// The arguments of `agent checkpoints`.
+#[derive(Debug, Args)]
+struct CheckpointsArgs {
+    /// The round (`round-…`) or the task (`task-…`) whose checkpoints to list.
+    #[arg(value_parser = parse_checkpoints_target, value_name = "TARGET")]
+    target: commands::checkpoints::Target,
+    /// Print checkpoint N (1 is the oldest; without N, the last) as an agent is told it, not the listing.
+    #[arg(long, value_name = "N", num_args = 0..=1, conflicts_with = "json")]
+    show: Option<Option<std::num::NonZeroUsize>>,
+    /// Print the checkpoints as JSON lines, as `agent log --json` prints its records.
+    #[arg(long)]
+    json: bool,
+}
+
+/// Reads a `round-…` or `task-…` word of the command line.
+fn parse_checkpoints_target(text: &str) -> Result<commands::checkpoints::Target, commands::checkpoints::InvalidTarget> {
+    text.parse()
 }
 
 /// The arguments of `agent log`.
@@ -640,6 +671,9 @@ enum CommandError {
     /// `agent log` failed.
     #[error(transparent)]
     Log(#[from] LogError),
+    /// `agent checkpoints` failed.
+    #[error(transparent)]
+    Checkpoints(#[from] commands::checkpoints::CheckpointsError),
     /// `agent debug` failed.
     #[error(transparent)]
     Debug(#[from] DebugError),
@@ -713,6 +747,7 @@ where
         Ok(Invocation::GuardCommit(args)) => finish(execute_blocking(environment, Work::GuardCommit(args), out), err)?,
         // `log` reads a file and needs no runtime: it runs on the thread of the command.
         Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
+        Ok(Invocation::Checkpoints(args)) => finish(execute_blocking(environment, Work::Checkpoints(args), out), err)?,
         Ok(Invocation::Debug(args)) => finish(execute_blocking(environment, Work::Debug(args), out), err)?,
         Ok(Invocation::DelegationCheck(args)) => finish(execute_nonblocking(environment, &args, out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
@@ -739,6 +774,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
             write_text(err, &format!("agent: {}\n", error_chain(&error)))?;
             Ok(match &error {
                 CommandError::Log(error) => ExitCode::from(error.exit_code()),
+                CommandError::Checkpoints(error) => ExitCode::from(error.exit_code()),
                 CommandError::Debug(error) => ExitCode::from(error.exit_code()),
                 CommandError::GuardCommit(GuardCommitError::Refused) => {
                     ExitCode::from(agent_runtime::commit_guard::COMMIT_REFUSED_STATUS)
@@ -775,6 +811,8 @@ enum Work {
     Gate(GateArgs),
     /// `guard-commit`.
     GuardCommit(GuardCommitArgs),
+    /// `checkpoints`.
+    Checkpoints(CheckpointsArgs),
     /// `debug`.
     Debug(DebugArgs),
 }
@@ -792,6 +830,7 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Steer(steer) => execute_steer(environment, steer, out).await,
             Work::Gate(args) => execute_gate(environment, args, out).await,
             Work::GuardCommit(args) => Ok(guard_commit(environment, &args.message_file, out).await?),
+            Work::Checkpoints(args) => execute_checkpoints(environment, args, out).await,
             Work::Debug(args) => execute_debug_cmd(environment, args, out).await,
         }
     })
@@ -989,6 +1028,38 @@ fn execute_log(environment: &Environment, args: LogArgs, out: &mut impl Write) -
     }
     let request = LogRequest::new(args.round, args.team, format)?;
     log_in(&home.history_file(), &request, zone, out)?;
+    Ok(())
+}
+
+/// Carries out `agent checkpoints`: reads the history in the home and prints the checkpoints; the daemon is not asked.
+///
+/// # Errors
+/// [`CommandError`].
+async fn execute_checkpoints(
+    environment: &Environment,
+    args: CheckpointsArgs,
+    out: &mut impl Write,
+) -> Result<(), CommandError> {
+    use commands::checkpoints::{CheckpointsRequest, Mode, checkpoints_in};
+
+    let home = environment.home()?;
+    let mode = match (args.show, args.json) {
+        (_, true) => Mode::Json,
+        (Some(number), false) => Mode::Show(number),
+        (None, false) => Mode::Listing,
+    };
+    let request = CheckpointsRequest {
+        target: args.target,
+        mode,
+    };
+    checkpoints_in(
+        &home.history_file(),
+        &home.prompts_dir(),
+        &request,
+        environment.zone(),
+        out,
+    )
+    .await?;
     Ok(())
 }
 
