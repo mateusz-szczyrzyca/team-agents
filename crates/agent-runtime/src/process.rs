@@ -311,6 +311,9 @@ impl Supervisor {
         command
             .args(&spec.args)
             .envs(spec.env.iter().map(|(name, value)| (name.as_str(), value)))
+            // The inherited `PWD` names the daemon's directory; a CLI that reads it before `getcwd` (opencode) would
+            // work there instead of in its worktree (issue #352).
+            .env("PWD", spec.working_dir.as_path())
             .current_dir(spec.working_dir.as_path())
             .stdin(Stdio::null())
             .stdout(stdout)
