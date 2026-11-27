@@ -5,6 +5,7 @@
 
 #[cfg(test)]
 mod account_process {
+    use std::fmt::Write as _;
     use std::os::unix::fs::PermissionsExt as _;
     use std::path::{Path, PathBuf};
     use std::process::{Child, Command, Output, Stdio};
@@ -114,26 +115,30 @@ mod account_process {
                 )
             };
             for (name, account) in AGENTS {
-                config.push_str(&format!("[agents.{name}]\ncli = \"claude\"\n{}", arguments(name)));
+                write!(config, "[agents.{name}]\ncli = \"claude\"\n{}", arguments(name)).unwrap();
                 if let Some(account) = account {
-                    config.push_str(&format!("account = \"{account}\"\n"));
+                    writeln!(config, "account = \"{account}\"").unwrap();
                 }
             }
             for name in ["inv-opus", "inv-codex", "inv-gemini"] {
-                config.push_str(&format!(
+                write!(
+                    config,
                     "[investigators.{name}]\ncli = \"claude\"\nargs = [\"--scenario\", \"sleep\", \"--as\", \"{name}\", \
                      \"--bus-bin\", \"{bus}\", \"--bus-dir\", \"{home}/bus\", \"--home\", \"{home}\"]\n",
                     bus = agentbus_binary().display(),
                     home = home.display(),
-                ));
+                )
+                .unwrap();
             }
-            config.push_str(&format!(
+            write!(
+                config,
                 "[plan]\nbounces = 0\n[tiers]\nnormal = [\"comp-claude-1\", \"mateusz-claude-1\", \"plain-claude-1\"]\n\
                  [binaries]\nclaude = \"{}\"\nagentbus = \"{}\"\n\
                  [repos.example]\nbase_branch = \"main\"\ngate = [\"true\"]\n[disk]\nlow_free_gb = 0\nmin_free_gb = 0\n",
                 script("team-cli.sh").display(),
                 agentbus_binary().display(),
-            ));
+            )
+            .unwrap();
             std::fs::write(home.join("agents.toml"), config).unwrap();
             std::fs::write(home.join("secrets.toml"), SECRETS).unwrap();
             std::fs::set_permissions(home.join("secrets.toml"), std::fs::Permissions::from_mode(0o600)).unwrap();
