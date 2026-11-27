@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.139.0 · agent-core 0.136.0 · agent-runtime 0.123.0 — 27.11.2026 — PR pending
+## agent 0.139.0 · agent-core 0.136.0 · agent-runtime 0.123.0 — 27.11.2026 — PR #332
 
 ### New features
 - [agent] [agent-core] [agent-runtime] Coordinators can request a conflict investigation with `kind: "conflict"` and an item. The investigator works locally at the current pull request tip and returns resolution commands, resolved hunks and the version to set without pushing.

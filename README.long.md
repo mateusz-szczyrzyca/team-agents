@@ -1338,8 +1338,9 @@ three tools; calls to them are refused. `agentbus serve --investigations=off|on`
 option defaults to `on` with the legacy role checks, so an older daemon with a newer bus keeps its previous behavior.
 Explicit `on` grants the tools to a team task regardless of its agent tier.
 
-Use `request_investigation` only when an investigator would help. Commit first: question and split investigators start from your
-branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with `STATUS: SLEEPING`;
+Use `request_investigation` only when an investigator would help. Commit first: question and split investigators
+start from your branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with
+`STATUS: SLEEPING`;
 the answer arrives as a message, which wakes the requester.
 Coordinators and members ask an investigator before writing a technical question for the human, following the
 exceptions in their role prompts.
