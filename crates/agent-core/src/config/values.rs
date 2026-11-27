@@ -207,7 +207,7 @@ macro_rules! text_value {
 pub(crate) use text_value;
 
 /// Keeps a text as it is.
-fn keep(text: String) -> String {
+pub(crate) fn keep(text: String) -> String {
     text
 }
 
