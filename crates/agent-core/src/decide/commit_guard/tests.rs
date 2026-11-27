@@ -365,3 +365,34 @@ fn a_plan_with_no_for_line_does_not_check_the_commit() {
     assert_eq!(judge_step(&plan(false), "Fix it\n"), StepVerdict::Allowed);
     assert_eq!(judge_step(&plan(false), "Fix it\n\nStep: 9.9\n"), StepVerdict::Allowed);
 }
+
+// Rule: the `Step:` trailer ends the message: a `Step:` line followed by more of the body is no trailer.
+#[test]
+fn a_step_line_that_the_body_goes_on_after_is_no_trailer() {
+    let messages = [
+        "Fix it\n\nStep: 1.1\n\nExplanation after the trailer.\n",
+        "Fix it\n\nStep: 1.1\n\nMore of the body.\n",
+        "Step: 1.1\n\nFix it\n",
+    ];
+
+    for message in messages {
+        assert_eq!(
+            judge_step(&plan(true), message),
+            StepVerdict::Refused(StepRefusal::Missing { steps: both_steps() }),
+            "{message:?}"
+        );
+    }
+}
+
+// Rule: the comment lines an editor leaves under a message, and blank lines, do not move the trailer off the end.
+#[test]
+fn comment_lines_and_blank_lines_after_the_trailer_leave_it_the_end_of_the_message() {
+    let messages = [
+        "Fix it\n\nStep: 1.1\n\n# Please enter the commit message.\n# Lines starting with '#' are ignored.\n",
+        "Fix it\n\nStep: 1.1\n\n\n",
+    ];
+
+    for message in messages {
+        assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
+    }
+}
