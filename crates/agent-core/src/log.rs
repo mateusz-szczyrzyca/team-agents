@@ -268,6 +268,10 @@ pub enum LogEvent {
     InvestigationFailed,
     /// A checkpoint of a round could not be taken or recorded: the round goes on without it.
     CheckpointFailed,
+    /// Findings were selected and durably marked as shown before a run.
+    FindingsShown,
+    /// Optional findings could not be loaded or prepared; the run starts without them.
+    FindingsUnavailable,
 }
 
 impl Keyword for LogEvent {
@@ -318,8 +322,10 @@ impl LogEvent {
             | Self::PublishOffBranch
             | Self::InvestigationKindUnknown
             | Self::CheckpointFailed
+            | Self::FindingsUnavailable
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
+            | Self::FindingsShown
             | Self::RunNoToolRetry
             | Self::TeamRemoved
             | Self::RoundChanged
