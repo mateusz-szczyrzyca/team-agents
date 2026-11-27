@@ -258,21 +258,25 @@ async fn a_request_waits_while_no_investigator_is_free() {
 
 #[tokio::test]
 async fn a_request_of_another_team_is_left_to_that_team() {
-    let mut rig = Rig::new(
-        &[
-            normal("claude-lead", "sleep"),
-            normal("claude-1", "inv-add:Own question,done"),
-            investigator("inv-r1", "done"),
-            investigator("inv-r2", "done"),
-        ],
-        1,
-        true,
-    )
-    .await;
-    rig.start().await;
-
-    let bus_dir = rig.home.root().join("bus");
+    let mut state = super::super::fixture::pair_state();
+    let foreign_task = crate::fixtures::task(4);
+    let foreign_team = agent_core::state::Team::new(
+        crate::fixtures::team_id(1),
+        crate::fixtures::repo(),
+        crate::fixtures::at(0),
+        MergeMode::NoMerge,
+        agent_core::state::TaskListText::new("Foreign team's work.\n".to_owned()).unwrap(),
+        agent_core::state::Crew::solo(agent_core::state::Member::new(
+            foreign_task.clone(),
+            crate::fixtures::normal("other-agent"),
+        ))
+        .unwrap(),
+    );
+    state.insert_team(foreign_team).unwrap();
     let bus_bin = super::super::fixture::agentbus_binary();
+    let daemon = super::super::fixture::Daemon::new(&state, Some(&bus_bin));
+    let bus_dir = daemon.home.root().join("bus");
+    std::fs::create_dir_all(&bus_dir).unwrap();
     let status = Command::new(bus_bin)
         .args([
             "inv-add",
@@ -281,13 +285,13 @@ async fn a_request_of_another_team_is_left_to_that_team() {
             "--from-agent",
             "other-agent",
             "--from-task",
-            "task-20260101-000000-othr",
+            foreign_task.as_str(),
             "--repo",
             "example",
             "--branch",
             "main",
             "--tasks-dir",
-            rig.home.tasks_dir().to_str().unwrap(),
+            daemon.home.tasks_dir().to_str().unwrap(),
             "--question",
             "Foreign question",
             "--kind",
@@ -297,25 +301,12 @@ async fn a_request_of_another_team_is_left_to_that_team() {
         .unwrap();
     assert!(status.success());
 
-    let (_team, _) = rig
-        .run(
-            &["claude-lead", "claude-1"],
-            ONE,
-            MergeMode::NoMerge,
-            Some("claude-lead"),
-        )
-        .await;
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.serve_investigations(&crate::fixtures::team_id(0)).await.unwrap();
 
-    rig.wait_for("own request answered beside foreign request", || {
-        bus_state(&rig)["investigations"]["2"]["status"] == "done"
-    })
-    .await;
-
-    let bus_state_text = std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap();
+    let bus_state_text = std::fs::read_to_string(bus_dir.join("state.json")).unwrap();
     let bus_state: serde_json::Value = serde_json::from_str(&bus_state_text).unwrap();
     assert_eq!(bus_state["investigations"]["1"]["status"], "queued");
-
-    rig.stop().await.unwrap();
 }
 
 #[tokio::test]
