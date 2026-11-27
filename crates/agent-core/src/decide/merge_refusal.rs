@@ -70,11 +70,17 @@ pub enum AfterLead {
 
 #[must_use]
 /// What follows a refused merge, given the refusal and the conflict passes the round has left.
-pub fn after_refusal(refusal: Refusal, budget: ConflictBudget, _investigator: InvestigatorPass) -> AfterRefusal {
+pub fn after_refusal(refusal: Refusal, budget: ConflictBudget, investigator: InvestigatorPass) -> AfterRefusal {
     match refusal {
         Refusal::Other => AfterRefusal::TellHuman,
         Refusal::Conflict if budget.limit == 0 => AfterRefusal::TellHuman,
-        Refusal::Conflict if budget.spent >= budget.limit => AfterRefusal::AskHuman,
+        Refusal::Conflict if budget.spent >= budget.limit => {
+            if investigator.enabled && !investigator.filed_for_head {
+                AfterRefusal::AskInvestigator
+            } else {
+                AfterRefusal::AskHuman
+            }
+        }
         Refusal::Conflict => AfterRefusal::LeadMergesBase,
     }
 }
