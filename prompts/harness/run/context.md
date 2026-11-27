@@ -17,8 +17,7 @@ The human does not answer live: you reach them only through a questions file (be
 
 Everything a command prints stays in your context and is read again at every later step. Print only what you need:
 
-- Find the place first (`rg -n`, or the Serena tools when you have them), then read only those lines
-  (`sed -n '120,180p' <file>`). Do not print a whole file longer than 200 lines.
+- Find the place first (`rg -n`), then read only those lines (`sed -n '120,180p' <file>`). Do not print a whole file longer than 200 lines.
 - Start with `git status --short` and `git diff --stat`; then show the diff of only the files you need
   (`git diff -- <path>`).
 - One dump per command: do not chain several file contents, diffs or logs in one command.
