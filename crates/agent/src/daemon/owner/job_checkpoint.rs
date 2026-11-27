@@ -361,8 +361,9 @@ impl Owner {
     }
 
     /// Hands the job of the task `from` over to the task `to`: `to` gets a `holder_changed` checkpoint that tells what the
-    /// last checkpoint of `from` told, and its run is briefed from it. Nothing is handed over when `from` left no
-    /// checkpoint with work in it. A history that cannot be read is logged and leaves the job without a hand-over.
+    /// last checkpoint of `from` told, and its run is briefed from it. A job that left only its start is handed over
+    /// with that start, while a run that has just begun is briefed from none; nothing is handed over when `from` left no
+    /// checkpoint at all. A history that cannot be read is logged and leaves the job without a hand-over.
     pub(super) async fn job_handed_over(&mut self, from: &TaskId, to: &TaskId, team: &TeamId, rounds: Vec<RoundId>) {
         if self.history.is_disabled() {
             return;
