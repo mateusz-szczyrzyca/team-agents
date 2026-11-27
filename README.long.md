@@ -295,6 +295,8 @@ A run is one start of an agent's CLI for a task; a session is the CLI's conversa
 resume. A run ends with a `STATUS:` line in the agent's final message — `DONE`, `QUESTIONS`, `FAILED` or `SLEEPING`
 (a coordinator or member waiting for the bus) — and the daemon acts on it.
 
+A run that resumes its session after a report receives only what happened since that report: answers, checks, a fix pass and other continuation notices. Its working context, rules and brief are already in the conversation. The assigned item is repeated only if it changed (or the previous run had no round); a coordinator still receives the team items. Every new session keeps its complete first prompt in `tasks/<task>/session-prompt.md`, overwritten when another new session starts, so the agent can read it after context compaction. A new session, including one replacing a session above its bound, and a session resumed after a human stop receive the whole prompt.
+
 A Claude Code run that exhausts its turn budget resumes in the same session. Configure `[limits] max_turns`
 (default `300`) and `turn_limit_resumes` (default `3`); after that many consecutive resumes the task goes on in a new
 session (see [When a run goes wrong](#when-a-run-goes-wrong)), or fails and notifies you with the count when no new

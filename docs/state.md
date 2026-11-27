@@ -534,6 +534,7 @@ Each is derived or lives elsewhere, so that there is one place for it:
 - **The configuration** — read from `agents.toml`; the state refers to it by name (`repo`, the names of agents). A
   name that the configuration no longer has is the daemon's problem to report, not a reason to refuse the state.
 - **The text of questions and answers** — in `questions-<number>.md`.
+- **The first prompt of the current session** — `tasks/<task>/session-prompt.md`, written before every new session starts and overwritten by the next new session. Resumed runs leave it unchanged; older tasks may not have it until a new session starts.
 - **Activity** — what a run did, in its activity log, and what the human did to the task (`{"kind":"control","action":"pause","by":{"kind":"cli"}}`, and an `info` line for an answer); the state keeps only how a run began and ended.
 - **Review reports, gate output** — in files; the state keeps their verdicts and paths. A gate run is in
   `tasks/<task>/gate-<n>.log` (its output) and `tasks/<task>/gate.json`, the task's last **gate record**
