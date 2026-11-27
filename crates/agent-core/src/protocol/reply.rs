@@ -232,14 +232,7 @@ pub enum SwapRefusal {
 
 impl From<SwapRefusal> for Failure {
     fn from(refusal: SwapRefusal) -> Self {
-        let kind = match &refusal {
-            SwapRefusal::UnknownAgent { .. } | SwapRefusal::Worker { .. } => FailureKind::Invalid,
-            SwapRefusal::SameHolder { .. }
-            | SwapRefusal::InTeam { .. }
-            | SwapRefusal::InRun { .. }
-            | SwapRefusal::Role { .. }
-            | SwapRefusal::Done { .. } => FailureKind::Conflict,
-        };
+        let kind = FailureKind::Invalid;
         Self {
             kind,
             message: refusal.to_string(),

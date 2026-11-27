@@ -47,6 +47,7 @@ pub enum Trouble {
     /// The human started the task anew with `agent renew`; no run went bad.
     Human,
     /// A human swapped the task's agent with `agent swap`; no run went bad.
+    #[serde(rename = "swap_stub")]
     Swap,
 }
 
