@@ -1336,7 +1336,8 @@ an empty task set retains the unfiltered behavior of `inv_next`.
 |---|---|
 | `list_agents`, `send_message`, `read_messages`, `read_message`, `wait_for_message`, `set_status` | communication (`read_message` reads one long message whole by its number) |
 | `reserve`, `release`, `list_reservations` | shared resources |
-| `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook |
+| `notebook_read`, `notebook_append`, `notebook_write_section` | the repository notebook (progress, decisions and next steps) |
+| `finding_add`, `finding_resolve` | add or resolve a note about repository paths |
 | `checkpoint` | save a resumable work state; a non-coordinator member saves its own archived task record, not carried into a resume |
 | `request_investigation`, `investigation_status`, `record_decision` | investigation requests, results and decisions (team coordinators and members only) |
 | `delegate`, `delegation_status`, `delegation_feedback` | worker requests (normal tier; an investigator in a team or on a request may ask too, a worker not); optional `requires` matches against pool worker capabilities |
@@ -1376,6 +1377,32 @@ human as before.
 
 Older bus states without these kinds or the optional item still load; legacy question and review kinds retain
 their meaning.
+
+### Repository findings
+
+Every role can call `finding_add(kind, paths, text)` to record a short note about repository files.
+The kinds are `flaky_test` (a test that fails without a cause in the code), `trap` (misleading code or
+documentation), and `environment` (a tool, toolchain or host issue). `paths` is an array of at most ten
+repository-relative file or directory paths; `flaky_test` and `trap` require at least one. Paths contain no
+spaces or `..` components, have at most 200 characters, and are normalized without `./` or a trailing `/`.
+Text has 1–600 characters. A task may have at most ten open findings in each repository.
+The result is `ADDED F-<n>`; IDs start at one and increase even after findings are resolved.
+
+Call `finding_resolve(id, reason)` when the cause is fixed or the note is wrong, including a reason of
+1–300 characters. Any task may resolve any finding of its repository. The result is `RESOLVED F-<n>`, or
+`ALREADY RESOLVED F-<n>` on a repeated resolution. An unknown ID is a not-found error.
+Keep progress notes, decisions and remaining work in `notebook_append`.
+
+`agentbus findings --repo <repo> --json` prints a JSON array of open findings, oldest first, with
+`id`, `ts`, `author`, `task`, `kind`, `paths` and `text`. Like other bus commands, `--dir` selects an
+isolated bus directory; an omitted repository is an invalid-argument error, and storage failures use the
+storage error exit class. Addition and resolution publish `finding_added` and `finding_resolved` bus events
+to the task's team and log events with those same names.
+
+The append-only journal is `notebooks/<repo>/findings.jsonl` in the bus directory. An addition record has
+`op: "add"` and the listing fields; a resolution has `op: "resolve"`, `id`, `ts`, `author`, `task` and
+`reason`. A missing journal means no findings. Existing bus state and notebooks are unchanged and require
+no migration. This bus support does not yet inject findings into run prompts.
 
 ### Requests to workers
 

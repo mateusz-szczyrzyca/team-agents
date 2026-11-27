@@ -22,6 +22,11 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Enhancements
 - [agent-core] A checkpoint written by an earlier version, with no job, is read as the checkpoint of an item.
 
+## agentbus — 27.11.2026 — PR pending
+
+### New features
+- [agentbus] Agents can record findings about repository files with `finding_add`, close them with `finding_resolve`, and list open notes with `agentbus findings --repo <repo> --json`.
+
 ## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.128.0 — 27.11.2026 — PR pending
 
 ### Enhancements

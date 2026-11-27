@@ -1013,6 +1013,10 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 		return toolResult(s.investigationStatus())
 	case "wait_for_message":
 		return toolResult(s.waitForMessage(a.str("from"), a.num("timeout_seconds"), a.flag("include_broadcast")))
+	case "finding_add":
+		return toolResult(s.findingAdd(a.str("kind"), a.strings("paths"), a.str("text")))
+	case "finding_resolve":
+		return toolResult(s.findingResolve(a.str("id"), a.str("reason")))
 	case "notebook_read":
 		return toolResult(s.notebookRead(a.str("section"), a.num("last"), a.str("search")))
 	case "notebook_append":
@@ -1715,6 +1719,8 @@ func main() {
 		cmdNodeDoorbell(os.Args[2:])
 	case "team-list":
 		cmdTeamList(os.Args[2:])
+	case "findings":
+		cmdFindings(os.Args[2:])
 	case "notes":
 		cmdNotes(os.Args[2:])
 	case "helper-remote-list":
