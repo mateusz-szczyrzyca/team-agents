@@ -703,6 +703,25 @@ impl Rig {
     }
 }
 
+impl Rig {
+    /// Starts the real daemon with the owner's idle tick set to `tick`, so that a test can tell what the owner does
+    /// because a step asked for it from what it does when the next tick comes.
+    pub(super) async fn start_with_tick(&mut self, tick: Duration) {
+        self.shutdown = CancellationToken::new();
+        let mut setup = self.setup();
+        if let Some(timings) = setup.timings.as_mut() {
+            timings.tick = tick;
+        }
+        let daemon = tokio::spawn(run_in(setup, self.surroundings(), self.shutdown.clone()));
+        self.wait_for("daemon socket with a set tick", || {
+            self.home.socket_file().exists() || daemon.is_finished()
+        })
+        .await;
+        assert!(!daemon.is_finished(), "the daemon exited before serving");
+        self.daemon = Some(daemon);
+    }
+}
+
 #[cfg(test)]
 #[path = "rig/tests.rs"]
 mod tests;

@@ -83,6 +83,7 @@ pub fn draft_pull<'a>(events: impl IntoIterator<Item = &'a HistoryEvent>) -> Dra
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::TeamEnded {}
+        | HistoryEvent::Checkpoint { .. }
         | HistoryEvent::Lost { .. } => draft,
     })
 }

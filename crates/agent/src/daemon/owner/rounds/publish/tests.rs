@@ -366,3 +366,26 @@ async fn publication_retry_clears_only_the_recorded_pr_branch_backoff() {
         Some(&crate::fixtures::at(400))
     );
 }
+
+#[tokio::test]
+async fn the_rounds_of_a_publication_that_wait_for_the_human_are_the_open_ones() {
+    let (state, team_id) = state_with_waiting_lead();
+    let round: agent_core::ids::RoundId = "round-20261119-090000-wait".parse().unwrap();
+    let items = vec!["1.1".to_owned()];
+    let (_open_daemon, open, _open_sinks, _) = owner_of(&state).await;
+    let mut closed_state = state.clone();
+    closed_state
+        .team_mut(&team_id)
+        .unwrap()
+        .close_round(&round, crate::fixtures::at(40), agent_core::state::RoundEnd::Abandoned)
+        .unwrap();
+    let (_closed_daemon, closed, _closed_sinks, _) = owner_of(&closed_state).await;
+
+    let found = (
+        open.open_publication_rounds(&team_id, &items),
+        closed.open_publication_rounds(&team_id, &items),
+        closed.open_publication_rounds(&team_id, &["9.9".to_owned()]),
+    );
+
+    assert_eq!(found, (vec![round], Vec::new(), Vec::new()));
+}

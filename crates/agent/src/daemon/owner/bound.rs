@@ -2,6 +2,7 @@
 //! The task is started anew before its next run, which is briefed from the checkpoint. [`starts_anew`] is the decision;
 //! this module gathers what it takes, from the configuration and from the history.
 
+use agent_core::history::CheckpointCause;
 use std::path::Path;
 
 use agent_core::config::{Config, context_bound};
@@ -118,6 +119,9 @@ impl Owner {
                     "the context of the last run cannot be read: its session is replaced, its size unknown"
                 );
                 let begun = self.parts.state.begin_context_session(task, at)?;
+                if begun {
+                    self.queue_for_task(task, CheckpointCause::HolderChanged);
+                }
                 log_decision(
                     "context",
                     &format!("task={task}, context=unknown, bound={bound}"),
@@ -128,6 +132,9 @@ impl Owner {
             SizeRead::Told(tokens) if !starts_anew(Some(tokens), Some(bound)) => Ok(false),
             SizeRead::Told(tokens) => {
                 let begun = self.parts.state.begin_context_session_with_size(task, at, tokens)?;
+                if begun {
+                    self.queue_for_task(task, CheckpointCause::HolderChanged);
+                }
                 log_decision(
                     "context",
                     &format!("task={task}, context={tokens}, bound={bound}"),

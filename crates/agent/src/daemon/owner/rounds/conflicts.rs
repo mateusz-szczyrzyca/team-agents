@@ -7,6 +7,7 @@ use agent_core::decide::merge_refusal::{
     ExhaustedRoundRecovery, GatingStatus, LeadEnd, SplitPullStatus, account_conflict_pass, after_lead, changed_by_lead,
     recover_exhausted_split_round,
 };
+use agent_core::history::CheckpointCause;
 use agent_core::history::HistoryEvent;
 use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
@@ -144,6 +145,11 @@ impl Owner {
         })?;
         self.parts.state.record_activities(now);
         self.save().await?;
+        for item in items {
+            if let Ok(round) = self.round_of_item(team, *item) {
+                self.queue_checkpoint(now, team, &round, CheckpointCause::MergeRefused, None, None);
+            }
+        }
         let lead = self.lead_of(team)?;
         self.release_conflict_lead(&lead.task, look)
     }

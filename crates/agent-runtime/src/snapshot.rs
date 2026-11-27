@@ -7,7 +7,7 @@ use agent_core::ids::{RoundId, TaskId};
 use agent_core::log::LogEvent;
 use agent_core::state::Timestamp;
 
-use crate::git::{CommitIdentity, Git, GitError};
+use crate::git::{CheckpointSnapshot, CommitIdentity, Git, GitError};
 
 /// The name the commits of snapshots have: a snapshot is the harness's commit, not an agent's.
 const SNAPSHOT_NAME: &str = "team-agents";
@@ -72,4 +72,56 @@ pub async fn take_snapshot(
         head: taken.head,
         bytes: taken.bytes,
     })
+}
+
+/// Takes the snapshot of the worktree at `worktree` for a checkpoint of `task` in `round`: the one under `previous` when
+/// it holds the same tree on the same head, else a new one.
+///
+/// # Errors
+/// [`SnapshotError::Git`] when git cannot read the worktree or write the snapshot.
+pub async fn take_checkpoint_snapshot(
+    worktree: &AbsolutePath,
+    round: &RoundId,
+    task: &TaskId,
+    previous: Option<&str>,
+) -> Result<CheckpointSnapshot, SnapshotError> {
+    let identity = CommitIdentity::new(SNAPSHOT_NAME.to_owned(), SNAPSHOT_EMAIL.to_owned(), None);
+    Git::new(worktree.clone(), identity)
+        .snapshot_unless_unchanged(round, task, previous)
+        .await
+        .map_err(|source| SnapshotError::Git {
+            round: round.clone(),
+            task: task.clone(),
+            source,
+        })
+}
+
+/// Why the snapshot references of a round could not be removed.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot remove the snapshot references of round {round}")]
+pub struct PruneError {
+    /// The round whose references were to be removed.
+    pub round: RoundId,
+    /// What git said.
+    #[source]
+    pub source: GitError,
+}
+
+/// Removes the snapshot references `references` of `round` from the repository of `worktree`.
+///
+/// # Errors
+/// [`PruneError`] when git cannot delete a reference.
+pub async fn prune_snapshots(
+    worktree: &AbsolutePath,
+    round: &RoundId,
+    references: &[String],
+) -> Result<(), PruneError> {
+    let identity = CommitIdentity::new(SNAPSHOT_NAME.to_owned(), SNAPSHOT_EMAIL.to_owned(), None);
+    Git::new(worktree.clone(), identity)
+        .delete_snapshot_references(references)
+        .await
+        .map_err(|source| PruneError {
+            round: round.clone(),
+            source,
+        })
 }

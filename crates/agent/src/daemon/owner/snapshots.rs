@@ -138,7 +138,7 @@ impl Owner {
 
 /// Validates `path` as an [`AbsolutePath`], returning the human-readable cause when `path` is not valid UTF-8 or not an
 /// absolute path.
-fn validate_worktree_path(path: &Path) -> Result<AbsolutePath, String> {
+pub(super) fn validate_worktree_path(path: &Path) -> Result<AbsolutePath, String> {
     let Some(text) = path.to_str() else {
         return Err(format!("the worktree path {} is not valid UTF-8", path.display()));
     };

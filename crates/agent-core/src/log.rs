@@ -254,6 +254,8 @@ pub enum LogEvent {
     /// The harness was to publish an item's branch while the lead's worktree had another branch out and no gate had passed at
     /// the tip of the item's branch: nothing was pushed, and the lead was sent back to switch and run the gate.
     PublishOffBranch,
+    /// A checkpoint of a round could not be taken or recorded: the round goes on without it.
+    CheckpointFailed,
 }
 
 impl Keyword for LogEvent {
@@ -302,6 +304,7 @@ impl LogEvent {
             | Self::DeliveryClosed
             | Self::WorktreeSwitchRefused
             | Self::PublishOffBranch
+            | Self::CheckpointFailed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::RunNoToolRetry

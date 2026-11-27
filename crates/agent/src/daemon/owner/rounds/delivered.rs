@@ -8,6 +8,7 @@
 //! is told, with the same list. What the lead was told is kept in memory and is told again after a restart of the daemon,
 //! never dropped; what the human was told is found among the saved notices, so the human is asked once.
 
+use agent_core::history::CheckpointCause;
 use std::path::Path;
 use std::str::FromStr;
 
@@ -589,6 +590,7 @@ impl Owner {
             .and_then(|values| values.with("files", list_of(&lacking.files)))
             .and_then(|values| values.with("outcome", outcome_of(holder.status)));
         self.tell_human(pulls, AutopilotNotice::MemberWorkLeft, values, lead, now);
+        self.queue_for_task(&holder.task, CheckpointCause::WaitsForHuman);
         if let Some(told) = self.watch.delivered.get_mut(&holder.task) {
             told.asked = true;
         }

@@ -154,6 +154,26 @@ mod history_events {
         }
     }
 
+    /// A checkpoint of a commit of a round, with a snapshot and no content.
+    fn checkpoint() -> HistoryEvent {
+        HistoryEvent::Checkpoint {
+            round: world::round(1),
+            item: Some("1.1".parse().unwrap()),
+            task: world::task(1),
+            job: agent_core::history::CheckpointJob::Item,
+            tier: agent_core::kinds::Tier::Normal,
+            cause: agent_core::history::CheckpointCause::Commit,
+            pull_request: Some(pr(7)),
+            head: Some(head('e')),
+            draft: true,
+            phase: agent_core::state::PhaseKind::InProgress,
+            review_pass: Some(1),
+            fix_pass: None,
+            snapshot: Some("refs/agents/snapshots/round-20261111-193001-q1w2/task-20261111-193001-k3x9/1".to_owned()),
+            content: None,
+        }
+    }
+
     /// One event of every kind, with texts that are not ASCII and a text of a thousand characters.
     fn every_event() -> Vec<HistoryEvent> {
         let mut events = vec![
@@ -244,6 +264,7 @@ mod history_events {
                 end: RoundEnd::Merged,
             },
             HistoryEvent::TeamEnded {},
+            checkpoint(),
             HistoryEvent::Lost {
                 task: Some(world::task(1)),
                 what: LostKind::Record(RecordKind::Step),
@@ -287,6 +308,7 @@ mod history_events {
             "notified",
             "round_closed",
             "team_ended",
+            "checkpoint",
             "lost",
         ];
         let events = every_event();
@@ -326,7 +348,15 @@ mod history_events {
             .map(|event| (event.kind().to_string(), event.key()))
             .collect();
         let none = |kind: &str| keys.iter().find(|(name, _)| name == kind).unwrap().1.is_none();
-        for kind in ["gate", "checked", "controlled", "serena_reminded", "notified", "lost"] {
+        for kind in [
+            "gate",
+            "checked",
+            "controlled",
+            "serena_reminded",
+            "notified",
+            "checkpoint",
+            "lost",
+        ] {
             assert!(none(kind), "{kind} can happen again");
         }
         let mut seen = std::collections::BTreeSet::new();
@@ -335,7 +365,7 @@ mod history_events {
                 assert!(seen.insert((kind.clone(), key.clone())), "{kind} {key} is not unique");
             }
         }
-        assert_eq!(seen.len(), keys.len() - 6);
+        assert_eq!(seen.len(), keys.len() - 7);
     }
 
     #[test]
@@ -407,6 +437,7 @@ mod history_events {
             ("notified", vec!["title", "body"]),
             ("round_closed", vec![]),
             ("team_ended", vec![]),
+            ("checkpoint", vec![]),
             ("lost", vec!["detail"]),
         ];
         for (mut event, (kind, names)) in every_event().into_iter().zip(expected) {
