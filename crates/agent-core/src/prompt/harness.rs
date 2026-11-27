@@ -42,6 +42,8 @@ pub enum HarnessPrompt {
     TeamItem,
     /// The last checkpoint of an agent, for a run that has one.
     Checkpoint,
+    /// One checkpoint of a round told against the requirements of its item: what is to be done, what is done, what is left.
+    CheckpointState,
     /// What a run resumed after the watchdog killed it is told.
     ResumeHang,
     /// What a run resumed after a restart of the harness is told.
@@ -187,6 +189,7 @@ impl HarnessPrompt {
         Self::TeamItems,
         Self::TeamItem,
         Self::Checkpoint,
+        Self::CheckpointState,
         Self::ResumeHang,
         Self::ResumeRestart,
         Self::ResumeLimit,
@@ -285,6 +288,11 @@ impl HarnessPrompt {
                 &["item_id", "item_title", "item_description", "who"],
             ),
             Self::Checkpoint => PromptSpec::new("harness/run/checkpoint.md", Audience::Model, &["checkpoint"]),
+            Self::CheckpointState => PromptSpec::new(
+                "harness/run/checkpoint-state.md",
+                Audience::Model,
+                &["meant", "done", "left", "cause", "time", "head"],
+            ),
             Self::ResumeHang => PromptSpec::new("harness/run/resume-hang.md", Audience::Model, &["minutes"]),
             Self::ResumeRestart => PromptSpec::new("harness/run/resume-restart.md", Audience::Model, &[]),
             Self::ResumeTurnLimit => PromptSpec::new("harness/run/resume-turn-limit.md", Audience::Model, &[]),
