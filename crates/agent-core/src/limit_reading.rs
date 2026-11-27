@@ -67,10 +67,7 @@ impl LimitReading {
     /// # Errors
     /// [`InvalidLimitReading::UsedOutOfRange`] when `used` is not a number from 0 to 1.
     pub fn new(window: LimitWindow, used: f64, resets_at: Timestamp) -> Result<Self, InvalidLimitReading> {
-        // `contains` is false for NaN and the infinities too.
-        if !(0.0..=1.0).contains(&used) {
-            return Err(InvalidLimitReading::UsedOutOfRange { used });
-        }
+        Self::check_used(used)?;
         Ok(Self {
             window,
             used,
@@ -85,9 +82,7 @@ impl LimitReading {
     /// [`InvalidLimitReading::ResetOutOfRange`] when the seconds are no time a [`Timestamp`] holds.
     pub fn from_unix(window: LimitWindow, used: f64, reset_seconds: i64) -> Result<Self, InvalidLimitReading> {
         // The share is checked first: a reading with both wrong is told by its share.
-        if !(0.0..=1.0).contains(&used) {
-            return Err(InvalidLimitReading::UsedOutOfRange { used });
-        }
+        Self::check_used(used)?;
         let resets_at = UtcDateTime::from_unix_timestamp(reset_seconds)
             .map_err(ResetTimeError::Calendar)
             .and_then(|time| Timestamp::from_utc(time).map_err(ResetTimeError::Year))
@@ -95,7 +90,20 @@ impl LimitReading {
                 seconds: reset_seconds,
                 source,
             })?;
-        Self::new(window, used, resets_at)
+        Ok(Self {
+            window,
+            used,
+            resets_at,
+        })
+    }
+
+    /// Checks that `used` is a number from 0 to 1; NaN and the infinities are refused too.
+    fn check_used(used: f64) -> Result<(), InvalidLimitReading> {
+        if (0.0..=1.0).contains(&used) {
+            Ok(())
+        } else {
+            Err(InvalidLimitReading::UsedOutOfRange { used })
+        }
     }
 
     /// The window the reading is of.
