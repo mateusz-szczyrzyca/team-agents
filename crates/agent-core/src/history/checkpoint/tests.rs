@@ -467,3 +467,30 @@ fn the_gate_a_second_opinion_that_ended_a_control_and_a_reminder_leave_no_checkp
         assert_cause(event, None);
     }
 }
+
+#[test]
+fn the_free_texts_of_a_checkpoint_are_the_parts_of_its_content() {
+    let mut event = checkpoint(Some(CheckpointContent {
+        meant: "meant".to_owned(),
+        done: "done".to_owned(),
+        left: "left".to_owned(),
+    }));
+    let found: Vec<(&str, String)> = event
+        .texts_mut()
+        .into_iter()
+        .map(|(name, text)| (name, text.clone()))
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("meant", "meant".to_owned()),
+            ("done", "done".to_owned()),
+            ("left", "left".to_owned())
+        ]
+    );
+}
+
+#[test]
+fn a_checkpoint_without_content_has_no_free_text() {
+    assert_eq!(checkpoint(None).texts_mut().len(), 0);
+}

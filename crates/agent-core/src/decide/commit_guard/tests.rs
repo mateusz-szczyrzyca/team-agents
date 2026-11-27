@@ -441,3 +441,27 @@ fn the_scissors_line_and_what_follows_it_are_not_part_of_the_message() {
         assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
     }
 }
+
+// Rule: a checkpoint ties a commit to the step its `Step:` trailer names, the last one when it names several.
+#[test]
+fn the_step_of_a_message_is_the_last_step_trailer_that_reads() {
+    let cases: [(&str, Option<&str>); 6] = [
+        ("Fix it\n\nStep: 1.2\n", Some("1.2")),
+        ("Fix it\n\nStep: 1.1\nStep: 2.3\n", Some("2.3")),
+        ("Fix it\n\nStep: banana\n", None),
+        ("Fix it\n\nNo trailer.\n", None),
+        ("Fix it\n\nStep: 1.2\nMore of the body.\n", None),
+        (
+            "Fix it\n\nStep: 1.2\n\n# ------------------------ >8 ------------------------\ndiff\n",
+            Some("1.2"),
+        ),
+    ];
+
+    for (message, want) in cases {
+        assert_eq!(
+            step_of_message(message),
+            want.map(|id| id.parse().unwrap()),
+            "{message:?}"
+        );
+    }
+}

@@ -5,22 +5,29 @@
 //! then the record, then the history is flushed, before the owner acts on anything else. A checkpoint that cannot be taken
 //! is logged as `checkpoint_failed` and never stops the round.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
-use agent_core::history::{CheckpointCause, CheckpointJob, EventRecord, HistoryEvent, Record};
-use agent_core::ids::{ItemId, RoundId, TaskId, TeamId};
+use agent_core::decide::commit_guard::step_of_message;
+use agent_core::history::{
+    CheckpointCause, CheckpointContent, CheckpointJob, CommitLine, EventRecord, FindingLine, HistoryEvent, Next,
+    Record, StateInput, checkpoint_content,
+};
+use agent_core::ids::{BranchName, ItemId, RoundId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
+use agent_core::plan::judge::JudgementState;
 use agent_core::state::{CommitId, Completion, ItemPhase, PhaseKind, PrNumber, Round, RoundEnd, Timestamp};
+use agent_core::task_list::requirements::Requirement;
 use agent_runtime::git::Revision;
 use agent_runtime::history::{Flush, Reader};
 use agent_runtime::process::error_chain;
-use agent_runtime::snapshot::{prune_snapshots, take_checkpoint_snapshot};
+use agent_runtime::snapshot::{branch_commits, prune_snapshots, take_checkpoint_snapshot};
 
 use super::Owner;
+use super::briefing::{standing_states, try_read_plan};
 use super::commit_reminder::watched_run;
 use super::snapshots::validate_worktree_path;
 
@@ -34,9 +41,29 @@ const FLUSH_WAIT: Duration = Duration::from_secs(2);
 /// How long the owner waits once the writer has not answered in [`FLUSH_WAIT`]: only long enough to see that it is back.
 const STALLED_FLUSH_WAIT: Duration = Duration::from_millis(20);
 
+/// What the state said of the item of a round and of its reviews when a step was queued: what the content of the
+/// checkpoint is told from, besides the plan, the judgements and the commits that are read when it is taken.
+#[derive(Debug, Clone)]
+pub(super) struct ContentFacts {
+    /// The task's short description.
+    description: String,
+    /// The item's title.
+    title: String,
+    /// The requirements of the item, numbered.
+    requirements: Vec<Requirement>,
+    /// The findings of the round's pull request, as its ledger has them.
+    findings: Vec<FindingLine>,
+    /// How many review passes passed.
+    passes_passed: u32,
+    /// The branch the work branch was forked from; `None` when the repository is not configured any more.
+    base: Option<BranchName>,
+}
+
 /// What the state said of a round when a step was queued.
 #[derive(Debug, Clone)]
 pub(super) struct Facts {
+    /// What the content of the checkpoint is told from; `None` for a round that has no item.
+    told: Option<ContentFacts>,
     /// The item of the round, when it has one.
     item: Option<ItemId>,
     /// The holder whose worktree the checkpoint keeps.
@@ -121,6 +148,14 @@ pub(super) struct Checkpoints {
     /// owner does not wait for it longer than [`STALLED_FLUSH_WAIT`] until it answers again.
     stalled: bool,
 }
+
+/// The first seven characters of a commit's hash: how a checkpoint names a commit.
+fn short(hash: &str) -> String {
+    hash.chars().take(SHORT_HASH).collect()
+}
+
+/// How many characters of a commit's hash a checkpoint tells.
+const SHORT_HASH: usize = 7;
 
 /// Locks `mutex`; a lock left poisoned by a panic still guards a consistent list, as every change of it is one call.
 fn locked<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -316,8 +351,41 @@ impl Owner {
             } => None,
         });
         let kind = phase.map_or(PhaseKind::InProgress, ItemPhase::kind);
+        let told = item
+            .and_then(|id| team.task_list().list().item(id))
+            .map(|listed| ContentFacts {
+                description: team.task_list().list().display_short_desc(),
+                title: listed.title.clone(),
+                requirements: listed.requirements(),
+                findings: progress
+                    .and_then(agent_core::state::ItemProgress::findings)
+                    .map(|ledger| {
+                        ledger
+                            .entries()
+                            .iter()
+                            .map(|entry| FindingLine {
+                                number: entry.number,
+                                severity: entry.finding.severity,
+                                place: entry.finding.place.clone(),
+                                text: entry.finding.text.clone(),
+                                status: entry.status,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                passes_passed: progress
+                    .and_then(|progress| u32::try_from(progress.completed_review_passes()).ok())
+                    .unwrap_or_default(),
+                base: self
+                    .parts
+                    .settings
+                    .config
+                    .repo(team.repo())
+                    .map(|repo| repo.base_branch.clone()),
+            });
         let reviewed = matches!(kind, PhaseKind::InReview | PhaseKind::Fixing | PhaseKind::Approved);
         Some(Facts {
+            told,
             item,
             task: member.task().clone(),
             tier: member.agent().tier(),
@@ -468,6 +536,7 @@ impl Owner {
                 (None, None)
             }
         };
+        let content = self.checkpoint_text(team, round, cause, &facts, head.as_ref()).await;
         let event = HistoryEvent::Checkpoint {
             round: round.clone(),
             item: facts.item,
@@ -482,7 +551,7 @@ impl Owner {
             review_pass: facts.review_pass,
             fix_pass: facts.fix_pass,
             snapshot,
-            content: None,
+            content,
         };
         self.history.record(Record::Event(Box::new(EventRecord {
             at,
@@ -490,6 +559,93 @@ impl Owner {
             rounds: vec![round.clone()],
             event,
         })));
+    }
+
+    /// What the checkpoint of `cause` says of the work of the holder: what is meant, what is done and what is left, told
+    /// against the requirements of the item from its plan, the judgements of its steps, its commits and its findings.
+    /// `None` for a round with no item, and when a fact cannot be read: that is logged as `checkpoint_failed`, and the
+    /// checkpoint is taken without a content.
+    async fn checkpoint_text(
+        &self,
+        team: &TeamId,
+        round: &RoundId,
+        cause: CheckpointCause,
+        facts: &Facts,
+        head: Option<&CommitId>,
+    ) -> Option<CheckpointContent> {
+        let told = facts.told.as_ref()?;
+        let failed = |error: &str| {
+            tracing::warn!(
+                event = LogEvent::CheckpointFailed.as_str(),
+                team = %team,
+                round = %round,
+                task = %facts.task,
+                cause = %cause,
+                error = %error,
+                "a checkpoint has no content: the round goes on"
+            );
+        };
+        let worktree = match validate_worktree_path(&facts.worktree) {
+            Ok(worktree) => worktree,
+            Err(error) => {
+                failed(&error);
+                return None;
+            }
+        };
+        let Some(base) = &told.base else {
+            failed("the repository of the team is not configured any more");
+            return None;
+        };
+        let commits = match branch_commits(&worktree, &facts.task, base).await {
+            Ok(commits) => commits,
+            Err(error) => {
+                failed(&error_chain(&error));
+                return None;
+            }
+        };
+        let judged = match self.latest_judgements(&facts.task).await {
+            Ok(judged) => judged,
+            Err(error) => {
+                failed(&error_chain(&error));
+                return None;
+            }
+        };
+        let plan = match try_read_plan(&worktree).await {
+            Ok(plan) => plan,
+            Err(error) => {
+                failed(&error_chain(&error));
+                return None;
+            }
+        };
+        let judgements: BTreeMap<ItemId, JudgementState> = match &plan {
+            Some(plan) => {
+                let (_, plans_by_run) = self.earlier_plans(&facts.task, None).await;
+                standing_states(plan, &judged, &plans_by_run).into_iter().collect()
+            }
+            None => BTreeMap::new(),
+        };
+        let commits: Vec<CommitLine> = commits
+            .iter()
+            .map(|commit| CommitLine {
+                id: short(commit.id.as_str()),
+                step: step_of_message(&commit.message),
+            })
+            .collect();
+        let head = head.map(|head| short(head.as_str()));
+        let item = facts.item?;
+        Some(checkpoint_content(&StateInput {
+            description: &told.description,
+            item,
+            title: &told.title,
+            requirements: &told.requirements,
+            plan: plan.as_ref(),
+            judgements: &judgements,
+            commits: &commits,
+            findings: &told.findings,
+            passes_passed: told.passes_passed,
+            head: head.as_deref(),
+            next: Next::of(cause, facts.phase, told.passes_passed, facts.pull_request),
+        }))
     }
 
     /// Removes every snapshot reference the checkpoints of `round` kept, and forgets them.

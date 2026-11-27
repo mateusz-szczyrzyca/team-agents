@@ -1,0 +1,14 @@
+## Checkpoint: commit at 2026-11-27T04:00:00Z, head 0123abc
+
+### What is to be done
+Task: Build the thing.
+Item 1.3: Say what is meant
+R1. the first thing works
+
+### What is done
+Totals: 1 commits, 1 steps
+R1 met — steps 1.1 (confirmed); commits abc1234
+
+### What is left
+Totals: 0 steps, 0 findings
+next: commit what is finished, run the gate and hand the round over
