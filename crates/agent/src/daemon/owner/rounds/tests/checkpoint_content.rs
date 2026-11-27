@@ -4,9 +4,11 @@
 use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
-use agent_core::state::MergeMode;
+use agent_core::state::{ItemPhase, MergeMode};
 use agent_core::task_list::TaskList;
 use agent_runtime::history::Reader;
+
+use crate::commands::checkpoints::{CheckpointsRequest, Mode, Target, checkpoints_in};
 
 use super::rig::{ONE, Rig, git, investigator, normal};
 
@@ -200,4 +202,110 @@ async fn a_plan_that_does_not_read_leaves_a_checkpoint_without_content_and_a_che
         .filter(|entry| entry.event() == LogEvent::CheckpointFailed)
         .count();
     assert_ne!(failed, 0);
+}
+
+/// A reviewer that asks for changes the first time and approves afterwards.
+const CHANGES_ONCE: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
+
+/// The listing line of every checkpoint of `team`, told from the records the daemon wrote, oldest first.
+fn expected_listing(rig: &Rig, team: &TeamId) -> Vec<String> {
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    reader
+        .team_records(team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            Record::Event(event) => match event.event {
+                HistoryEvent::Checkpoint {
+                    cause,
+                    pull_request,
+                    head,
+                    draft,
+                    review_pass,
+                    snapshot,
+                    content,
+                    ..
+                } => {
+                    let pull = pull_request.map_or("none".to_owned(), |number| {
+                        format!("#{} {}", number.get(), if draft { "draft" } else { "ready" })
+                    });
+                    let content = content.expect("the daemon wrote a content");
+                    let totals = |text: &str| {
+                        text.lines()
+                            .next()
+                            .unwrap()
+                            .strip_prefix("Totals: ")
+                            .unwrap()
+                            .to_owned()
+                    };
+                    Some(format!(
+                        "{}  {cause}  PR {pull}  head {}  pass {}  done {}  left {}  snapshot {}",
+                        event.at,
+                        head.map_or("none".to_owned(), |head| head.as_str().chars().take(7).collect()),
+                        review_pass.unwrap_or(0),
+                        totals(&content.done),
+                        totals(&content.left),
+                        snapshot.unwrap_or_else(|| "none".to_owned()),
+                    ))
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn agent_checkpoints_lists_the_round_of_a_whole_run_as_the_daemon_wrote_it() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,fix-work"),
+            investigator("inv-r1", CHANGES_ONCE),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.item_where("1.1", "done", |phase| matches!(phase, ItemPhase::Done { .. }))
+        .await;
+    rig.stop().await.unwrap();
+    let request = CheckpointsRequest {
+        target: Target::Task(tasks[0].clone()),
+        mode: Mode::Listing,
+    };
+    let mut out = Vec::new();
+
+    checkpoints_in(
+        &rig.home.history_file(),
+        &rig.home.root().join("prompts"),
+        &request,
+        &mut out,
+    )
+    .await
+    .unwrap();
+
+    let listing = String::from_utf8(out).unwrap();
+    let lines: Vec<&str> = listing.lines().collect();
+    assert_eq!(lines, expected_listing(&rig, &team));
+    assert!(
+        lines.first().unwrap().contains("  round_opened  PR none  "),
+        "{listing}"
+    );
+    assert!(
+        lines.iter().any(|line| line.contains("  pull_ready  PR #1 ready  ")),
+        "{listing}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|line| line.contains("  fix_pass_started  PR #1 ready  ")),
+        "{listing}"
+    );
+    assert!(
+        lines.last().unwrap().contains("  pull_merged  PR #1 ready  "),
+        "{listing}"
+    );
 }

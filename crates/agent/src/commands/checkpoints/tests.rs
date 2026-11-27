@@ -274,3 +274,79 @@ fn a_word_that_is_no_round_or_task_is_a_usage_error() {
     assert_eq!((status, out.as_str()), (ExitCode::from(2), ""));
     assert!(err.contains("banana"), "{err}");
 }
+
+// Rule: a pull request that is not a draft is listed as ready.
+#[test]
+fn a_pull_request_that_is_not_a_draft_is_listed_as_ready() {
+    let dir = home();
+    let mut db = HistoryDb::open(&dir.path().join("history.db"), MaxTextBytes::default()).unwrap();
+    let Record::Event(mut ready) = checkpoint(40, CheckpointCause::PullApproved, true, Some(content())) else {
+        panic!("a checkpoint is an event")
+    };
+    let HistoryEvent::Checkpoint { draft, .. } = &mut ready.event else {
+        panic!("a checkpoint is a checkpoint")
+    };
+    *draft = false;
+    db.write(&[Record::Event(ready)]).unwrap();
+    drop(db);
+
+    let (status, out, _) = run(dir.path(), &["round-20261127-040001-q1w2"]);
+
+    assert_eq!(status, ExitCode::SUCCESS);
+    assert_eq!(
+        out.lines().last().unwrap(),
+        format!(
+            "2026-11-27T04:00:40Z  pull_approved  PR #7 ready  head 0123abc  pass 0  done 2 commits, 1 steps  left 3 steps, 1 findings  snapshot {SNAPSHOT}"
+        )
+    );
+}
+
+// Rule: `--show 1` prints the oldest checkpoint; one that kept no account of the work says so in each part.
+#[test]
+fn show_one_prints_the_oldest_checkpoint_and_says_when_it_kept_no_account() {
+    let dir = home();
+
+    let (status, out, err) = run(dir.path(), &["round-20261127-040001-q1w2", "--show", "1"]);
+
+    assert_eq!((status, err.as_str()), (ExitCode::SUCCESS, ""));
+    assert_eq!(
+        out,
+        "## Checkpoint: round_opened at 2026-11-27T04:00:10Z, head 0123abc000000000000000000000000000000000\n\n\
+         ### What is to be done\n(this checkpoint kept no account of the work)\n\n\
+         ### What is done\n(this checkpoint kept no account of the work)\n\n\
+         ### What is left\n(this checkpoint kept no account of the work)\n"
+    );
+}
+
+// Rule: with `--json` and no checkpoint, stdout stays empty (no JSON line) and the message goes to stderr, exit 0.
+#[test]
+fn json_with_no_checkpoint_prints_no_line_and_says_so_on_stderr() {
+    let dir = home();
+    let mut db = HistoryDb::open(&dir.path().join("history.db"), MaxTextBytes::default()).unwrap();
+    let quiet: RoundId = "round-20261127-040100-q1w2".parse().unwrap();
+    db.write(&[Record::Round(Box::new(RoundOpening {
+        round: quiet,
+        team: team(),
+        at: at(61),
+        subject: RoundSubject::Item(ItemText {
+            item: "1.2".parse().unwrap(),
+            title: "Second".to_owned(),
+            description: "Do it.".to_owned(),
+            expected_result: None,
+            checks: None,
+        }),
+    }))])
+    .unwrap();
+    drop(db);
+
+    let (status, out, err) = run(dir.path(), &["round-20261127-040100-q1w2", "--json"]);
+
+    assert_eq!(
+        (status, out.as_str(), err.as_str()),
+        (
+            ExitCode::SUCCESS,
+            "",
+            "No checkpoints for round-20261127-040100-q1w2.\n"
+        )
+    );
+}
