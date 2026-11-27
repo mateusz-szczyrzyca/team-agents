@@ -55,26 +55,41 @@ fn a_check_line_without_a_number_gets_the_next_free_one() {
     let item = item_of("    Checks:\n    - K1. one\n    - two\n    - K3: three\n    - four\n");
     assert_eq!(
         pairs(&item),
-        expected(&[("K1", "one"), ("K2", "two"), ("K3", "three"), ("K4", "four")])
+        expected(&[
+            ("R1", "The title"),
+            ("K1", "one"),
+            ("K2", "two"),
+            ("K3", "three"),
+            ("K4", "four")
+        ])
     );
 }
 
 #[test]
 fn an_unnumbered_check_does_not_take_a_number_a_later_line_names() {
     let item = item_of("    Checks:\n    - one\n    - K1. two\n");
-    assert_eq!(pairs(&item), expected(&[("K2", "one"), ("K1", "two")]));
+    assert_eq!(
+        pairs(&item),
+        expected(&[("R1", "The title"), ("K2", "one"), ("K1", "two")])
+    );
 }
 
 #[test]
 fn a_number_named_twice_is_kept_by_the_first_line_only() {
     let item = item_of("    Checks:\n    - K1. one\n    - K1. two\n");
-    assert_eq!(pairs(&item), expected(&[("K1", "one"), ("K2", "two")]));
+    assert_eq!(
+        pairs(&item),
+        expected(&[("R1", "The title"), ("K1", "one"), ("K2", "two")])
+    );
 }
 
 #[test]
 fn checks_that_are_not_bullets_are_one_line_each() {
     let item = item_of("    Checks:\n    run it\n    K2. run that\n");
-    assert_eq!(pairs(&item), expected(&[("K1", "run it"), ("K2", "run that")]));
+    assert_eq!(
+        pairs(&item),
+        expected(&[("R1", "The title"), ("K1", "run it"), ("K2", "run that")])
+    );
 }
 
 #[test]
