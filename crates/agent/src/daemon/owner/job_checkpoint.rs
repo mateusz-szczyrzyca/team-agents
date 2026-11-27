@@ -9,13 +9,13 @@ use std::path::PathBuf;
 
 use agent_core::history::{
     CheckResult, CheckpointCause, CheckpointContent, CheckpointJob, CommitLine, EventRecord, HistoryEvent, JobWork,
-    Record,
+    Record, ReviewedItem, review_meant,
 };
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::kinds::Tier;
 use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
-use agent_core::state::{CommitId, PhaseKind, PrNumber, Timestamp};
+use agent_core::state::{CommitId, ItemPhase, PhaseKind, PrNumber, ReviewOutcome, Timestamp};
 use agent_runtime::git::{CommitIdentity, Git, Revision};
 use agent_runtime::harness_prompts::HarnessPrompts;
 use agent_runtime::history::{LastCheckpoint, Reader};
@@ -70,6 +70,89 @@ impl Owner {
         let task = facts.task.clone();
         self.checkpoints.jobs.insert(task.clone(), facts);
         self.job_checkpoint(&task, cause).await;
+    }
+
+    /// Registers the review the reviewer `task` is about to make and takes its first checkpoint; a reviewer that is
+    /// registered already, or has no review pending, is left alone. A fact that cannot be read is logged and the review
+    /// has no checkpoints.
+    pub(super) async fn review_job_started(&mut self, task: &TaskId, team_id: &TeamId) {
+        if self.checkpoints.jobs.contains_key(task) {
+            return;
+        }
+        let Some(team) = self.parts.state.team(team_id) else {
+            return;
+        };
+        let Some((progress, pr, reviewed)) = team.items().iter().find_map(|progress| match progress.phase() {
+            ItemPhase::InReview { pr, reviews }
+                if reviews
+                    .iter()
+                    .any(|review| review.task == *task && matches!(review.outcome, ReviewOutcome::Pending)) =>
+            {
+                Some((progress, pr.number, progress.completed_review_passes()))
+            }
+            ItemPhase::Pending
+            | ItemPhase::InProgress { .. }
+            | ItemPhase::InReview { .. }
+            | ItemPhase::Fixing { .. }
+            | ItemPhase::Approved { .. }
+            | ItemPhase::Done { .. } => None,
+        }) else {
+            return;
+        };
+        let (Some(listed), Some(round)) = (
+            team.task_list().list().item(progress.id()),
+            team.open_rounds().find(|round| round.item() == Some(progress.id())),
+        ) else {
+            return;
+        };
+        let worktree = self.parts.store.home().worktree_dir(team.repo(), task);
+        let head = match worktree_head(&worktree).await {
+            Ok(head) => head,
+            Err(error) => {
+                tracing::warn!(
+                    event = LogEvent::CheckpointFailed.as_str(),
+                    team = %team_id,
+                    task = %task,
+                    cause = %CheckpointCause::ReviewStarted,
+                    error = %error,
+                    "the head of a review's worktree cannot be read: the review has no checkpoints"
+                );
+                return;
+            }
+        };
+        let Ok(pass) = u32::try_from(reviewed.saturating_add(1)) else {
+            tracing::warn!(
+                event = LogEvent::CheckpointFailed.as_str(),
+                team = %team_id,
+                task = %task,
+                cause = %CheckpointCause::ReviewStarted,
+                error = "the review pass is too large for a checkpoint",
+                "the review has no checkpoints"
+            );
+            return;
+        };
+        let requirements = listed.requirements();
+        let item = ReviewedItem {
+            id: progress.id(),
+            title: &listed.title,
+            requirements: &requirements,
+        };
+        let facts = JobFacts {
+            team: team_id.clone(),
+            round: round.id().clone(),
+            job: CheckpointJob::Review,
+            tier: Tier::Investigator,
+            task: task.clone(),
+            worktree,
+            meant: review_meant(pr, &short(head.as_str()), pass, &item),
+            start: head,
+            pull_request: Some(pr),
+            review_pass: Some(pass),
+            findings_file: Some(self.parts.store.home().review_findings_file(task, pr, pass)),
+            findings_seen: String::new(),
+            last_check: None,
+        };
+        self.job_started(facts, CheckpointCause::ReviewStarted).await;
     }
 
     /// Takes the checkpoint of `cause` for the job of `task`; a task that is no job is left alone.
@@ -315,6 +398,21 @@ impl Owner {
             ),
         }
     }
+}
+
+/// The commit the worktree at `path` has out.
+///
+/// # Errors
+/// The cause, when the path is no worktree or git cannot read its head.
+async fn worktree_head(path: &std::path::Path) -> Result<CommitId, String> {
+    let worktree = validate_worktree_path(path)?;
+    Git::new(
+        worktree,
+        CommitIdentity::new(LOOK_NAME.to_owned(), LOOK_EMAIL.to_owned(), None),
+    )
+    .rev_parse(&Revision::Head)
+    .await
+    .map_err(|error| error_chain(&error))
 }
 
 /// The name git is given for the look at a worktree's head, which commits nothing.

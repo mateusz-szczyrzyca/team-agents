@@ -1413,6 +1413,9 @@ impl Owner {
         self.record_run_start(task, &plan, &rounds, reason, now);
         // The checkpoint of the opening is taken from the worktree as it is before the engine starts the agent in it.
         self.checkpoint_round_opened(task).await;
+        if located.role == Role::Reviewer {
+            self.review_job_started(task, &located.team).await;
+        }
         // What the history queued before the run started (the start of a fix pass, an answer to a finding) is taken and
         // durable before the agent can change the worktree.
         self.flush_checkpoints().await;
@@ -2139,16 +2142,23 @@ impl Owner {
         {
             self.read_delivery_claim(task, &located.team, message).await?;
         }
-        if located.role == Role::Reviewer
-            && held == plan::PlanHeld::No
-            && matches!(
-                end,
-                RunEnd::Reported {
-                    outcome: RunOutcome::Done
-                }
-            )
-        {
-            self.review_ended(task, located, message).await?;
+        if located.role == Role::Reviewer {
+            let submitted = held == plan::PlanHeld::No
+                && matches!(
+                    end,
+                    RunEnd::Reported {
+                        outcome: RunOutcome::Done
+                    }
+                );
+            if submitted {
+                self.review_ended(task, located, message).await?;
+            }
+            let cause = if submitted {
+                CheckpointCause::ReviewSubmitted
+            } else {
+                CheckpointCause::RunEnded
+            };
+            self.job_ended(task, cause).await;
         }
         if located.role == Role::Investigator {
             return self.investigation_ended(task, located, end, message).await;

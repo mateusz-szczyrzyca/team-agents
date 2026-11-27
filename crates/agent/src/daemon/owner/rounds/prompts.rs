@@ -52,6 +52,9 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
+    /// The number of the review pass does not fit a checkpoint's.
+    #[error("the review pass is too large for a checkpoint")]
+    PassTooLarge(#[from] std::num::TryFromIntError),
     /// A text of the harness cannot be rendered.
     #[error("cannot render a text of the harness")]
     Harness(#[from] agent_runtime::harness_prompts::RenderTextError),
@@ -851,6 +854,20 @@ pub(super) async fn review_request(
         if let Some(item) = team.task_list().list().item(progress.id()) {
             sections.extend(item_sections(&harness, item)?);
         }
+    }
+    // A reviewer writes its findings down as it has them, so that a reviewer that replaces it starts from them.
+    let pass = u32::try_from(verification.pass)?;
+    let file = ctx.home.review_findings_file(task, pr.number, pass);
+    let file_values = Variables::new().with("file", file.display().to_string())?;
+    sections.push(ctx.texts.render(HarnessPrompt::ReviewFindingsFile, &file_values)?);
+    let rounds = team.open_rounds().map(|round| round.id().clone()).collect();
+    let taken_over = TakenOver::Review {
+        task,
+        pull_request: pr.number,
+        pass,
+    };
+    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
+        sections.push(briefing);
     }
     Ok(Some(
         sections
