@@ -281,3 +281,87 @@ fn a_test_fix_commit_of_test_files_only_may_edit_a_frozen_test() {
         assert_eq!(got, want, "{name}");
     }
 }
+
+/// A plan whose steps are 1.1 and 1.2; `with_for` gives them `For:` lines.
+fn plan(with_for: bool) -> Plan {
+    let for_line = if with_for { "    For: R1\n" } else { "" };
+    crate::plan::parse_plan(&format!(
+        "Do it.\n\n1. Work\n[x] 1.1 First\n{for_line}[ ] 1.2 Second\n{for_line}"
+    ))
+    .unwrap()
+}
+
+fn both_steps() -> Vec<ItemId> {
+    vec!["1.1".parse().unwrap(), "1.2".parse().unwrap()]
+}
+
+// Rule: when the plan has `For:` lines, a commit message with no `Step:` trailer is refused.
+#[test]
+fn a_message_with_no_step_trailer_is_refused_when_the_plan_has_for_lines() {
+    let verdict = judge_step(&plan(true), "Fix the parser\n\nIt read the line twice.\n");
+
+    assert_eq!(
+        verdict,
+        StepVerdict::Refused(StepRefusal::Missing { steps: both_steps() })
+    );
+}
+
+// Rule: a trailer names a step of the plan, or the commit is refused with what it named.
+#[test]
+fn a_trailer_that_names_no_step_of_the_plan_is_refused_with_what_it_names() {
+    let cases: [(&str, &[&str]); 3] = [
+        ("Fix it\n\nStep: 3.1\n", &["3.1"]),
+        ("Fix it\n\nStep: banana\n", &["banana"]),
+        ("Fix it\n\nStep: 1.1\nStep: 2.2\n", &["2.2"]),
+    ];
+
+    for (message, named) in cases {
+        let want = StepVerdict::Refused(StepRefusal::NotInPlan {
+            named: named.iter().map(|text| (*text).to_owned()).collect(),
+            steps: both_steps(),
+        });
+        assert_eq!(judge_step(&plan(true), message), want, "{message:?}");
+    }
+}
+
+// Rule: a commit that names a step of the plan in a `Step:` trailer is allowed, also when it is a `RED:`, a `TEST-FIX:`
+// or a merge commit.
+#[test]
+fn a_trailer_that_names_a_step_of_the_plan_allows_the_commit() {
+    let messages = [
+        "Fix the parser\n\nIt read the line twice.\n\nStep: 1.2\n",
+        "RED: parse a line\n\nStep: 1.1\n",
+        "TEST-FIX: the case\n\nWrong value.\n\nStep: 1.1\n",
+        "Merge branch 'other'\n\nStep: 1.2\n",
+        "Fix it\n\nStep:   1.1  \n",
+    ];
+
+    for message in messages {
+        assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
+    }
+}
+
+// Rule: only a line that starts with `Step:` is a trailer; a comment of the editor or the word inside a sentence is not.
+#[test]
+fn only_a_line_that_starts_with_step_is_a_trailer() {
+    let messages = [
+        "Fix it\n\nSee Step: 1.1 for why.\n",
+        "Fix it\n# Step: 1.1\n",
+        "Fix it\n\nstep: 1.1\n",
+    ];
+
+    for message in messages {
+        assert_eq!(
+            judge_step(&plan(true), message),
+            StepVerdict::Refused(StepRefusal::Missing { steps: both_steps() }),
+            "{message:?}"
+        );
+    }
+}
+
+// Rule: a plan with no `For:` line (a legacy plan) is not checked.
+#[test]
+fn a_plan_with_no_for_line_does_not_check_the_commit() {
+    assert_eq!(judge_step(&plan(false), "Fix it\n"), StepVerdict::Allowed);
+    assert_eq!(judge_step(&plan(false), "Fix it\n\nStep: 9.9\n"), StepVerdict::Allowed);
+}

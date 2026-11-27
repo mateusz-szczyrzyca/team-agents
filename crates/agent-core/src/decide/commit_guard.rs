@@ -8,6 +8,8 @@
 
 use crate::config::Checks;
 use crate::decide::checks::{Change, CommitFacts, FileChange, Lines, RED_PREFIX, TEST_FIX_PREFIX};
+use crate::ids::ItemId;
+use crate::plan::Plan;
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
@@ -117,6 +119,40 @@ pub fn judge_commit(rules: &Checks, frozen: &[FrozenTest], commit: &PendingCommi
     } else {
         Verdict::Refused(vec![Refusal::TestFixTouchesOtherFiles { others }])
     }
+}
+
+/// Why a commit of a task whose plan ties its steps to requirements is refused for its `Step:` trailer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepRefusal {
+    /// The message has no `Step:` trailer.
+    Missing {
+        /// The steps of the plan, in the order written: what the trailer may name.
+        steps: Vec<ItemId>,
+    },
+    /// The message has `Step:` trailers and some of them name no step of the plan.
+    NotInPlan {
+        /// What those trailers name, as written, in the order of the message.
+        named: Vec<String>,
+        /// The steps of the plan, in the order written.
+        steps: Vec<ItemId>,
+    },
+}
+
+/// What is to happen to a commit that is about to be made, as far as its `Step:` trailer goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepVerdict {
+    /// It is made.
+    Allowed,
+    /// It is not made.
+    Refused(StepRefusal),
+}
+
+/// Whether the commit with the message `message` may be made, given the `plan` of the task: when the plan has `For:`
+/// lines, the message ends in a `Step: N.M` trailer that names a step of the plan.
+#[must_use]
+pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
+    let _ = (plan, message);
+    StepVerdict::Allowed
 }
 
 /// What `file`, which takes lines out of its file, takes out of it.
