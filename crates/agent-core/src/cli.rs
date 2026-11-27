@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::{AbsolutePath, CliArgs, CommandLine, EnvName, InvalidValue, ModelName, Program, ValueRule};
 use crate::kinds::CliKind;
+use crate::limit_reading::LimitReading;
 use crate::protocol::{Client, ControlAction};
 
 /// Longest session ID, in bytes: the bound of a model name.
@@ -419,6 +420,13 @@ pub trait OutputParser: Send {
     /// the parser. Parsers that read no usage return the default, which tells nothing.
     fn usage(&self) -> RunUsage {
         RunUsage::default()
+    }
+
+    /// The latest reading the stream gave of each rate-limit window of the account, at most one per window, in the
+    /// order of [`crate::limit_reading::LimitWindow`]; read it before [`OutputParser::finish`] consumes the parser.
+    /// Parsers of CLIs that report no limits return none.
+    fn readings(&self) -> Vec<LimitReading> {
+        Vec::new()
     }
 
     /// The context in tokens of the latest model call that told one, available while the run goes on. Parsers that read
