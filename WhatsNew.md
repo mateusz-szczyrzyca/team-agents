@@ -12,7 +12,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent 0.149.0 · agent-core 0.149.0 — 28.11.2026 — PR #363
 
 ### New features
-- [agent] [agent-core] A human's swap skips only the tier rule, allowing tasks to be handed over to any configured tier, with new socket command `Swap` on protocol 10, trouble reason `swap`, and typed refusal causes. An older daemon cannot read a state holding `swap`.
+- [agent] [agent-core] A human's swap skips only the tier rule, allowing tasks to be handed over to any configured tier except workers, with new socket command `Swap` on protocol 10, trouble reason `swap`, and typed refusal causes. An older daemon cannot read a state holding `swap`.
 
 ## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
 

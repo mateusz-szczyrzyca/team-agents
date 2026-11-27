@@ -986,7 +986,7 @@ impl State {
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `choice` is [`Choice::Harness`] and `holder` is of a lower tier than the agent that holds it, `holder` is in its
-    /// team, or a run of it is going.
+    /// team or is a worker, or a run of it is going.
     pub fn hand_over_task_as(
         &mut self,
         task: &TaskId,
@@ -1024,6 +1024,12 @@ impl State {
                 task: task.clone(),
                 holder: holder.tier(),
                 held: held_by.tier(),
+            });
+        }
+        if let Participant::Worker(agent) = &holder {
+            return Err(HandOverError::Worker {
+                task: task.clone(),
+                agent: agent.clone(),
             });
         }
         let in_team = team
