@@ -50,8 +50,9 @@ cli = "codex"
 args = ["-c", "model_reasoning_effort=\"high\""]
 
 # --- Accounts (optional) ------------------------------------------------------------------------------------------
-# An account is one subscription or key. In this version accounts are only read and checked: runs do not use them
-# yet, so no variable is set and no quota is shared. Agents without an account run as before. Check the provider's
+# An account is one subscription or key. A run of an agent with an account gets the account's variables in its
+# environment (later wins: the daemon's, [agent_env], the account's env, the account's secrets); the quota is not shared
+# between the agents of an account yet. Agents without an account run as before. Check the provider's
 # terms before you use more than one subscription.
 # An agent or an investigator with an account is named `<owner>-...`. The secret variables of the account are
 # `[account_env.NAME]` in secrets.toml; a variable is set in `env` or there, never in both.
