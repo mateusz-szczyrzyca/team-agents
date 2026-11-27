@@ -2179,7 +2179,6 @@ impl Owner {
             }
         ) {
             let answer = message.unwrap_or_default();
-            use tokio::io::AsyncWriteExt;
             let has_unfinished = self.parts.state.team(&located.team).is_some_and(|team| {
                 team.investigations()
                     .iter()
@@ -2196,7 +2195,7 @@ impl Owner {
                     path: inv.file.clone(),
                     source,
                 })?;
-            file.write_all(answer.as_bytes())
+            tokio::io::AsyncWriteExt::write_all(&mut file, answer.as_bytes())
                 .await
                 .map_err(|source| OwnerError::WriteRecord {
                     path: inv.file.clone(),
