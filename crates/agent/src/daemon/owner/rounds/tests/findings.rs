@@ -104,3 +104,75 @@ async fn open_findings_are_delivered_on_existing_item_paths() {
     rig.stop().await.unwrap();
     assert!(prompt.contains("## Findings of other agents"), "{prompt}");
 }
+
+/// Exercises both production findings events for the exhaustive daemon log contract.
+pub(super) async fn record_findings_events(observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>) {
+    use agent_core::config::Secrets;
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::{HistoryLayer, Reader};
+    use std::os::unix::fs::PermissionsExt;
+
+    for fails in [false, true] {
+        let mut rig = rig().await;
+        if fails {
+            let cfg = std::fs::read_to_string(rig.home.config_file()).unwrap();
+            let line = cfg.lines().find(|line| line.starts_with("agentbus = ")).unwrap();
+            let original = line.strip_prefix("agentbus = \"").unwrap().strip_suffix('"').unwrap();
+            let wrapper = rig.home.root().join("findings-bus");
+            std::fs::write(
+                &wrapper,
+                format!("#!/bin/sh\nif [ \"$1\" = findings ]; then exit 1; fi\nexec '{original}' \"$@\"\n"),
+            )
+            .unwrap();
+            std::fs::set_permissions(&wrapper, std::fs::Permissions::from_mode(0o700)).unwrap();
+            std::fs::write(
+                rig.home.config_file(),
+                cfg.replace(line, &format!("agentbus = \"{}\"", wrapper.display())),
+            )
+            .unwrap();
+        }
+        let layer = HistoryLayer::deferred(LogLevel::Info, rig.history_test_clock(), Secrets::default());
+        rig.start_with_log_layer(layer).await;
+        let author: TaskId = "task-20261120-000000-aaaa".parse().unwrap();
+        write_finding(&rig, &author, false);
+        let text = ONE.replace("Do the first thing in the repository.", "Change `src/lib.rs`.");
+        let (team, tasks) = rig.run(&["codex-1"], &text, MergeMode::Autopilot, None).await;
+        let prompt = rig.prompt(&tasks[0], 1).await;
+        rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+        rig.stop().await.unwrap();
+        assert_eq!(prompt.contains("## Findings of other agents"), !fails);
+        let event = if fails {
+            LogEvent::FindingsUnavailable
+        } else {
+            LogEvent::FindingsShown
+        };
+        let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+        let row = logs
+            .iter()
+            .find(|row| row.event() == event)
+            .expect("production findings event");
+        assert_eq!(row.level(), event.level());
+        assert_eq!(row.task(), Some(&tasks[0]));
+        assert_eq!(row.team(), Some(&team));
+        if !fails {
+            assert_eq!(row.fields().get("ids"), Some(&json!("[\"F-1\"]")));
+            assert_eq!(row.fields().get("scores"), Some(&json!("[3]")));
+        }
+        observed.insert(event);
+    }
+}
+
+#[tokio::test]
+async fn findings_delivery_and_bus_failure_emit_scoped_events_without_blocking_runs() {
+    let mut observed = std::collections::BTreeSet::new();
+    record_findings_events(&mut observed).await;
+    assert_eq!(
+        observed,
+        [
+            agent_core::log::LogEvent::FindingsShown,
+            agent_core::log::LogEvent::FindingsUnavailable
+        ]
+        .into_iter()
+        .collect()
+    );
+}
