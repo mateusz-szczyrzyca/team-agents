@@ -4775,7 +4775,7 @@ while test ! -f \"$AGENTS_HOME/release-worker\"; do sleep 0.05; done
         );
         world.script(
             "commit-then-fail",
-            r#"
+            r"
 if [[ ! -f .fake-interrupted ]]; then
     mkdir -p docs
     printf '%s\n' 'retained partial work' > docs/partial.txt
@@ -4787,7 +4787,7 @@ fi
 printf '%s\n' 'the walkthrough' > docs/guide.md
 git add docs
 git -c user.name=Worker -c user.email=worker@example.com commit -qm 'Complete retained work'
-"#,
+",
         );
         let request = MEMBER_REQUEST.replace(
             "\"files\":\"docs/guide.md\"",
