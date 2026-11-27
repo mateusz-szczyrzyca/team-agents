@@ -211,13 +211,9 @@ impl Home {
     /// The file a reviewer `task` writes its findings of the review of pull request `pull_request`, pass `pass`, to: in
     /// the task's directory, where the reviewer that takes over finds nothing of it, only the checkpoint's copy.
     #[must_use]
-    pub fn review_findings_file(
-        &self,
-        task: &TaskId,
-        _pull_request: agent_core::state::PrNumber,
-        _pass: u32,
-    ) -> PathBuf {
-        self.task_dir(task).join("findings.md")
+    pub fn review_findings_file(&self, task: &TaskId, pull_request: agent_core::state::PrNumber, pass: u32) -> PathBuf {
+        self.task_dir(task)
+            .join(format!("review-pr{pull_request}-pass{pass}-findings.md"))
     }
 
     /// The file with the last gate record of `task`, in the task's directory.
