@@ -2,6 +2,7 @@
 //! start each of them goes on from the `daemon_started` checkpoint of its own task. The world is a process world, as in
 //! `worker_request_process.rs`: a temporary `AGENTS_HOME`, the stand-in CLI `team-cli.sh` for every agent, the real
 //! `agentbus`, a worker tier, and the fake GitHub of the daemon's own tests (a pull request is opened, so a review starts).
+//! The held runs the kill leaves are released by the test, so that no stand-in outlives it.
 
 /// The fake GitHub of the round tests, read from where it is: it serves the routes the harness uses and merges into a bare
 /// repository. Most of its controls are for tests that are not here.
