@@ -335,11 +335,13 @@ context_percent = 80
 
 # --- Merges --------------------------------------------------------------------------------------------------------
 # GitHub may refuse to merge an approved pull request because it conflicts with its base. The lead of the round is then
-# asked to merge the base into its branch, at most `conflict_passes` times per round; after that you are asked.
-#   conflict_passes   lead passes per round on a merge conflict; when they are used up the lead asks you; 0 tells you at once, as before (default: 3)
+# asked to merge the base into its branch, at most `conflict_passes` times per round; an investigator then helps once before you are asked.
+#   conflict_passes   ordinary lead passes per round on a merge conflict (default: 3)
+#   investigator_pass   ask an investigator after those passes, then give the lead one extra pass (default: true)
 
 [merge]
 conflict_passes = 3
+investigator_pass = true
 
 # --- Publication ---------------------------------------------------------------------------------------------------
 # What the harness does when a branch cannot be published to GitHub (push failure, pull request creation or update error).
