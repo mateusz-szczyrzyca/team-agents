@@ -1474,6 +1474,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     super::item_tip_tests::record_publish_off_branch(&mut observed).await;
     record_no_tool_startup_events(&mut observed).await;
     super::investigations_tests::record_investigation_events(&mut observed).await;
+    super::investigations_tests::record_investigation_failure_events(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(
