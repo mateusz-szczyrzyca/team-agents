@@ -251,3 +251,37 @@ async fn account_changed_between_runs_starts_a_reviewer_from_briefing() {
     assert!(args.contains("--session-id"), "a new session: {args}");
     assert!(briefing.contains(BRIEFING), "{briefing}");
 }
+
+// Rule: a session that began under an account is recorded with its first run: when the daemon stops and starts again with
+// the same account, the cut run resumes its session and is not briefed.
+#[tokio::test]
+async fn a_session_that_began_under_an_account_is_resumed_after_a_restart_with_the_same_account() {
+    let mut rig = rig_with("script:cut,script:finish").await;
+    give_the_account(&rig);
+    rig.start().await;
+    let (_, tasks) = rig.run(&["comp-claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let worktree = rig.worktree(&tasks[0]);
+    rig.wait_for("the cut run to leave its files", || {
+        worktree.join("staged.txt").exists()
+    })
+    .await;
+    rig.stop().await.unwrap();
+    rig.start().await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    let args = std::fs::read_to_string(worktree.join(".fake-args-2")).unwrap();
+    let state = rig
+        .item_where("1.1", "merged after the restart", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+    rig.stop().await.unwrap();
+
+    assert!(!prompt.contains(BRIEFING), "never a briefing: {prompt}");
+    assert!(args.contains("--resume"), "the session of the account: {args}");
+    let member = state.find_task(&tasks[0]).unwrap().member;
+    assert!(member.renewals().is_none(), "no session was begun");
+    assert_eq!(
+        state.session_account(&tasks[0]),
+        Some(&ACCOUNT.parse::<AccountName>().unwrap())
+    );
+}
