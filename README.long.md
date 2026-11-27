@@ -1436,11 +1436,14 @@ branch: it takes a snapshot of the requester's worktree first, and the requester
 as they were. The commit that is brought over is what the worker committed since its request was given to it, not
 everything its branch holds. The worker's prompt (`prompts/harness/team/delegation.md`) therefore tells it to commit the files a request names
 in its own worktree before it ends, and to do the job there even when the requester's worktree seems to have it already;
-work it leaves uncommitted is not brought over and the request fails. A commit that conflicts, or one that would write over a file the requester changed or has, is
+work it leaves uncommitted is not brought over and the request fails. That rule holds over the request: a worker
+commits the files also when the request says not to, and says so in its notes; the texts of a member, a coordinator and a
+solo agent tell them never to ask for uncommitted edits. A commit that conflicts, or one that would write over a file the requester changed or has, is
 not applied: the requester is told, with the files. A result that is wrong — the check failed or ran past its limit, the worker changed a
 file the request did not name, it left a file the request names uncommitted, it committed nothing, its run lasted past
 `[workers] seconds`, or the daemon cannot read what it left (the commit the worker started from, its commits) — is returned
-to the requester with the reasons, and the request is answered as `failed`; what cannot be judged is never brought over. The
+to the requester with the reasons, and the request is answered as `failed`; the requester reads of the one result when the
+step had one try, and of every result, each named by its try, when an earlier worker's result was wrong too; what cannot be judged is never brought over. The
 check runs beside the daemon, which goes on with the other tasks meanwhile; a worker whose result is not settled yet (its file is
 still in its task directory) is busy and is not given the next request, and only a request the bus still has running for that
 worker's task is settled from a file. A good result is told to the requester with the step,
