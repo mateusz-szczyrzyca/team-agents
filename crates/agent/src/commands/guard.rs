@@ -17,7 +17,7 @@ use agent_core::config::{AbsolutePath, CommitGuard, RepoName};
 use agent_core::decide::commit_guard::{StepRefusal, StepVerdict, Verdict, judge_step};
 use agent_core::plan::{PLAN_FILE, PlanError, parse_plan};
 use agent_runtime::commit_guard::text::{RefusalTextError, refusal_text, step_refusal_text};
-use agent_runtime::commit_guard::{CommitKind, GuardError, Judged, Operation, judge_staged, operation_in_progress};
+use agent_runtime::commit_guard::{CommitKind, GuardError, Judged, judge_staged};
 use agent_runtime::git::{CommitIdentity, Git};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
 use agent_runtime::process::error_chain;
@@ -227,9 +227,8 @@ async fn amend_requested() -> bool {
 }
 
 /// Why the commit with `message` is refused for its `Step:` trailer, if it is: in a worktree whose plan has `For:`
-/// lines, every commit names a step of the plan. A commit that an operation replays (a cherry-pick, a revert, a rebase)
-/// is not written by the agent and is not asked.
-async fn step_refusal(git: &Git, directory: &Path, message: &str) -> Result<Option<StepRefusal>, Unjudged> {
+/// lines, every commit names a step of the plan, also one that a cherry-pick, a revert or a rebase makes.
+async fn step_refusal(directory: &Path, message: &str) -> Result<Option<StepRefusal>, Unjudged> {
     let path = directory.join(PLAN_FILE);
     let text = match tokio::fs::read_to_string(&path).await {
         Ok(text) => text,
@@ -239,12 +238,6 @@ async fn step_refusal(git: &Git, directory: &Path, message: &str) -> Result<Opti
     };
     let plan = parse_plan(&text)?;
     if !plan.ties_requirements() {
-        return Ok(None);
-    }
-    if matches!(
-        operation_in_progress(git).await?,
-        Some(Operation::CherryPick | Operation::Revert | Operation::Rebase)
-    ) {
         return Ok(None);
     }
     Ok(match judge_step(&plan, message) {
@@ -293,7 +286,7 @@ async fn judge(environment: &Environment, message_file: &Path) -> Result<Option<
         AbsolutePath::from_str(text).map_err(invalid)?,
         CommitIdentity::new(READER_NAME.to_owned(), READER_EMAIL.to_owned(), None),
     );
-    let step = step_refusal(&git, directory, &message).await?;
+    let step = step_refusal(directory, &message).await?;
     let frozen = match repo.checks.as_ref() {
         Some(rules) => match judge_staged(&git, rules, &repo.base_branch, subject, kind).await? {
             Judged::NotAuthored(_) | Judged::Verdict(Verdict::Allowed) => None,
