@@ -76,12 +76,7 @@ fn a_hand_over_ends_the_wait_for_the_agent_that_takes_the_task() {
     let holder: AgentName = "claude-2".parse().expect("an agent name");
 
     state
-        .hand_over_task(
-            &task(),
-            Participant::Normal(holder),
-            Choice::Harness,
-            at("2026-11-21T10:06:00Z"),
-        )
+        .hand_over_task(&task(), Participant::Normal(holder), at("2026-11-21T10:06:00Z"))
         .expect("the hand-over");
 
     assert_eq!(state.find_task(&task()).unwrap().member.waiting_since(), None);
@@ -127,7 +122,6 @@ fn a_busy_hand_over_before_any_run_is_written_and_read_back() {
         .hand_over_task(
             &fresh_task,
             Participant::Normal("claude-2".parse().unwrap()),
-            Choice::Harness,
             at("2026-11-21T10:06:00Z"),
         )
         .unwrap();
@@ -170,7 +164,6 @@ fn a_busy_notice_obligation_survives_a_restart_until_the_team_takes_it() {
         .hand_over_task(
             &fresh_task,
             Participant::Normal("claude-2".parse().unwrap()),
-            Choice::Harness,
             at("2026-11-21T10:06:00Z"),
         )
         .unwrap();

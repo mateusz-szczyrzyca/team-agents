@@ -208,7 +208,6 @@ fn a_member_taken_over_by_another_agent_is_woken_on_the_bus_under_its_current_ag
         .hand_over_task(
             &task_id(2),
             agent_core::state::Participant::Normal(agent("claude-9")),
-            agent_core::state::Choice::Harness,
             at,
         )
         .unwrap();

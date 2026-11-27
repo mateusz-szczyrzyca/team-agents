@@ -561,17 +561,11 @@ fn team_replace_notices_use_current_holders_and_preserve_the_original_task_branc
         .hand_over_task(
             &task_id(1),
             crate::fixtures::investigator("inv-new"),
-            agent_core::state::Choice::Harness,
             crate::fixtures::at(1),
         )
         .unwrap();
     state
-        .hand_over_task(
-            &task_id(2),
-            crate::fixtures::normal("claude-2"),
-            agent_core::state::Choice::Harness,
-            crate::fixtures::at(2),
-        )
+        .hand_over_task(&task_id(2), crate::fixtures::normal("claude-2"), crate::fixtures::at(2))
         .unwrap();
     let team = state.team(&id).unwrap();
     let finished = told(team, 2, &reported(RunOutcome::Done), None).unwrap();

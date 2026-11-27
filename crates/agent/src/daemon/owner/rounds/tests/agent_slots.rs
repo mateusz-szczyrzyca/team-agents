@@ -239,12 +239,7 @@ async fn a_restart_during_the_busy_hand_over_keeps_the_new_holder_and_briefing()
     let at: Timestamp = "2026-11-22T18:00:00Z".parse().unwrap();
     let claude_2: agent_core::ids::AgentName = "claude-2".parse().unwrap();
     state
-        .hand_over_task(
-            &waiting_task,
-            Participant::Normal(claude_2.clone()),
-            agent_core::state::Choice::Harness,
-            at,
-        )
+        .hand_over_task(&waiting_task, Participant::Normal(claude_2.clone()), at)
         .unwrap();
     let branch = match state
         .team(&team_b)
@@ -477,12 +472,7 @@ async fn a_lower_tier_candidate_is_not_given_the_waiting_task() {
 
     let (mut state, _team, task) = waiting_team_state();
     state
-        .hand_over_task(
-            &task,
-            crate::fixtures::investigator("inv-1"),
-            agent_core::state::Choice::Harness,
-            crate::fixtures::at(0),
-        )
+        .hand_over_task(&task, crate::fixtures::investigator("inv-1"), crate::fixtures::at(0))
         .unwrap();
     state
         .start_waiting(&task, crate::fixtures::at(0))
@@ -692,12 +682,7 @@ fn pre_send_busy_notice() -> (agent_core::state::State, agent_core::ids::TeamId,
     }
     let holder: agent_core::ids::AgentName = "inv-1".parse().unwrap();
     state
-        .hand_over_task(
-            &task,
-            Participant::Investigator("inv-1".parse().unwrap()),
-            agent_core::state::Choice::Harness,
-            at,
-        )
+        .hand_over_task(&task, Participant::Investigator("inv-1".parse().unwrap()), at)
         .unwrap();
     state
         .team_mut(&team)
