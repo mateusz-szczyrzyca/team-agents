@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.131.0 — 27.11.2026 — PR pending
+
+### Enhancements
+- [agent-core] Coordinators and members ask an investigator before they ask you a technical question.
+
 ## agent 0.134.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 26.11.2026 — PR pending
 
 ### New features

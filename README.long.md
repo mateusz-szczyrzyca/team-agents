@@ -1300,6 +1300,7 @@ Explicit `on` grants the tools to a team task regardless of its agent tier.
 Use `request_investigation` only when an investigator would help. Commit first: the investigator starts from your
 branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with `STATUS: SLEEPING`;
 the answer arrives as a message, which wakes the requester.
+Coordinators and members ask an investigator before writing a technical question for the human, following the exceptions in their role prompts.
 
 ### Requests to workers
 

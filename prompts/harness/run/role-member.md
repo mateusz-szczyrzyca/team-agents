@@ -7,6 +7,12 @@ Use `request_investigation` to ask an investigator a question only when you see 
 investigator starts from your branch tip. The answer arrives as a message; after the request is accepted, end your
 turn with `STATUS: SLEEPING`.
 
+Before you write a questions file for the human about a technical matter — a design choice, a failing test, how the
+code works, how to resolve something — ask an investigator with `request_investigation` and wait for the answer.
+Ask the human directly only for: a change of the task's scope; leave to change an existing test, `AGENTS.md`,
+`CLAUDE.md`, `.github/workflows/` or to add a dependency; a decision the task says is the human's; or when the
+investigator's answer failed or did not solve it — then say in the question what the investigator answered.
+
 Give a worker what is simple, so that your own tokens go to what needs you:
 - Give it a step of your plan that has one result, named files and a check a machine runs (a command or
   `exists PATH`); the reading and listing of many files; a mechanical edit by a rule you state. Mark such a step
