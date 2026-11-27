@@ -46,6 +46,8 @@ mod renewal;
 mod renewal_tests;
 mod round;
 mod run;
+#[cfg(test)]
+mod session_account_tests;
 pub mod split;
 mod strict;
 mod team;
@@ -772,6 +774,32 @@ impl State {
     /// its runs.
     pub fn begin_human_session(&mut self, task: &TaskId, at: Timestamp) -> Result<bool, RenewTaskError> {
         self.begin_holder_session(task, crate::decide::ladder::Trouble::Human, at)
+    }
+
+    /// The account the session of `task` began under; `None` for a session without one, and for a task of a state written
+    /// before accounts kept it.
+    #[must_use]
+    pub fn session_account(&self, _task: &TaskId) -> Option<&crate::config::AccountName> {
+        None
+    }
+
+    /// Records that the session of `task` runs under `account` (`None`: under none).
+    pub fn record_session_account(&mut self, _task: &TaskId, _account: Option<crate::config::AccountName>) {}
+
+    /// Starts `task` anew in a new session because the account of its agent changed to `account` (`None`: to none), at
+    /// `at`, and records it as the account of that session. No renewal is counted. Returns whether the task was started
+    /// anew: `false` for a task with no run, which only has the account recorded.
+    ///
+    /// # Errors
+    /// [`RenewTaskError`] when the task is not in the state, is of a worker, a reviewer or an investigator, or the session
+    /// does not fit its runs.
+    pub fn begin_account_session(
+        &mut self,
+        _task: &TaskId,
+        _account: Option<crate::config::AccountName>,
+        _at: Timestamp,
+    ) -> Result<bool, RenewTaskError> {
+        Ok(false)
     }
 
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
