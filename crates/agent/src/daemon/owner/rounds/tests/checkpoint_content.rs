@@ -3,6 +3,7 @@
 
 use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record};
 use agent_core::ids::TeamId;
+use agent_core::log::LogEvent;
 use agent_core::state::MergeMode;
 use agent_core::task_list::TaskList;
 use agent_runtime::history::Reader;
@@ -138,4 +139,65 @@ async fn the_checkpoint_of_the_opening_of_a_round_tells_every_requirement_not_st
         "Totals: 0 steps, 0 findings\nR1 not started — no step names it\nK1 not started — no step names it\n\
          next: commit what is finished, run the gate and hand the round over"
     );
+}
+
+/// The checkpoints of `team` with their cause and content, in the order they were written, whether they have a content
+/// or not.
+fn taken(rig: &Rig, team: &TeamId) -> Vec<(CheckpointCause, Option<CheckpointContent>)> {
+    let reader = Reader::open(&rig.home.history_file()).unwrap();
+    reader
+        .team_records(team)
+        .unwrap()
+        .into_iter()
+        .filter_map(|stored| match stored.record {
+            Record::Event(event) => match event.event {
+                HistoryEvent::Checkpoint { cause, content, .. } => Some((cause, content)),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn a_plan_that_does_not_read_leaves_a_checkpoint_without_content_and_a_checkpoint_failed_entry() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "script:broken"),
+            investigator("inv-r1", APPROVING),
+            investigator("inv-r2", APPROVING),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let signals = plan_script(&rig, "broken");
+    let script = rig.home.root().join("fake-scripts").join("broken.sh");
+    let text = std::fs::read_to_string(&script).unwrap();
+    std::fs::write(&script, text.replace("1. Work", "0. Work")).unwrap();
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("the commit", || signals.join("one").exists()).await;
+    rig.wait_for("the checkpoint of the commit", || {
+        taken(&rig, &team)
+            .iter()
+            .any(|(cause, _)| *cause == CheckpointCause::Commit)
+    })
+    .await;
+    std::fs::write(signals.join("finish"), "").unwrap();
+    rig.stop().await.unwrap();
+
+    let after_commit = taken(&rig, &team)
+        .into_iter()
+        .find(|(cause, _)| *cause == CheckpointCause::Commit)
+        .unwrap();
+    assert_eq!(after_commit.1, None);
+    let failed = Reader::open(&rig.home.history_file())
+        .unwrap()
+        .daemon_logs()
+        .unwrap()
+        .into_iter()
+        .filter(|entry| entry.event() == LogEvent::CheckpointFailed)
+        .count();
+    assert_ne!(failed, 0);
 }
