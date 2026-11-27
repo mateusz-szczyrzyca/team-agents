@@ -1076,7 +1076,7 @@ fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result
 
 /// The text after `For:` when `line` is a `For:` line.
 fn for_line(line: &str) -> Option<&str> {
-    line.trim_end().strip_prefix(FOR_PREFIX).filter(|_| false)
+    line.trim_end().strip_prefix(FOR_PREFIX)
 }
 
 /// The requirements a `For:` line names, separated by commas.
