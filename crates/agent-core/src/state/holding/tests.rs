@@ -570,3 +570,39 @@ fn human_swap_of_reviewer_task_refused() {
         })
     );
 }
+
+#[test]
+fn state_with_reason_swap_reads() {
+    let mut state = old_state();
+    state
+        .begin_holder_session(&task(), crate::decide::ladder::Trouble::Swap, at())
+        .expect("holder session begins with reason swap");
+
+    let member = state.find_task(&task()).expect("the task").member;
+    assert_eq!(
+        member.renewals().map(crate::state::Renewals::reason),
+        Some(crate::decide::ladder::Trouble::Swap)
+    );
+
+    let saved = state.to_json().expect("state serializes to json");
+    assert!(saved.contains("\"reason\": \"swap\""));
+
+    let loaded = State::from_json(&saved).expect("state with reason swap reads back");
+    assert_eq!(
+        loaded
+            .find_task(&task())
+            .expect("the task")
+            .member
+            .renewals()
+            .map(crate::state::Renewals::reason),
+        Some(crate::decide::ladder::Trouble::Swap)
+    );
+    assert_eq!(loaded, state);
+}
+
+#[test]
+fn state_of_today_reads_as_before() {
+    let before = State::from_json(include_str!("../../../tests/fixtures/state-before-swap.json"))
+        .expect("state before swap reads");
+    assert!(before.find_task(&task()).is_some());
+}
