@@ -236,8 +236,15 @@ async fn account_changed_between_runs_starts_a_reviewer_from_briefing() {
     rig.stop().await.unwrap();
     give_the_reviewers_an_account(&rig);
     rig.start().await;
-    let briefing = rig.prompt(&reviewer, 2).await;
-    let args = std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-args-2")).unwrap();
+    // The stand-in counts the runs of a reviewer's worktree from one again after the restart, so the run that follows the
+    // cut one is the first it knows; wait for its prompt to be the briefing, not the one of the run before.
+    rig.wait_for("the cut review to start a new session from the briefing", || {
+        std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-prompt-1"))
+            .is_ok_and(|text| text.starts_with(BRIEFING))
+    })
+    .await;
+    let briefing = rig.prompt(&reviewer, 1).await;
+    let args = std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-args-1")).unwrap();
     rig.stop().await.unwrap();
 
     assert!(!args.contains("--resume"), "not the old session: {args}");
