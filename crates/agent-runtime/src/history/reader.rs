@@ -727,8 +727,8 @@ impl Reader {
     }
 
     /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
-    /// except that a change of holder is skipped. It is taken at the take-over itself and tells the same work as the
-    /// checkpoint before it.
+    /// except that a change of holder and the end of a run that left the worktree as the checkpoint before it kept it are
+    /// skipped. They are taken at the take-over itself and tell the same work as the checkpoint before them.
     ///
     /// # Errors
     /// [`ReadError`].
@@ -737,9 +737,9 @@ impl Reader {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Option<LastCheckpoint>, ReadError> {
-        Ok(newest_for(self.round_checkpoints(round)?, task, |found| {
-            found.cause != agent_core::history::CheckpointCause::HolderChanged
-        }))
+        let all = self.round_checkpoints(round)?;
+        let told = tells_the_work(&all);
+        Ok(newest_for(told, task, |_| true))
     }
 
     /// Every checkpoint of `round` with what it says of the work, oldest first.
@@ -1681,4 +1681,25 @@ fn newest_for(
         Some(position) => Some(accepted.swap_remove(position)),
         None => accepted.pop(),
     }
+}
+
+/// The checkpoints of `all` (oldest first) that tell the work: all but a change of holder and the end of a run whose
+/// snapshot is the one the task's checkpoint before it kept, which changed nothing in the worktree.
+fn tells_the_work(all: &[LastCheckpoint]) -> Vec<LastCheckpoint> {
+    use agent_core::history::CheckpointCause;
+    let mut told = Vec::new();
+    for (position, found) in all.iter().enumerate() {
+        let unchanged = found.snapshot.is_some()
+            && all
+                .iter()
+                .take(position)
+                .rfind(|earlier| earlier.task == found.task)
+                .is_some_and(|earlier| earlier.snapshot == found.snapshot);
+        let adds_nothing =
+            found.cause == CheckpointCause::HolderChanged || (found.cause == CheckpointCause::RunEnded && unchanged);
+        if !adds_nothing {
+            told.push(found.clone());
+        }
+    }
+    told
 }
