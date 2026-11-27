@@ -288,3 +288,42 @@ async fn a_worktree_changed_after_the_checkpoint_is_kept_in_a_new_snapshot_and_t
     );
     assert!(briefing.contains("- changed-after.txt"), "{briefing}");
 }
+
+// Rule: a new session after runs without a status, whose worktree is as the last checkpoint kept it, is briefed from that
+// checkpoint's snapshot and makes no snapshot of its own: every reference is a checkpoint's, none is numbered.
+// Test-First: not possible — the behaviour exists since the briefing took the checkpoint's snapshot; this test pins it.
+#[tokio::test]
+async fn a_no_status_new_session_whose_worktree_matches_the_last_checkpoint_makes_no_numbered_snapshot() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "nostatus-dirty,nostatus,nostatus,work"),
+            investigator("inv-r1", APPROVE),
+            investigator("inv-r2", APPROVE),
+        ],
+        5,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+
+    let briefing = rig.prompt(&tasks[0], 4).await;
+    let references = snapshot_refs(&rig.repo);
+    rig.stop().await.unwrap();
+
+    assert!(briefing.starts_with(BRIEFING), "{briefing}");
+    let named: Vec<&String> = references
+        .iter()
+        .filter(|reference| briefing.contains(reference.as_str()))
+        .collect();
+    assert_eq!(named.len(), 1, "one snapshot is named: {references:?}\n{briefing}");
+    let leaves: Vec<&str> = references
+        .iter()
+        .filter_map(|reference| reference.rsplit('/').next())
+        .collect();
+    assert_eq!(leaves.len(), references.len(), "{references:?}");
+    assert!(
+        leaves.iter().all(|leaf| leaf.starts_with('c')),
+        "no numbered snapshot is made: {references:?}"
+    );
+}
