@@ -47,8 +47,20 @@ impl ShownFindings {
     /// Loads a task's shown IDs, with an absent record treated as empty.
     /// # Errors
     /// Returns [`ShownFindingsError`] for unreadable or invalid records.
-    pub async fn read(_path: &Path) -> Result<Self, ShownFindingsError> {
-        Ok(Self::default())
+    pub async fn read(path: &Path) -> Result<Self, ShownFindingsError> {
+        let Some(record) = crate::text_file::read_text_file(path, MAX_SHOWN_BYTES)
+            .await
+            .map_err(|source| ShownFindingsError::Read {
+                path: path.to_path_buf(),
+                source,
+            })?
+        else {
+            return Ok(Self::default());
+        };
+        serde_json::from_str(&record.text).map_err(|source| ShownFindingsError::Json {
+            path: path.to_path_buf(),
+            source,
+        })
     }
     /// The IDs excluded from later selections.
     #[must_use]
@@ -60,9 +72,19 @@ impl ShownFindings {
     /// Returns [`ShownFindingsError`] if the record cannot be encoded or replaced.
     pub async fn save(
         &mut self,
-        _path: &Path,
-        _ids: impl IntoIterator<Item = FindingId>,
+        path: &Path,
+        ids: impl IntoIterator<Item = FindingId>,
     ) -> Result<(), ShownFindingsError> {
-        Ok(())
+        self.shown.extend(ids);
+        let text = serde_json::to_string(self).map_err(|source| ShownFindingsError::Json {
+            path: path.to_path_buf(),
+            source,
+        })?;
+        crate::text_file::replace_text_file(path, &text, 0o600)
+            .await
+            .map_err(|source| ShownFindingsError::Write {
+                path: path.to_path_buf(),
+                source,
+            })
     }
 }
