@@ -11,6 +11,7 @@ pub(crate) mod sample;
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
+use agent_core::config::AccountName;
 use agent_core::decide::outcome::PauseReason;
 use agent_core::decide::refusal;
 use agent_core::ids::{AgentName, TaskId, TeamId};
@@ -302,6 +303,41 @@ pub(super) enum Notice {
         /// When the refused provider would take the agent again.
         return_at: Timestamp,
     },
+    /// Every task of an account is paused: the provider refused a run of one of its agents.
+    AccountPaused(AccountPausedNotice),
+}
+
+/// What the notification of a paused account tells.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct AccountPausedNotice {
+    /// The account.
+    pub(super) account: AccountName,
+    /// The agents of the account, in name order.
+    pub(super) agents: Vec<String>,
+    /// When the pause of the account ends.
+    pub(super) until: Timestamp,
+    /// Which limit the provider showed, in words.
+    pub(super) reason: &'static str,
+    /// How many tasks the pause holds.
+    pub(super) tasks: usize,
+}
+
+impl AccountPausedNotice {
+    /// The text of the notification, its values with the times in the zone of `context`, and its kind. A pause of the
+    /// task's account is a pause for a provider's limit, as the status of the notification says.
+    fn parts(
+        &self,
+        common: Variables,
+        context: &NoticeContext<'_>,
+    ) -> Result<(HarnessPrompt, Variables, NoticeKind), NoticeError> {
+        let values = common
+            .with("account", self.account.as_str())?
+            .with("agents", self.agents.join(", "))?
+            .with("until", context.offset.stamp_minute(self.until))?
+            .with("reason", self.reason)?
+            .with("tasks", self.tasks.to_string())?;
+        Ok((HarnessPrompt::NoticeAccountPaused, values, NoticeKind::Paused))
+    }
 }
 
 /// Why a notice cannot be made into a notification.
@@ -336,6 +372,10 @@ impl Notice {
         Ok(layout_notification(kind, context, &rendered)?)
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one arm per notice of the catalog; a notice that is added is one more arm"
+    )]
     fn parts(
         &self,
         common: Variables,
@@ -439,6 +479,7 @@ impl Notice {
                 )?;
                 (HarnessPrompt::NoticeNoFreeAgent, values, NoticeKind::NoFreeAgent)
             }
+            Self::AccountPaused(notice) => notice.parts(common, context)?,
         };
         Ok((text, values, kind))
     }

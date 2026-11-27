@@ -511,7 +511,7 @@ impl HarnessPrompt {
             Self::NoticeAccountPaused => PromptSpec::new(
                 "harness/notify/account-paused.md",
                 Audience::Human,
-                &["account", "agents", "until", "reason", "tasks"],
+                &["agent", "task", "account", "agents", "until", "reason", "tasks"],
             ),
             Self::NoticeIdleRefused => PromptSpec::new(
                 "harness/run/notice-idle-refused.md",

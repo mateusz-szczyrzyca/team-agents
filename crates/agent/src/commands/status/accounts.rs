@@ -19,7 +19,7 @@ pub(crate) fn account_lines<'a>(
     now: Timestamp,
     zone: Zone,
 ) -> Option<String> {
-    let lines: String = paused
+    let lines: Vec<String> = paused
         .filter(|(_, pause)| now < pause.until)
         .map(|(account, pause)| {
             let until = if pause.until.as_utc() - now.as_utc() < SAME_DAY {
@@ -34,5 +34,5 @@ pub(crate) fn account_lines<'a>(
             format!("account {account} paused until {until} ({reason})\n")
         })
         .collect();
-    (!lines.is_empty()).then_some(lines)
+    (!lines.is_empty()).then(|| lines.concat())
 }
