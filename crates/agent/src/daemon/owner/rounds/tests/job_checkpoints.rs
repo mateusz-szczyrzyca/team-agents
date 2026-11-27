@@ -339,3 +339,83 @@ async fn a_daemon_that_starts_again_checkpoints_a_review_that_was_going_with_its
         "next: finish the review of pass 1 and submit it with a verdict"
     );
 }
+
+#[tokio::test]
+async fn the_look_checkpoints_a_commit_of_an_investigator_and_the_findings_a_reviewer_wrote() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-1", "hold"),
+            investigator("inv-2", "hold"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("the review is asked", |state| review_task_of(state, "inv-1").is_some())
+        .await;
+    let reviewer = review_task_of(&state, "inv-1").unwrap();
+    let round = state.team(&team).unwrap().rounds()[0].id().clone();
+    rig.wait_for("the checkpoint of the review's start", || {
+        job_checkpoints(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::ReviewStarted)
+    })
+    .await;
+    let started = job_checkpoints(&rig, &round)
+        .into_iter()
+        .find(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::ReviewStarted)
+        .unwrap();
+    let file = rig
+        .home
+        .review_findings_file(&reviewer, started.pull_request.unwrap(), started.review_pass.unwrap());
+    std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+    std::fs::write(&file, "1. [MAJOR] ERR-3 a.rs:4 — a panic\n").unwrap();
+    rig.wait_for("the checkpoint of the findings", || {
+        job_checkpoints(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::FindingsWritten)
+    })
+    .await;
+    let worktree = rig.worktree(&reviewer);
+    std::fs::write(worktree.join("notes.md"), "a note\n").unwrap();
+    for args in [
+        ["add", "notes.md"].as_slice(),
+        &["commit", "-q", "-m", "Note the review"],
+    ] {
+        let status = std::process::Command::new("git")
+            .args(["-c", "user.name=Reviewer", "-c", "user.email=reviewer@example.com"])
+            .args(args)
+            .current_dir(&worktree)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+    rig.wait_for("the checkpoint of the commit", || {
+        job_checkpoints(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::Commit)
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let kept = job_checkpoints(&rig, &round);
+    let written = kept
+        .iter()
+        .find(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::FindingsWritten)
+        .unwrap();
+    assert_eq!(written.job, CheckpointJob::Review);
+    assert!(
+        written.content.as_ref().unwrap().done.contains("ERR-3 a.rs:4"),
+        "{written:#?}"
+    );
+    let committed = kept
+        .iter()
+        .find(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::Commit)
+        .unwrap();
+    assert!(committed.head.is_some(), "{committed:#?}");
+    assert_ne!(committed.head, started.head);
+}
