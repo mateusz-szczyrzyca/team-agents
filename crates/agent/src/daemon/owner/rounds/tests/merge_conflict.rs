@@ -894,7 +894,7 @@ fn conflict_requests(rig: &Rig) -> serde_json::Value {
 #[tokio::test]
 async fn a_conflict_after_three_lead_passes_goes_to_an_investigator_before_the_human() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "conflict-investigator:hold",
         "work,merge-base,merge-base,merge-base,hold,ask-here",
         true,
     )
@@ -916,7 +916,7 @@ async fn a_conflict_after_three_lead_passes_goes_to_an_investigator_before_the_h
 #[tokio::test]
 async fn the_lead_gets_one_more_pass_with_the_investigators_answer() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-done:git merge origin/main — résolution",
+        "conflict-investigator:inv-done:git merge origin/main — résolution",
         "work,merge-base,merge-base,merge-base,hold,ask-here",
         true,
     )
@@ -933,7 +933,7 @@ async fn the_lead_gets_one_more_pass_with_the_investigators_answer() {
 #[tokio::test]
 async fn the_human_is_asked_when_the_pass_after_the_answer_fails() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-done:Resolve the conflict",
+        "conflict-investigator:inv-done:Resolve the conflict",
         "work,merge-base,merge-base,merge-base,fail-tool,ask-here",
         true,
     )
@@ -952,7 +952,7 @@ async fn the_human_is_asked_when_the_pass_after_the_answer_fails() {
 #[tokio::test]
 async fn the_human_is_asked_when_the_conflict_request_fails() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-fail",
+        "conflict-investigator:inv-fail",
         "work,merge-base,merge-base,merge-base,ask-here",
         true,
     )
@@ -971,7 +971,7 @@ async fn the_human_is_asked_when_the_conflict_request_fails() {
 #[tokio::test]
 async fn investigator_pass_false_asks_the_human_after_three_passes_as_before() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "conflict-investigator:hold",
         "work,merge-base,merge-base,merge-base,ask-here",
         false,
     )
@@ -990,7 +990,7 @@ async fn investigator_pass_false_asks_the_human_after_three_passes_as_before() {
 #[tokio::test]
 async fn a_conflict_request_is_filed_once_per_item_and_head() {
     let (mut rig, _) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "conflict-investigator:hold",
         "work,merge-base,merge-base,merge-base,hold,ask-here",
         true,
     )
@@ -1014,7 +1014,7 @@ async fn a_conflict_request_is_filed_once_per_item_and_head() {
 #[tokio::test]
 async fn a_new_head_may_get_a_new_conflict_request() {
     let (mut rig, task) = spent_conflict_passes(
-        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "conflict-investigator:hold",
         "work,merge-base,merge-base,merge-base,hold",
         true,
     )
@@ -1044,8 +1044,8 @@ async fn merge_conflict_investigated_is_logged_with_item_and_id() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work,merge-base,ask-here"),
-            investigator("inv-r1", "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold"),
-            investigator("inv-r2", "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold"),
+            investigator("inv-r1", "conflict-investigator:hold"),
+            investigator("inv-r2", "conflict-investigator:hold"),
         ],
         5,
         true,
