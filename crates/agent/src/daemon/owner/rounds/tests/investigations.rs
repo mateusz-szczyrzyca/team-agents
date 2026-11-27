@@ -274,7 +274,7 @@ async fn a_request_of_another_team_is_left_to_that_team() {
     );
     state.insert_team(foreign_team).unwrap();
     let bus_bin = super::super::fixture::agentbus_binary();
-    let daemon = super::super::fixture::Daemon::new(&state, Some(&bus_bin));
+    let daemon = super::super::fixture::Daemon::new(&state, Some(bus_bin));
     let bus_dir = daemon.home.root().join("bus");
     std::fs::create_dir_all(&bus_dir).unwrap();
     let status = Command::new(bus_bin)
