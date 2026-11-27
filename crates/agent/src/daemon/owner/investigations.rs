@@ -396,20 +396,20 @@ impl Owner {
         reason: &str,
         located: Option<&super::Located>,
     ) -> Result<(), OwnerError> {
-        self.parts
-            .bus
-            .inv_set(
-                req.id,
-                &InvTransition::Failed {
-                    reason: reason.to_owned(),
-                },
-            )
-            .await
-            .map_err(|source| OwnerError::Bus { source })?;
+        let reason = located
+            .and_then(|located| self.parts.state.team(&located.team))
+            .and_then(|team| team.investigation_failure(req.id))
+            .unwrap_or(reason)
+            .to_owned();
         if let Some(located) = located {
-            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), team = %located.team, id = %req.id, reason);
-        } else {
-            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), id = %req.id, reason);
+            self.parts
+                .state
+                .team_mut(&located.team)
+                .ok_or_else(|| OwnerError::LostTeam {
+                    team: located.team.clone(),
+                })?
+                .record_investigation_failure(req.id, reason.clone());
+            self.save().await?;
         }
         if let Some(task) = &req.inv_task {
             self.close_investigation_task(task).await?;
@@ -419,7 +419,7 @@ impl Owner {
         {
             let values = super::Variables::new()
                 .with("investigation_id", req.id.to_string())?
-                .with("reason", reason)?;
+                .with("reason", reason.as_str())?;
             let text = self
                 .parts
                 .team_texts
@@ -434,6 +434,16 @@ impl Owner {
                 .send(&from, &to, &super::Outgoing::Chat { text })
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
+        }
+        self.parts
+            .bus
+            .inv_set(req.id, &InvTransition::Failed { reason: reason.clone() })
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        if let Some(located) = located {
+            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), team = %located.team, id = %req.id, reason = %reason);
+        } else {
+            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), id = %req.id, reason = %reason);
         }
         Ok(())
     }
@@ -451,6 +461,17 @@ impl Owner {
             if !self.is_investigation_requester_live(&req) {
                 self.fail_investigation(&req, "the requester's task ended", None)
                     .await?;
+                continue;
+            }
+            let pending = req
+                .inv_task
+                .as_ref()
+                .and_then(|task| self.parts.state.find_task(task))
+                .and_then(|found| found.team.investigation_failure(req.id))
+                .map(str::to_owned);
+            if let Some(reason) = pending {
+                let located = req.inv_task.as_ref().map(|task| self.locate(task)).transpose()?;
+                self.fail_investigation(&req, &reason, located.as_ref()).await?;
                 continue;
             }
             if !matches!(

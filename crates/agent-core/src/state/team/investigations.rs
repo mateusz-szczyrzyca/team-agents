@@ -21,6 +21,12 @@ pub struct InvestigationRecord {
 }
 
 impl Team {
+    /// The durable failure decision used to resume cleanup and notification.
+    #[must_use]
+    pub fn investigation_failure(&self, id: NonZeroU32) -> Option<&str> {
+        self.investigation_failures.get(&id).map(String::as_str)
+    }
+
     /// Requests assigned to this team, including their retry exclusions.
     #[must_use]
     pub fn investigations(&self) -> &[InvestigationRecord] {
@@ -29,6 +35,11 @@ impl Team {
 }
 
 impl CheckedMut<'_, Team> {
+    /// Retains the first failure decision while cleanup or delivery is retried.
+    pub fn record_investigation_failure(&mut self, id: NonZeroU32, reason: String) {
+        self.value.investigation_failures.entry(id).or_insert(reason);
+    }
+
     /// Records the current assignment, replacing the previous attempt of that request.
     pub fn record_investigation(&mut self, record: InvestigationRecord) {
         if let Some(previous) = self

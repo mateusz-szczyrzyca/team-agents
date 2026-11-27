@@ -110,6 +110,7 @@ impl Team {
             reviewers,
             activities: Vec::new(),
             investigations: Vec::new(),
+            investigation_failures: std::collections::BTreeMap::new(),
             unpushed_base: None,
             idle_watch: None,
             splits: Vec::new(),

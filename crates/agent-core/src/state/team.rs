@@ -444,6 +444,9 @@ pub struct Team {
     /// Attempts and retry exclusions for standalone investigation requests.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     investigations: Vec<InvestigationRecord>,
+    /// Failure decisions retained so cleanup and notification can resume after a restart.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    investigation_failures: std::collections::BTreeMap<std::num::NonZeroU32, String>,
     /// Explicit permission and evidence for an unpublished base at team creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     unpushed_base: Option<super::UnpushedBase>,
@@ -497,6 +500,9 @@ struct TeamWire {
     /// Missing in teams written before investigation retries.
     #[serde(default)]
     investigations: Vec<InvestigationRecord>,
+    /// Older teams have no pending failure decisions.
+    #[serde(default)]
+    investigation_failures: std::collections::BTreeMap<std::num::NonZeroU32, String>,
     /// Older teams carry no permission to start from unpublished commits.
     #[serde(default)]
     unpushed_base: Option<super::UnpushedBase>,
@@ -656,6 +662,7 @@ impl Team {
             reviewers: Vec::new(),
             activities: Vec::new(),
             investigations: Vec::new(),
+            investigation_failures: std::collections::BTreeMap::new(),
             unpushed_base: None,
             idle_watch: None,
             splits: Vec::new(),
