@@ -277,9 +277,9 @@ impl Owner {
         if self.parts.state.team(team).is_some_and(|found| {
             items_of(found, pr.number).iter().any(|id| {
                 found.item(*id).is_some_and(|item| {
-                    item.conflict_investigation().is_some_and(|record| &record.head == head)
+                    item.conflict_investigation()
+                        .is_some_and(|record| &record.head == head && !record.answered)
                         && item.merge_conflict().is_none()
-                        && item.merge_passes() <= self.parts.settings.config.merge().conflict_passes
                 })
             })
         }) {

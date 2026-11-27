@@ -241,32 +241,6 @@ impl Owner {
             .map(|found| found.team.id().clone())
     }
 
-    /// Saves completion before scheduling the requesting lead's additional conflict pass.
-    pub(in crate::daemon::owner) async fn record_conflict_investigation_answer(
-        &mut self,
-        team: &TeamId,
-        id: std::num::NonZeroU32,
-    ) -> Result<(), OwnerError> {
-        let items: Vec<_> = self
-            .parts
-            .state
-            .team(team)
-            .into_iter()
-            .flat_map(agent_core::state::Team::items)
-            .filter(|item| item.conflict_investigation().is_some_and(|record| record.id == id))
-            .map(agent_core::state::ItemProgress::id)
-            .collect();
-        self.each_item(team, &items, |item| {
-            if let Some(mut record) = item.conflict_investigation().cloned() {
-                record.answered = true;
-                item.set_conflict_investigation(record);
-            }
-            Ok(())
-        })?;
-        self.save().await?;
-        Ok(())
-    }
-
     /// Resumes a durable investigation after its answer, failure, or a daemon restart.
     async fn advance_conflict_investigations(
         &mut self,
@@ -285,7 +259,7 @@ impl Owner {
                 let record = item.conflict_investigation()?;
                 (matches!(item.phase(), ItemPhase::Approved { .. })
                     && item.merge_conflict().is_none()
-                    && item.merge_passes() <= self.parts.settings.config.merge().conflict_passes)
+                    && !record.answered)
                     .then(|| (item.id(), record.clone()))
             })
             .collect();
@@ -587,6 +561,16 @@ impl Owner {
             return Ok(false);
         }
         self.record_conflict_published(site.team, items, approved_head, pr.number)?;
+        self.each_item(site.team, items, |item| {
+            if let Some(mut record) = item.conflict_investigation().cloned()
+                && record.answered
+            {
+                // The answer's published tip has already used this head's investigation.
+                record.head = tip.clone();
+                item.set_conflict_investigation(record);
+            }
+            Ok(())
+        })?;
         self.record_event_at(
             now,
             site.team,

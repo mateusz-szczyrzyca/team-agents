@@ -791,11 +791,11 @@ impl<'de> Deserialize<'de> for ItemProgress {
 /// An automatic conflict investigation, retained across daemon restarts.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConflictInvestigation {
-    /// Pull request head for which the request was filed.
+    /// Requested head, advanced to the tip published by its answer pass.
     pub head: CommitId,
     /// The request's bus id.
     pub id: NonZeroU32,
-    /// Whether the investigator supplied a completed answer.
+    /// Whether the completed answer has scheduled its additional lead pass.
     pub answered: bool,
 }
 

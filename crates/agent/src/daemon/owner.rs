@@ -2228,7 +2228,6 @@ impl Owner {
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
             if let Some(team) = self.automatic_conflict_team(&inv) {
-                self.record_conflict_investigation_answer(&team, inv.id).await?;
                 self.look_at(&team);
                 return Ok(());
             }
