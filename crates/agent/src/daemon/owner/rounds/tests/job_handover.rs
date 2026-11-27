@@ -205,7 +205,7 @@ async fn an_investigation_tried_again_is_handed_over_by_a_holder_changed_checkpo
 }
 
 #[tokio::test]
-async fn a_review_that_was_going_when_the_daemon_stopped_is_briefed_from_its_daemon_started_checkpoint() {
+async fn a_review_that_was_going_when_the_daemon_stopped_is_briefed_from_its_own_last_checkpoint() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "work"),
@@ -229,11 +229,6 @@ async fn a_review_that_was_going_when_the_daemon_stopped_is_briefed_from_its_dae
             .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::ReviewStarted)
     })
     .await;
-    std::fs::write(
-        rig.worktree(&reviewer).join("scratch.md"),
-        "looked at before the stop\n",
-    )
-    .unwrap();
     rig.stop().await.unwrap();
 
     rig.start().await;
@@ -245,8 +240,8 @@ async fn a_review_that_was_going_when_the_daemon_stopped_is_briefed_from_its_dae
 
     let prompt = std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-prompt-2")).unwrap();
     assert!(prompt.contains("# THIS REVIEW WAS STARTED BEFORE YOU"), "{prompt}");
-    assert!(prompt.contains("## Checkpoint: daemon_started at"), "{prompt}");
-    assert!(prompt.contains("scratch.md"), "{prompt}");
+    assert!(prompt.contains("## Checkpoint: run_ended at"), "{prompt}");
+    assert!(prompt.contains("finish the review of pass 1"), "{prompt}");
 }
 
 /// Makes the investigators `names` of `rig` `OpenCode` ones: their runs go to the same stand-in CLI, and their provider is
