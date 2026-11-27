@@ -23,6 +23,12 @@ const MAX_OWNER_LEN: usize = 32;
 /// Longest value of an `env` variable, in bytes: longer than any path or setting in use.
 const MAX_ENV_VALUE_LEN: usize = 4096;
 
+/// Keeps a checked text in the smaller form the names are stored in: they sit in errors, and a small error keeps the
+/// `Result` of every command small.
+fn boxed(text: String) -> Box<str> {
+    text.into_boxed_str()
+}
+
 /// The name of an account in `[accounts.NAME]` and `[account_env.NAME]`, such as `comp-claude`.
 ///
 /// 1 to 64 bytes of lowercase ASCII letters, digits and `-`, starting with a letter and not ending with `-`: the
@@ -30,7 +36,7 @@ const MAX_ENV_VALUE_LEN: usize = 4096;
 /// `-`, a last `-` and any other character.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 #[serde(try_from = "String")]
-pub struct AccountName(String);
+pub struct AccountName(Box<str>);
 
 fn check_account_name(text: &str) -> Result<(), InvalidValue> {
     const WHAT: &str = "account name";
@@ -46,7 +52,7 @@ fn check_account_name(text: &str) -> Result<(), InvalidValue> {
     Ok(())
 }
 
-text_value!(AccountName, check_account_name, keep);
+text_value!(AccountName, check_account_name, boxed);
 
 /// The owner of an account, a lowercase word such as `mateusz` or `comp`: the first part of the names of the agents
 /// that use the account.
@@ -56,7 +62,7 @@ text_value!(AccountName, check_account_name, keep);
 /// character (uppercase letters, spaces, `-`).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Deserialize)]
 #[serde(try_from = "String")]
-pub struct OwnerName(String);
+pub struct OwnerName(Box<str>);
 
 fn check_owner_name(text: &str) -> Result<(), InvalidValue> {
     check_text("account owner", text, MAX_OWNER_LEN, |c| {
@@ -68,7 +74,7 @@ fn check_owner_name(text: &str) -> Result<(), InvalidValue> {
     Ok(())
 }
 
-text_value!(OwnerName, check_owner_name, keep);
+text_value!(OwnerName, check_owner_name, boxed);
 
 /// The value of a variable in an account's `env`: not a secret, so it may be shown.
 ///
@@ -138,7 +144,7 @@ pub enum AccountError {
         account: AccountName,
         /// The rule the owner breaks, with the text that was written.
         #[source]
-        source: InvalidValue,
+        source: Box<InvalidValue>,
     },
     /// An agent or an investigator names an account that has no `[accounts.NAME]` table.
     #[error("{} of {name}: account {account} is not defined in [accounts]", key.section())]
@@ -244,7 +250,7 @@ fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, Account
         .parse::<OwnerName>()
         .map_err(|source| AccountError::OwnerInvalid {
             account: name.clone(),
-            source,
+            source: Box::new(source),
         })?;
     Ok(Account { owner, env: raw.env })
 }
