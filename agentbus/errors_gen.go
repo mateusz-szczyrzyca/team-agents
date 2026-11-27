@@ -263,6 +263,9 @@ const (
 	RequestInvestigationNotAllowed      RequestInvestigationCause = iota // the daemon disabled investigation tools for this run [Permission]
 	RequestInvestigationInvestigator                                     // an investigator called it (investigators cannot request investigations) [Permission]
 	RequestInvestigationMissingQuestion                                  // the question is missing [InvalidArgument]
+	RequestInvestigationNotLead                                          // a split or conflict request was not made by the team lead [Permission]
+	RequestInvestigationMissingItem                                      // a split or conflict request has no item [InvalidArgument]
+	RequestInvestigationInvalidKind                                      // the request kind is unknown [InvalidArgument]
 	RequestInvestigationStorage                                          // the shared state or a file could not be read or written [Storage]
 )
 
@@ -274,6 +277,9 @@ var requestInvestigationCauses = [...]causeInfo{
 	{"NotAllowed", ClassPermission},
 	{"Investigator", ClassPermission},
 	{"MissingQuestion", ClassInvalidArgument},
+	{"NotLead", ClassPermission},
+	{"MissingItem", ClassInvalidArgument},
+	{"InvalidKind", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
