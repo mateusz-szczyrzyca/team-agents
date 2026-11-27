@@ -795,7 +795,7 @@ pub struct ConflictInvestigation {
     pub head: CommitId,
     /// The request's bus id.
     pub id: NonZeroU32,
-    /// Whether the completed answer has scheduled its additional lead pass.
+    /// Whether the request has been consumed by an answer pass or human fallback.
     pub answered: bool,
 }
 

@@ -139,6 +139,11 @@ impl Owner {
                 return self.file_conflict_investigations(team, items, head, &url).await;
             }
             ConflictStep::AskHuman => self.each_item(team, items, |item| {
+                if let Some(record) = item.conflict_investigation().filter(|record| &record.head == head) {
+                    let mut consumed = record.clone();
+                    consumed.answered = true;
+                    item.set_conflict_investigation(consumed);
+                }
                 item.set_conflict_approved_head(head.clone());
                 if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
                     context.reviewed_head = Some(head.clone());
@@ -264,6 +269,18 @@ impl Owner {
             })
             .collect();
         for (item, mut record) in pending {
+            let lead = self.lead_of(team)?;
+            let place = self.place_of(team, &[item]);
+            let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
+            let Some(head) = self
+                .head_of(&place, team, super::waiting::WaitingStep::ReadMergeHead, None, git)
+                .await?
+            else {
+                continue;
+            };
+            if head != record.head {
+                continue;
+            }
             let request = self
                 .parts
                 .bus
