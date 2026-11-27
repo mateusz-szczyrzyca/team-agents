@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] A human's swap skips only the tier rule, allowing tasks to be handed over to any configured tier, with new socket command `Swap`, trouble reason `swap`, and typed refusal causes. An older daemon cannot read a state holding `swap`.
+
 ## agent-core 0.147.0 — 27.11.2026 — PR pending
 
 ### Enhancements
