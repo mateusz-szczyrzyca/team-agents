@@ -20,6 +20,9 @@ const APPROVE: &str = "verify:VERDICT: APPROVE\\nSUMMARY: fine";
 /// A first-pass finding followed by acceptance of the committed fix.
 const CHANGES: &str = "verify:VERDICT: REQUEST_CHANGES\\nFINDINGS\\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\\n   CHECK: read src/lib.rs:7,verify:VERDICT: APPROVE\\nSUMMARY: fixed";
 
+/// A reviewer that approves when the test lets it, which it never does: the review of its pass stays open.
+const HELD_APPROVAL: &str = "held-verify:VERDICT: APPROVE\\nSUMMARY: fine";
+
 /// The header every briefing of a new session starts with.
 const BRIEFING: &str = "# A NEW SESSION ON A TASK THAT WAS ALREADY STARTED";
 
@@ -220,6 +223,7 @@ async fn a_renewal_is_briefed_with_the_last_checkpoint_and_makes_no_new_snapshot
     let (mut rig, team, task, worktree) = waiting_with_a_finding().await;
     let runs_before = rig.runs(&task);
     let told = last_told(&rig, &team, &task);
+    assert_eq!(told.cause, CheckpointCause::WaitsForHuman);
     let reference = told.snapshot.clone().expect("the checkpoint kept a snapshot");
     let before = snapshot_refs(&worktree);
 
@@ -236,15 +240,74 @@ async fn a_renewal_is_briefed_with_the_last_checkpoint_and_makes_no_new_snapshot
 
     assert!(matches!(renewed, Reply::Applied { .. }), "{renewed:?}");
     assert!(briefing.starts_with(BRIEFING), "{briefing}");
-    assert!(
-        briefing.contains(&format!("## Checkpoint: {} at ", told.cause)),
-        "{briefing}"
-    );
+    assert!(briefing.contains("## Checkpoint: waits_for_human at "), "{briefing}");
     let left = part(&briefing, "### What is left\n");
     assert!(
         left.contains("[MAJOR]") && left.contains("src/lib.rs:7"),
         "the open finding is not under What is left: {left}"
     );
+    assert!(
+        briefing.contains(&format!("kept as a snapshot, {reference}.")),
+        "the snapshot of the checkpoint is not the briefing's: {briefing}"
+    );
+    assert_eq!(after, before, "no snapshot reference was made");
+}
+
+/// A solo task whose first review is in and whose second is still open, so that no fix run follows it and its round
+/// waits with the review as the last step that tells the work, with its team, its task and its worktree.
+async fn waiting_after_a_review() -> (Rig, TeamId, TaskId, std::path::PathBuf) {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-r1", CHANGES),
+            investigator("inv-r2", HELD_APPROVAL),
+        ],
+        5,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.wait_for("the checkpoint of the first review", || {
+        has_checkpoint(&rig, &team, CheckpointCause::ReviewSubmitted)
+    })
+    .await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    let worktree = rig.worktree(&tasks[0]);
+    (rig, team, tasks[0].clone(), worktree)
+}
+
+// Rule: a renewal after a review_submitted checkpoint: the briefing has that checkpoint, tells the work as the review
+// left it, and takes the snapshot of the checkpoint instead of a new one, as the worktree is as the checkpoint kept it.
+// Test-First: not possible — the behaviour exists since the briefing took the checkpoint's snapshot; this test pins it
+// for the review step, whose finding is in the ledger only once its pass is complete (a fix run then follows).
+#[tokio::test]
+async fn a_renewal_after_a_review_is_briefed_with_the_review_checkpoint_and_makes_no_new_snapshot() {
+    let (mut rig, team, task, worktree) = waiting_after_a_review().await;
+    let runs_before = rig.runs(&task);
+    let told = last_told(&rig, &team, &task);
+    let reference = told.snapshot.clone().expect("the checkpoint kept a snapshot");
+    let before = snapshot_refs(&worktree);
+    assert_eq!(told.cause, CheckpointCause::ReviewSubmitted);
+    assert!(
+        before.contains(&reference),
+        "the snapshot of the review is kept: {before:?}"
+    );
+
+    let renewed = ask(
+        &rig,
+        Command::Renew(ControlRequest {
+            target: Target::Task(task.clone()),
+        }),
+    )
+    .await;
+    let briefing = rig.prompt(&task, runs_before + 1).await;
+    let after = snapshot_refs(&worktree);
+    rig.stop().await.unwrap();
+
+    assert!(matches!(renewed, Reply::Applied { .. }), "{renewed:?}");
+    assert!(briefing.starts_with(BRIEFING), "{briefing}");
+    assert!(briefing.contains("## Checkpoint: review_submitted at "), "{briefing}");
     assert!(
         briefing.contains(&format!("kept as a snapshot, {reference}.")),
         "the snapshot of the checkpoint is not the briefing's: {briefing}"
@@ -258,6 +321,7 @@ async fn a_worktree_changed_after_the_checkpoint_is_kept_in_a_new_snapshot_and_t
     let (mut rig, team, task, worktree) = waiting_with_a_finding().await;
     let runs_before = rig.runs(&task);
     let told = last_told(&rig, &team, &task);
+    assert_eq!(told.cause, CheckpointCause::WaitsForHuman);
     let checkpoint_reference = told.snapshot.clone().expect("the checkpoint kept a snapshot");
     let before = snapshot_refs(&worktree);
     std::fs::write(worktree.join("changed-after.txt"), "after\n").unwrap();
@@ -274,10 +338,7 @@ async fn a_worktree_changed_after_the_checkpoint_is_kept_in_a_new_snapshot_and_t
     rig.stop().await.unwrap();
 
     assert!(matches!(renewed, Reply::Applied { .. }), "{renewed:?}");
-    assert!(
-        briefing.contains(&format!("## Checkpoint: {} at ", told.cause)),
-        "{briefing}"
-    );
+    assert!(briefing.contains("## Checkpoint: waits_for_human at "), "{briefing}");
     assert!(
         after.len() > before.len(),
         "a new snapshot reference: {before:?} -> {after:?}"

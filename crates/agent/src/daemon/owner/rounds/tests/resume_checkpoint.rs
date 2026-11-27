@@ -239,6 +239,13 @@ async fn a_member_that_fails_in_the_middle_of_its_work_is_replaced_and_the_new_a
     let (_, tasks) = rig
         .run(&["inv-lead", "claude-1"], ONE, MergeMode::Autopilot, Some("inv-lead"))
         .await;
+    // Where the work stood when the member's run went bad: the script has made its commit before it touches `midway`.
+    rig.wait_for("the member's script to have done its work", || {
+        signals.join("midway").exists()
+    })
+    .await;
+    let worktree = rig.worktree(&tasks[1]);
+    let standing = Standing::of(&worktree);
     let state = rig
         .state_where("the member is held by claude-2", |state| {
             state
@@ -247,9 +254,7 @@ async fn a_member_that_fails_in_the_middle_of_its_work_is_replaced_and_the_new_a
         })
         .await;
     let runs = u32::try_from(state.find_task(&tasks[1]).unwrap().member.runs().len()).unwrap();
-    let worktree = rig.worktree(&tasks[1]);
     let briefing = rig.prompt(&tasks[1], runs).await;
-    let standing = Standing::of(&worktree);
     assert!(signals.join("first").exists());
     assert_resumed(&briefing, &worktree, &standing);
     rig.stop().await.unwrap();
@@ -275,9 +280,14 @@ async fn a_session_that_ends_three_times_without_a_status_goes_on_in_a_new_sessi
     let signals = midway_script(&rig, "midway", false);
     rig.start().await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
-    let briefing = rig.prompt(&tasks[0], 4).await;
+    // Where the work stood after the first run, whose script made the commit and left the file: the runs after it add none.
+    rig.wait_for("the first run's script to have done its work", || {
+        signals.join("midway").exists()
+    })
+    .await;
     let worktree = rig.worktree(&tasks[0]);
     let standing = Standing::of(&worktree);
+    let briefing = rig.prompt(&tasks[0], 4).await;
     assert!(signals.join("first").exists());
     assert_resumed(&briefing, &worktree, &standing);
     rig.stop().await.unwrap();
