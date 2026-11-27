@@ -40,7 +40,7 @@ fn seconds_since_the_epoch_become_the_reset_time() {
 #[test]
 fn seconds_no_timestamp_holds_are_refused_with_their_cause() {
     let calendar = LimitReading::from_unix(LimitWindow::FiveHour, 0.5, i64::MAX).expect_err("no such time");
-    let year = LimitReading::from_unix(LimitWindow::FiveHour, 0.5, 253_402_300_800).expect_err("year 10000");
+    let year = LimitReading::from_unix(LimitWindow::FiveHour, 0.5, -62_167_219_201).expect_err("year -1");
 
     assert!(
         matches!(
@@ -56,7 +56,7 @@ fn seconds_no_timestamp_holds_are_refused_with_their_cause() {
         matches!(
             year,
             InvalidLimitReading::ResetOutOfRange {
-                seconds: 253_402_300_800,
+                seconds: -62_167_219_201,
                 source: ResetTimeError::Year(_)
             }
         ),
