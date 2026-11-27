@@ -48,6 +48,12 @@ pub(in crate::daemon::owner) enum SectionError {
         /// The requested item.
         item: ItemId,
     },
+    /// A completed investigation has lost its saved answer.
+    #[error("the conflict investigation answer {path:?} is missing")]
+    MissingInvestigationAnswer {
+        /// The answer file supplied by the bus.
+        path: std::path::PathBuf,
+    },
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
@@ -300,6 +306,22 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
     }
 }
 
+/// Reads the bounded answer used by an additional conflict pass.
+async fn conflict_investigator_answer(path: &std::path::Path) -> Result<String, SectionError> {
+    match read_text_file(path, MAX_REPORT_BYTES)
+        .await
+        .map_err(|source| SectionError::Report {
+            path: path.to_path_buf(),
+            source,
+        })? {
+        Some(file) => Ok(format!(
+            "An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:\n{}",
+            file.text
+        )),
+        None => Ok(String::new()),
+    }
+}
+
 /// What the lead of `found` is told about an approved pull request that GitHub refuses to merge for a conflict: the merge of
 /// the base it is sent to make, or the question it is to put to the human once the passes are used up; `None` when no
 /// merge is in trouble.
@@ -365,17 +387,7 @@ async fn merge_conflict_text(
                     })?,
                 );
                 let request = bus.inv_get(record.id).await?;
-                let path = request.file;
-                match read_text_file(&path, MAX_REPORT_BYTES)
-                    .await
-                    .map_err(|source| SectionError::Report { path, source })?
-                {
-                    Some(file) => format!(
-                        "An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:\n{}",
-                        file.text
-                    ),
-                    None => String::new(),
-                }
+                conflict_investigator_answer(&request.file).await?
             } else {
                 String::new()
             };
