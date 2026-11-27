@@ -24,7 +24,15 @@ fn item(text: &str) -> ItemId {
 /// What a task keeps: created under numbered requirements, or before them.
 fn keeping(tied: bool) -> PlanKeeping {
     let task: TaskId = "task-20261111-153001-k3x9".parse().unwrap();
-    let member = Member::new(task, Participant::Normal("codex-1".parse().unwrap()));
+    let mut member = Member::new(task, Participant::Normal("codex-1".parse().unwrap()));
+    // The marker is set when the first run starts: that run is given the numbered requirements.
+    member
+        .begin_run(
+            "run-20261111-153002-r1r1".parse().unwrap(),
+            "2026-11-11T15:30:02Z".parse().unwrap(),
+            None,
+        )
+        .unwrap();
     let created = member.plan().cloned().unwrap();
     if tied {
         created
