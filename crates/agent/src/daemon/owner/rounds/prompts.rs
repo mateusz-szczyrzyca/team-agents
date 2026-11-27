@@ -5,6 +5,7 @@
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
+use agent_core::decide::ladder::Trouble;
 use agent_core::ids::{BranchName, InvalidName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
@@ -328,6 +329,17 @@ async fn with_briefing(ctx: &Context<'_>, found: &TaskRef<'_>, text: String) -> 
     if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
         text.push_str("\n\n");
         text.push_str(&briefing);
+    }
+    // An investigator works for no round, so the briefing of the ladder is not built for it: its new session is told why it
+    // began here.
+    let renewals = found.member.renewals().filter(|_| found.member.awaits_new_session());
+    if renewals.is_some_and(|renewals| renewals.reason() == Trouble::AccountChanged) {
+        text.push_str("\n\n");
+        text.push_str(
+            ctx.texts
+                .render(HarnessPrompt::BriefingInvestigationAccountChanged, &Variables::new())?
+                .trim_end(),
+        );
     }
     Ok(Some(Addition::Replace(text)))
 }

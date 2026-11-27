@@ -12,7 +12,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent 0.148.0 · agent-core 0.148.0 · agent-runtime 0.136.0 — 27.11.2026 — PR #362
 
 ### New features
-- [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task.
+- [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task. An investigator, which works for no round, is told in its prompt that the account changed.
 - [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
 
 ## agent-core 0.147.0 — 27.11.2026 — PR #360

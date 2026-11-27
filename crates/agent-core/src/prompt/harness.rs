@@ -105,6 +105,9 @@ pub enum HarnessPrompt {
     /// The line of the briefing's list of reasons that tells the account of the task's agent changed, which a session
     /// belongs to.
     BriefingAccountChanged,
+    /// The note an investigator's prompt ends with when the account of its agent changed: its new session did not resume
+    /// the one before. An investigator works for no round, so it has no briefing of the kind of [`Self::Briefing`].
+    BriefingInvestigationAccountChanged,
     /// The note that older runs of the task are left out of the briefing's list of runs.
     BriefingRunsLeftOut,
     /// The note that older answers of the human are left out of the briefing's list of answers.
@@ -240,6 +243,7 @@ impl HarnessPrompt {
         Self::BriefingMessageCut,
         Self::BriefingMessagesLeftOut,
         Self::BriefingAccountChanged,
+        Self::BriefingInvestigationAccountChanged,
         Self::BriefingRunsLeftOut,
         Self::BriefingAnswersLeftOut,
         Self::BriefingPlanConfirmed,
@@ -419,6 +423,11 @@ impl HarnessPrompt {
             Self::BriefingAccountChanged => {
                 PromptSpec::new("harness/run/briefing-account-changed.md", Audience::Model, &[])
             }
+            Self::BriefingInvestigationAccountChanged => PromptSpec::new(
+                "harness/run/briefing-investigation-account-changed.md",
+                Audience::Model,
+                &[],
+            ),
             Self::BriefingRunsLeftOut => PromptSpec::new("harness/run/briefing-runs-left-out.md", Audience::Model, &[]),
             Self::BriefingAnswersLeftOut => {
                 PromptSpec::new("harness/run/briefing-answers-left-out.md", Audience::Model, &[])
