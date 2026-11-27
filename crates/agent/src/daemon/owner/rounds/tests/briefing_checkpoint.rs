@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use agent_core::history::CheckpointCause;
+use agent_core::history::{CheckpointCause, HistoryEvent, Record};
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{Client, Command, ControlRequest, Reply, Target};
 use agent_core::state::MergeMode;
@@ -36,6 +36,19 @@ struct Kept {
     cause: CheckpointCause,
     /// The reference of its snapshot.
     snapshot: Option<String>,
+}
+
+/// Whether the history has a checkpoint of `team` taken after `wanted`.
+fn has_checkpoint(rig: &Rig, team: &TeamId, wanted: CheckpointCause) -> bool {
+    Reader::open(&rig.home.history_file())
+        .unwrap()
+        .team_records(team)
+        .unwrap()
+        .into_iter()
+        .any(|stored| match stored.record {
+            Record::Event(event) => matches!(event.event, HistoryEvent::Checkpoint { cause, .. } if cause == wanted),
+            _ => false,
+        })
 }
 
 /// The checkpoint of the round of `team` that tells `task`'s next holder how the work stands, as the history gives it.
@@ -191,6 +204,10 @@ async fn waiting_with_a_finding() -> (Rig, TeamId, TaskId, std::path::PathBuf) {
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     rig.notification_with("FIXED needs a commit").await;
     rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.wait_for("the checkpoint of the wait", || {
+        has_checkpoint(&rig, &team, CheckpointCause::WaitsForHuman)
+    })
+    .await;
     let worktree = rig.worktree(&tasks[0]);
     (rig, team, tasks[0].clone(), worktree)
 }
