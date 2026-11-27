@@ -58,8 +58,32 @@ impl Git {
     /// [`GitError::Failed`] when a commit is not in the repository; [`GitError::Run`], [`GitError::OutputTooLong`],
     /// [`GitError::NotACommit`], [`GitError::NotUtf8`] and [`GitError::Unexpected`].
     pub async fn range_messages(&self, base: &CommitId, head: &CommitId) -> Result<Vec<CommitMessage>, GitError> {
-        let _ = (base, head);
-        Ok(Vec::new())
+        let operation = GitOperation::Log;
+        let range = format!("{base}..{head}");
+        let one_more = self.limits.max_commits.saturating_add(1).to_string();
+        let captured = self
+            .run_ok(
+                operation,
+                Reach::Local,
+                &[
+                    arg("log"),
+                    arg("--topo-order"),
+                    arg("--reverse"),
+                    arg("--max-count"),
+                    arg(&one_more),
+                    arg("--format=%H%x00%B%x00"),
+                    arg(&range),
+                    arg("--"),
+                ],
+            )
+            .await?;
+        let messages = parse_messages(operation, whole(operation, &captured.stdout, self.limits)?)?;
+        if messages.len() > self.limits.max_commits {
+            return Err(GitError::TooManyCommits {
+                limit: self.limits.max_commits,
+            });
+        }
+        Ok(messages)
     }
 
     /// The files the index changes against `against`, as the commit that is about to be made changes them. A rename is
@@ -535,6 +559,29 @@ fn parse_log(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitFacts>, 
         });
     }
     Ok(commits)
+}
+
+/// Reads the output of `git log --format=%H%x00%B%x00`: the ID and the whole message of each commit, each ended by a NUL,
+/// and a line break after the commit. A message that is not UTF-8 is read with its bad bytes replaced: the trailers that
+/// are looked for in it are ASCII.
+fn parse_messages(operation: GitOperation, bytes: &[u8]) -> Result<Vec<CommitMessage>, GitError> {
+    let mut fields: Vec<&[u8]> = bytes.split(|byte| *byte == 0).collect();
+    match fields.pop() {
+        Some(rest) if rest.iter().all(u8::is_ascii_whitespace) => {}
+        Some(rest) => return Err(unexpected(operation, rest)),
+        None => return Ok(Vec::new()),
+    }
+    let mut messages = Vec::new();
+    for record in fields.chunks(2) {
+        let &[id, message] = record else {
+            return Err(unexpected(operation, &record.concat()));
+        };
+        messages.push(CommitMessage {
+            id: commit_id(operation, utf8(operation, id)?.trim())?,
+            message: String::from_utf8_lossy(message).trim_end().to_owned(),
+        });
+    }
+    Ok(messages)
 }
 
 /// Reads the output of `git log --format=%H%x00%an%x00`: the ID and the author's name of each commit, each ended by a
