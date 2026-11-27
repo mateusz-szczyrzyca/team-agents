@@ -48,7 +48,10 @@ mod tests {
         std::fs::write(dir.path().join("docs/user guide é.md"), "new").unwrap();
         let paths = handle.changed_files(&"main".parse().unwrap()).await.unwrap();
         assert_eq!(
-            paths.iter().map(|p| p.as_str()).collect::<Vec<_>>(),
+            paths
+                .iter()
+                .map(agent_core::decide::findings::RepoPath::as_str)
+                .collect::<Vec<_>>(),
             ["committed", "deleted", "dirty", "docs/user guide é.md"]
         );
     }
