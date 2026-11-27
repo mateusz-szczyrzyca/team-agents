@@ -1287,3 +1287,160 @@ async fn a_failed_conflict_request_allows_merge_after_the_human_answers() {
     rig.stop().await.unwrap();
     assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_conflict_request_without_available_investigators_asks_the_human() {
+    use agent_core::status::TaskStatus;
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:hold",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    rig.stop().await.unwrap();
+    let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    let mut kept = String::new();
+    let mut investigator_section = false;
+    for line in config.lines() {
+        if line.starts_with('[') {
+            investigator_section = line.starts_with("[investigators.");
+        }
+        if !investigator_section {
+            kept.push_str(line);
+            kept.push('\n');
+        }
+    }
+    std::fs::write(rig.home.config_file(), kept).unwrap();
+    rig.start().await;
+    rig.status_is(&task, TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(matches!(
+        item.merge_conflict(),
+        Some(agent_core::state::MergeConflict::AskingHuman { .. })
+    ));
+    assert_eq!(conflict_requests(&rig)["investigations"]["1"]["status"], "failed");
+    assert!(item.conflict_investigation().unwrap().answered);
+}
+
+#[tokio::test]
+async fn a_conflict_request_whose_requester_ended_records_the_human_fallback() {
+    use agent_core::status::TaskStatus;
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:hold",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    rig.status_is(&task, TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    let mut state = rig.state();
+    state
+        .find_task_mut(&task)
+        .unwrap()
+        .1
+        .transition(TaskStatus::Stopped)
+        .unwrap();
+    std::fs::write(rig.home.state_file(), state.to_json().unwrap()).unwrap();
+    rig.start().await;
+    let state = rig
+        .state_where("human fallback for the ended requester", |state| {
+            matches!(
+                state.teams()[0].item("1.1".parse().unwrap()).unwrap().merge_conflict(),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. })
+            )
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert!(item.conflict_investigation().unwrap().answered);
+    assert_eq!(conflict_requests(&rig)["investigations"]["1"]["status"], "failed");
+    assert_eq!(state.find_task(&task).unwrap().member.status(), TaskStatus::Stopped);
+}
+
+#[tokio::test]
+async fn a_superseded_conflict_request_is_failed() {
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:hold",
+        "work,merge-base,merge-base,merge-base,hold",
+        true,
+    )
+    .await;
+    let worktree = rig.worktree(&task);
+    std::fs::write(worktree.join("result.txt"), "superseding head\n").unwrap();
+    git(&worktree, &["add", "result.txt"]);
+    git(&worktree, &["commit", "-q", "-m", "Supersede the investigated head"]);
+    git(&worktree, &["push", "-q", "origin", "HEAD"]);
+    rig.state_where("replacement investigation", |state| {
+        state.teams()[0]
+            .item("1.1".parse().unwrap())
+            .unwrap()
+            .conflict_investigation()
+            .is_some_and(|record| record.id.get() == 2)
+    })
+    .await;
+    rig.stop().await.unwrap();
+    assert_eq!(conflict_requests(&rig)["investigations"]["1"]["status"], "failed");
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn a_failed_request_for_an_old_head_does_not_ask_the_human_for_a_new_head() {
+    let (mut rig, task) = spent_conflict_passes(
+        "conflict-investigator:hold",
+        "work,merge-base,merge-base,merge-base,hold",
+        true,
+    )
+    .await;
+    rig.stop().await.unwrap();
+    let mut requests = conflict_requests(&rig);
+    requests["investigations"]["1"]["status"] = serde_json::json!("failed");
+    std::fs::write(
+        rig.home.root().join("bus/state.json"),
+        serde_json::to_string(&requests).unwrap(),
+    )
+    .unwrap();
+    let worktree = rig.worktree(&task);
+    std::fs::write(worktree.join("result.txt"), "new independent head\n").unwrap();
+    git(&worktree, &["add", "result.txt"]);
+    git(&worktree, &["commit", "-q", "-m", "Publish a new independent head"]);
+    git(&worktree, &["push", "-q", "origin", "HEAD"]);
+    rig.start().await;
+    let state = rig
+        .state_where("a new request or a stale human fallback", |state| {
+            let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+            item.conflict_investigation().is_some_and(|record| record.id.get() == 2) || item.merge_conflict().is_some()
+        })
+        .await;
+    rig.stop().await.unwrap();
+    let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+    assert_eq!(item.conflict_investigation().unwrap().id.get(), 2);
+    assert_eq!(item.merge_conflict(), None);
+}
+
+#[tokio::test]
+async fn a_restart_looks_at_the_pending_merge_without_filing_a_duplicate_request() {
+    let (mut rig, _) = spent_conflict_passes(
+        "conflict-investigator:hold",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    rig.stop().await.unwrap();
+    let endpoint = format!("/repos/{SLUG}/pulls/1");
+    let before = rig.github.calls("GET", &endpoint).len();
+    rig.start().await;
+    rig.wait_for("a merge look after restart", || {
+        rig.github.calls("GET", &endpoint).len() > before
+            || rig.state().teams()[0]
+                .item("1.1".parse().unwrap())
+                .unwrap()
+                .conflict_investigation()
+                .unwrap()
+                .answered
+    })
+    .await;
+    rig.stop().await.unwrap();
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
