@@ -35,6 +35,7 @@ async fn first_failure(end: RunEnd) {
             failed_with: vec![],
         });
     let daemon = Daemon::new(&state, Some(&bus));
+    configure_another_investigator(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     let located = owner.locate(&task(3)).unwrap();
     owner
@@ -302,6 +303,7 @@ async fn a_restart_requeues_an_assignment_whose_task_has_finished() {
 async fn a_complete_answer_preserves_private_attempts_only_in_the_file() {
     let attempt = Attempt::new();
     let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    configure_another_investigator(&daemon);
     let (mut owner, _sinks) = daemon.bare_owner().await;
     let located = owner.locate(&task(3)).unwrap();
     owner
@@ -418,4 +420,14 @@ async fn a_classified_provider_pause_is_discarded_for_an_investigator() {
     assert_eq!(status, agent_core::status::TaskStatus::Failed);
     assert!(notice.is_none());
     assert_eq!(owner.locate(&task(3)).unwrap().agent, "inv-1");
+}
+
+/// Retry scenarios need a candidate other than the investigator that just failed.
+fn configure_another_investigator(daemon: &Daemon) {
+    use std::io::Write;
+    let mut config = std::fs::OpenOptions::new()
+        .append(true)
+        .open(daemon.home.config_file())
+        .unwrap();
+    writeln!(config, "\n[investigators.inv-2]\ncli = \"claude\"").unwrap();
 }
