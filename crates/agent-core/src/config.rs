@@ -1479,7 +1479,8 @@ impl Config {
     /// valid TOML or not the format of the file; [`ConfigError::UnknownName`], [`ConfigError::DuplicateName`],
     /// [`ConfigError::NameInTwoLists`] and [`ConfigError::AgentInNoList`] for lists that do not fit the agents;
     /// [`ConfigError::PlanRole`] and [`ConfigError::PlanRoleTwice`] for a `[plan] roles` list that names a role
-    /// without a plan or a role twice.
+    /// without a plan or a role twice; [`ConfigError::Account`] for accounts or an agent's `account` that are
+    /// refused (see [`AccountError`]).
     pub fn from_toml_str(text: &str) -> Result<Self, ConfigError> {
         if text.len() > MAX_CONFIG_BYTES {
             return Err(ConfigError::TooLarge {

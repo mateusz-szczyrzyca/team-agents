@@ -195,15 +195,103 @@ pub enum AccountSecretsError {
 }
 
 /// Checks the accounts the file defines against the agents and the investigators that use them and returns them.
+///
+/// The first rule broken is the error. Checked in this order: every account's owner, account by account; then every
+/// agent and investigator that names an account, agents first: the account must exist and the name must start with
+/// `<owner>-`; at last that every account is named by one of them.
 pub(super) fn check(
-    _accounts: BTreeMap<AccountName, RawAccount>,
-    _agents: &BTreeMap<AgentName, AgentConfig>,
-    _investigators: &BTreeMap<InvestigatorName, InvestigatorConfig>,
+    accounts: BTreeMap<AccountName, RawAccount>,
+    agents: &BTreeMap<AgentName, AgentConfig>,
+    investigators: &BTreeMap<InvestigatorName, InvestigatorConfig>,
 ) -> Result<BTreeMap<AccountName, Account>, AccountError> {
-    Ok(BTreeMap::new())
+    let accounts = accounts
+        .into_iter()
+        .map(|(name, raw)| check_account(&name, raw).map(|account| (name, account)))
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
+    let users = agents
+        .iter()
+        .map(|(name, agent)| (ContextKey::Agent, name.as_str(), agent.account.as_ref()))
+        .chain(
+            investigators
+                .iter()
+                .map(|(name, agent)| (ContextKey::Investigator, name.as_str(), agent.account.as_ref())),
+        );
+    for (key, name, account) in users {
+        if let Some(account) = account {
+            check_user(&accounts, key, name, account)?;
+        }
+    }
+    let used = |account: &AccountName| {
+        agents.values().any(|agent| agent.account.as_ref() == Some(account))
+            || investigators
+                .values()
+                .any(|agent| agent.account.as_ref() == Some(account))
+    };
+    match accounts.keys().find(|account| !used(account)) {
+        Some(account) => Err(AccountError::Unused {
+            account: account.clone(),
+        }),
+        None => Ok(accounts),
+    }
 }
 
-/// Checks the `[account_env.NAME]` tables of `secrets` against the accounts of `config`.
-pub(super) fn check_secrets(_config: &Config, _secrets: &Secrets) -> Result<(), AccountSecretsError> {
+/// Checks the owner of the account `name` and makes the [`Account`].
+fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, AccountError> {
+    let owner = raw
+        .owner
+        .ok_or_else(|| AccountError::OwnerMissing { account: name.clone() })?;
+    let owner = owner
+        .parse::<OwnerName>()
+        .map_err(|source| AccountError::OwnerInvalid {
+            account: name.clone(),
+            source,
+        })?;
+    Ok(Account { owner, env: raw.env })
+}
+
+/// Checks that the agent or investigator `name` of `key`, which names `account`, has an account to use and is named
+/// after its owner.
+fn check_user(
+    accounts: &BTreeMap<AccountName, Account>,
+    key: ContextKey,
+    name: &str,
+    account: &AccountName,
+) -> Result<(), AccountError> {
+    let found = accounts.get(account).ok_or_else(|| AccountError::UnknownAccount {
+        key,
+        name: name.to_owned(),
+        account: account.clone(),
+    })?;
+    let owner = found.owner();
+    let named_after_owner = name
+        .strip_prefix(owner.as_str())
+        .is_some_and(|rest| rest.starts_with('-'));
+    if named_after_owner {
+        return Ok(());
+    }
+    Err(AccountError::NameWithoutOwner {
+        key,
+        name: name.to_owned(),
+        account: account.clone(),
+        owner: owner.clone(),
+    })
+}
+
+/// Checks the `[account_env.NAME]` tables of `secrets` against the accounts of `config`, table by table in the order
+/// of the account names, variable by variable in the order of their names.
+pub(super) fn check_secrets(config: &Config, secrets: &Secrets) -> Result<(), AccountSecretsError> {
+    for (account, variables) in secrets.account_env() {
+        let Some(found) = config.accounts().get(account) else {
+            return Err(AccountSecretsError::NoAccount {
+                account: account.clone(),
+            });
+        };
+        if let Some(variable) = variables.keys().find(|variable| found.env().contains_key(*variable)) {
+            return Err(AccountSecretsError::VariableTwice {
+                account: account.clone(),
+                variable: variable.clone(),
+            });
+        }
+    }
     Ok(())
 }
