@@ -1,4 +1,6 @@
 //! Findings are delivered once per task, including after restarting the daemon.
+use std::fmt::Write as _;
+
 use super::rig::{ONE, Rig, git, investigator, normal};
 use agent_core::ids::TaskId;
 use agent_core::state::MergeMode;
@@ -11,7 +13,7 @@ fn write_finding(rig: &Rig, task: &TaskId, resolved: bool) {
     let record = json!({"op":"add","id":"F-1","ts":"2099-01-01T00:00:00Z","author":"claude-1","task":task.as_str(),"kind":"trap","paths":["src/lib.rs"],"text":"Use the checked helper"});
     let mut lines = format!("{record}\n");
     if resolved {
-        lines.push_str(&format!("{}\n", json!({"op":"resolve","id":"F-1","ts":"2099-01-01T00:00:01Z","author":"other","task":task.as_str(),"reason":"fixed"})));
+        writeln!(lines, "{}", json!({"op":"resolve","id":"F-1","ts":"2099-01-01T00:00:01Z","author":"other","task":task.as_str(),"reason":"fixed"})).unwrap();
     }
     std::fs::write(directory.join("findings.jsonl"), lines).unwrap();
 }
