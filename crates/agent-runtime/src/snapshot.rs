@@ -176,11 +176,21 @@ pub async fn work_since(
     task: &TaskId,
     span: &WorkSpan<'_>,
 ) -> Result<WorkSince, WorkSinceError> {
-    let _ = (worktree, task, span);
-    Ok(WorkSince {
-        commits: Vec::new(),
-        changed: Vec::new(),
-    })
+    let identity = CommitIdentity::new(SNAPSHOT_NAME.to_owned(), SNAPSHOT_EMAIL.to_owned(), None);
+    let git = Git::new(worktree.clone(), identity);
+    let failed = |source| WorkSinceError {
+        task: task.clone(),
+        source,
+    };
+    let commits = git.range_messages(span.start, span.head).await.map_err(failed)?;
+    let changed = git
+        .changed_between(span.start, span.tree)
+        .await
+        .map_err(failed)?
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    Ok(WorkSince { commits, changed })
 }
 
 /// Why the snapshot references of a round could not be removed.
