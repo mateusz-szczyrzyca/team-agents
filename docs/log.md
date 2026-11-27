@@ -395,6 +395,8 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `investigation_started` | `info` | A queued request starts a new investigator task: `id`, `investigator`, `task`, `from_task`. |
 | `investigation_answered` | `info` | A completed answer is saved and delivered: `id`, `investigator`, `chars`. |
 | `investigation_kind_unknown` | `warn` | An unsupported request kind is failed without starting a task, once per request: `id`, `kind`. |
+| `investigation_requeued` | `info` | An unsuccessful attempt is requeued privately: `id`, `investigator`, `reason`. |
+| `investigation_failed` | `info` | A request ends unsuccessfully: `id`, `reason`. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and

@@ -9,11 +9,18 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.133.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 26.11.2026 — PR pending
+## agent 0.133.0 · agent-core 0.130.0 · agent-runtime 0.118.0 — 27.11.2026 — PR #321
 
 ### New features
 - [agent] Team investigation requests now start a free investigator in a separate worktree at the requester's branch tip. Completed answers are saved and sent directly to the requester, waking its task; investigation work stays local.
 - [agent-core] [agent-runtime] Investigation starts, answers and unknown request kinds are recorded in the daemon log and history. Existing history is preserved on upgrade.
+
+### Bug fixes
+- [agent] Failed investigations retry with another investigator once, keep unfinished text private, and notify the requester after a second failure, timeout or human stop. Requests from ended tasks are closed without a message; active assignments recover after restart.
+- [agent-core] Investigators at a provider's limit wait for their cooldown before receiving another request.
+
+### Configuration
+- [agent-core] new: `[investigations] answer_minutes` (default `30`, range `10..=1440`) — maximum time for an investigator's current attempt, excluding time in the queue.
 
 ## agent 0.132.0 · agent-core 0.129.0 · agent-runtime 0.117.0 — 26.11.2026 — PR #316
 

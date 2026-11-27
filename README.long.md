@@ -1274,7 +1274,20 @@ remain for that team. Unknown request kinds are failed once and logged as `inves
 Team state retains the `investigator` task role beside reviewer tasks and records investigation activity; older
 state without the role field still loads. History schema 33 accepts investigator runs. Schema 34 adds
 `investigation_started`, `investigation_answered` and `investigation_kind_unknown`, preserving existing logs,
-round links, search entries and cursors. Automatic retries and failure notifications are a later feature.
+round links, search entries and cursors. It also accepts `investigation_requeued` and `investigation_failed`.
+
+An unsuccessful attempt is closed and retried once with a different investigator. Any unfinished answer stays
+in the request file under `## Unfinished answer of <investigator> (<end>)`; it is never sent to the requester
+or included in the replacement's prompt. A second failure, a human stop, or expiry of
+`[investigations] answer_minutes` (default `30`, allowed `10..=1440`) ends the request and tells the requester
+to decide or ask the human in its questions file. The deadline starts when the current investigator task is
+created; queue time does not count. Ended requesters and removed teams fail their requests without a message.
+Provider refusals close the attempt instead of pausing, switching agents or retrying the same task; an
+investigator remains unavailable until its provider cooldown ends. After restart, live assignments continue,
+and requests with no live assigned task return to the queue.
+
+Each team's optional `investigations` records store the request `id`, current `task`, `started` timestamp and
+`failed_with` investigator names. Old state without these records still loads; an empty list is omitted.
 
 For daemon integrations, `agentbus inv-next --task TASK` restricts selection to requests from that task; repeat
 `--task` for every live task of the team. Without `--task`, selection remains global. A nonmatching request stays
