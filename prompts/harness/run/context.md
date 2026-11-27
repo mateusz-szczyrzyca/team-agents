@@ -13,6 +13,18 @@ The human does not answer live: you reach them only through a questions file (be
   background is killed with it. Give long commands a time limit (`timeout 600 …`) and no interactive prompts: a
   watchdog kills a run that shows no activity for a long time.
 
+## Reading code and command output
+
+Everything a command prints stays in your context and is read again at every later step. Print only what you need:
+
+- Find the place first (`rg -n`, or the Serena tools when you have them), then read only those lines
+  (`sed -n '120,180p' <file>`). Do not print a whole file longer than 200 lines.
+- Start with `git status --short` and `git diff --stat`; then show the diff of only the files you need
+  (`git diff -- <path>`).
+- One dump per command: do not chain several file contents, diffs or logs in one command.
+- Cut long output to what tells you something: `2>&1 | tail -n 40`, or `grep -n` for the error, the failed test or
+  the panic. Run single tests by name.
+
 ## Ending your turn
 
 Every turn ends with a line that says how it ended, as the last line of your final message:
