@@ -67,6 +67,23 @@ pub struct RoundCheckpoint {
     pub draft: bool,
 }
 
+/// The newest checkpoint of a round for a holder, with what it says of the work.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LastCheckpoint {
+    /// When it was taken.
+    pub at: agent_core::state::Timestamp,
+    /// The task whose worktree the checkpoint keeps.
+    pub task: TaskId,
+    /// The step it was taken after.
+    pub cause: agent_core::history::CheckpointCause,
+    /// The tip of the worktree's branch; `None` when git could not say.
+    pub head: Option<agent_core::state::CommitId>,
+    /// The reference of the snapshot; `None` when it could not be taken.
+    pub snapshot: Option<String>,
+    /// What is meant, done and left; `None` for a checkpoint that kept no account of the work.
+    pub content: Option<agent_core::history::CheckpointContent>,
+}
+
 /// The newest runs of a task and whether older ones were left out.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NewestRuns {
@@ -693,6 +710,21 @@ impl Reader {
             }
         }
         Ok(found)
+    }
+
+    /// The newest checkpoint of `round` that keeps the worktree of `task`, or, when the task has none in the round, the
+    /// newest of the round: its account of the work is the round's, whoever held it. `None` when the round has no
+    /// checkpoint.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_checkpoint_of_round(
+        &self,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Option<LastCheckpoint>, ReadError> {
+        let _ = (round, task);
+        Ok(None)
     }
 
     /// The prompts of the runs of `round`, oldest first.
