@@ -279,8 +279,14 @@ impl Git {
     /// # Errors
     /// The errors of [`Git::snapshot`] that read the head and the worktree.
     pub async fn worktree_matches_snapshot(&self, reference: &str) -> Result<bool, GitError> {
-        let _ = reference;
-        Ok(true)
+        let head = self.rev_parse(&Revision::Head).await?;
+        let scratch = make_scratch().await?;
+        let built = self.build_scratch_tree(scratch.path(), &head).await;
+        close_scratch(scratch).await;
+        let (_overrides, tree) = built?;
+        let held_tree = self.resolve_quietly(&format!("{reference}^{{tree}}")).await?;
+        let held_head = self.resolve_quietly(&format!("{reference}^1")).await?;
+        Ok(held_tree.as_deref() == Some(tree.as_str()) && held_head.as_deref() == Some(head.to_string().as_str()))
     }
 
     /// Builds the tree of the worktree in a scratch index in `scratch`, commits it on `head` and points the next reference
