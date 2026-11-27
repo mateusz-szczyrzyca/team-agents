@@ -59,7 +59,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use agent_core::cli::SessionId as CliSessionId;
-use agent_core::config::{AbsolutePath, InvalidValue};
+use agent_core::config::{AbsolutePath, AccountName, InvalidValue};
 use agent_core::decide::ladder::{LadderStep, Renewals, Trouble, next_step};
 use agent_core::decide::limit::{Decision, Limit, Refusal, decide, next_refusals};
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
@@ -1402,6 +1402,9 @@ impl Owner {
                 );
             }
         }
+        // Resolved before the task is committed as running: a failure here must not leave a running task without a job.
+        let agent: AgentName = located.agent.parse()?;
+        let account = self.account_of(&agent);
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),
@@ -1453,12 +1456,28 @@ impl Owner {
             }
         }
         Box::pin(self.start_owned_team_request(task, &plan.run)).await?;
-        self.spawn_job(task.clone(), plan.job, run_span);
+        self.spawn_job(task.clone(), plan.job, account, run_span);
         Ok(())
     }
 
-    /// Spawns `job` for `task` with `run_span`.
-    pub(super) fn spawn_job(&mut self, task: TaskId, job: RunJob, run_span: tracing::Span) {
+    /// The account the agent `name` runs with, from the configuration: `None` for an agent without one. An agent that
+    /// the configuration no longer has is not found here either; the run of it was refused before it was planned.
+    pub(super) fn account_of(&self, name: &AgentName) -> Option<AccountName> {
+        let config = &self.parts.settings.config;
+        match self.participant_of(name)? {
+            Participant::Normal(agent) | Participant::Worker(agent) => config.agent(&agent)?.account.clone(),
+            Participant::Investigator(agent) => config.investigator(&agent)?.account.clone(),
+        }
+    }
+
+    /// Spawns `job` for `task` with `run_span`, for an agent that runs with `account`.
+    pub(super) fn spawn_job(
+        &mut self,
+        task: TaskId,
+        job: RunJob,
+        account: Option<AccountName>,
+        run_span: tracing::Span,
+    ) {
         self.request_runs.insert(task.clone(), job.run.clone());
         let engine = self.parts.engine.clone();
         let cancel = self.shutdown.child_token();
@@ -1467,7 +1486,7 @@ impl Owner {
         self.holds.insert(task.clone(), hold.clone());
         let dispatch = tracing::dispatcher::get_default(Clone::clone);
         let handle = self.runs.spawn(Scoped::new(
-            async move { engine.run_held(job, &cancel, &hold).await }.instrument(run_span),
+            async move { engine.run_held_as(job, account.as_ref(), &cancel, &hold).await }.instrument(run_span),
             dispatch,
         ));
         self.running.insert(handle.id(), task.clone());

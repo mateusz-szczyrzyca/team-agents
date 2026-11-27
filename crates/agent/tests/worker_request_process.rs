@@ -5127,4 +5127,82 @@ git commit -qm 'Complete retained work'
         // The orphan of the killed daemon ends once released: no stand-in outlives the test.
         std::fs::write(world.home.join("release-worker"), "").unwrap();
     }
+
+    impl World {
+        /// Makes `agent` (an agent, a worker or an investigator of the configuration) run with the account `comp-claude`
+        /// of the owner `comp`, which has one variable that is not secret and one secret.
+        fn give_comp_account(&self, agent: &str) {
+            let path = self.home.join("agents.toml");
+            let mut config = std::fs::read_to_string(&path).unwrap();
+            let table = ["agents", "investigators"]
+                .iter()
+                .map(|kind| format!("[{kind}.{agent}]\n"))
+                .find(|header| config.contains(header))
+                .unwrap();
+            config = config.replace(&table, &format!("{table}account = \"comp-claude\"\n"));
+            write!(
+                config,
+                "[accounts.comp-claude]\nowner = \"comp\"\n[accounts.comp-claude.env]\nACCOUNT_VARIABLE = \"env-of-comp\"\n"
+            )
+            .unwrap();
+            std::fs::write(&path, config).unwrap();
+            let secrets = self.home.join("secrets.toml");
+            std::fs::write(
+                &secrets,
+                "[account_env.comp-claude]\nACCOUNT_SECRET = \"secret-of-comp\"\n",
+            )
+            .unwrap();
+            std::fs::set_permissions(&secrets, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        }
+
+        /// What the stand-in of `agent` wrote down of its environment, once it wrote it.
+        fn environment_seen_by(&self, agent: &str) -> String {
+            let file = self.home.join(format!("env-seen-{agent}.txt"));
+            let mut text = String::new();
+            eventually(&format!("the environment of {agent}"), || {
+                text = std::fs::read_to_string(&file).unwrap_or_default();
+                text.lines().count() == 2
+            });
+            text
+        }
+    }
+
+    /// What a run with the account `comp-claude` sees of the two variables the stand-ins write down.
+    const COMP_ENVIRONMENT: &str = "ACCOUNT_VARIABLE=env-of-comp\nACCOUNT_SECRET=secret-of-comp\n";
+
+    // Rule: an investigator that names an account runs with the account's variables and secrets.
+    #[test]
+    fn an_investigator_with_an_account_runs_with_the_environment_of_its_account() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "sleep"),
+            ("comp-inv", "investigator", "env-sleep:ACCOUNT_VARIABLE+ACCOUNT_SECRET"),
+            ("glm-1", "worker", "sleep"),
+        ]);
+        world.give_comp_account("comp-inv");
+        world.start();
+
+        world.run(&["claude-1", "comp-inv", "glm-1"]);
+
+        assert_eq!(world.environment_seen_by("comp-inv"), COMP_ENVIRONMENT);
+    }
+
+    // Rule: a pool worker of the installation that names an account runs a request it is given with the account's
+    // variables and secrets.
+    #[test]
+    fn a_pool_worker_with_an_account_runs_a_request_with_the_environment_of_its_account() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("inv-opus", "investigator", "sleep"),
+            ("comp-glm-1", "worker", "env-sleep:ACCOUNT_VARIABLE+ACCOUNT_SECRET"),
+        ]);
+        world.give_comp_account("comp-glm-1");
+        world.allow_tries(1);
+        world.asks("member", Some(MEMBER_PLAN), &[MEMBER_REQUEST]);
+        world.start();
+
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+
+        std::fs::write(world.worktree(task(&tasks, "claude-1")).join(".fake-ask"), "").unwrap();
+        assert_eq!(world.environment_seen_by("comp-glm-1"), COMP_ENVIRONMENT);
+    }
 }

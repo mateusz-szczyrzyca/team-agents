@@ -9,10 +9,25 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.146.0 · agent-core 0.144.0 · agent-runtime 0.133.0 — 27.11.2026 — PR pending
+## agent 0.147.0 · agent-core 0.146.0 · agent-runtime 0.135.0 — 27.11.2026 — PR pending
 
 ### New features
 - [agent] [agent-runtime] An agent that works on files another agent left a finding about (a flaky test, a trap in the code, a tool's behaviour) is shown it once, at the start of its run.
+
+## agent 0.146.0 · agent-runtime 0.134.0 — 27.11.2026 — PR #358
+
+### New features
+- [agent] [agent-runtime] A run of an agent that names an account gets the account's variables in its environment: the daemon's, `[agent_env]`, the account's `env`, the account's `[account_env.NAME]` — the later wins. Two agents of one CLI with two accounts in one team each see only their own account's login. An agent without an account runs as before. The quota of an account is not shared between its agents yet.
+
+## agent-core 0.145.0 — 27.11.2026 — PR #359
+
+### Enhancements
+- [agent-core] The state can hold the pause of an account (`accounts` in `state.json`, written only when an account is paused), and a new rule says when a refused run pauses its account: the first refused run pauses it until the reset (or the configured pause), a later one finds it paused, an old pause is expired. Nothing records a pause yet, so no run changes.
+
+## agent-core 0.144.0 · agent-runtime 0.133.0 — 27.11.2026 — PR #355
+
+### Enhancements
+- [agent-core] [agent-runtime] A Claude Code run's `rate_limit_event` records are read into readings of the five-hour and the seven-day window (how much is used, when it resets); the newest record of each window wins, and a record of another shape gives no reading and no error. Nothing stores or shows the readings in this version.
 
 ## agent-runtime 0.132.0 — 27.11.2026 — PR #353
 

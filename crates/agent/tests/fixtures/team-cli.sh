@@ -9,6 +9,9 @@
 #   opencode-verdict:V  as an OpenCode reviewer (its JSON records): ends with the line VERDICT: V, SUMMARY and STATUS: DONE
 #   done:TEXT       ends with TEXT, a line break and STATUS: DONE
 #   sleep           ends with STATUS: SLEEPING
+#   env-sleep:N1+N2  writes each variable N1, N2 and its value (`<unset>` for one the run does not have), one `NAME=value` line each,
+#                   to the file `env-seen-AGENT.txt` of the home the configuration names (AGENT is the agent's name), then
+#                   ends with STATUS: SLEEPING: what the environment of the run of that agent held
 #   bus-sleep       reads its messages as the `--agent` its MCP configuration names, then ends with STATUS: SLEEPING
 #   fail            ends with STATUS: FAILED
 #   changed-session-fail  as a run whose CLI changed mid-task: reports a changed session identity and ends with
@@ -707,6 +710,14 @@ case $action in
     result "${action#target-done:}"'\nSTATUS: DONE'
     ;;
   sleep) result 'Nothing to do now.\nSTATUS: SLEEPING' ;;
+  env-sleep:*)
+    IFS=+ read -ra variables <<< "${action#env-sleep:}"
+    : > "$home/env-seen-$name.txt"
+    for variable in "${variables[@]}"; do
+      printf '%s=%s\n' "$variable" "${!variable-<unset>}" >> "$home/env-seen-$name.txt"
+    done
+    result 'Nothing to do now.\nSTATUS: SLEEPING'
+    ;;
   clean-sleep)
     hide_own_files
     result 'Nothing to do now.\nSTATUS: SLEEPING'

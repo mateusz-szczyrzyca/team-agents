@@ -93,7 +93,8 @@ Configure that many outside each team.
 
 An account is one subscription or key of a provider. `[accounts.NAME]` of `agents.toml` describes it, `[account_env.NAME]`
 of `secrets.toml` holds its secret variables, and an agent or an investigator names it with `account = "NAME"`. A file
-without accounts loads and behaves as before. This version reads and checks the accounts; the runs do not use them yet.
+without accounts loads and behaves as before. A run of an agent with an account gets the account's variables in its environment; the quota of an account is not
+shared between its agents yet.
 
 ```toml
 [accounts.comp-claude]
@@ -125,6 +126,7 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
   both: loading the home refuses the pair, naming the account and the variable and never a value. A
   `[account_env.NAME]` without an `[accounts.NAME]` is refused too.
 - `max_runs` and `hold_at` are unknown keys until the versions that bring them.
+- An agent without an account gets the environment it always got.
 - The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
 
 The harness knows no provider: it only sets variables. Each provider reads its login from a place you can point it
