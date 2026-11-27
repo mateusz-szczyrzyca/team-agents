@@ -5,6 +5,7 @@
 //! through the control protocol ([`crate::protocol`]). Everything here is pure data with its rules: a value that
 //! exists is a valid one, and a text that is not valid is refused when it is read.
 
+mod account_pause;
 mod base;
 mod checked;
 mod checks;
@@ -33,6 +34,8 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+mod account_pause_tests;
+#[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
 mod human_session_tests;
@@ -51,6 +54,7 @@ mod values;
 mod waiting_tests;
 mod wake_delivery;
 
+pub use account_pause::AccountPause;
 pub use base::UnpushedBase;
 pub use checked::CheckedMut;
 pub use checks::{Asked, Basis, ChecksRecord, Covers, ItemChecks, Sent};
@@ -147,6 +151,9 @@ pub struct State {
     /// Until when an agent refused by its provider is kept out of new tasks, reviews and takeovers; an agent without an
     /// entry is not refused.
     refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// The accounts whose provider refused a run and no run of their agents starts before the time of their pause; an
+    /// account without an entry is not paused.
+    accounts: BTreeMap<crate::config::AccountName, AccountPause>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -177,6 +184,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no agent is refused.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     refused_agents: &'a BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// See [`State`]; omitted when no account is paused.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    accounts: &'a BTreeMap<crate::config::AccountName, AccountPause>,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -201,6 +211,7 @@ impl Serialize for State {
             queued,
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
+            accounts: &self.accounts,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -216,6 +227,7 @@ impl PartialEq for State {
             && self.wake_deliveries == other.wake_deliveries
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
+            && self.accounts == other.accounts
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -245,6 +257,9 @@ struct StateWire {
     /// Optional in state written before provider refusals were persisted.
     #[serde(default)]
     refused_agents: BTreeMap<crate::ids::AgentName, Timestamp>,
+    /// Optional in state written before the pauses of accounts were persisted.
+    #[serde(default)]
+    accounts: BTreeMap<crate::config::AccountName, AccountPause>,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -418,6 +433,24 @@ impl State {
         self.commit_cuts.entry(task).or_default().insert(run);
     }
 
+    /// The pause of `account`, `None` when none is recorded for it.
+    #[must_use]
+    pub fn account_pause(&self, account: &crate::config::AccountName) -> Option<&AccountPause> {
+        self.accounts.get(account)
+    }
+
+    /// Records the pause of `account`, or forgets it with `None`.
+    pub fn record_account_pause(&mut self, account: crate::config::AccountName, pause: Option<AccountPause>) {
+        match pause {
+            Some(pause) => {
+                self.accounts.insert(account, pause);
+            }
+            None => {
+                self.accounts.remove(&account);
+            }
+        }
+    }
+
     /// Until when the agent is refused by its provider, `None` when it is not refused at all.
     #[must_use]
     pub fn refused_until(&self, agent: &crate::ids::AgentName) -> Option<Timestamp> {
@@ -501,6 +534,7 @@ impl State {
             recoveries: Vec::new(),
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
+            accounts: BTreeMap::new(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -1191,6 +1225,7 @@ impl TryFrom<StateWire> for State {
             recoveries: wire.recoveries,
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
+            accounts: wire.accounts,
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };
