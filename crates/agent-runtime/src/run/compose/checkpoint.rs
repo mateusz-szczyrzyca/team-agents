@@ -27,8 +27,17 @@ pub const NO_CONTENT: &str = "(this checkpoint kept no account of the work)";
 /// # Errors
 /// [`VariablesError`] when a value cannot be given to its variable.
 pub fn checkpoint_state_variables(facts: &CheckpointFacts<'_>) -> Result<Variables, VariablesError> {
-    let _ = facts;
-    Ok(Variables::new())
+    let kept = |part: fn(&CheckpointContent) -> &str| facts.content.map_or(NO_CONTENT, part).to_owned();
+    Variables::new()
+        .with("meant", kept(|content| &content.meant))?
+        .with("done", kept(|content| &content.done))?
+        .with("left", kept(|content| &content.left))?
+        .with("cause", facts.cause.to_string())?
+        .with("time", facts.at.to_string())?
+        .with(
+            "head",
+            facts.head.map_or_else(|| "none".to_owned(), ToString::to_string),
+        )
 }
 
 #[cfg(test)]

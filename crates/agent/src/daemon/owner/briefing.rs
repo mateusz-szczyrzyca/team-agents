@@ -873,6 +873,7 @@ impl BriefingFacts {
                 not_done: &not_done,
             },
             review: *review,
+            checkpoint: None,
         };
         Ok(briefing_variables_with(&facts, &notes)?)
     }

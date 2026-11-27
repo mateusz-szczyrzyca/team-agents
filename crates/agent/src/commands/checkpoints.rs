@@ -9,11 +9,12 @@ use std::str::FromStr;
 use agent_core::config::Language;
 use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record, SequencedRecord};
 use agent_core::ids::{InvalidId, RoundId, TaskId};
-use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
+use agent_core::prompt::{HarnessPrompt, VariablesError};
 use agent_core::state::{CommitId, PrNumber, Timestamp};
 use agent_core::story::{Selection, json_lines};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError, RenderTextError};
 use agent_runtime::history::{ReadError, Reader};
+use agent_runtime::run::compose::{CheckpointFacts, checkpoint_state_variables};
 
 use super::log::UNKNOWN_ID_EXIT;
 
@@ -254,25 +255,15 @@ impl Row {
 
     /// The checkpoint as the agent is told it, rendered with `checkpoint-state.md`.
     fn shown(&self, texts: &HarnessPrompts) -> Result<String, CheckpointsError> {
-        let kept = |part: fn(&CheckpointContent) -> &str| self.content.as_ref().map_or(NO_CONTENT, part).to_owned();
-        let values = Variables::new()
-            .with("meant", kept(|content| &content.meant))?
-            .with("done", kept(|content| &content.done))?
-            .with("left", kept(|content| &content.left))?
-            .with("cause", self.cause.to_string())?
-            .with("time", self.at.to_string())?
-            .with(
-                "head",
-                self.head
-                    .as_ref()
-                    .map_or_else(|| "none".to_owned(), ToString::to_string),
-            )?;
+        let values = checkpoint_state_variables(&CheckpointFacts {
+            cause: self.cause,
+            at: self.at,
+            head: self.head.as_ref(),
+            content: self.content.as_ref(),
+        })?;
         Ok(texts.render(HarnessPrompt::CheckpointState, &values)?)
     }
 }
-
-/// What `--show` says of a checkpoint that kept no account of the work: one taken before checkpoints had a content.
-const NO_CONTENT: &str = "(this checkpoint kept no account of the work)";
 
 /// How many characters of a commit's hash the listing shows.
 const SHORT_HASH: usize = 7;
