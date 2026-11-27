@@ -64,15 +64,12 @@ impl From<FindingId> for String {
     }
 }
 
-/// The bus path limit in Unicode characters.
-const MAX_PATH_CHARS: usize = 200;
-
-/// A normalized relative repository path, without parent traversal or whitespace.
+/// A normalized relative repository path, without parent traversal.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
 pub struct RepoPath(String);
 
-/// A path is empty, absolute, contains parent traversal or whitespace, or exceeds 200 characters.
+/// A path is empty, absolute or contains parent traversal.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid finding path {value:?}")]
 pub struct InvalidRepoPath {
@@ -83,14 +80,11 @@ impl RepoPath {
     /// Normalizes a relative path, removing `.` and empty components.
     ///
     /// # Errors
-    /// Returns [`InvalidRepoPath`] for absolute, empty, traversing, whitespace-containing or overlong paths.
+    /// Returns [`InvalidRepoPath`] for absolute, empty or traversing paths.
     pub fn parse(value: &str) -> Result<Self, InvalidRepoPath> {
         let invalid = || InvalidRepoPath {
             value: value.to_owned(),
         };
-        if value.chars().count() > MAX_PATH_CHARS || value.chars().any(char::is_whitespace) {
-            return Err(invalid());
-        }
         let normalized = value.replace('\\', "/");
         if normalized.starts_with('/')
             || normalized.as_bytes().get(1) == Some(&b':')
