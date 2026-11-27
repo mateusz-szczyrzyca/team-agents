@@ -5,7 +5,7 @@
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::ids::{BranchName, InvalidName};
+use agent_core::ids::{BranchName, InvalidName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
@@ -41,6 +41,12 @@ pub(in crate::daemon::owner) enum SectionError {
     Repo {
         /// The repository.
         repo: agent_core::config::RepoName,
+    },
+    /// The conflict request's item no longer has an open pull request.
+    #[error("item {item} has no open pull request for a conflict investigation")]
+    ConflictPullRequest {
+        /// The requested item.
+        item: ItemId,
     },
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
@@ -260,6 +266,25 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
                 .with("part_limit", ctx.settings.config.split().part_limit.to_string())?
                 .with("question", &inv.question)?;
             let text = ctx.texts.render(HarnessPrompt::InvestigationSplit, &values)?;
+            return Ok(Some(Addition::Replace(text.trim_end().to_owned())));
+        }
+        if let agent_runtime::agentbus::InvestigationKind::Conflict { item } = inv.kind {
+            let pr = super::super::investigations::conflict_pull_request(found.team, item)
+                .ok_or(SectionError::ConflictPullRequest { item })?;
+            let configured = ctx
+                .settings
+                .config
+                .repo(found.team.repo())
+                .ok_or_else(|| SectionError::Repo {
+                    repo: found.team.repo().clone(),
+                })?;
+            let values = Variables::new()
+                .with("item", item.to_string())?
+                .with("pr_number", pr.number.to_string())?
+                .with("branch", pr.branch.as_str())?
+                .with("base", configured.base_branch.as_str())?
+                .with("question", &inv.question)?;
+            let text = ctx.texts.render(HarnessPrompt::InvestigationConflict, &values)?;
             return Ok(Some(Addition::Replace(text.trim_end().to_owned())));
         }
         let values = Variables::new()
