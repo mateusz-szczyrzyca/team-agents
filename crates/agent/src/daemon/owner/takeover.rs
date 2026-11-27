@@ -164,7 +164,7 @@ impl Owner {
             .collect();
         let busy = self.agents_in_runs();
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
         let listed: Vec<(&AgentName, Tier, Activity)> = replacement
             .agents()
             .iter()
@@ -488,7 +488,7 @@ impl Owner {
         let going = self.all_runs_going();
         let busy: std::collections::HashSet<_> = going.iter().map(|run| &run.agent).collect();
         // An agent its provider refused is not free until its return: it takes no task over.
-        let refused = self.parts.state.refused_agents_at(Timestamp::now(&self.parts.clock)?);
+        let refused = self.unavailable_agents_at(Timestamp::now(&self.parts.clock)?);
         let in_team: Vec<&str> = found
             .team
             .crew()

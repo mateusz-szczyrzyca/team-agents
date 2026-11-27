@@ -7,6 +7,7 @@
 use std::collections::BTreeSet;
 
 use agent_core::config::AccountName;
+use agent_core::decide::account_candidates::agents_of_paused_accounts;
 use agent_core::decide::account_pause::{AccountPauseOutcome, decide};
 use agent_core::decide::limit::Limit;
 use agent_core::decide::outcome::PauseReason;
@@ -46,6 +47,18 @@ impl Owner {
         self.account_named(agent)
             .and_then(|account| self.parts.state.account_pause(&account).map(|pause| now < pause.until))
             .unwrap_or(false)
+    }
+
+    /// The agents that take nothing new at `now`: those their provider refused and those whose account is paused. An
+    /// agent of a paused account is picked for nothing — no replacement, no hand-over, no worker for a request.
+    pub(super) fn unavailable_agents_at(&self, now: Timestamp) -> Vec<AgentName> {
+        let mut agents = self.parts.state.refused_agents_at(now);
+        agents.extend(agents_of_paused_accounts(
+            &self.parts.state,
+            &self.parts.settings.config,
+            now,
+        ));
+        agents
     }
 
     /// The agents and investigators that have `account`, in name order.

@@ -897,7 +897,7 @@ impl Owner {
         let busy = self.agents_in_runs();
         // An agent its provider refused takes no item until its return: busy for the assignment, as a running one is.
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
         let candidates: Vec<_> = outside
             .iter()
             .map(|agent| agent_core::decide::part::Candidate {
@@ -1294,7 +1294,7 @@ impl Owner {
         }
 
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
+        let refused = self.unavailable_agents_at(now);
         let mut pool_workers_data = Vec::new();
         for name in &pool {
             let Some(agent_conf) = self.parts.settings.config.agent(name) else {
