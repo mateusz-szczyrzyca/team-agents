@@ -174,7 +174,7 @@ pub enum FailureKind {
 
 /// Why a swap of a task to another agent was refused.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, thiserror::Error)]
-#[serde(tag = "stub_refusal", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "refusal", rename_all = "snake_case", deny_unknown_fields)]
 pub enum SwapRefusal {
     /// The agent is not configured.
     #[error("unknown agent {agent}: it is not in agents.toml")]
@@ -228,6 +228,23 @@ pub enum SwapRefusal {
         /// The task.
         task: TaskId,
     },
+}
+
+impl From<SwapRefusal> for Failure {
+    fn from(refusal: SwapRefusal) -> Self {
+        let kind = match &refusal {
+            SwapRefusal::UnknownAgent { .. } | SwapRefusal::Worker { .. } => FailureKind::Invalid,
+            SwapRefusal::SameHolder { .. }
+            | SwapRefusal::InTeam { .. }
+            | SwapRefusal::InRun { .. }
+            | SwapRefusal::Role { .. }
+            | SwapRefusal::Done { .. } => FailureKind::Conflict,
+        };
+        Self {
+            kind,
+            message: refusal.to_string(),
+        }
+    }
 }
 
 /// What `remove` took away with a team, and what it could not take away: the answer names each of them.

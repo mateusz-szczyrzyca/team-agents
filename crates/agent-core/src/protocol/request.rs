@@ -111,7 +111,6 @@ pub enum Command {
     /// Take a team out of the daemon with what is only its own, after its unmerged work is bundled.
     Remove(RemoveRequest),
     /// Change the agent holding a task.
-    #[serde(rename = "swap_stub")]
     Swap(SwapRequest),
 }
 
