@@ -66,7 +66,7 @@ impl Git {
     }
 
     /// Reads bounded UTF-8 output of a local comparison command.
-    async fn base_output(&self, operation: GitOperation, args: &[&str]) -> Result<String, GitError> {
+    pub(super) async fn base_output(&self, operation: GitOperation, args: &[&str]) -> Result<String, GitError> {
         let args = args.iter().copied().map(arg).collect::<Vec<_>>();
         let captured = self.run_ok(operation, Reach::Local, &args).await?;
         whole(operation, &captured.stdout, self.limits)?;

@@ -1664,11 +1664,16 @@ impl AgentBus {
     ///
     /// # Errors
     /// Returns [`AgentBusError`] if the bus fails or its JSON cannot be decoded.
-    pub async fn findings(
-        &self,
-        _repo: &RepoName,
-    ) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
-        Ok(Vec::new())
+    pub async fn findings(&self, repo: &RepoName) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
+        let command = BusCommand::Findings;
+        let output = self
+            .run(
+                command,
+                Args::new().flag("--repo", repo.as_str()).switch("--json"),
+                None,
+            )
+            .await?;
+        decode_json(command, &output)
     }
 
     /// Takes the next queued investigation without restricting its requesting task.
