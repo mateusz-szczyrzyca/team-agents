@@ -485,31 +485,31 @@ fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_deb
 #[test]
 fn human_swap_to_lower_tier_is_applied() {
     let mut state = old_state();
-    let worker = Participant::Worker("worker-9".parse::<AgentName>().unwrap());
+    let coordinator: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
 
     assert_eq!(
-        state.hand_over_task(&task(), worker.clone(), Choice::Human, at()),
+        state.hand_over_task(&coordinator, normal("claude-9"), Choice::Human, at()),
         Ok(())
     );
 
     let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
-    let member = loaded.find_task(&task()).unwrap().member;
-    assert_eq!(member.agent(), &worker);
+    let member = loaded.find_task(&coordinator).unwrap().member;
+    assert_eq!(member.agent(), &normal("claude-9"));
 }
 
 #[test]
 fn harness_handover_to_lower_tier_is_still_refused() {
     let mut state = old_state();
-    let worker = Participant::Worker("worker-9".parse::<AgentName>().unwrap());
+    let coordinator: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
 
-    let refused = state.hand_over_task(&task(), worker, Choice::Harness, at());
+    let refused = state.hand_over_task(&coordinator, normal("claude-9"), Choice::Harness, at());
 
     assert_eq!(
         refused,
         Err(HandOverError::LowerTier {
-            task: task(),
-            holder: crate::kinds::Tier::Worker,
-            held: crate::kinds::Tier::Normal,
+            task: coordinator,
+            holder: crate::kinds::Tier::Normal,
+            held: crate::kinds::Tier::Investigator,
         })
     );
 }
