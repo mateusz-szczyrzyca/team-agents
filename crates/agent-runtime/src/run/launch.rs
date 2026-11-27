@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::cli::{OutputParser, RunMode, RunRequest};
-use agent_core::config::{AbsolutePath, EnvName};
+use agent_core::config::{AbsolutePath, AccountName, EnvName, EnvValue, Secret};
 use agent_core::log::LogEvent;
 use agent_core::prompt::{HarnessPrompt, Variables};
 
@@ -150,7 +150,11 @@ async fn write_file(path: &Path, content: &str) -> Result<(), RunError> {
 }
 
 /// Makes `job` ready: the prompt, the adapter's run, its files, what it keeps out of git, its process.
-pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch, RunError> {
+pub(super) async fn prepare(
+    parts: &EngineParts,
+    job: &RunJob,
+    account: Option<&AccountName>,
+) -> Result<Launch, RunError> {
     if matches!(job.mode, RunMode::New { .. }) {
         write_file(&parts.store.home().session_prompt_file(&job.task), &job.prompt).await?;
     }
@@ -185,8 +189,10 @@ pub(super) async fn prepare(parts: &EngineParts, job: &RunJob) -> Result<Launch,
             source,
         })?;
     let hooks = guard_hooks(parts, job, &run_dir).await;
+    let account = account.map(|name| account_variables(parts, name)).transpose()?;
     let mut env = base_agent_environment(
         &parts.secrets,
+        account.as_ref(),
         &parts.agent_binary_dir,
         &parts.config.binaries().agent_path,
         parts.store.home().root(),
@@ -303,10 +309,44 @@ pub async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Re
     handle.flush().await.map_err(io_error)
 }
 
+/// The variables of the account an agent runs with: its `env` of `agents.toml` and its secrets of `secrets.toml`.
+struct AccountVariables<'a> {
+    /// The variables that are not secret.
+    env: &'a BTreeMap<EnvName, EnvValue>,
+    /// The secret variables; they win over `env` of the same name.
+    secrets: Option<&'a BTreeMap<EnvName, Secret>>,
+}
+
+/// The variables of the account `name` the engine's configuration and secrets give.
+fn account_variables<'a>(parts: &'a EngineParts, name: &'a AccountName) -> Result<AccountVariables<'a>, RunError> {
+    let account = parts
+        .config
+        .accounts()
+        .get(name)
+        .ok_or_else(|| RunError::UnknownAccount { account: name.clone() })?;
+    Ok(AccountVariables {
+        env: account.env(),
+        secrets: parts.secrets.account_env().get(name),
+    })
+}
+
+impl AccountVariables<'_> {
+    /// Puts the account's variables into `env`: its `env` first, then its secrets over it.
+    fn add_to(&self, env: &mut BTreeMap<EnvName, String>) {
+        for (name, value) in self.env {
+            env.insert(name.clone(), value.as_str().to_owned());
+        }
+        for (name, secret) in self.secrets.into_iter().flatten() {
+            env.insert(name.clone(), secret.expose().to_owned());
+        }
+    }
+}
+
 /// The base environment of a run or command check of an agent with `identity`: the agents' secrets, `PATH`,
 /// `AGENTS_HOME`, and the commit identity (with optional `hooks`).
 fn base_agent_environment(
     secrets: &agent_core::config::Secrets,
+    account: Option<&AccountVariables<'_>>,
     agent_binary_dir: &AbsolutePath,
     agent_path: &[AbsolutePath],
     home: &Path,
@@ -316,6 +356,9 @@ fn base_agent_environment(
     let mut env = BTreeMap::new();
     for (name, secret) in secrets.agent_env() {
         env.insert(name.clone(), secret.expose().to_owned());
+    }
+    if let Some(account) = account {
+        account.add_to(&mut env);
     }
     let directories = agent_path_directories(agent_binary_dir.as_path(), agent_path);
     let joined = std::env::join_paths(directories).map_err(|source| RunError::AgentPath { source })?;
@@ -344,7 +387,7 @@ pub fn check_environment(
     home: &Path,
     identity: &CommitIdentity,
 ) -> Result<Vec<(String, String)>, RunError> {
-    let env = base_agent_environment(secrets, agent_binary_dir, agent_path, home, identity, None)?;
+    let env = base_agent_environment(secrets, None, agent_binary_dir, agent_path, home, identity, None)?;
     Ok(env.into_iter().map(|(k, v)| (k.as_str().to_owned(), v)).collect())
 }
 
