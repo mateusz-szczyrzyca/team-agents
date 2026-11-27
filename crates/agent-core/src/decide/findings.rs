@@ -264,7 +264,8 @@ pub fn select_findings<'a>(
     selected
 }
 
-/// Renders the section's lines, using the date in `zone`; no findings produces an empty string.
+/// Renders one line per finding, replacing text line breaks with spaces and using dates in `zone`.
+/// No findings produces an empty string.
 #[must_use]
 pub fn render_findings(selected: &[Selected<'_>], zone: Zone) -> String {
     selected
@@ -278,7 +279,11 @@ pub fn render_findings(selected: &[Selected<'_>], zone: Zone) -> String {
             };
             let local = zone.local_minute(f.added_at);
             let date = local.split_once(' ').map_or(local.as_str(), |(date, _)| date);
-            format!("- {} [{}] {paths} — {} ({}, {date})", f.id, f.kind, f.text, f.author)
+            let text = f
+                .text
+                .replace("\r\n", " ")
+                .replace(['\r', '\n', '\u{0085}', '\u{2028}', '\u{2029}'], " ");
+            format!("- {} [{}] {paths} — {text} ({}, {date})", f.id, f.kind, f.author)
         })
         .collect::<Vec<_>>()
         .join("\n")
