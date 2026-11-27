@@ -14,7 +14,7 @@ import (
 )
 
 // invAddFixture runs the real CLI with isolated state and returns stdout, its exit error and the home.
-func invAddFixture(t *testing.T, args ...string) (string, error, string) {
+func invAddFixture(t *testing.T, args ...string) (string, string, error) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -29,18 +29,18 @@ func invAddFixture(t *testing.T, args ...string) (string, error, string) {
 	cmd := exec.CommandContext(ctx, bin, flags...) // #nosec G204 -- executable and arguments are owned by this isolated fixture.
 	cmd.Env = append(os.Environ(), "AGENTS_HOME="+home)
 	out, err := cmd.Output()
-	return string(out), err, home
+	return string(out), home, err
 }
 
 // invAddFailsWith checks the CLI's exit class and structured cause, plus an unchanged queue.
 func invAddFailsWith(t *testing.T, want CmdInvAddCause, args ...string) {
 	t.Helper()
-	out, err, home := invAddFixture(t, args...)
+	out, home, err := invAddFixture(t, args...)
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) || exit.ExitCode() != want.info().class.ExitCode() {
 		t.Fatalf("exit %v, output %q; want %v", err, out, want.info().class)
 	}
-	logs, readErr := os.ReadFile(filepath.Join(home, "logs", "agentbus.jsonl"))
+	logs, readErr := os.ReadFile(filepath.Join(home, "logs", "agentbus.jsonl")) // #nosec G304 -- home is created by this fixture, which reads only its own CLI log.
 	if readErr != nil {
 		t.Fatal(readErr)
 	}
@@ -72,7 +72,7 @@ func invAddFailsWith(t *testing.T, want CmdInvAddCause, args ...string) {
 }
 
 func TestInvAddConflictStoresTheItem(t *testing.T) {
-	out, err, home := invAddFixture(t, "--kind", "conflict", "--item", "2.3")
+	out, home, err := invAddFixture(t, "--kind", "conflict", "--item", "2.3")
 	if err != nil {
 		t.Fatalf("inv-add: %v", err)
 	}
