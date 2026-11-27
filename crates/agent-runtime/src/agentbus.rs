@@ -150,6 +150,8 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// `inv-add`.
+    InvAdd,
     /// `inv-next`.
     InvNext,
     /// `inv-set`.
@@ -1749,8 +1751,21 @@ impl AgentBus {
     ///
     /// # Errors
     /// [`AgentBusError`] if the command fails or prints an invalid id.
-    pub async fn inv_add_conflict(&self, _req: &NewConflictRequest) -> Result<NonZeroU32, AgentBusError> {
-        Err(unexpected(BusCommand::InvGet, ""))
+    pub async fn inv_add_conflict(&self, req: &NewConflictRequest) -> Result<NonZeroU32, AgentBusError> {
+        let command = BusCommand::InvAdd;
+        let args = Args::new()
+            .flag("--kind", "conflict")
+            .flag("--from-agent", req.from_agent.to_string())
+            .flag("--from-task", req.from_task.to_string())
+            .flag("--repo", req.repo.to_string())
+            .flag("--branch", req.branch.to_string())
+            .flag("--item", req.item.to_string())
+            .flag("--question", &req.question)
+            .flag("--pr-url", &req.pr_url)
+            .flag("--pr-number", req.pr_number.to_string())
+            .flag("--tasks-dir", self.home.as_path().join("tasks"));
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
     }
 
     /// Lists open investigations (pending or in progress).
