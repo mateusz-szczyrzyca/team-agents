@@ -34,6 +34,8 @@ pub use recovery::{
     Recovery, RecoveryDestination, RecoveryError, RecoveryInstallation, RecoveryPhase, RecoveryPreparation,
 };
 #[cfg(test)]
+mod account_hold_tests;
+#[cfg(test)]
 mod account_pause_tests;
 #[cfg(test)]
 mod commit_cut_tests;
@@ -154,6 +156,9 @@ pub struct State {
     /// The accounts whose provider refused a run and no run of their agents starts before the time of their pause; an
     /// account without an entry is not paused.
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// The tasks the pause of their account holds: the daemon paused them for it, so only the end of that pause wakes
+    /// them, never a pause of the human. A task without an entry is not held.
+    account_held: BTreeSet<TaskId>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -187,6 +192,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no account is paused.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     accounts: &'a BTreeMap<crate::config::AccountName, AccountPause>,
+    /// See [`State`]; omitted when the pause of no account holds a task.
+    #[serde(skip_serializing_if = "BTreeSet::is_empty")]
+    account_held_tasks: &'a BTreeSet<TaskId>,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -212,6 +220,7 @@ impl Serialize for State {
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
             accounts: &self.accounts,
+            account_held_tasks: &self.account_held,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -228,6 +237,7 @@ impl PartialEq for State {
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
             && self.accounts == other.accounts
+            && self.account_held == other.account_held
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -260,6 +270,9 @@ struct StateWire {
     /// Optional in state written before the pauses of accounts were persisted.
     #[serde(default)]
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// Optional in state written before the tasks held by the pause of an account were persisted.
+    #[serde(default)]
+    account_held_tasks: BTreeSet<TaskId>,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -451,6 +464,26 @@ impl State {
         }
     }
 
+    /// The paused accounts with their pauses, in the order of the account names.
+    pub fn account_pauses(&self) -> impl Iterator<Item = (&crate::config::AccountName, &AccountPause)> {
+        self.accounts.iter()
+    }
+
+    /// Records that the pause of an account holds `task`: the daemon paused it for that pause.
+    pub fn hold_task_for_account(&mut self, task: TaskId) {
+        let _ = task;
+    }
+
+    /// Records that no pause of an account holds `task` any more.
+    pub fn release_task_from_account(&mut self, task: &TaskId) {
+        let _ = task;
+    }
+
+    /// The tasks the pause of an account holds, in the order of their IDs.
+    pub fn tasks_held_by_account(&self) -> impl Iterator<Item = &TaskId> {
+        self.account_held.iter()
+    }
+
     /// Until when the agent is refused by its provider, `None` when it is not refused at all.
     #[must_use]
     pub fn refused_until(&self, agent: &crate::ids::AgentName) -> Option<Timestamp> {
@@ -535,6 +568,7 @@ impl State {
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
             accounts: BTreeMap::new(),
+            account_held: BTreeSet::new(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -1061,6 +1095,7 @@ impl State {
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
         self.limit_refusals.retain(|task, _| !tasks.contains(task));
         self.commit_cuts.retain(|task, _| !tasks.contains(task));
+        self.account_held.retain(|task| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
     }
@@ -1226,6 +1261,7 @@ impl TryFrom<StateWire> for State {
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
             accounts: wire.accounts,
+            account_held: wire.account_held_tasks,
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };
