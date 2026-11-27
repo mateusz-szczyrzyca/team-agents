@@ -14,7 +14,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ### Enhancements
 - [agent-core] Agents are told when to leave a finding about files and when to resolve one.
 
-## agent 0.147.0 · agent-core 0.146.0 · agent-runtime 0.135.0 — 27.11.2026 — PR pending
+## agent 0.147.0 · agent-core 0.146.0 · agent-runtime 0.135.0 — 27.11.2026 — PR #357
 
 ### New features
 - [agent] [agent-runtime] An agent that works on files another agent left a finding about (a flaky test, a trap in the code, a tool's behaviour) is shown it once, at the start of its run.
