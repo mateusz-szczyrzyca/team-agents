@@ -1221,6 +1221,14 @@ home that cannot be read are not judged (the last one says so). Only the guard's
 (`--amend` and its abbreviations, a value of `-m` is not an option); an alias that hides `--amend` in its definition is
 judged as a new commit. `git commit --no-verify` skips the hook; the checks
 before the review find the commit then, as before.
+**Every commit names the step it serves.** The plan of a task of an item says which requirement each step serves: the
+harness numbers the item's requirements when it gives the item to the agent (`R1`, `R2`, ... for the bullets of its
+`Expected result:`, `K1`, `K2`, ... for its `Checks:`), and a step carries a `For: R1, K2` line in `.agent/plan.md`
+([`docs/plan.md`](docs/plan.md)). A run that ends `STATUS: DONE` with a step that is not given up and names no requirement,
+or one the item does not have, is sent back for its plan (counted by `[plan] bounces` like the other corrections). A plan
+with no `For:` line that was started before this version reads as before. In the worktree of a task whose plan has `For:` lines
+the same `commit-msg` hook refuses a commit whose message has no `Step: N.M` line naming a step of the plan — `RED:`,
+`TEST-FIX:` and merge commits too — and tells the agent what to add. The commits the harness itself makes are not checked.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
 ### The gate

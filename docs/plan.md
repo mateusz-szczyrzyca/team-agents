@@ -18,6 +18,7 @@ Finish the guide, then publish it.           the intent: every line before the f
 [ ] 1.1 Write the outline                   a step: "[mark] N.M Title"
     Files: docs/plan.md, src/a.rs            at most one: the paths the step is about
     Check: exists docs/plan.md              at most one: how it is shown to be done
+    For: R1, K2                             at most one: the requirements of the item the step serves
     Start with the audience.                the rest of the text is the step's note
 [>] 1.2 Write the first draft
 2. Publish
@@ -67,6 +68,12 @@ stage here, and what it calls an item is a step. A plan has no `Coordinator:` or
   `delegate` (one result, named files, a check a machine runs) instead of doing it. Only the exact line
   `By: worker` is the mark; any other line that starts with `By:` is a note like any other, and a plan without the
   line is done by its holder, step by step, as before. The mark stays in the note, so the plan writes it back.
+- **`For:`** — at most one line of the text: `For:` and then the requirements of the task's item that the step serves,
+  separated by commas (`For: R1, K2`). The harness numbers them when it gives the item to an agent: the top-level
+  bullets of the item's `Expected result:` are `R1`, `R2`, ... and the lines of its `Checks:` keep their `K1`, `K2`, ...
+  (a check line with no number gets the next free one; an item with neither part has one requirement, `R1`, its
+  title). `For:` stays in the note, so the plan writes it back; a `For:` line with nothing after it, or with a word that
+  is no `R<n>` or `K<n>`, is an error of the plan. `Item::requirements()` lists them.
 
 Two words of a `Check:` line are not commands, and how a command is told from them:
 
@@ -185,6 +192,18 @@ four reasons, in this order, each with its own text of the catalog (`prompts/har
 | unreadable | it does not parse | the error with its line, as the table of [Errors](#errors) gives it |
 | lost step | a step that any version kept from an earlier run had is gone, or its ID names another step than in the newest of them — so the same plan handed in again after a send-back for a lost step goes back again | the step IDs, and that a step is given up, never deleted |
 | unfinished | a step is to do (`[ ]`) or in hand (`[>]`) | the step IDs, and to finish them or give them up with a reason |
+| no requirement | a step that is not given up has no `For:` line, or names a requirement the item does not have | the step IDs of each kind and the requirements the item has |
+
+The "no requirement" send-back is for a task of an item that was created under numbered requirements (the marker
+`requirements_tied` of its plan in `state.json`). A task created before is checked only once a step of its plan has a
+`For:` line; a plan with no `For:` line, written before this rule, reads as before: its steps count as "not tied to a
+requirement".
+
+**Commits name their step.** In the worktree of a lead, a member or a solo agent whose plan has `For:` lines, the commit
+hook (`agent guard-commit`, [`docs/architecture.md`](architecture.md)) refuses a commit whose message has no `Step: N.M`
+line of its own naming a step of the plan, and tells the agent what to add (`prompts/harness/run/commit-refused-step.md`).
+`RED:`, `GREEN:`, `TEST-FIX:` and merge commits name a step as well; commits the harness makes itself are not checked, nor
+are those a cherry-pick, a revert or a rebase replays.
 
 A run that ends with another status is recorded and never sent back for its plan. **A coordinator** also ends a turn
 with `STATUS: DONE` after it integrated one member while others work: its `DONE` is judged by its plan only when no
