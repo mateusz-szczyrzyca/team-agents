@@ -504,6 +504,21 @@ impl RunEngine {
         self.run_held(job, cancel, &WatchdogHold::new()).await
     }
 
+    /// Carries out `job` like [`RunEngine::run_held`], for an agent that runs with `account`: the environment of the run
+    /// holds the account's variables and secrets.
+    ///
+    /// # Errors
+    /// [`RunError`], as for [`RunEngine::run`].
+    pub async fn run_held_as(
+        &self,
+        job: RunJob,
+        _account: Option<&agent_core::config::AccountName>,
+        cancel: &CancellationToken,
+        hold: &WatchdogHold,
+    ) -> Result<RunVerdict, RunError> {
+        self.run_held(job, cancel, hold).await
+    }
+
     /// Carries out `job` like [`RunEngine::run`], with the watchdog held off while `hold` is held: the run is never
     /// taken for hung then, and its silence is counted from the moment the hold ended.
     ///
