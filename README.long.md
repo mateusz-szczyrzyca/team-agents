@@ -1409,8 +1409,7 @@ highest numeric ID. `[findings] max_shown` (default `8`, range `1–20`) limits 
 range `500–10000`) limits the sum of the texts' character lengths by removing findings from the end. Repository-wide
 environment findings match every run. Run paths may contain spaces or exceed the bus finding-input path limit;
 backtick path extraction still excludes tokens containing whitespace. Finding text line breaks become spaces in the
-rendered section, so each finding occupies one line. These settings and the findings prompt are available for the daemon wiring
-to follow separately; this support does not yet inject findings into run prompts.
+rendered section, so each finding occupies one line.
 
 ### Durable findings delivery
 
@@ -1421,7 +1420,7 @@ have already found. The agent's own findings and findings that are already resol
 The findings are selected according to the `[findings]` configuration section: `keep_days` controls which findings are
 fresh enough to be considered (default 30 days, range 0-365 days), `max_shown` limits how many findings are displayed
 (default 8, range 1-20), and `max_chars` limits the total character count of all findings text (default 3000,
-range 500-10000). The selection algorithm prioritizes findings by recency and relevance to the files being worked on.
+range 500-10000). The selection algorithm prioritizes path relevance, then recency and numeric finding ID.
 
 The selected findings are shown only once per task, even across daemon restarts. The harness records which findings
 were shown in a task file (`findings-shown.json`) so that they won't be repeated in subsequent runs of the same task.
