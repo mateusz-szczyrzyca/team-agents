@@ -318,7 +318,9 @@ async fn conflict_investigator_answer(path: &std::path::Path) -> Result<String, 
             "An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:\n{}",
             file.text
         )),
-        None => Ok(String::new()),
+        None => Err(SectionError::MissingInvestigationAnswer {
+            path: path.to_path_buf(),
+        }),
     }
 }
 
