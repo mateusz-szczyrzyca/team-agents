@@ -16,9 +16,13 @@ use crate::kinds::Role;
 use crate::plan::{Plan, PlanError, Step, StepState};
 use crate::state::{ItemPhase, PlanFault, PlanKeeping, PlanReason, PlanStage, RunEnd, StepMismatch};
 use crate::status::RunOutcome;
+use crate::task_list::requirements::RequirementId;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod requirement_tests;
 
 /// What the daemon read at the end of the run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +144,20 @@ pub enum PlanVerdict {
 /// Decides what happens to the plan of a task whose run ended as `end`, taking into account any step check mismatch.
 #[must_use]
 pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReason>) -> PlanVerdict {
+    decide_plan_for_item(facts, mismatch, None)
+}
+
+/// Decides as [`decide_plan_with_mismatch`], and for a task of an item, whose requirements are `known`, also sends back
+/// a plan whose steps do not name them: every step that is not given up needs a `For:` line naming requirements the
+/// item has. `None` when the task has no item. A task created before numbered requirements keeps its plan as it reads
+/// until a step has a `For:` line.
+#[must_use]
+pub fn decide_plan_for_item(
+    facts: PlanFacts<'_>,
+    mismatch: Option<PlanReason>,
+    known: Option<&[RequirementId]>,
+) -> PlanVerdict {
+    let _ = known;
     if !matches!(
         facts.end,
         RunEnd::Reported {

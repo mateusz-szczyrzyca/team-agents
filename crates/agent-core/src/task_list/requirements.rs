@@ -8,6 +8,8 @@ use std::fmt;
 use std::num::NonZeroU16;
 use std::str::FromStr;
 
+use serde::{Deserialize, Serialize};
+
 use super::Item;
 
 /// Which part of an item a requirement comes from.
@@ -30,7 +32,8 @@ impl RequirementKind {
 }
 
 /// The number of a requirement of an item, written `R3` or `K2`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
 pub struct RequirementId {
     /// The part of the item it comes from.
     kind: RequirementKind,
@@ -70,6 +73,20 @@ impl fmt::Display for RequirementId {
 pub struct InvalidRequirementId {
     /// The text that was refused.
     pub value: String,
+}
+
+impl TryFrom<String> for RequirementId {
+    type Error = InvalidRequirementId;
+
+    fn try_from(text: String) -> Result<Self, Self::Error> {
+        text.parse()
+    }
+}
+
+impl From<RequirementId> for String {
+    fn from(id: RequirementId) -> Self {
+        id.to_string()
+    }
 }
 
 impl FromStr for RequirementId {

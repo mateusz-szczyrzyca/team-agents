@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::run::RunEnd;
 use crate::decide::outcome::Pause;
 use crate::ids::{ItemId, RunId};
+use crate::task_list::requirements::RequirementId;
 
 /// The record of a finished run whose plan checks or settlement are in progress (`docs/state.md`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,6 +91,15 @@ pub enum PlanReason {
         #[serde(default)]
         tail: String,
     },
+    /// Steps that are not given up name no requirement of the item in their `For:` line, or name one it does not have.
+    NoRequirement {
+        /// The steps with no `For:` line, in the order of the plan.
+        without: Vec<ItemId>,
+        /// The steps that name a requirement the item does not have, in the order of the plan.
+        unknown: Vec<ItemId>,
+        /// The requirements the item has, in order: `R1`, ..., `K1`, ....
+        known: Vec<RequirementId>,
+    },
     /// Both a plan fault (`LostStep` or `Unfinished`) and a step check [`Self::Mismatch`] occurred on the same run.
     FaultAndMismatch {
         /// The structural plan fault (`LostStep` or `Unfinished`).
@@ -161,6 +171,11 @@ pub struct PlanKeeping {
     /// mismatch. Tasks created between `0.35.0` and `#163` have a plan record without this marker.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     judging: bool,
+    /// Whether the task was created under numbered requirements: its plan names the requirements of its item in `For:`
+    /// lines, and a run that reports `DONE` with a step that names none is sent back. A task created before has no
+    /// marker and is sent back only once its plan has a `For:` line.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    requirements_tied: bool,
     /// The reason of a send-back the next run of the task delivers; `None` when none waits, and not written then.
     #[serde(skip_serializing_if = "Option::is_none")]
     pending: Option<PlanReason>,
@@ -181,8 +196,15 @@ impl PlanKeeping {
     pub fn new() -> Self {
         Self {
             judging: true,
+            requirements_tied: true,
             ..Self::default()
         }
+    }
+
+    /// Whether the task was created under numbered requirements, so that every step of its plan must name one.
+    #[must_use]
+    pub const fn requirements_tied(&self) -> bool {
+        self.requirements_tied
     }
 
     /// Whether the task was created under step judging (`#163` or newer) and therefore bounces on a step check
