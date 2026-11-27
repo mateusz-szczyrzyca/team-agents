@@ -21,6 +21,7 @@ pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, c
     Debug,
     Clone,
     Copy,
+    Default,
     PartialEq,
     Eq,
     Hash,
@@ -35,7 +36,9 @@ pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, c
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<CheckpointJob>)]
 pub enum CheckpointJob {
-    /// An item of a task list: a lead, a member, a solo agent or a coordinator working on its round.
+    /// An item of a task list: a lead, a member, a solo agent or a coordinator working on its round. The job of a record that
+    /// names none: those written before the other jobs had checkpoints are all items.
+    #[default]
     Item,
     /// A request a worker serves for a member.
     WorkerRequest,
@@ -43,13 +46,6 @@ pub enum CheckpointJob {
     Review,
     /// An investigation.
     Investigation,
-}
-
-impl Default for CheckpointJob {
-    /// The job of a record that names none: those written before the other jobs had checkpoints are all items.
-    fn default() -> Self {
-        Self::Review
-    }
 }
 
 impl Keyword for CheckpointJob {

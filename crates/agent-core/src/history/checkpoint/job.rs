@@ -4,6 +4,7 @@
 //! meant is the request, the pull request under review or the question; what is done is what the worktree holds; what is
 //! left is what the job still has to do, and `next:` says what that is.
 
+use super::state::{cut, one_line};
 use super::{CheckpointContent, CommitLine};
 use crate::ids::ItemId;
 use crate::state::PrNumber;
@@ -60,33 +61,111 @@ pub enum JobWork<'a> {
 /// What is meant by a worker's request: its text, and its check when it names one.
 #[must_use]
 pub fn request_meant(request: &str, check: Option<&str>) -> String {
-    let _ = (request, check);
-    String::new()
+    let mut lines = vec![format!("R1. {request}")];
+    lines.extend(check.map(|check| format!("{CHECK_LABEL}{check}")));
+    lines.join("\n")
 }
 
 /// What is meant by a review: the pull request at its head and the pass, against the requirements of its item.
 #[must_use]
 pub fn review_meant(pull_request: PrNumber, head: &str, pass: u32, item: &ReviewedItem<'_>) -> String {
-    let _ = (pull_request, head, pass, item);
-    String::new()
+    let mut lines = vec![format!(
+        "R1. Review pull request #{pull_request} at head {head}, pass {pass}, against the requirements of item {} ({}):",
+        item.id, item.title
+    )];
+    lines.extend(
+        item.requirements
+            .iter()
+            .map(|requirement| format!("- {}. {}", requirement.id, requirement.text)),
+    );
+    lines.join("\n")
 }
 
 /// What is meant by an investigation: the question of the request.
 #[must_use]
 pub fn investigation_meant(question: &str) -> String {
-    let _ = question;
-    String::new()
+    format!("R1. Answer the question: {question}")
 }
+
+/// The start of the line of a request's check in what is meant.
+const CHECK_LABEL: &str = "K1. ";
 
 /// The three parts of the checkpoint of a job whose `meant` part is `meant`, with `work` done so far.
 #[must_use]
 pub fn job_content(meant: String, work: &JobWork<'_>) -> CheckpointContent {
-    let _ = work;
-    CheckpointContent {
-        meant,
-        done: String::new(),
-        left: String::new(),
+    let (done, left) = match work {
+        JobWork::Request {
+            last_check,
+            commits,
+            changed,
+        } => (
+            request_done(*last_check, commits, changed),
+            request_left(last_check.is_some_and(|result| result.passed), has_check(&meant)),
+        ),
+        JobWork::Review { pass, findings } => (
+            review_done(findings),
+            format!("next: finish the review of pass {pass} and submit it with a verdict"),
+        ),
+        JobWork::Investigation { commits, changed } => (
+            work_lines(commits, changed).join("\n"),
+            "next: answer the question".to_owned(),
+        ),
+    };
+    CheckpointContent { meant, done, left }
+}
+
+/// Whether `meant` is of a request that names a check.
+fn has_check(meant: &str) -> bool {
+    meant.lines().any(|line| line.starts_with(CHECK_LABEL))
+}
+
+/// The lines that tell the commits and the changed files of a worktree.
+fn work_lines(commits: &[CommitLine], changed: &[String]) -> Vec<String> {
+    let mut lines = vec![format!("Commits: {}", commits.len())];
+    lines.extend(cut(commits.iter().map(|commit| format!("- {}", commit.id)).collect()));
+    lines.push(if changed.is_empty() {
+        "Changed files: none".to_owned()
+    } else {
+        format!("Changed files: {}", changed.join(", "))
+    });
+    lines
+}
+
+/// What a worker's request has done: the work of its worktree and how its check last ran.
+fn request_done(last_check: Option<CheckResult<'_>>, commits: &[CommitLine], changed: &[String]) -> String {
+    let mut lines = work_lines(commits, changed);
+    lines.push(match last_check {
+        None => "Check: not run yet".to_owned(),
+        Some(result) => format!(
+            "Check: {} — {}",
+            if result.passed { "passed" } else { "failed" },
+            one_line(result.line)
+        ),
+    });
+    lines.join("\n")
+}
+
+/// What is left of a worker's request: its check, until it passes.
+fn request_left(passed: bool, checked: bool) -> String {
+    match (checked, passed) {
+        (true, true) => "Nothing is left of the request: its check passed.\nnext: report the result".to_owned(),
+        (true, false) => "K1 has not passed yet.\nnext: make the check pass and commit".to_owned(),
+        (false, _) => "R1 is not met yet.\nnext: do what the request asks and commit".to_owned(),
     }
+}
+
+/// What a review has done: the findings its file holds, counted by their numbers.
+fn review_done(findings: &str) -> String {
+    let written = findings.lines().filter(|line| is_finding_line(line)).count();
+    let mut lines = vec![format!("Findings written so far: {written}")];
+    lines.extend(cut(findings.lines().map(str::to_owned).collect()));
+    lines.join("\n")
+}
+
+/// Whether `line` starts a finding of a report: a number and a full stop.
+fn is_finding_line(line: &str) -> bool {
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    digits > 0 && line.chars().nth(digits) == Some('.')
 }
 
 #[cfg(test)]
