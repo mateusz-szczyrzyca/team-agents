@@ -137,14 +137,80 @@ impl Item {
     /// around the requirements is kept; `None` when the item has no expected result.
     #[must_use]
     pub fn expected_numbered(&self) -> Option<String> {
-        None
+        let text = self.expected_result.as_deref()?;
+        let ids = self.ids_of(RequirementKind::Result);
+        Some(number_text(text, &ids, Otherwise::FirstLine))
     }
 
     /// The checks with each line written with its number: `K1. text`; `None` when the item has no checks.
     #[must_use]
     pub fn checks_numbered(&self) -> Option<String> {
-        None
+        let text = self.checks.as_deref()?;
+        let ids = self.ids_of(RequirementKind::Check);
+        Some(number_text(text, &ids, Otherwise::EveryLine))
     }
+
+    /// The numbers of the requirements of one part, in order.
+    fn ids_of(&self, kind: RequirementKind) -> Vec<RequirementId> {
+        self.requirements()
+            .into_iter()
+            .map(|requirement| requirement.id)
+            .filter(|id| id.kind() == kind)
+            .collect()
+    }
+}
+
+/// Where requirements start in a text with no bullet.
+#[derive(Debug, Clone, Copy)]
+enum Otherwise {
+    /// The first non-blank line: the whole text is one requirement.
+    FirstLine,
+    /// Every non-blank line.
+    EveryLine,
+}
+
+/// Which lines of `text` start a requirement, in order of the lines.
+fn starts(text: &str, otherwise: Otherwise) -> Vec<bool> {
+    let top = text
+        .lines()
+        .filter(|line| bullet_text(line).is_some())
+        .map(super::indentation)
+        .min();
+    let mut seen_first = false;
+    text.lines()
+        .map(|line| {
+            if let Some(top) = top {
+                return bullet_text(line).is_some() && super::indentation(line) == top;
+            }
+            let starts = !line.trim().is_empty()
+                && match otherwise {
+                    Otherwise::FirstLine => !seen_first,
+                    Otherwise::EveryLine => true,
+                };
+            seen_first |= starts;
+            starts
+        })
+        .collect()
+}
+
+/// `text` with the lines that start a requirement written as `<id>. <text>`, a `K` label of the line dropped; the other
+/// lines are kept as they are. Lines that start a requirement beyond the `ids` are kept as they are.
+fn number_text(text: &str, ids: &[RequirementId], otherwise: Otherwise) -> String {
+    let mut ids = ids.iter();
+    let mut out: Vec<String> = Vec::new();
+    for (line, starts) in text.lines().zip(starts(text, otherwise)) {
+        let id = if starts { ids.next() } else { None };
+        match id {
+            Some(id) => {
+                let indent: String = line.chars().take_while(|c| c.is_whitespace()).collect();
+                let body = bullet_text(line).unwrap_or_else(|| line.trim());
+                let body = split_label(body.trim()).1;
+                out.push(format!("{indent}{id}. {body}"));
+            }
+            None => out.push(line.to_owned()),
+        }
+    }
+    out.join("\n")
 }
 
 /// The texts `results` as the requirements `R1`, `R2`, ... in order.
