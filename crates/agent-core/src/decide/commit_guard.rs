@@ -9,7 +9,7 @@
 use crate::config::Checks;
 use crate::decide::checks::{Change, CommitFacts, FileChange, Lines, RED_PREFIX, TEST_FIX_PREFIX};
 use crate::ids::ItemId;
-use crate::plan::Plan;
+use crate::plan::{Plan, Step};
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
@@ -151,9 +151,37 @@ pub enum StepVerdict {
 /// lines, the message ends in a `Step: N.M` trailer that names a step of the plan.
 #[must_use]
 pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
-    let _ = (plan, message);
-    StepVerdict::Allowed
+    if !plan.ties_requirements() {
+        return StepVerdict::Allowed;
+    }
+    let steps = || plan.steps().map(Step::id).collect::<Vec<_>>();
+    let named: Vec<&str> = message.lines().filter_map(step_trailer).collect();
+    if named.is_empty() {
+        return StepVerdict::Refused(StepRefusal::Missing { steps: steps() });
+    }
+    let unknown: Vec<String> = named
+        .into_iter()
+        .filter(|text| !text.parse::<ItemId>().is_ok_and(|id| plan.step(&id).is_some()))
+        .map(str::to_owned)
+        .collect();
+    if unknown.is_empty() {
+        StepVerdict::Allowed
+    } else {
+        StepVerdict::Refused(StepRefusal::NotInPlan {
+            named: unknown,
+            steps: steps(),
+        })
+    }
 }
+
+/// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
+/// that only mentions the word are no trailer.
+fn step_trailer(line: &str) -> Option<&str> {
+    line.strip_prefix(STEP_TRAILER).map(str::trim)
+}
+
+/// What starts the trailer of a commit message that names the step of the plan the commit belongs to.
+const STEP_TRAILER: &str = "Step:";
 
 /// What `file`, which takes lines out of its file, takes out of it.
 const fn taken_by(file: &FileChange) -> Taken {
