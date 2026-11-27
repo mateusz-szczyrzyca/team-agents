@@ -353,6 +353,15 @@ case $action in
       result 'Complete commands\nSTATUS: DONE'
     fi
     ;;
+  inv-retry-notes)
+    # Only the first investigator fails, after it left a note in its worktree; its replacement supplies a complete answer.
+    if mkdir "$home/.fake-investigation-notes"; then
+      printf 'what the first investigator found\n' > notes.md
+      result 'Private résumé\nSTATUS: FAILED'
+    else
+      result 'Complete commands\nSTATUS: DONE'
+    fi
+    ;;
   inv-fail) result 'Private résumé\nSTATUS: FAILED' ;;
   inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)

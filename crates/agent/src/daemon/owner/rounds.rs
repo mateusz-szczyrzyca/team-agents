@@ -1130,3 +1130,7 @@ mod briefing_checkpoint_tests;
 #[cfg(test)]
 #[path = "rounds/tests/resume_checkpoint.rs"]
 mod resume_checkpoint_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/job_checkpoints.rs"]
+mod job_checkpoints_tests;
