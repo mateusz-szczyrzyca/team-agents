@@ -550,7 +550,8 @@ Each is derived or lives elsewhere, so that there is one place for it:
   result: `{"request": n, "team", "requester", "requester_task", "worker", "worker_task", "summary", "run_seconds", "base",
   "stage": {"stage": "ended" | "checked" | "settled", ...}}`. `checked` holds what the request asked, the worker's commit, the
   files outside the request's `files` and what the check found; `settled` adds what became of the result (`report`, `brought`
-  with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons). The daemon removes the
+  with the commit on the requester's branch, `conflict` with the files, `returned` with the reasons of its one result, `returned_after_tries` with the reasons of every
+  try, each named by its try — written from agent 0.144.0; an older daemon refuses that file and sets it aside). The daemon removes the
   file when the requester is told. A daemon that starts finds the files of the team's workers and goes on from their
   stages; an unknown field is refused, and a file that is refused, cut short or cannot be read is set aside as
   `worker-request-<n>.json.damaged` (kept, never read again), logged (`worker_request_damaged`, with its name) and its request is

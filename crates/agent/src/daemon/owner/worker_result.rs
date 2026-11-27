@@ -1248,7 +1248,9 @@ impl Owner {
         // the worker's failure.
         match settlement {
             Settlement::Report | Settlement::Brought { .. } => self.pool_dispatch.turns.succeeded(&pending.worker),
-            Settlement::Returned { .. } | Settlement::Again { .. } => self.pool_dispatch.turns.failed(&pending.worker),
+            Settlement::Returned { .. } | Settlement::ReturnedAfterTries { .. } | Settlement::Again { .. } => {
+                self.pool_dispatch.turns.failed(&pending.worker);
+            }
             Settlement::Conflict { .. } => {}
         }
         if let Some(outcome) = self.settle_owned_request(pending, status, &summary, &notice).await? {
@@ -1348,9 +1350,25 @@ impl Owner {
                     &files.join(", "),
                 )?,
             ),
+            Settlement::ReturnedAfterTries { reasons } => (
+                DelegationStatus::Failed,
+                crate::daemon::team::worker_step_returned(
+                    texts,
+                    pending.request,
+                    &step,
+                    reasons,
+                    crate::daemon::team::StepResults::EveryTry,
+                )?,
+            ),
             Settlement::Returned { reasons } | Settlement::Again { reasons } => (
                 DelegationStatus::Failed,
-                crate::daemon::team::worker_step_returned(texts, pending.request, &step, reasons)?,
+                crate::daemon::team::worker_step_returned(
+                    texts,
+                    pending.request,
+                    &step,
+                    reasons,
+                    crate::daemon::team::StepResults::One,
+                )?,
             ),
         };
         let notice = match status {

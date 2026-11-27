@@ -359,7 +359,17 @@ pub(in crate::daemon) fn worker_result_conflict(
     Ok(texts.render(TeamPrompt::WorkerResultConflict, &values)?)
 }
 
-/// The text that gives a step back to the requester: every reason a result was wrong, one on a line.
+/// Which results of a request a step given back is told with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::daemon) enum StepResults {
+    /// The one result of the request's only try.
+    One,
+    /// The results of every try, each named by its try.
+    EveryTry,
+}
+
+/// The text that gives a step back to the requester, worded for `results`: every reason a result was wrong, one on a
+/// line.
 ///
 /// # Errors
 /// [`NoticeRenderError`].
@@ -368,13 +378,18 @@ pub(in crate::daemon) fn worker_step_returned(
     request: RequestId,
     step: &str,
     reasons: &[String],
+    results: StepResults,
 ) -> Result<String, NoticeRenderError> {
     let listed: Vec<String> = reasons.iter().map(|reason| format!("- {reason}")).collect();
     let values = Variables::new()
         .with("request_id", request.number().to_string())?
         .with("step", step)?
         .with("reasons", listed.join("\n"))?;
-    Ok(texts.render(TeamPrompt::WorkerStepReturned, &values)?)
+    let prompt = match results {
+        StepResults::One => TeamPrompt::WorkerStepReturnedOnce,
+        StepResults::EveryTry => TeamPrompt::WorkerStepReturned,
+    };
+    Ok(texts.render(prompt, &values)?)
 }
 
 /// The text that returns to the requester a request that no worker of the pool took for `minutes` whole minutes.

@@ -180,7 +180,9 @@ impl Owner {
         }
         let task_dir = self.parts.store.home().task_dir(&pending.worker_task);
         match read_try(&task_dir, pending.request) {
-            Ok(tried) => Settlement::Returned {
+            // Only a request with earlier tries has the reasons of more than one result to tell.
+            Ok(tried) if tried.earlier.is_empty() => Settlement::Returned { reasons },
+            Ok(tried) => Settlement::ReturnedAfterTries {
                 reasons: reasons_by_try(&tried, &reasons),
             },
             Err(error) => {
