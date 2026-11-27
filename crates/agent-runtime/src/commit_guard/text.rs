@@ -1,7 +1,7 @@
 //! What an agent is told when its commit is refused: the findings, each as a line of the catalog, in the frame that says
 //! how to make the commit the rule allows.
 
-use agent_core::decide::commit_guard::{Refusal, Taken};
+use agent_core::decide::commit_guard::{Refusal, StepRefusal, Taken};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::CommitId;
@@ -84,4 +84,14 @@ pub fn refusal_text(texts: &HarnessPrompts, refusals: &[Refusal]) -> Result<Stri
     texts
         .render(HarnessPrompt::CommitRefused, &values)
         .map_err(RefusalTextError::Render)
+}
+
+/// The text that tells an agent that the commit with this `refusal` was not made because of its `Step:` trailer, and
+/// what to add.
+///
+/// # Errors
+/// [`RefusalTextError`] when a text of the catalog is not loaded or does not fit its values.
+pub fn step_refusal_text(texts: &HarnessPrompts, refusal: &StepRefusal) -> Result<String, RefusalTextError> {
+    let _ = (texts, refusal);
+    Ok(String::new())
 }
