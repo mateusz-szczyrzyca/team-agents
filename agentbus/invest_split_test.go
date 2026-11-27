@@ -113,3 +113,39 @@ func TestLegacyQuestionPreservesContext(t *testing.T) {
 		}
 	})
 }
+
+func TestSplitRequestRejectsMalformedItem(t *testing.T) {
+	for _, kind := range []string{"split", "conflict"} {
+		for _, item := range []string{"opaque", "1", "1.2.3", ".1", "1.", "0.1", "1.0", "01.1", "1.01", "65536.1", "1.65536", "-1.1", "+1.1", "１.1", "1. 1"} {
+			t.Run(kind+"/"+item, func(t *testing.T) {
+				s := splitRequester(t, "lead")
+				_, err := s.callTool("request_investigation", map[string]any{"question": "Help", "kind": kind, "item": item})
+				var denied *RequestInvestigationError // invalid items must never enter the queue
+				if !errors.As(err, &denied) || denied.Cause != RequestInvestigationInvalidItem {
+					t.Fatalf("got %v, want RequestInvestigationInvalidItem", err)
+				}
+				mustWith(t, s.bus, func(st *State) {
+					if len(st.Investigations) != 0 {
+						t.Fatalf("invalid request was queued: %+v", st.Investigations)
+					}
+				})
+			})
+		}
+	}
+}
+
+func TestSplitRequestAcceptsItemBounds(t *testing.T) {
+	for _, kind := range []string{"split", "conflict"} {
+		for _, item := range []string{"1.1", "65535.65535"} {
+			s := splitRequester(t, "lead")
+			if _, err := s.callTool("request_investigation", map[string]any{"question": "Help", "kind": kind, "item": item}); err != nil {
+				t.Fatal(err)
+			}
+			mustWith(t, s.bus, func(st *State) {
+				if inv := st.Investigations["1"]; inv == nil || inv.Item != item {
+					t.Fatalf("item changed: %+v", inv)
+				}
+			})
+		}
+	}
+}

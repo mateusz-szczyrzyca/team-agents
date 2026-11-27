@@ -265,6 +265,7 @@ const (
 	RequestInvestigationMissingQuestion                                  // the question is missing [InvalidArgument]
 	RequestInvestigationNotLead                                          // a split or conflict request was not made by the team lead [Permission]
 	RequestInvestigationMissingItem                                      // a split or conflict request has no item [InvalidArgument]
+	RequestInvestigationInvalidItem                                      // a split or conflict item is not two positive 16-bit numbers without leading zeros [InvalidArgument]
 	RequestInvestigationInvalidKind                                      // the request kind is unknown [InvalidArgument]
 	RequestInvestigationStorage                                          // the shared state or a file could not be read or written [Storage]
 )
@@ -279,6 +280,7 @@ var requestInvestigationCauses = [...]causeInfo{
 	{"MissingQuestion", ClassInvalidArgument},
 	{"NotLead", ClassPermission},
 	{"MissingItem", ClassInvalidArgument},
+	{"InvalidItem", ClassInvalidArgument},
 	{"InvalidKind", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
