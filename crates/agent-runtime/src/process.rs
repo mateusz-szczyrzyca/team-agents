@@ -882,6 +882,23 @@ mod tests {
         assert_eq!(Path::new(printed.trim_end()), dir.path().canonicalize().unwrap());
     }
 
+    // Rule: `PWD` names the working directory, not the directory of the daemon. A CLI that takes its directory from
+    // `PWD` before `getcwd` (opencode) otherwise works in the daemon's directory (issue #352). `printenv`, not a
+    // shell: a shell repairs a wrong `PWD` when it starts.
+    #[tokio::test]
+    async fn pwd_names_the_working_directory_not_the_daemons() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let mut process = supervisor()
+            .spawn(&spec(dir.path(), "printenv", &["PWD"]))
+            .await
+            .unwrap();
+        process.wait().await.unwrap();
+
+        let printed = read(&dir.path().join("out"));
+        assert_eq!(Path::new(printed.trim_end()), dir.path());
+    }
+
     // Rule: the variables of the spec are added to the environment, and the others stay.
     #[tokio::test]
     async fn the_environment_is_added_to_the_inherited_one() {
