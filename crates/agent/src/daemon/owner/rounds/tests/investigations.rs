@@ -931,3 +931,132 @@ async fn a_split_completion_reports_the_task_allocation() {
         activity.outcome()
     );
 }
+
+#[tokio::test]
+async fn the_conflict_investigators_worktree_is_at_the_pull_requests_tip() {
+    use super::rig::git;
+    use agent_core::state::ItemPhase;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "integrate,integrate,inv-conflict,sleep"),
+            normal("claude-other", "work"),
+            investigator("inv-r1", "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold"),
+            investigator("inv-r2", "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.github.answer_merges(super::fake_github::MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-other"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    let state = rig
+        .item_where("1.1", "pull request open", |phase| {
+            matches!(phase, ItemPhase::Approved { .. })
+        })
+        .await;
+    let ItemPhase::Approved { pr, .. } = state.team(&team).unwrap().item("1.1".parse().unwrap()).unwrap().phase()
+    else {
+        panic!("pull request");
+    };
+    let branch = pr.branch.as_str().to_owned();
+    let number = pr.number.to_string();
+    // Advance only the remote PR branch, proving that a stale local branch is insufficient.
+    git(&rig.repo, &["checkout", "-q", "-b", "remote-advance", &branch]);
+    git(
+        &rig.repo,
+        &["commit", "--allow-empty", "-q", "-m", "Advance PR remotely"],
+    );
+    let expected = git(&rig.repo, &["rev-parse", "HEAD"]);
+    git(
+        &rig.repo,
+        &["push", "-q", "origin", &format!("HEAD:refs/heads/{branch}")],
+    );
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-conflict-ready"), "").unwrap();
+    let state = rig
+        .state_where("conflict investigator running", |state| {
+            state.team(&team).is_some_and(|team| {
+                team.reviewers()
+                    .iter()
+                    .any(|m| m.role() == Some(Role::Investigator) && m.status() == TaskStatus::Running)
+            })
+        })
+        .await;
+    let task = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(Role::Investigator))
+        .unwrap()
+        .task();
+    let actual = git(&rig.worktree(task), &["rev-parse", "HEAD"]);
+    let symbolic = Command::new("git")
+        .args(["symbolic-ref", "HEAD"])
+        .current_dir(rig.worktree(task))
+        .output()
+        .unwrap();
+    let prompt = rig.prompt(task, 1).await;
+    rig.stop().await.unwrap();
+    assert_eq!(actual, expected);
+    assert!(!symbolic.status.success(), "investigator must be detached");
+    for text in [
+        "1.1",
+        &number,
+        &branch,
+        "origin/main",
+        "Resolve this merge conflict",
+        "never push",
+        "resolved hunks",
+        "version",
+    ] {
+        assert!(prompt.contains(text), "missing {text:?}: {prompt}");
+    }
+}
+
+#[tokio::test]
+async fn a_conflict_request_without_a_pull_request_fails_and_tells_the_lead() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-conflict,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "hold"),
+            investigator("inv-r2", "hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    std::fs::write(rig.worktree(&tasks[0]).join(".fake-conflict-ready"), "").unwrap();
+    let bus_file = rig.home.root().join("bus/state.json");
+    rig.wait_for("conflict request handled", || {
+        let text = std::fs::read_to_string(&bus_file).unwrap();
+        let state: serde_json::Value = serde_json::from_str(&text).unwrap();
+        matches!(
+            state["investigations"]["1"]["status"].as_str(),
+            Some("running" | "failed")
+        )
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(bus_file).unwrap()).unwrap();
+    assert_eq!(state["investigations"]["1"]["status"], "failed");
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(messages.contains("pull request"), "{messages}");
+}
