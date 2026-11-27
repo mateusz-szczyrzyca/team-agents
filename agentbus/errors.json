@@ -849,6 +849,16 @@
      "name": "InvalidKind",
      "class": "InvalidArgument",
      "doc": "--kind is not an investigation kind"
+    },
+    {
+     "name": "MissingItem",
+     "class": "InvalidArgument",
+     "doc": "a conflict request has no --item"
+    },
+    {
+     "name": "InvalidItem",
+     "class": "InvalidArgument",
+     "doc": "--item is invalid or supplied for another kind"
     }
    ]
   },

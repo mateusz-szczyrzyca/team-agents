@@ -27,6 +27,7 @@ use agent_core::config::{AbsolutePath, Program, RepoName};
 use agent_core::ids::{AgentName, BranchName, ItemId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Keyword, UnknownKeyword};
 use agent_core::repo_path::RepoPath;
+use agent_core::state::PrNumber;
 use serde::de::Error as _;
 use serde::{Deserialize, Deserializer};
 use serde_json::json;
@@ -149,6 +150,8 @@ pub enum BusCommand {
     Send,
     /// `status`.
     Status,
+    /// `inv-add`.
+    InvAdd,
     /// `inv-next`.
     InvNext,
     /// `inv-set`.
@@ -1127,6 +1130,27 @@ pub struct BusStatus {
     pub reservations: Vec<String>,
 }
 
+/// A lead's request to investigate a conflict on an item pull request.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewConflictRequest {
+    /// Agent that asks for help.
+    pub from_agent: AgentName,
+    /// Lead task that owns the request.
+    pub from_task: TaskId,
+    /// Repository of the item.
+    pub repo: RepoName,
+    /// Branch of the requester.
+    pub branch: BranchName,
+    /// Task-list item whose pull request conflicts.
+    pub item: ItemId,
+    /// Specific conflict question.
+    pub question: String,
+    /// Pull request URL.
+    pub pr_url: String,
+    /// Pull request number.
+    pub pr_number: PrNumber,
+}
+
 /// The bus of one `AGENTS_HOME`, run through the `agentbus` command.
 #[derive(Debug, Clone)]
 pub struct AgentBus {
@@ -1719,6 +1743,27 @@ impl AgentBus {
     pub async fn inv_get(&self, id: NonZeroU32) -> Result<Investigation, AgentBusError> {
         let command = BusCommand::InvGet;
         let args = Args::new().flag("--id", id.to_string());
+        let output = self.run(command, args, None).await?;
+        decode_json(command, &output)
+    }
+
+    /// Files a conflict investigation and returns its new bus id.
+    ///
+    /// # Errors
+    /// [`AgentBusError`] if the command fails or prints an invalid id.
+    pub async fn inv_add_conflict(&self, req: &NewConflictRequest) -> Result<NonZeroU32, AgentBusError> {
+        let command = BusCommand::InvAdd;
+        let args = Args::new()
+            .flag("--kind", "conflict")
+            .flag("--from-agent", req.from_agent.to_string())
+            .flag("--from-task", req.from_task.to_string())
+            .flag("--repo", req.repo.to_string())
+            .flag("--branch", req.branch.to_string())
+            .flag("--item", req.item.to_string())
+            .flag("--question", &req.question)
+            .flag("--pr-url", &req.pr_url)
+            .flag("--pr-number", req.pr_number.to_string())
+            .flag("--tasks-dir", self.home.as_path().join("tasks"));
         let output = self.run(command, args, None).await?;
         decode_json(command, &output)
     }
