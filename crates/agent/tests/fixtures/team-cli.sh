@@ -313,6 +313,24 @@ case $action in
     head=$(git rev-parse HEAD)
     result "VERDICT: APPROVE\nSUMMARY: commit \`$head\`\nSTATUS: DONE"
     ;;
+  inv-retry:*)
+    # Only the first investigator fails; its replacement supplies a complete answer.
+    if mkdir "$home/.fake-investigation-attempt"; then
+      case ${action#inv-retry:} in
+        failed) result 'Private résumé\nSTATUS: FAILED' ;;
+        sleeping) result 'Private résumé\nSTATUS: SLEEPING' ;;
+        nostatus) result 'Private résumé' ;;
+        quota) printf '%s\n' 'quota exhausted' >&2; exit 1 ;;
+        rate) printf '%s\n' 'rate limit exceeded' >&2; exit 1 ;;
+        turn) printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session" ;;
+        hung) while :; do sleep 1; done ;;
+        *) exit 64 ;;
+      esac
+    else
+      result 'Complete commands\nSTATUS: DONE'
+    fi
+    ;;
+  inv-fail) result 'Private résumé\nSTATUS: FAILED' ;;
   inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)
     # OpenCode's first launch after the configuration switch fails without tools; the next session works.

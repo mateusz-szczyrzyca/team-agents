@@ -583,3 +583,154 @@ async fn the_whole_unicode_answer_is_delivered_once_with_a_200_character_summary
         )
     );
 }
+
+/// Checks reassignment, attempt privacy and provider refusal handling through the whole daemon.
+async fn check_failed_attempt_is_reassigned(scenario: &'static str, expected_end: &str) {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Retry this request,sleep"),
+            investigator("inv-r1", scenario),
+            investigator("inv-r2", scenario),
+        ],
+        1,
+        true,
+    )
+    .await;
+    if expected_end == "hung" {
+        let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+        std::fs::write(
+            rig.home.config_file(),
+            format!("{config}\n[investigations]\nanswer_minutes = 1440\n"),
+        )
+        .unwrap();
+    }
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.state_where("replacement answer delivered", |_| {
+        bus_state(&rig)["investigations"]["1"]["status"] == "done"
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let attempts: Vec<_> = team
+        .reviewers()
+        .iter()
+        .filter(|m| m.role() == Some(Role::Investigator))
+        .collect();
+    assert_eq!(attempts.len(), 2);
+    assert_ne!(attempts[0].agent(), attempts[1].agent());
+    assert_eq!(attempts[0].status(), TaskStatus::Failed);
+    assert_eq!(attempts[1].status(), TaskStatus::Done);
+    assert_eq!(team.investigations()[0].failed_with.len(), 1);
+    let request = &bus_state(&rig)["investigations"]["1"];
+    let file = std::fs::read_to_string(request["file"].as_str().unwrap()).unwrap();
+    assert!(file.contains("Complete commands"), "{file}");
+    if matches!(expected_end, "failed" | "sleeping" | "no_status") {
+        assert!(file.contains("## Unfinished answer of"), "{file}");
+        assert!(file.contains("Private résumé"), "{file}");
+    }
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(!messages.contains("Private résumé"), "{messages}");
+    for attempt in &attempts {
+        assert_eq!(rig.runs(attempt.task()), 1, "no retry in the same task");
+    }
+}
+
+#[tokio::test]
+async fn a_reported_failure_requeues_to_another_investigator() {
+    check_failed_attempt_is_reassigned("inv-retry:failed", "failed").await;
+}
+#[tokio::test]
+async fn a_sleeping_answer_requeues_to_another_investigator() {
+    check_failed_attempt_is_reassigned("inv-retry:sleeping", "sleeping").await;
+}
+#[tokio::test]
+async fn a_cut_off_answer_is_kept_private_and_requeued_to_another_investigator() {
+    check_failed_attempt_is_reassigned("inv-retry:nostatus", "no_status").await;
+}
+#[tokio::test]
+async fn a_quota_refusal_requeues_to_another_investigator_without_pausing() {
+    check_failed_attempt_is_reassigned("inv-retry:quota", "quota").await;
+}
+#[tokio::test]
+async fn a_rate_refusal_requeues_to_another_investigator_without_pausing() {
+    check_failed_attempt_is_reassigned("inv-retry:rate", "rate").await;
+}
+#[tokio::test]
+async fn a_turn_limit_requeues_to_another_investigator() {
+    check_failed_attempt_is_reassigned("inv-retry:turn", "turn").await;
+}
+#[tokio::test]
+async fn a_hung_attempt_requeues_to_another_investigator() {
+    check_failed_attempt_is_reassigned("inv-retry:hung", "hung").await;
+}
+
+/// Produces both failure events by exhausting the two distinct investigators.
+pub(super) async fn record_investigation_failure_events(
+    observed: &mut std::collections::BTreeSet<agent_core::log::LogEvent>,
+) {
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::Reader;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Both attempts fail,sleep"),
+            investigator("inv-r1", "inv-fail"),
+            investigator("inv-r2", "inv-fail"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.wait_for("second failure recorded", || {
+        bus_state(&rig)["investigations"]["1"]["status"] == "failed"
+    })
+    .await;
+    rig.wait_for("failure notice delivered", || {
+        std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl"))
+            .unwrap()
+            .contains("decide yourself")
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(messages.contains("questions file"), "{messages}");
+    assert!(!messages.contains("Private résumé"), "{messages}");
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    for event in [LogEvent::InvestigationRequeued, LogEvent::InvestigationFailed] {
+        let rows: Vec<_> = logs.iter().filter(|row| row.event() == event).collect();
+        assert_eq!(rows.len(), 1, "{event:?}: {rows:?}");
+        assert_eq!(rows[0].level(), LogLevel::Info);
+        assert_eq!(rows[0].team(), Some(&team));
+        assert_eq!(rows[0].fields()["id"], "1");
+        assert!(rows[0].fields()["reason"].as_str().is_some());
+        if event == LogEvent::InvestigationRequeued {
+            assert!(rows[0].fields()["investigator"].as_str().is_some());
+        }
+        observed.insert(event);
+    }
+}
+#[tokio::test]
+async fn a_second_failure_sends_a_decision_notice_and_records_both_events() {
+    let mut observed = std::collections::BTreeSet::new();
+    record_investigation_failure_events(&mut observed).await;
+    assert_eq!(observed.len(), 2);
+}
