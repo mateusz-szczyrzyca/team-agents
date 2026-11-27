@@ -498,4 +498,8 @@ CREATE INDEX daemon_log_rounds_by_round ON daemon_log_rounds (round, log);
         version: 36,
         sql: include_str!("036-merge-conflict-investigated.sql"),
     },
+    Migration {
+        version: 37,
+        sql: include_str!("037-findings.sql"),
+    },
 ];
