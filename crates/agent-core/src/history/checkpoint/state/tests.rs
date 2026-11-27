@@ -204,7 +204,7 @@ fn the_steps_of_a_legacy_plan_are_listed_under_not_tied_to_a_requirement() {
             "K1 not started",
             "Review passes passed: 1",
             "Not tied to a requirement:",
-            "steps 1.1 (declared)",
+            "steps 1.1 (confirmed)",
         ]
     );
     assert_eq!(
