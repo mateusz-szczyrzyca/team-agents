@@ -428,6 +428,15 @@ impl Rig {
         tokio::time::timeout(PATIENCE, daemon).await.unwrap().unwrap()
     }
 
+    /// Ends the daemon as a `SIGKILL` would: its task is dropped where it stands, with no shutdown, no wait for its runs and
+    /// nothing more written. The state and the history are as the last write left them.
+    pub(super) async fn kill(&mut self) {
+        let daemon = self.daemon.take().unwrap();
+        daemon.abort();
+        let ended = daemon.await.expect_err("an aborted daemon does not return");
+        assert!(ended.is_cancelled(), "{ended:?}");
+    }
+
     /// Stops the daemon, waits up to `patience` for it to end and returns how it ended: for a daemon whose stop has more
     /// to write than one run's wait allows.
     pub(super) async fn stop_within(&mut self, patience: Duration) -> Result<(), DaemonError> {

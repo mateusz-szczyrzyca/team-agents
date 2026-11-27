@@ -419,3 +419,136 @@ async fn the_look_checkpoints_a_commit_of_an_investigator_and_the_findings_a_rev
     assert!(committed.head.is_some(), "{committed:#?}");
     assert_ne!(committed.head, started.head);
 }
+
+#[tokio::test]
+async fn a_review_that_was_going_when_the_daemon_was_killed_goes_on_from_its_daemon_started_checkpoint() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work"),
+            investigator("inv-1", "hold"),
+            investigator("inv-2", "hold"),
+        ],
+        1,
+        false,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("the review is asked", |state| review_task_of(state, "inv-1").is_some())
+        .await;
+    let reviewer = review_task_of(&state, "inv-1").unwrap();
+    let round = state.team(&team).unwrap().rounds()[0].id().clone();
+    rig.wait_for("the checkpoint of the review's start", || {
+        job_checkpoints(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.task == reviewer && checkpoint.cause == CheckpointCause::ReviewStarted)
+    })
+    .await;
+    std::fs::write(
+        rig.worktree(&reviewer).join("scratch.md"),
+        "looked at before the kill\n",
+    )
+    .unwrap();
+    rig.kill().await;
+
+    rig.start().await;
+    rig.wait_for("the second prompt of the review", || {
+        std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-prompt-2")).is_ok()
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let started: Vec<_> = daemon_started_jobs(&rig, &round)
+        .into_iter()
+        .filter(|checkpoint| checkpoint.task == reviewer)
+        .collect();
+    assert_eq!(started.len(), 1, "{started:#?}");
+    assert_eq!(started[0].job, CheckpointJob::Review);
+    let prompt = std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-prompt-2")).unwrap();
+    assert!(prompt.contains("# THIS REVIEW WAS STARTED BEFORE YOU"), "{prompt}");
+    let head = started[0]
+        .head
+        .as_ref()
+        .expect("the start took the head of the worktree");
+    assert!(
+        prompt.contains(&format!("head {head}")),
+        "the run is briefed from the state the start of the daemon took: {prompt}"
+    );
+    let own: Vec<_> = job_checkpoints(&rig, &round)
+        .into_iter()
+        .filter(|checkpoint| checkpoint.task == reviewer)
+        .map(|checkpoint| checkpoint.cause)
+        .collect();
+    let at = |cause| own.iter().position(|kept| *kept == cause);
+    assert!(
+        at(CheckpointCause::DaemonStarted) < at(CheckpointCause::RunEnded),
+        "the start of the daemon took its checkpoint before the cut run was ended: {own:?}"
+    );
+    assert!(prompt.contains("finish the review of pass 1"), "{prompt}");
+}
+
+#[tokio::test]
+async fn an_investigation_that_was_going_when_the_daemon_was_killed_has_a_daemon_started_checkpoint_with_its_notes() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Why does the split fail?,sleep"),
+            investigator("inv-r1", "hold"),
+            investigator("inv-r2", "hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    let investigators = |state: &State| -> Vec<TaskId> {
+        state.team(&team).map_or_else(Vec::new, |team| {
+            team.reviewers()
+                .iter()
+                .filter(|member| member.role() == Some(Role::Investigator))
+                .map(|member| member.task().clone())
+                .collect()
+        })
+    };
+    let state = rig
+        .state_where("the investigator", |state| !investigators(state).is_empty())
+        .await;
+    let first = investigators(&state)[0].clone();
+    let round = state.team(&team).unwrap().rounds()[0].id().clone();
+    rig.wait_for("the checkpoint of the investigation's start", || {
+        job_checkpoints(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.cause == CheckpointCause::InvestigationStarted)
+    })
+    .await;
+    std::fs::write(rig.worktree(&first).join("notes.md"), "found before the kill\n").unwrap();
+    rig.kill().await;
+
+    rig.start().await;
+    rig.wait_for("the checkpoint of the start of the daemon", || {
+        daemon_started_jobs(&rig, &round)
+            .iter()
+            .any(|checkpoint| checkpoint.task == first)
+    })
+    .await;
+    rig.stop().await.unwrap();
+
+    let started: Vec<_> = daemon_started_jobs(&rig, &round)
+        .into_iter()
+        .filter(|checkpoint| checkpoint.task == first)
+        .collect();
+    assert_eq!(started.len(), 1, "{started:#?}");
+    assert_eq!(started[0].job, CheckpointJob::Investigation);
+    let content = started[0].content.as_ref().unwrap();
+    assert!(content.done.contains("notes.md"), "{content:?}");
+    assert_eq!(content.left, "next: answer the question");
+}
