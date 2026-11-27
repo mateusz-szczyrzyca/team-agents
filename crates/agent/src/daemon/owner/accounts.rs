@@ -32,9 +32,10 @@ pub(super) enum AccountHandled {
 }
 
 impl Owner {
-    /// The account of the agent or investigator `agent`; `None` for one without an account or one the configuration
+    /// The account of the agent or investigator `agent`, found by the name the state records (see also `account_of`,
+    /// which resolves a validated name); `None` for one without an account or one the configuration
     /// does not have any more.
-    pub(super) fn account_of(&self, agent: &str) -> Option<AccountName> {
+    pub(super) fn account_named(&self, agent: &str) -> Option<AccountName> {
         let config = &self.parts.settings.config;
         let of_agent = config
             .agents()
@@ -52,7 +53,7 @@ impl Owner {
 
     /// Whether the account of `agent` is paused at `now`: none of its runs starts.
     pub(super) fn account_is_paused(&self, agent: &str, now: Timestamp) -> bool {
-        self.account_of(agent)
+        self.account_named(agent)
             .and_then(|account| self.parts.state.account_pause(&account).map(|pause| now < pause.until))
             .unwrap_or(false)
     }
@@ -91,7 +92,7 @@ impl Owner {
         let Some(limit) = limit_of(end, now) else {
             return Ok(AccountHandled::NotAnAccount);
         };
-        let Some(account) = self.account_of(&located.agent) else {
+        let Some(account) = self.account_named(&located.agent) else {
             return Ok(AccountHandled::NotAnAccount);
         };
         let mut answer = self.account_answer(&limit, &account, now)?;
@@ -178,7 +179,7 @@ impl Owner {
         for item in self.parts.state.queued_tasks() {
             if item.task == *refused
                 || self.in_flight.contains(&item.task)
-                || self.account_of(item.agent.as_str()).as_ref() != Some(account)
+                || self.account_named(item.agent.as_str()).as_ref() != Some(account)
             {
                 continue;
             }
@@ -219,7 +220,7 @@ impl Owner {
                 self.parts
                     .state
                     .find_task(task)
-                    .is_some_and(|found| self.account_of(found.member.agent().name()).as_ref() == Some(account))
+                    .is_some_and(|found| self.account_named(found.member.agent().name()).as_ref() == Some(account))
             })
             .count();
         self.parts.state.record_account_pause(account.clone(), None);
@@ -247,7 +248,7 @@ impl Owner {
                 continue;
             }
             let until = self
-                .account_of(found.member.agent().name())
+                .account_named(found.member.agent().name())
                 .and_then(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
                 .unwrap_or(now);
             self.wakes.insert(task, until);
