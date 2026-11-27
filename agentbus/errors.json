@@ -1855,6 +1855,87 @@
      "doc": "the worker request does not exist"
     }
    ]
+  },
+  {
+   "type": "FindingAdd",
+   "op": "finding_add",
+   "what": "the finding_add operation",
+   "causes": [
+    {
+     "name": "MissingText",
+     "class": "InvalidArgument",
+     "doc": "the finding text is missing"
+    },
+    {
+     "name": "TextTooLong",
+     "class": "InvalidArgument",
+     "doc": "the finding text exceeds 600 characters"
+    },
+    {
+     "name": "InvalidKind",
+     "class": "InvalidArgument",
+     "doc": "the finding kind is unknown"
+    },
+    {
+     "name": "MissingPaths",
+     "class": "InvalidArgument",
+     "doc": "this finding kind requires paths"
+    },
+    {
+     "name": "InvalidPath",
+     "class": "InvalidArgument",
+     "doc": "a finding path is invalid"
+    },
+    {
+     "name": "TooManyPaths",
+     "class": "InvalidArgument",
+     "doc": "more than ten paths were supplied"
+    },
+    {
+     "name": "TooManyOpen",
+     "class": "Conflict",
+     "doc": "the task already has ten open findings"
+    }
+   ]
+  },
+  {
+   "type": "FindingResolve",
+   "op": "finding_resolve",
+   "what": "the finding_resolve operation",
+   "causes": [
+    {
+     "name": "MissingId",
+     "class": "InvalidArgument",
+     "doc": "the finding id is missing"
+    },
+    {
+     "name": "MissingReason",
+     "class": "InvalidArgument",
+     "doc": "the resolution reason is missing"
+    },
+    {
+     "name": "ReasonTooLong",
+     "class": "InvalidArgument",
+     "doc": "the reason exceeds 300 characters"
+    },
+    {
+     "name": "UnknownFinding",
+     "class": "NotFound",
+     "doc": "the finding does not exist"
+    }
+   ]
+  },
+  {
+   "type": "Findings",
+   "op": "findings",
+   "what": "the findings operation",
+   "causes": [
+    {
+     "name": "MissingRepo",
+     "class": "InvalidArgument",
+     "doc": "the repository is missing"
+    }
+   ]
   }
  ]
 }

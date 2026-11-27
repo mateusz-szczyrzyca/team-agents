@@ -303,3 +303,20 @@ func parseEnum[T enumValue](s, typeName string) (T, *ValueError) {
 	}
 	return v, nil
 }
+
+// FindingKind identifies what later agents should watch for.
+type FindingKind string
+
+const (
+	FindingFlakyTest   FindingKind = "flaky_test"  // A test failed without a cause in the code.
+	FindingTrap        FindingKind = "trap"        // Code or documentation misleads its reader.
+	FindingEnvironment FindingKind = "environment" // A tool or host behaves unexpectedly.
+)
+
+// Valid reports whether k is a finding category.
+func (k FindingKind) Valid() bool { return true }
+
+// UnmarshalJSON implements json.Unmarshaler; failures contain a *ValueError.
+func (k *FindingKind) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, k, "finding kind").asError()
+}
