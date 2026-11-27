@@ -496,3 +496,72 @@ async fn unfinished_answers_and_failure_notices_use_readable_end_names() {
         assert!(attempt.calls().contains(label), "{}", attempt.calls());
     }
 }
+
+/// Models slow workspace setup without sleeping or depending on elapsed wall time.
+#[derive(Debug)]
+struct WorkspaceClock {
+    /// Git creates this directory only while adding the detached investigator worktree.
+    worktrees: std::path::PathBuf,
+}
+
+impl agent_core::ids::Clock for WorkspaceClock {
+    fn now(&self) -> time::UtcDateTime {
+        if self.worktrees.exists() {
+            at(2400).as_utc()
+        } else {
+            at(0).as_utc()
+        }
+    }
+}
+
+#[tokio::test]
+async fn delayed_workspace_setup_does_not_consume_the_answer_window() {
+    let mut attempt = Attempt::new();
+    attempt.state = pair_state();
+    attempt.request("queued", None);
+    std::fs::write(
+        &attempt.bus,
+        r#"#!/bin/sh
+set -eu
+root=$(dirname "$0")
+case "$1" in
+inv-list) if [ ! -f "$root/assigned" ]; then printf '#1 queued\n'; fi;;
+inv-get|inv-next) cat "$root/request.json";;
+inv-set) touch "$root/assigned";;
+esac
+"#,
+    )
+    .unwrap();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let found = attempt.state.find_task(&task(1)).unwrap();
+    let checkout = daemon.home.worktree_dir(found.team.repo(), &task(1));
+    std::fs::create_dir_all(&checkout).unwrap();
+    for args in [
+        vec!["init", "-q", "-b", "main"],
+        vec![
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.com",
+            "commit",
+            "--allow-empty",
+            "-qm",
+            "initial",
+        ],
+    ] {
+        let output = std::process::Command::new("git")
+            .current_dir(&checkout)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.parts.clock = agent_runtime::clock::SharedClock::new(WorkspaceClock {
+        worktrees: checkout.join(".git/worktrees"),
+    });
+    owner.serve_investigations(&team_id(0)).await.unwrap();
+    let records = owner.parts.state.team(&team_id(0)).unwrap().investigations();
+    assert_eq!(records.len(), 1);
+    assert_eq!(records[0].started, at(2400));
+}
