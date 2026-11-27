@@ -923,6 +923,10 @@ async fn the_lead_gets_one_more_pass_with_the_investigators_answer() {
     .await;
     assert_investigation_filed(&rig);
     rig.wait_for("the extra lead run", || rig.runs(&task) >= 5).await;
+    rig.wait_for("the extra prompt to be written", || {
+        rig.worktree(&task).join(".fake-prompt-5").is_file()
+    })
+    .await;
     let prompt = std::fs::read_to_string(rig.worktree(&task).join(".fake-prompt-5")).unwrap();
     rig.stop().await.unwrap();
     assert!(prompt.contains("pass 4 of 4"), "{prompt}");
