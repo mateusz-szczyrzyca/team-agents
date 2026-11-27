@@ -997,7 +997,12 @@ async fn a_member_that_is_done_tells_the_coordinator_which_wakes_to_integrate_it
         .await;
     f.stop().await.unwrap();
 
-    assert!(woken.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{woken}");
+    assert!(
+        woken
+            .strip_prefix("# YOUR SESSION GOES ON\n")
+            .is_some_and(|rest| rest.contains("# YOU HAVE BEEN WOKEN UP (team ")),
+        "{woken}"
+    );
     let messages = f.messages();
     assert!(messages.contains("member_finished"), "{messages}");
     assert!(messages.contains("claude-1 reported DONE on item 1.1"), "{messages}");
@@ -1430,7 +1435,12 @@ async fn a_failed_member_without_an_item_is_told_with_the_choice_to_give_its_wor
     let prompt = f.prompt(&tasks[0], 2).await;
     f.stop().await.unwrap();
 
-    assert!(prompt.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{prompt}");
+    assert!(
+        prompt
+            .strip_prefix("# YOUR SESSION GOES ON\n")
+            .is_some_and(|rest| rest.contains("# YOU HAVE BEEN WOKEN UP (team ")),
+        "{prompt}"
+    );
     let (fields, text) = single_notice("member_failed", "inv-opus", &f.messages());
     assert_eq!(fields, [("member".to_owned(), "claude-1".to_owned())]);
     assert!(text.contains("claude-1 failed"), "{text}");
@@ -1599,7 +1609,12 @@ async fn a_message_to_a_member_that_sleeps_starts_its_task_again_with_the_wake()
     f.status_is(&tasks[1], TaskStatus::Waiting).await;
     f.stop().await.unwrap();
 
-    assert!(prompt.starts_with("# YOU HAVE BEEN WOKEN UP (team "), "{prompt}");
+    assert!(
+        prompt
+            .strip_prefix("# YOUR SESSION GOES ON\n")
+            .is_some_and(|rest| rest.contains("# YOU HAVE BEEN WOKEN UP (team ")),
+        "{prompt}"
+    );
     assert!(prompt.contains(team.as_str()), "{prompt}");
     assert_eq!(f.runs(&tasks[0]), 1, "the coordinator was not woken: {}", f.messages());
 }
@@ -2080,7 +2095,12 @@ async fn a_free_member_is_given_the_next_item_when_the_daemon_looks_at_the_team_
     let state = f.status_is(&tasks[1], TaskStatus::Waiting).await;
     f.stop().await.unwrap();
 
-    assert!(prompt.starts_with("# A NEW ITEM FOR YOU: 2.1"), "{prompt}");
+    assert!(
+        prompt
+            .strip_prefix("# YOUR SESSION GOES ON\n")
+            .is_some_and(|rest| rest.contains("# A NEW ITEM FOR YOU: 2.1")),
+        "{prompt}"
+    );
     assert!(prompt.contains("## Your item: 2.1 — Two"), "{prompt}");
     let branch = format!("agents/claude-1/{}-2.1", tasks[1]);
     assert_eq!(
@@ -2315,7 +2335,12 @@ async fn an_item_whose_branch_could_not_be_started_is_given_out_when_the_branch_
     let prompt = f.prompt(&tasks[1], 2).await;
     f.stop().await.unwrap();
 
-    assert!(prompt.starts_with("# A NEW ITEM FOR YOU: 2.1"), "{prompt}");
+    assert!(
+        prompt
+            .strip_prefix("# YOUR SESSION GOES ON\n")
+            .is_some_and(|rest| rest.contains("# A NEW ITEM FOR YOU: 2.1")),
+        "{prompt}"
+    );
     assert_eq!(
         git(&f.worktree(&tasks[1]), &["rev-parse", "--abbrev-ref", "HEAD"]),
         next_branch

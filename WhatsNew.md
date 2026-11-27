@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.140.0 · agent-core 0.137.0 · agent-runtime 0.124.0 — 27.11.2026 — PR pending
+
+### Enhancements
+- [agent] [agent-core] [agent-runtime] A run that resumes its session after a report (the checks, a fix pass, a continuation) is sent only what happened since, not its whole task again; the first prompt of each session is kept in the task's directory as session-prompt.md.
+
 ## agent 0.139.0 · agent-core 0.136.0 · agent-runtime 0.123.0 — 27.11.2026 — PR #332
 
 ### New features

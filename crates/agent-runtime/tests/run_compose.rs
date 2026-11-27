@@ -80,6 +80,8 @@ mod run_compose {
                 number: NonZeroU32::new(2).unwrap(),
                 brief: "",
                 item: None,
+                item_changed: false,
+                session_prompt: None,
                 team_items: &[],
                 checkpoint: None,
                 serena: Serena::Without,

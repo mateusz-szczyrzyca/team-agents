@@ -241,6 +241,12 @@ impl Home {
         self.task_dir(task).join(format!("questions-{number}.md"))
     }
 
+    /// The complete first prompt of the task's current session, overwritten when a new session starts.
+    #[must_use]
+    pub fn session_prompt_file(&self, task: &TaskId) -> PathBuf {
+        self.task_dir(task).join("session-prompt.md")
+    }
+
     /// The file where measured free disk space in bytes is recorded.
     #[must_use]
     pub fn free_space_file(&self) -> PathBuf {
