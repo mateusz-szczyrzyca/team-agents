@@ -393,15 +393,16 @@ mod account_environment {
         let home_for_db = tempfile::tempdir().unwrap();
         let db_path = home_for_db.path().join("history.db");
         let db = HistoryDb::open(&db_path, MaxTextBytes::default()).unwrap();
-        let started = History::start(
+        let secrets = secrets_text("", &format!("COMP_API_KEY = \"{MARKER}\""));
+        let started = History::start_with_secrets(
             db,
             Setup {
                 reporter: Arc::new(TracingReporter),
                 capacity: NonZeroUsize::new(1024).unwrap(),
             },
+            Secrets::parse(&secrets, 0o600).unwrap(),
         )
         .unwrap();
-        let secrets = secrets_text("", &format!("COMP_API_KEY = \"{MARKER}\""));
         let rig = rig(&config_text(&fake_cli(), ""), &secrets, Some(started.history.clone())).await;
         started.history.record(Record::Run(Box::new(RunStart {
             run: run_id(),
