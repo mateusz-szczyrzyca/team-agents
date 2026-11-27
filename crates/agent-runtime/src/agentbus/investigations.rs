@@ -23,20 +23,6 @@ pub enum InvestigationKind {
     Unknown(String),
 }
 
-impl<'de> Deserialize<'de> for InvestigationKind {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(match s.as_str() {
-            "" => Self::Question,
-            "review" => Self::Review,
-            _ => Self::Unknown(s),
-        })
-    }
-}
-
 /// The lifecycle status returned by the bus, retaining future values.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InvestigationStatus {
@@ -121,12 +107,16 @@ where
         #[serde(default)]
         kind: String,
         /// Split requests must name a valid task-list item.
-        item: Option<ItemId>,
+        item: Option<String>,
     }
     let raw = RequestKind::deserialize(deserializer)?;
     Ok(match raw.kind.as_str() {
         "split" => InvestigationKind::Split {
-            item: raw.item.ok_or_else(|| serde::de::Error::missing_field("item"))?,
+            item: raw
+                .item
+                .ok_or_else(|| serde::de::Error::missing_field("item"))?
+                .parse()
+                .map_err(serde::de::Error::custom)?,
         },
         "" | "question" => InvestigationKind::Question,
         "review" => InvestigationKind::Review,
