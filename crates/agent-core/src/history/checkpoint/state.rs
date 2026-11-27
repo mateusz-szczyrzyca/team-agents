@@ -74,8 +74,18 @@ impl Next {
     /// waits whatever its phase is.
     #[must_use]
     pub fn of(cause: CheckpointCause, phase: PhaseKind, passes_passed: u32, pull_request: Option<PrNumber>) -> Self {
-        let _ = (cause, phase, passes_passed, pull_request);
-        Self::Nothing
+        if matches!(cause, CheckpointCause::WaitsForHuman | CheckpointCause::QuestionAsked) {
+            return Self::WaitForHuman;
+        }
+        match (phase, pull_request) {
+            (PhaseKind::Pending | PhaseKind::InProgress, _) | (PhaseKind::Fixing, None) => Self::HandOver,
+            (PhaseKind::InReview, _) => Self::WaitForReviews {
+                pass: passes_passed.saturating_add(1),
+            },
+            (PhaseKind::Fixing, Some(pull_request)) => Self::Fix { pull_request },
+            (PhaseKind::Approved, _) => Self::WaitForMerge,
+            (PhaseKind::Done, _) => Self::Nothing,
+        }
     }
 }
 
