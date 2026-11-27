@@ -17,6 +17,7 @@ pub mod debug;
 mod debug_redaction;
 pub mod disk;
 pub mod editor;
+pub mod findings;
 pub mod git;
 pub mod github;
 pub mod harness_prompts;
