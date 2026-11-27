@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.138.0 · agent-core 0.135.0 · agent-runtime 0.122.0 — 27.11.2026 — PR #329
+## agent 0.138.0 · agent-core 0.135.0 · agent-runtime 0.122.0 — 27.11.2026 — PR #331
 
 ### New features
 - [agent] `agent checkpoints <round|task>` lists the checkpoints of a round or a task, oldest first, one line each; `--show [N]` prints one checkpoint in full (the last without N) and `--json` prints them as JSON lines.
