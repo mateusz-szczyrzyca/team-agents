@@ -17,6 +17,11 @@ pub enum InvestigationKind {
         /// The parent item to divide.
         item: ItemId,
     },
+    /// A coordinator asks for help resolving an item pull request conflict.
+    Conflict {
+        /// The item whose pull request must be investigated.
+        item: ItemId,
+    },
     /// A PR review (`"review"`).
     Review,
     /// Any other kind that an earlier or later bus version wrote.
@@ -95,7 +100,7 @@ pub struct Investigation {
     pub file: PathBuf,
 }
 
-/// Reads the kind and its item together so split requests carry a validated item.
+/// Reads the kind and its item together so structured requests carry a validated item.
 fn deserialize_request_kind<'de, D>(deserializer: D) -> Result<InvestigationKind, D::Error>
 where
     D: Deserializer<'de>,
@@ -106,18 +111,23 @@ where
         /// Legacy requests omit their question kind.
         #[serde(default)]
         kind: String,
-        /// Split requests must name a valid task-list item.
+        /// Structured requests must name a valid task-list item.
         item: Option<String>,
     }
     let raw = RequestKind::deserialize(deserializer)?;
     Ok(match raw.kind.as_str() {
-        "split" => InvestigationKind::Split {
-            item: raw
+        "split" | "conflict" => {
+            let item = raw
                 .item
                 .ok_or_else(|| serde::de::Error::missing_field("item"))?
                 .parse()
-                .map_err(serde::de::Error::custom)?,
-        },
+                .map_err(serde::de::Error::custom)?;
+            if raw.kind == "split" {
+                InvestigationKind::Split { item }
+            } else {
+                InvestigationKind::Conflict { item }
+            }
+        }
         "" | "question" => InvestigationKind::Question,
         "review" => InvestigationKind::Review,
         _ => InvestigationKind::Unknown(raw.kind),

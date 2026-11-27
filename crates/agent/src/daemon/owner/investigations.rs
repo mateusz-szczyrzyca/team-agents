@@ -4,10 +4,10 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 use agent_core::decide::investigator::Activity;
-use agent_core::ids::{AgentName, InvestigatorName, TaskId, TeamId};
+use agent_core::ids::{AgentName, InvestigatorName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
-use agent_core::state::{InvestigationRecord, Member, Participant, RunEnd, Timestamp};
+use agent_core::state::{InvestigationRecord, ItemPhase, Member, Participant, PullRequest, RunEnd, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind, InvestigationStatus};
 use agent_runtime::git::Revision;
@@ -18,6 +18,14 @@ use crate::daemon::review::investigator_of;
 
 /// The bus queue admits at most three pending investigation requests.
 const QUEUE_MAX: NonZeroUsize = NonZeroUsize::new(3).unwrap();
+
+/// Returns the item's open pull request, if its phase carries one.
+pub(super) fn conflict_pull_request(team: &Team, item: ItemId) -> Option<&PullRequest> {
+    match team.item(item)?.phase() {
+        ItemPhase::InReview { pr, .. } | ItemPhase::Fixing { pr, .. } | ItemPhase::Approved { pr, .. } => Some(pr),
+        ItemPhase::Pending | ItemPhase::InProgress { .. } | ItemPhase::Done { .. } => None,
+    }
+}
 
 impl Owner {
     /// Serves open investigation requests with free investigators for `team_id`.
@@ -196,10 +204,25 @@ impl Owner {
             .worktree_git(&lead.repo, &lead.task, &lead.agent)
             .map_err(|source| OwnerError::InvestigationWorkspace(source.into()))?;
         let agent: AgentName = chosen.as_str().parse()?;
-        let head = git
-            .rev_parse(&Revision::Branch(req.branch.clone()))
-            .await
-            .map_err(OwnerError::InvestigationGit)?;
+        let revision = if let InvestigationKind::Conflict { item } = req.kind {
+            let branch = self
+                .parts
+                .state
+                .team(team_id)
+                .and_then(|team| conflict_pull_request(team, item))
+                .map(|pr| pr.branch.clone());
+            let Some(branch) = branch else {
+                let requester = self.locate(&req.from_task)?;
+                self.fail_investigation(req, "the item has no open pull request", Some(&requester))
+                    .await?;
+                return Ok(());
+            };
+            git.fetch(&branch).await.map_err(OwnerError::InvestigationGit)?;
+            Revision::RemoteBranch(branch)
+        } else {
+            Revision::Branch(req.branch.clone())
+        };
+        let head = git.rev_parse(&revision).await.map_err(OwnerError::InvestigationGit)?;
         let (_path, _branch) = self
             .make_worktree(&git, &lead, &agent, &task, &head)
             .await
