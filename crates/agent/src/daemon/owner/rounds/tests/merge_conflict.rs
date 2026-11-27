@@ -1240,7 +1240,7 @@ pub(super) async fn record_merge_conflict_investigated(
     let row = entries[0];
     assert_eq!(row.level(), agent_core::log::LogLevel::Info);
     assert_eq!(row.team(), Some(state.teams()[0].id()));
-    assert!(!row.rounds().is_empty());
+    assert_eq!(row.rounds(), &[]);
     assert_eq!(row.task(), None);
     assert_eq!(row.run(), None);
     observed.insert(agent_core::log::LogEvent::MergeConflictInvestigated);
