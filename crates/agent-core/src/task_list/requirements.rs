@@ -4,8 +4,9 @@
 //! which requirement they are about. The top-level bullets of the expected result are `R1`, `R2`, ...; the lines of the
 //! checks keep the `K1`, `K2`, ... they start with, and a line without one gets the next free number.
 
+use std::collections::HashSet;
 use std::fmt;
-use std::num::NonZeroU16;
+use std::num::NonZeroU32;
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
@@ -38,13 +39,13 @@ pub struct RequirementId {
     /// The part of the item it comes from.
     kind: RequirementKind,
     /// Its number within that part, from 1.
-    number: NonZeroU16,
+    number: NonZeroU32,
 }
 
 impl RequirementId {
     /// The requirement `number` of the part `kind`.
     #[must_use]
-    pub const fn new(kind: RequirementKind, number: NonZeroU16) -> Self {
+    pub const fn new(kind: RequirementKind, number: NonZeroU32) -> Self {
         Self { kind, number }
     }
 
@@ -56,7 +57,7 @@ impl RequirementId {
 
     /// Its number within that part, from 1.
     #[must_use]
-    pub const fn number(self) -> NonZeroU16 {
+    pub const fn number(self) -> NonZeroU32 {
         self.number
     }
 }
@@ -105,8 +106,8 @@ impl FromStr for RequirementId {
     }
 }
 
-/// A number from 1 to 65535 written with ASCII digits and no leading zero; `None` for any other text.
-fn parse_number(digits: &str) -> Option<NonZeroU16> {
+/// A number from 1 to 4294967295 written with ASCII digits and no leading zero; `None` for any other text.
+fn parse_number(digits: &str) -> Option<NonZeroU32> {
     if digits.starts_with('0') || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
         return None;
     }
@@ -241,10 +242,10 @@ fn numbered_results(results: Vec<String>) -> Vec<Requirement> {
         .collect()
 }
 
-/// The numbers from 1 to 65535: more lines than that are not read, and the byte limit of a task list keeps any text far
-/// below it.
-fn numbers() -> impl Iterator<Item = NonZeroU16> {
-    (1..=u16::MAX).filter_map(NonZeroU16::new)
+/// The numbers 1, 2, 3, ...: one for every line of a text, and the byte limit of a task list keeps their count far
+/// below what 32 bits hold.
+fn numbers() -> impl Iterator<Item = NonZeroU32> {
+    (0..u32::MAX).map(|offset| NonZeroU32::MIN.saturating_add(offset))
 }
 
 /// The text of a bullet line, without its marker; `None` for a line that is not one.
@@ -296,7 +297,7 @@ fn check_lines(text: &str) -> Vec<String> {
 }
 
 /// The number a check line starts with (`K2.` or `K2:`) and the rest of the line.
-fn split_label(line: &str) -> (Option<NonZeroU16>, &str) {
+fn split_label(line: &str) -> (Option<NonZeroU32>, &str) {
     let Some(after) = line.strip_prefix('K') else {
         return (None, line);
     };
@@ -314,26 +315,28 @@ fn split_label(line: &str) -> (Option<NonZeroU16>, &str) {
 /// The check `lines` as the requirements `K1`, `K2`, ...: a line keeps the number it names unless an earlier line took
 /// it, and the others get the smallest numbers that no line names.
 fn numbered_checks(lines: &[String]) -> Vec<Requirement> {
-    let split: Vec<(Option<NonZeroU16>, String)> = lines
+    let split: Vec<(Option<NonZeroU32>, String)> = lines
         .iter()
         .map(|line| {
             let (label, rest) = split_label(line);
             (label, rest.to_owned())
         })
         .collect();
-    let named: Vec<NonZeroU16> = split.iter().filter_map(|(label, _)| *label).collect();
-    let mut taken: Vec<NonZeroU16> = Vec::new();
+    let named: HashSet<NonZeroU32> = split.iter().filter_map(|(label, _)| *label).collect();
+    let mut taken: HashSet<NonZeroU32> = HashSet::new();
+    // The numbers no line names, in order: a line that names none takes the next of them.
+    let mut free = numbers().filter(|number| !named.contains(number));
     let mut found = Vec::new();
     for (label, text) in split {
         let number = match label.filter(|number| !taken.contains(number)) {
             Some(number) => number,
-            None => match numbers().find(|number| !named.contains(number) && !taken.contains(number)) {
+            None => match free.next() {
                 Some(number) => number,
-                // Every number is in use: a text cannot hold so many lines, so this is not reached.
+                // `numbers()` ends at 4294967294 lines, which a text of 1 MiB cannot hold: no line is dropped.
                 None => break,
             },
         };
-        taken.push(number);
+        taken.insert(number);
         found.push(Requirement {
             id: RequirementId::new(RequirementKind::Check, number),
             text,
