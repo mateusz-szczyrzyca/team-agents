@@ -1775,7 +1775,8 @@ impl Owner {
             self.record_pool_run_start(start);
 
             let run_span = tracing::error_span!("task", team = %team.id(), task = %worker_task);
-            self.spawn_job(worker_task.clone(), job, run_span);
+            let account = self.account_of(&worker_name);
+            self.spawn_job(worker_task.clone(), job, account, run_span);
 
             if !recovery_enabled {
                 self.tell_bus(
