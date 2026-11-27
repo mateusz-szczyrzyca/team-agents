@@ -195,3 +195,27 @@ fn the_end_of_a_run_with_no_snapshot_is_told() {
 
     assert_eq!(told(&path, HOLDER).unwrap().cause, CheckpointCause::RunEnded);
 }
+
+#[test]
+fn a_checkpoint_whose_texts_the_history_cut_is_read_with_its_content() {
+    let (_dir, path) = database();
+    checkpoint(
+        &path,
+        HOLDER,
+        "2026-11-26T09:02:00Z",
+        "commit",
+        r#","content":{"meant":"M","done":"D","left":"L"}"#,
+    );
+    Connection::open(&path)
+        .unwrap()
+        .execute("UPDATE history_records SET cut = 'meant,done,left'", [])
+        .unwrap();
+
+    let found = last(&path, HOLDER).unwrap();
+
+    let content = found.content.expect("the checkpoint kept its content");
+    assert_eq!(
+        (content.meant.as_str(), content.done.as_str(), content.left.as_str()),
+        ("M", "D", "L")
+    );
+}
