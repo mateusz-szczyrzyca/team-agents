@@ -968,16 +968,21 @@ async fn the_conflict_investigators_worktree_is_at_the_pull_requests_tip() {
     };
     let branch = pr.branch.as_str().to_owned();
     let number = pr.number.to_string();
-    // Advance only the remote PR branch, proving that a stale local branch is insufficient.
-    git(&rig.repo, &["checkout", "-q", "-b", "remote-advance", &branch]);
+    // A separate clone leaves the daemon's remote-tracking ref stale until it fetches.
+    let remote_writer = tempfile::tempdir().unwrap();
     git(
-        &rig.repo,
-        &["commit", "--allow-empty", "-q", "-m", "Advance PR remotely"],
+        remote_writer.path(),
+        &["clone", "-q", rig.origin.to_str().unwrap(), "writer"],
     );
-    let expected = git(&rig.repo, &["rev-parse", "HEAD"]);
-    git(
-        &rig.repo,
-        &["push", "-q", "origin", &format!("HEAD:refs/heads/{branch}")],
+    let writer = remote_writer.path().join("writer");
+    git(&writer, &["checkout", "-q", &branch]);
+    git(&writer, &["commit", "--allow-empty", "-q", "-m", "Advance PR remotely"]);
+    let expected = git(&writer, &["rev-parse", "HEAD"]);
+    git(&writer, &["push", "-q", "origin", &format!("HEAD:refs/heads/{branch}")]);
+    assert_ne!(
+        git(&rig.repo, &["rev-parse", &format!("refs/remotes/origin/{branch}")]),
+        expected,
+        "only a fetch should expose the new remote tip to the daemon"
     );
     std::fs::write(rig.worktree(&tasks[0]).join(".fake-conflict-ready"), "").unwrap();
     let state = rig
@@ -1058,5 +1063,25 @@ async fn a_conflict_request_without_a_pull_request_fails_and_tells_the_lead() {
     let state: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(bus_file).unwrap()).unwrap();
     assert_eq!(state["investigations"]["1"]["status"], "failed");
     let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
-    assert!(messages.contains("pull request"), "{messages}");
+    let messages: Vec<serde_json::Value> = messages
+        .lines()
+        .map(|line| serde_json::from_str(line).unwrap())
+        .collect();
+    let notices: Vec<_> = messages
+        .iter()
+        .filter(|message| {
+            message["text"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("Investigation #1 failed:"))
+        })
+        .collect();
+    assert_eq!(notices.len(), 1, "{messages:?}");
+    let notice = notices[0];
+    assert_eq!(notice["to"], "claude-lead");
+    assert_eq!(notice["task"], tasks[0].as_str());
+    assert_eq!(notice["kind"], "chat");
+    assert_eq!(
+        notice["text"],
+        "Investigation #1 failed: the item has no open pull request.\n\nYou must decide yourself, or ask the human in your questions file."
+    );
 }
