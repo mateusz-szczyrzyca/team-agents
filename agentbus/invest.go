@@ -283,6 +283,9 @@ func (s *Server) requestInvestigationKind(question, context string, wait bool, k
 			if item == "" {
 				return opErr(RequestInvestigationMissingItem, "%s", missing("item"))
 			}
+			if !validInvestigationItem(item) {
+				return opErr(RequestInvestigationInvalidItem, "item must be FEATURE.ITEM, with each number between 1 and 65535 and no leading zeros")
+			}
 		}
 		s.touch(st)
 		s.bus.promote(st, s.queueMax)
@@ -679,4 +682,27 @@ func cmdCancelPending(args []string) {
 		out.printf("cancelled: investigations/reviews %d, worker requests %d, teams %d\n", ev.Investigations, ev.Requests, ev.Teams)
 		return fromStorage(CmdCancelPendingStorage, out.err)
 	}).asError())
+}
+
+// validInvestigationItem matches the Rust ItemId boundary for structured requests.
+func validInvestigationItem(item string) bool {
+	parts := strings.Split(item, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > 5 || part[0] == '0' {
+			return false
+		}
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+		number, err := strconv.ParseUint(part, 10, 16)
+		if err != nil || number == 0 {
+			return false
+		}
+	}
+	return true
 }
