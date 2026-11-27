@@ -814,3 +814,191 @@ async fn reopening_review_after_allowed_only_conflict_passes_and_an_answered_que
         assert!(rig.home.review_report_file(reviewer.task(), pr, 2).is_file());
     }
 }
+
+/// Runs three real conflict passes, leaving the automatic investigation (or old human fallback) observable.
+async fn spent_conflict_passes(
+    review_and_answer: &'static str,
+    lead: &'static str,
+    enabled: bool,
+) -> (Rig, agent_core::ids::TaskId) {
+    use std::io::Write as _;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", lead),
+            investigator("inv-r1", review_and_answer),
+            investigator("inv-r2", review_and_answer),
+        ],
+        5,
+        true,
+    )
+    .await;
+    // The key is written only for the disabled compatibility case, so the default is exercised too.
+    if !enabled {
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(rig.home.config_file())
+                .unwrap(),
+            "[merge]\ninvestigator_pass = false"
+        )
+        .unwrap();
+    }
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    for pass in 1..=3 {
+        rig.wait_for("next conflict run", || rig.runs(&task) >= pass + 1).await;
+        std::fs::write(rig.repo.join("base-file.txt"), format!("base pass {pass}\n")).unwrap();
+        git(&rig.repo, &["add", "base-file.txt"]);
+        git(&rig.repo, &["commit", "-q", "-m", "Move the base for the next pass"]);
+        git(
+            &rig.repo,
+            &["push", "-q", rig.origin.to_str().unwrap(), "HEAD:refs/heads/main"],
+        );
+        std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    }
+    rig.state_where("investigation or human fallback after spent passes", |state| {
+        let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+        let value = serde_json::to_value(item).unwrap();
+        value.get("conflict_investigation").is_some()
+            || matches!(
+                item.merge_conflict(),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. })
+            )
+    })
+    .await;
+    (rig, task)
+}
+
+/// Requires a durable request before checking any dependent investigation lifecycle behaviour.
+fn assert_investigation_filed(rig: &Rig) {
+    let state = rig.state();
+    let item = serde_json::to_value(state.teams()[0].item("1.1".parse().unwrap()).unwrap()).unwrap();
+    assert_eq!(item["conflict_investigation"]["id"], 1);
+}
+
+/// The stored request record, read through the bus's persisted public format.
+fn conflict_requests(rig: &Rig) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap()).unwrap()
+}
+
+#[tokio::test]
+async fn a_conflict_after_three_lead_passes_goes_to_an_investigator_before_the_human() {
+    let (mut rig, task) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "work,merge-base,merge-base,merge-base,hold,ask-here",
+        true,
+    )
+    .await;
+    let state = rig.state();
+    rig.stop().await.unwrap();
+    let item = serde_json::to_value(state.teams()[0].item("1.1".parse().unwrap()).unwrap()).unwrap();
+    assert_eq!(item["conflict_investigation"]["id"], 1);
+    assert_eq!(rig.runs(&task), 4);
+    let requests = conflict_requests(&rig);
+    assert_eq!(requests["investigations"]["1"]["item"], "1.1");
+    assert_eq!(requests["investigations"]["1"]["from_task"], task.as_str());
+    assert_eq!(
+        requests["investigations"]["1"]["question"],
+        "Pull request #1 conflicts with main after 3 passes of the lead. Resolve it locally as your instructions say."
+    );
+}
+
+#[tokio::test]
+async fn the_lead_gets_one_more_pass_with_the_investigators_answer() {
+    let (mut rig, task) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-done:git merge origin/main — résolution",
+        "work,merge-base,merge-base,merge-base,hold,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.wait_for("the extra lead run", || rig.runs(&task) >= 5).await;
+    let prompt = std::fs::read_to_string(rig.worktree(&task).join(".fake-prompt-5")).unwrap();
+    rig.stop().await.unwrap();
+    assert!(prompt.contains("pass 4 of 4"), "{prompt}");
+    assert!(prompt.contains("An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:"), "{prompt}");
+    assert!(prompt.contains("git merge origin/main — résolution"), "{prompt}");
+}
+
+#[tokio::test]
+async fn the_human_is_asked_when_the_pass_after_the_answer_fails() {
+    let (mut rig, task) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-done:Resolve the conflict",
+        "work,merge-base,merge-base,merge-base,fail-tool,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.status_is(&task, agent_core::status::TaskStatus::Questions).await;
+    let prompt = std::fs::read_to_string(rig.worktree(&task).join(".fake-prompt-6")).unwrap();
+    rig.stop().await.unwrap();
+    assert!(
+        prompt.contains("Merge conflict on pull request #1 needs the human"),
+        "{prompt}"
+    );
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn the_human_is_asked_when_the_conflict_request_fails() {
+    let (mut rig, task) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,inv-fail",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.status_is(&task, agent_core::status::TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    assert_eq!(conflict_requests(&rig)["investigations"]["1"]["status"], "failed");
+    let prompt = std::fs::read_to_string(rig.worktree(&task).join(".fake-prompt-5")).unwrap();
+    assert!(
+        prompt.contains("Merge conflict on pull request #1 needs the human"),
+        "{prompt}"
+    );
+}
+
+#[tokio::test]
+async fn investigator_pass_false_asks_the_human_after_three_passes_as_before() {
+    let (mut rig, task) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        false,
+    )
+    .await;
+    rig.status_is(&task, agent_core::status::TaskStatus::Questions).await;
+    rig.stop().await.unwrap();
+    let requests = conflict_requests(&rig);
+    assert!(
+        requests["investigations"]
+            .as_object()
+            .is_none_or(serde_json::Map::is_empty)
+    );
+    assert_eq!(rig.runs(&task), 5);
+}
+
+#[tokio::test]
+async fn a_conflict_request_is_filed_once_per_item_and_head() {
+    let (mut rig, _) = spent_conflict_passes(
+        "verify:VERDICT: APPROVE\\nSUMMARY: fine,hold",
+        "work,merge-base,merge-base,merge-base,hold,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    let before = conflict_requests(&rig);
+    assert_eq!(before["investigations"].as_object().unwrap().len(), 1);
+    rig.stop().await.unwrap();
+    rig.start().await;
+    rig.state_where("restored investigation", |state| {
+        serde_json::to_value(state)
+            .unwrap()
+            .to_string()
+            .contains("conflict_investigation")
+    })
+    .await;
+    rig.stop().await.unwrap();
+    assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
