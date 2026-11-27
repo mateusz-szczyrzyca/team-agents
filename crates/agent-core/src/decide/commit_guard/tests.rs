@@ -396,3 +396,48 @@ fn comment_lines_and_blank_lines_after_the_trailer_leave_it_the_end_of_the_messa
         assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
     }
 }
+
+// Rule: the trailer block holds trailers only: a `Step:` line that the paragraph goes on after, with no blank line
+// between, is part of the body.
+#[test]
+fn a_step_line_followed_by_body_text_in_the_same_paragraph_is_no_trailer() {
+    let messages = [
+        "Fix it\n\nStep: 1.1\nMore of the body.\n",
+        "Fix it\n\nStep: 1.1\nMore of the body.\n\n# Please enter the commit message.\n",
+    ];
+
+    for message in messages {
+        assert_eq!(
+            judge_step(&plan(true), message),
+            StepVerdict::Refused(StepRefusal::Missing { steps: both_steps() }),
+            "{message:?}"
+        );
+    }
+}
+
+// Rule: other trailers beside `Step:`, and a folded value, stay in the trailer block.
+#[test]
+fn a_step_trailer_beside_other_trailers_allows_the_commit() {
+    let messages = [
+        "Fix it\n\nTest-First: not possible — a doc\nStep: 1.1\n",
+        "Fix it\n\nStep: 1.1\nCo-authored-by: A B <a@example.com>\n",
+        "Fix it\n\nSigned-off-by: A B <a@example.com>\nStep: 1.2\nNote: a long value\n  that goes on\n",
+    ];
+
+    for message in messages {
+        assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
+    }
+}
+
+// Rule: what `git commit -v` shows under the scissors line, and the comment character of that line, are not the message.
+#[test]
+fn the_scissors_line_and_what_follows_it_are_not_part_of_the_message() {
+    let messages = [
+        "Fix it\n\nStep: 1.1\n\n# ------------------------ >8 ------------------------\n# Do not modify or remove the line above.\ndiff --git a/f b/f\n+x\n",
+        "Fix it\n\nStep: 1.1\n\n; Please enter the commit message.\n; ------------------------ >8 ------------------------\n; Do not modify or remove the line above.\ndiff --git a/f b/f\n+x\n",
+    ];
+
+    for message in messages {
+        assert_eq!(judge_step(&plan(true), message), StepVerdict::Allowed, "{message:?}");
+    }
+}
