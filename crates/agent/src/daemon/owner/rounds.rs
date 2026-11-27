@@ -1118,3 +1118,7 @@ mod checkpoints_tests;
 #[cfg(test)]
 #[path = "rounds/tests/checkpoint_steps.rs"]
 mod checkpoint_steps_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/checkpoint_content.rs"]
+mod checkpoint_content_tests;
