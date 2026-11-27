@@ -49,6 +49,22 @@ model = "opus"
 cli = "codex"
 args = ["-c", "model_reasoning_effort=\"high\""]
 
+# --- Accounts (optional) ------------------------------------------------------------------------------------------
+# An account is one subscription or key. In this version accounts are only read and checked: runs do not use them
+# yet, so no variable is set and no quota is shared. Agents without an account run as before. Check the provider's
+# terms before you use more than one subscription.
+# An agent or an investigator with an account is named `<owner>-...`. The secret variables of the account are
+# `[account_env.NAME]` in secrets.toml; a variable is set in `env` or there, never in both.
+# [accounts.comp-claude]
+# owner = "comp"                                  # a lowercase word of letters and digits
+# [accounts.comp-claude.env]
+# CLAUDE_CONFIG_DIR = "/home/you/.claude-comp"    # not a secret; Codex: CODEX_HOME
+#
+# [investigators.comp-inv-opus]
+# cli = "claude"
+# model = "opus"
+# account = "comp-claude"
+
 # --- Which agents are normal, which are workers -----------------------------------------------------------------
 # Every agent is in exactly one of the two lists. `normal`: takes task-list items, solo or in a team, and may
 # coordinate a team. `workers`: never coordinate and take no items; they serve `delegate` requests, the first free
