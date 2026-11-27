@@ -353,3 +353,76 @@ async fn account_changed_between_runs_starts_an_investigator_with_the_reason() {
     assert!(!args.contains("--resume"), "not the old session: {args}");
     assert!(prompt.contains(INVESTIGATOR_ACCOUNT_NOTE), "{prompt}");
 }
+
+/// A step of the plan an investigator saved before its session was cut, which no other text of the prompt holds.
+const INVESTIGATOR_PLAN_MARKER: &str = "PLAN-MARKER-look-at-the-account";
+
+// Rule: the new session of an investigator is given the plan the session before saved in its worktree, as the briefing of
+// every other role is: the investigator has no round to brief it from, but its plan is in its worktree.
+#[tokio::test]
+async fn account_changed_between_runs_gives_an_investigator_its_saved_plan() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Check account,sleep"),
+            investigator("comp-inv", "script:hold,script:hold"),
+            investigator("comp-inv2", "script:hold,script:hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("hold.sh"), HOLD).unwrap();
+    let path = rig.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{text}\n[restart]\nsession = \"same\"\n")).unwrap();
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    let running = |state: &agent_core::state::State| {
+        state.team(&team).is_some_and(|team| {
+            team.reviewers().iter().any(|member| {
+                member.role() == Some(agent_core::kinds::Role::Investigator)
+                    && member.status() == agent_core::status::TaskStatus::Running
+            })
+        })
+    };
+    let state = rig.state_where("an investigator is running", running).await;
+    let member = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.role() == Some(agent_core::kinds::Role::Investigator))
+        .unwrap();
+    let name = member.agent().name().to_owned();
+    let task = member.task().clone();
+    rig.prompt(&task, 1).await;
+    let agent_dir = rig.worktree(&task).join(".agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::write(
+        agent_dir.join("plan.md"),
+        format!("Look at the account.\n\n1. Look\n[>] 1.1 {INVESTIGATOR_PLAN_MARKER}\n    Check: reviewer\n"),
+    )
+    .unwrap();
+
+    rig.stop().await.unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let header = format!("[investigators.{name}]\n");
+    let text = text.replace(&header, &format!("{header}account = \"{ACCOUNT}\"\n"));
+    std::fs::write(&path, format!("{text}\n[accounts.{ACCOUNT}]\nowner = \"comp\"\n")).unwrap();
+    rig.start().await;
+    let prompt = rig.prompt(&task, 2).await;
+    rig.stop().await.unwrap();
+
+    assert!(prompt.contains(INVESTIGATOR_ACCOUNT_NOTE), "{prompt}");
+    assert!(prompt.contains(INVESTIGATOR_PLAN_MARKER), "{prompt}");
+}
