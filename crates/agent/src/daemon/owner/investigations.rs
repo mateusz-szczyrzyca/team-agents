@@ -442,7 +442,9 @@ impl Owner {
         if let Some(task) = &req.inv_task {
             self.close_investigation_task(task).await?;
         }
-        if self.is_investigation_requester_live(req)
+        let automatic_team = self.automatic_conflict_team(req);
+        if automatic_team.is_none()
+            && self.is_investigation_requester_live(req)
             && let Some(located) = located
         {
             let values = super::Variables::new()
@@ -472,6 +474,9 @@ impl Owner {
             tracing::info!(event = LogEvent::InvestigationFailed.as_str(), team = %located.team, id = %req.id, reason = %reason);
         } else {
             tracing::info!(event = LogEvent::InvestigationFailed.as_str(), id = %req.id, reason = %reason);
+        }
+        if let Some(team) = automatic_team {
+            self.look_at(&team);
         }
         Ok(())
     }

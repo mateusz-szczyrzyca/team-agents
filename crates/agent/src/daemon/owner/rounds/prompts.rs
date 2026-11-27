@@ -222,7 +222,7 @@ async fn round_sections_for(
         }
         (Role::Solo | Role::Coordinator, _) => {
             // A merge refused for a conflict comes first: the lead merges the base, or is asked to put the question.
-            if let Some(text) = merge_conflict_text(ctx, texts, found)? {
+            if let Some(text) = merge_conflict_text(ctx, texts, found).await? {
                 return Ok(Some(Addition::Append(text)));
             }
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
@@ -306,7 +306,7 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
 ///
 /// # Errors
 /// [`SectionError`].
-fn merge_conflict_text(
+async fn merge_conflict_text(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
     found: &TaskRef<'_>,
@@ -316,7 +316,9 @@ fn merge_conflict_text(
         .items()
         .iter()
         .find_map(|item| match (item.phase(), item.merge_conflict()) {
-            (ItemPhase::Approved { pr, .. }, Some(conflict)) => Some((pr, conflict, item.merge_passes())),
+            (ItemPhase::Approved { pr, .. }, Some(conflict)) => {
+                Some((pr, conflict, item.merge_passes(), item.conflict_investigation()))
+            }
             (ItemPhase::Approved { .. }, None)
             | (
                 ItemPhase::Pending
@@ -327,7 +329,7 @@ fn merge_conflict_text(
                 _,
             ) => None,
         });
-    let Some((pr, conflict, passes)) = troubled else {
+    let Some((pr, conflict, passes, investigation)) = troubled else {
         return Ok(None);
     };
     let repo = found.team.repo();
@@ -340,12 +342,47 @@ fn merge_conflict_text(
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("base", base.as_str())?
-        .with("passes", ctx.settings.config.merge().conflict_passes.to_string())?;
+        .with(
+            "passes",
+            if investigation.is_some_and(|record| record.answered) {
+                passes.to_string()
+            } else {
+                ctx.settings.config.merge().conflict_passes.to_string()
+            },
+        )?;
     let text = match conflict {
         MergeConflict::MergingBase { .. } => {
+            let answer = if let Some(record) = investigation.filter(|record| record.answered) {
+                let bus = agent_runtime::agentbus::AgentBus::new(
+                    ctx.settings.config.binaries().agentbus.clone(),
+                    AbsolutePath::from_str(ctx.home.root().to_str().ok_or_else(|| SectionError::Path {
+                        path: ctx.home.root().to_path_buf(),
+                        source: None,
+                    })?)
+                    .map_err(|source| SectionError::Path {
+                        path: ctx.home.root().to_path_buf(),
+                        source: Some(source),
+                    })?,
+                );
+                let request = bus.inv_get(record.id).await?;
+                let path = request.file;
+                match read_text_file(&path, MAX_REPORT_BYTES)
+                    .await
+                    .map_err(|source| SectionError::Report { path, source })?
+                {
+                    Some(file) => format!(
+                        "An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:\n{}",
+                        file.text
+                    ),
+                    None => String::new(),
+                }
+            } else {
+                String::new()
+            };
             let values = values
                 .with("branch", pr.branch.as_str())?
-                .with("pass", passes.to_string())?;
+                .with("pass", passes.to_string())?
+                .with("investigator_answer", answer)?;
             texts.render(AutopilotPrompt::PrMergeConflict, &values)?
         }
         MergeConflict::AskingHuman { at } => {

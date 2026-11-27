@@ -2227,6 +2227,11 @@ impl Owner {
                 .inv_set(inv.id, &InvTransition::Done { summary })
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
+            if let Some(team) = self.automatic_conflict_team(&inv) {
+                self.record_conflict_investigation_answer(&team, inv.id).await?;
+                self.look_at(&team);
+                return Ok(());
+            }
             let from: AgentName = located.agent.parse()?;
             let to = Recipient::Task {
                 agent: inv.from_agent.clone(),
@@ -2250,6 +2255,10 @@ impl Owner {
                 investigator = %located.agent,
                 chars = answer.chars().count(),
             );
+        } else if let Some(team) = self.automatic_conflict_team(&inv) {
+            self.fail_investigation(&inv, "the conflict investigator's run failed", Some(located))
+                .await?;
+            self.look_at(&team);
         } else {
             self.requeue_investigation(&inv, located, end, message).await?;
         }

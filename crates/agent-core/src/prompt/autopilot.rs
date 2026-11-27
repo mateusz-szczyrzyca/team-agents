@@ -649,7 +649,7 @@ impl AutopilotPrompt {
             Self::PrUnpushedBase => &["base", "count", "first", "subject"],
             Self::PrWorkerSteps | Self::PrReturnedSteps => &["steps"],
             Self::PrSplit => &["split"],
-            Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes"],
+            Self::PrMergeConflict => &["pr", "base", "branch", "pass", "passes", "investigator_answer"],
             Self::PublishFailed => &["branch", "reason"],
             Self::NoticePublishQuestion => &["task", "items", "branch", "reason"],
             Self::PrMergeConflictAsk => &["pr", "base", "passes"],

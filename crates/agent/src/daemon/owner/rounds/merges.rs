@@ -274,6 +274,17 @@ impl Owner {
         if self.watch.refused.contains(&key) || self.asking_human_for_conflict(team, pr.number) {
             return Ok(Merge::Waits);
         }
+        if self.parts.state.team(team).is_some_and(|found| {
+            items_of(found, pr.number).iter().any(|id| {
+                found.item(*id).is_some_and(|item| {
+                    item.conflict_investigation().is_some_and(|record| &record.head == head)
+                        && item.merge_conflict().is_none()
+                        && item.merge_passes() <= self.parts.settings.config.merge().conflict_passes
+                })
+            })
+        }) {
+            return Ok(Merge::Waits);
+        }
         let request = MergeRequest {
             method: MergeMethod::Merge,
             expected_head: head.clone(),
@@ -300,8 +311,15 @@ impl Owner {
                         refusal,
                         budget,
                         agent_core::decide::merge_refusal::InvestigatorPass {
-                            enabled: false,
-                            filed_for_head: false,
+                            enabled: self.parts.settings.config.merge().investigator_pass,
+                            filed_for_head: self.parts.state.team(team).is_some_and(|found| {
+                                items_of(found, pr.number).iter().any(|id| {
+                                    found
+                                        .item(*id)
+                                        .and_then(agent_core::state::ItemProgress::conflict_investigation)
+                                        .is_some_and(|record| &record.head == head)
+                                })
+                            }),
                         },
                     );
                     agent_runtime::history::log_decision(
@@ -319,7 +337,10 @@ impl Owner {
                         | AfterRefusal::AskHuman
                         | AfterRefusal::AskInvestigator) => Ok(Merge::Conflict {
                             step: match after {
-                                AfterRefusal::AskHuman | AfterRefusal::AskInvestigator => ConflictStep::AskHuman,
+                                AfterRefusal::AskHuman => ConflictStep::AskHuman,
+                                AfterRefusal::AskInvestigator => ConflictStep::AskInvestigator {
+                                    url: about.url.to_owned(),
+                                },
                                 AfterRefusal::LeadMergesBase | AfterRefusal::TellHuman => ConflictStep::MergeBase,
                             },
                             head: head.clone(),

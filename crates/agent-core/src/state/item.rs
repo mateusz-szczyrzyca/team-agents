@@ -807,6 +807,11 @@ pub struct ConflictInvestigation {
 pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
+    /// Records the automatic request for this item's pull request head.
+    pub fn set_conflict_investigation(&mut self, investigation: ConflictInvestigation) {
+        self.value.conflict_investigation = Some(investigation);
+    }
+
     /// See [`ItemProgress::begin_merge_conflict`].
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.value.begin_merge_conflict(approved_head, at)
@@ -1555,6 +1560,12 @@ impl ItemProgress {
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
+
+    /// The automatic investigation most recently filed for this item.
+    #[must_use]
+    pub const fn conflict_investigation(&self) -> Option<&ConflictInvestigation> {
+        self.conflict_investigation.as_ref()
+    }
 
     /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
     #[must_use]
