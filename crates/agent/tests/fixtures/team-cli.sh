@@ -303,6 +303,14 @@ if [[ $action == deaf-* ]]; then
 fi
 init
 read_messages
+# Conflict investigations start in a new task, so choose their answer by role rather than run number.
+if [[ $action == conflict-investigator:* ]]; then
+  if [[ $prompt == *'# Investigate the conflict for item '* ]]; then
+    action=${action#conflict-investigator:}
+  else
+    action='verify:VERDICT: APPROVE\nSUMMARY: fine'
+  fi
+fi
 case $action in
   inv-conflict)
     while [[ ! -f .fake-conflict-ready ]]; do

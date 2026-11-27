@@ -62,9 +62,9 @@ pub use findings::{
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
 pub use holding::{HandOverError, Holding};
 pub use item::{
-    AdvanceError, AskReviewsError, Completion, FixPass, FixingWithoutFixPass, InvalidAdvance, InvalidReviews, ItemMut,
-    ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection, RejectionError,
-    ReplaceReviewError, Review, ReviewOutcome, SubmitReviewError,
+    AdvanceError, AskReviewsError, Completion, ConflictInvestigation, FixPass, FixingWithoutFixPass, InvalidAdvance,
+    InvalidReviews, ItemMut, ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection,
+    RejectionError, ReplaceReviewError, Review, ReviewOutcome, SubmitReviewError,
 };
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanFault, PlanKeeping, PlanReason, PlanStage, RunningPlanCheck, StepMismatch};

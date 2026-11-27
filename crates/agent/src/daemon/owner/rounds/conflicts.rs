@@ -13,7 +13,8 @@ use agent_core::ids::{ItemId, TaskId, TeamId};
 use agent_core::log::LogEvent;
 use agent_core::repo_path::RepoPath;
 use agent_core::state::{
-    AdvanceError, CommitId, ItemMut, ItemPhase, MergeConflict, PullRequest, QuestionState, Timestamp,
+    AdvanceError, CommitId, ConflictInvestigation, ItemMut, ItemPhase, MergeConflict, PullRequest, QuestionState,
+    Timestamp,
 };
 use agent_core::status::TaskStatus;
 use agent_runtime::git::{Git, Revision};
@@ -30,10 +31,15 @@ use crate::daemon::pr::{Joining, Publication, Publish};
 use crate::daemon::team::Why;
 
 /// What the daemon starts on an approved pull request after a conflict refusal or a conflict pass.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum ConflictStep {
     /// The lead merges the base branch into the pull request's branch.
     MergeBase,
+    /// The daemon asks an investigator about the refused pull request.
+    AskInvestigator {
+        /// Address of the pull request whose tip must be investigated.
+        url: String,
+    },
     /// The lead asks the human once in its questions file.
     AskHuman,
 }
@@ -128,21 +134,28 @@ impl Owner {
         now: Timestamp,
         look: &mut Look,
     ) -> Result<(), OwnerError> {
-        self.each_item(team, items, |item| {
-            match step {
-                ConflictStep::AskHuman => {
-                    item.set_conflict_approved_head(head.clone());
-                    if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
-                        context.reviewed_head = Some(head.clone());
-                    }
-                    item.ask_human_about_merge_conflict(now);
-                }
-                ConflictStep::MergeBase => {
-                    item.begin_merge_conflict(head.clone(), now);
-                }
+        match step {
+            ConflictStep::AskInvestigator { url } => {
+                return self.file_conflict_investigations(team, items, head, &url).await;
             }
-            Ok(())
-        })?;
+            ConflictStep::AskHuman => self.each_item(team, items, |item| {
+                if let Some(record) = item.conflict_investigation().filter(|record| &record.head == head) {
+                    let mut consumed = record.clone();
+                    consumed.answered = true;
+                    item.set_conflict_investigation(consumed);
+                }
+                item.set_conflict_approved_head(head.clone());
+                if let Some(context) = item.findings_mut().and_then(|ledger| ledger.verification_mut()) {
+                    context.reviewed_head = Some(head.clone());
+                }
+                item.ask_human_about_merge_conflict(now);
+                Ok(())
+            })?,
+            ConflictStep::MergeBase => self.each_item(team, items, |item| {
+                item.begin_merge_conflict(head.clone(), now);
+                Ok(())
+            })?,
+        }
         self.parts.state.record_activities(now);
         self.save().await?;
         for item in items {
@@ -152,6 +165,196 @@ impl Owner {
         }
         let lead = self.lead_of(team)?;
         self.release_conflict_lead(&lead.task, look)
+    }
+
+    /// Files and durably associates each automatic request with its refused head.
+    async fn file_conflict_investigations(
+        &mut self,
+        team: &TeamId,
+        items: &[ItemId],
+        head: &CommitId,
+        url: &str,
+    ) -> Result<(), OwnerError> {
+        let lead = self.lead_of(team)?;
+        let base = self
+            .base_branch(&lead.repo)
+            .map_err(|source| OwnerError::InvestigationWorkspace(source.into()))?;
+        for id in items {
+            let item = self
+                .parts
+                .state
+                .team(team)
+                .and_then(|found| found.item(*id))
+                .ok_or_else(|| OwnerError::LostItem {
+                    team: team.clone(),
+                    item: *id,
+                })?;
+            if item.conflict_investigation().is_some_and(|record| &record.head == head) {
+                continue;
+            }
+            let ItemPhase::Approved { pr, .. } = item.phase() else {
+                continue;
+            };
+            let superseded = item.conflict_investigation().map(|record| record.id);
+            let request = agent_runtime::agentbus::NewConflictRequest {
+                from_agent: lead.agent.clone(),
+                from_task: lead.task.clone(),
+                repo: lead.repo.clone(),
+                branch: pr.branch.clone(),
+                item: *id,
+                question: format!(
+                    "Pull request #{} conflicts with {base} after {} passes of the lead. Resolve it locally as your instructions say.",
+                    pr.number,
+                    item.merge_passes()
+                ),
+                pr_url: url.to_owned(),
+                pr_number: pr.number,
+            };
+            if let Some(id) = superseded {
+                self.fail_superseded_conflict_request(id).await?;
+            }
+            let request_id = self
+                .parts
+                .bus
+                .inv_add_conflict(&request)
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            self.each_item(team, &[*id], |item| {
+                item.set_conflict_investigation(ConflictInvestigation {
+                    head: head.clone(),
+                    id: request_id,
+                    answered: false,
+                });
+                Ok(())
+            })?;
+            self.save().await?;
+            tracing::info!(event = LogEvent::MergeConflictInvestigated.as_str(), item = %id, id = request_id.get());
+        }
+        Ok(())
+    }
+
+    /// Finds the requesting team only for requests filed by the automatic conflict path.
+    pub(in crate::daemon::owner) fn automatic_conflict_team(
+        &self,
+        request: &agent_runtime::agentbus::Investigation,
+    ) -> Option<TeamId> {
+        self.parts
+            .state
+            .find_task(&request.from_task)
+            .filter(|found| {
+                found.team.items().iter().any(|item| {
+                    item.conflict_investigation()
+                        .is_some_and(|record| record.id == request.id)
+                })
+            })
+            .map(|found| found.team.id().clone())
+    }
+
+    /// Stops pending work before its head association is replaced.
+    async fn fail_superseded_conflict_request(&mut self, id: std::num::NonZeroU32) -> Result<(), OwnerError> {
+        use agent_runtime::agentbus::InvestigationStatus;
+        let request = self
+            .parts
+            .bus
+            .inv_get(id)
+            .await
+            .map_err(|source| OwnerError::Bus { source })?;
+        match request.status {
+            Some(
+                InvestigationStatus::Queued
+                | InvestigationStatus::Waitroom
+                | InvestigationStatus::Starting
+                | InvestigationStatus::Running
+                | InvestigationStatus::WaitingHuman,
+            ) => {
+                self.fail_investigation(&request, "the pull request head was superseded", None)
+                    .await?;
+            }
+            Some(
+                InvestigationStatus::Done
+                | InvestigationStatus::Failed
+                | InvestigationStatus::Rejected
+                | InvestigationStatus::Unknown(_),
+            )
+            | None => {}
+        }
+        Ok(())
+    }
+
+    /// Resumes a durable investigation after its answer, failure, or a daemon restart.
+    async fn advance_conflict_investigations(
+        &mut self,
+        team: &TeamId,
+        look: &mut Look,
+        now: Timestamp,
+    ) -> Result<(), OwnerError> {
+        use agent_runtime::agentbus::InvestigationStatus;
+        let pending: Vec<_> = self
+            .parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::items)
+            .filter_map(|item| {
+                let record = item.conflict_investigation()?;
+                (matches!(item.phase(), ItemPhase::Approved { .. })
+                    && item.merge_conflict().is_none()
+                    && !record.answered)
+                    .then(|| (item.id(), record.clone()))
+            })
+            .collect();
+        for (item, mut record) in pending {
+            let lead = self.lead_of(team)?;
+            let place = self.place_of(team, &[item]);
+            let git = self.worktree_git(&lead.repo, &lead.task, &lead.agent);
+            let Some(head) = self
+                .head_of(&place, team, super::waiting::WaitingStep::ReadMergeHead, None, git)
+                .await?
+            else {
+                continue;
+            };
+            if head != record.head {
+                continue;
+            }
+            let request = self
+                .parts
+                .bus
+                .inv_get(record.id)
+                .await
+                .map_err(|source| OwnerError::Bus { source })?;
+            if self.parts.settings.config.investigators().is_empty() || !self.is_investigation_requester_live(&request)
+            {
+                self.fail_investigation(&request, "no investigator or live requester is available", None)
+                    .await?;
+                self.start_merge_conflict(team, &[item], ConflictStep::AskHuman, &record.head, now, look)
+                    .await?;
+                continue;
+            }
+            let step = match request.status {
+                Some(InvestigationStatus::Done) => {
+                    record.answered = true;
+                    self.each_item(team, &[item], |item| {
+                        item.set_conflict_investigation(record.clone());
+                        Ok(())
+                    })?;
+                    Some(ConflictStep::MergeBase)
+                }
+                Some(InvestigationStatus::Failed | InvestigationStatus::Rejected | InvestigationStatus::Unknown(_))
+                | None => Some(ConflictStep::AskHuman),
+                Some(
+                    InvestigationStatus::Queued
+                    | InvestigationStatus::Waitroom
+                    | InvestigationStatus::Starting
+                    | InvestigationStatus::Running
+                    | InvestigationStatus::WaitingHuman,
+                ) => None,
+            };
+            if let Some(step) = step {
+                self.start_merge_conflict(team, &[item], step, &record.head, now, look)
+                    .await?;
+            }
+        }
+        Ok(())
     }
 
     /// Queues the lead task `task` for a merge conflict pass or question, including when the lead's last run failed.
@@ -215,6 +418,7 @@ impl Owner {
         look: &mut Look,
         now: Timestamp,
     ) -> Result<(), OwnerError> {
+        self.advance_conflict_investigations(team, look, now).await?;
         let pass = match self.conflict_in_progress(team)? {
             Some(pass) => pass,
             None => match self.recover_exhausted_split_conflict(pulls, team).await {
@@ -409,6 +613,16 @@ impl Owner {
             return Ok(false);
         }
         self.record_conflict_published(site.team, items, approved_head, pr.number)?;
+        self.each_item(site.team, items, |item| {
+            if let Some(mut record) = item.conflict_investigation().cloned()
+                && record.answered
+            {
+                // The answer's published tip has already used this head's investigation.
+                record.head = tip.clone();
+                item.set_conflict_investigation(record);
+            }
+            Ok(())
+        })?;
         self.record_event_at(
             now,
             site.team,
@@ -954,7 +1168,7 @@ impl Owner {
     }
 
     /// Changes each of `items` of `team` with `change`.
-    pub(super) fn each_item(
+    pub(in crate::daemon::owner) fn each_item(
         &mut self,
         team: &TeamId,
         items: &[ItemId],

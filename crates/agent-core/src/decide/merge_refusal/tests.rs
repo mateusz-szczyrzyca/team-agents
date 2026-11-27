@@ -217,3 +217,37 @@ fn recover_exhausted_split_round_table() {
         ExhaustedRoundRecovery::WaitHuman
     );
 }
+
+/// Retains the pre-investigator decision cases with the optional pass disabled.
+fn after_refusal(refusal: Refusal, budget: ConflictBudget) -> AfterRefusal {
+    super::after_refusal(
+        refusal,
+        budget,
+        InvestigatorPass {
+            enabled: false,
+            filed_for_head: false,
+        },
+    )
+}
+
+#[test]
+fn a_spent_conflict_budget_asks_an_investigator_only_when_enabled_and_not_filed() {
+    for (enabled, filed_for_head, expected) in [
+        (true, false, AfterRefusal::AskInvestigator),
+        (true, true, AfterRefusal::AskHuman),
+        (false, false, AfterRefusal::AskHuman),
+        (false, true, AfterRefusal::AskHuman),
+    ] {
+        assert_eq!(
+            super::after_refusal(
+                Refusal::Conflict,
+                ConflictBudget { spent: 3, limit: 3 },
+                InvestigatorPass {
+                    enabled,
+                    filed_for_head
+                }
+            ),
+            expected
+        );
+    }
+}

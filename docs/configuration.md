@@ -521,7 +521,8 @@ does not allow (`Allow:`) is reviewed again before the merge. Every other refusa
 
 | Key | Default | Meaning |
 |---|---|---|
-| `conflict_passes` | `3` | lead passes per round to merge the base after a conflict; when they are used up, or the lead gives no result, the lead asks you in its questions file. `0` tells you at once, as before |
+| `investigator_pass` | `true` | after ordinary conflict passes, ask an investigator once per item and PR head; a completed answer gives the lead one extra pass. Failure asks the human. `false` keeps the direct human fallback |
+| `conflict_passes` | `3` | ordinary lead passes per round to merge the base after a conflict; when spent, the investigator pass runs before the human fallback. `0` tells the human at once, regardless of `investigator_pass` |
 
 ### `[publish]`
 

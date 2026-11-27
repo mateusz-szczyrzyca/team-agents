@@ -889,6 +889,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::WorktreeSwitched,
             LogEvent::InvestigationStarted,
             LogEvent::InvestigationAnswered,
+            LogEvent::MergeConflictInvestigated,
             LogEvent::InvestigationRequeued,
             LogEvent::InvestigationFailed,
         ] {
@@ -1480,6 +1481,7 @@ async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_i
     record_no_tool_startup_events(&mut observed).await;
     super::investigations_tests::record_investigation_events(&mut observed).await;
     super::investigations_tests::record_investigation_failure_events(&mut observed).await;
+    super::merge_conflict_tests::record_merge_conflict_investigated(&mut observed).await;
 
     let expected: BTreeSet<LogEvent> = LogEvent::ALL.iter().copied().collect();
     assert_eq!(

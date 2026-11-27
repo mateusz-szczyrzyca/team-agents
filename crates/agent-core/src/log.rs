@@ -258,6 +258,8 @@ pub enum LogEvent {
     InvestigationStarted,
     /// The investigator's complete answer is delivered to the requester.
     InvestigationAnswered,
+    /// The daemon filed an automatic conflict investigation for an item.
+    MergeConflictInvestigated,
     /// An investigation with an unsupported kind is failed without starting a task.
     InvestigationKindUnknown,
     /// An unfinished investigation is queued for a different investigator.
@@ -352,6 +354,7 @@ impl LogEvent {
             | Self::TaskHandedOver
             | Self::TaskAgentChanged
             | Self::InvestigationStarted
+            | Self::MergeConflictInvestigated
             | Self::InvestigationAnswered
             | Self::InvestigationRequeued
             | Self::InvestigationFailed

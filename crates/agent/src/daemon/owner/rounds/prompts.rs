@@ -49,6 +49,12 @@ pub(in crate::daemon::owner) enum SectionError {
         /// The requested item.
         item: ItemId,
     },
+    /// A completed investigation has lost its saved answer.
+    #[error("the conflict investigation answer {path:?} is missing")]
+    MissingInvestigationAnswer {
+        /// The answer file supplied by the bus.
+        path: std::path::PathBuf,
+    },
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
@@ -226,7 +232,7 @@ async fn round_sections_for(
         }
         (Role::Solo | Role::Coordinator, _) => {
             // A merge refused for a conflict comes first: the lead merges the base, or is asked to put the question.
-            if let Some(text) = merge_conflict_text(ctx, texts, found)? {
+            if let Some(text) = merge_conflict_text(ctx, texts, found).await? {
                 return Ok(Some(Addition::Append(text)));
             }
             // What the checks before a review tell the lead comes first: it is the last thing that happened to its round.
@@ -247,8 +253,8 @@ async fn round_sections_for(
     }
 }
 
-/// Renders the prompt section for an investigator task.
-async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<Addition>, SectionError> {
+/// Uses the same bus and validated home path for investigator and lead prompts.
+fn investigation_bus(ctx: &Context<'_>) -> Result<agent_runtime::agentbus::AgentBus, SectionError> {
     let home_str = ctx.home.root().to_str().ok_or_else(|| SectionError::Path {
         path: ctx.home.root().to_path_buf(),
         source: None,
@@ -257,7 +263,15 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
         path: ctx.home.root().to_path_buf(),
         source: Some(source),
     })?;
-    let bus = agent_runtime::agentbus::AgentBus::new(ctx.settings.config.binaries().agentbus.clone(), home);
+    Ok(agent_runtime::agentbus::AgentBus::new(
+        ctx.settings.config.binaries().agentbus.clone(),
+        home,
+    ))
+}
+
+/// Renders the prompt section for an investigator task.
+async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<Addition>, SectionError> {
+    let bus = investigation_bus(ctx)?;
     let open = bus.inv_open().await?;
     if let Some(inv) = open
         .into_iter()
@@ -318,13 +332,31 @@ async fn with_briefing(ctx: &Context<'_>, found: &TaskRef<'_>, text: String) -> 
     Ok(Some(Addition::Replace(text)))
 }
 
+/// Reads the bounded answer used by an additional conflict pass.
+async fn conflict_investigator_answer(path: &std::path::Path) -> Result<String, SectionError> {
+    match read_text_file(path, MAX_REPORT_BYTES)
+        .await
+        .map_err(|source| SectionError::Report {
+            path: path.to_path_buf(),
+            source,
+        })? {
+        Some(file) => Ok(format!(
+            "An investigator worked out this resolution on the tip of your pull request. Apply it, check it, then go on from step 4:\n{}",
+            file.text
+        )),
+        None => Err(SectionError::MissingInvestigationAnswer {
+            path: path.to_path_buf(),
+        }),
+    }
+}
+
 /// What the lead of `found` is told about an approved pull request that GitHub refuses to merge for a conflict: the merge of
 /// the base it is sent to make, or the question it is to put to the human once the passes are used up; `None` when no
 /// merge is in trouble.
 ///
 /// # Errors
 /// [`SectionError`].
-fn merge_conflict_text(
+async fn merge_conflict_text(
     ctx: &Context<'_>,
     texts: &AutopilotPrompts,
     found: &TaskRef<'_>,
@@ -334,7 +366,9 @@ fn merge_conflict_text(
         .items()
         .iter()
         .find_map(|item| match (item.phase(), item.merge_conflict()) {
-            (ItemPhase::Approved { pr, .. }, Some(conflict)) => Some((pr, conflict, item.merge_passes())),
+            (ItemPhase::Approved { pr, .. }, Some(conflict)) => {
+                Some((pr, conflict, item.merge_passes(), item.conflict_investigation()))
+            }
             (ItemPhase::Approved { .. }, None)
             | (
                 ItemPhase::Pending
@@ -345,7 +379,7 @@ fn merge_conflict_text(
                 _,
             ) => None,
         });
-    let Some((pr, conflict, passes)) = troubled else {
+    let Some((pr, conflict, passes, investigation)) = troubled else {
         return Ok(None);
     };
     let repo = found.team.repo();
@@ -358,12 +392,27 @@ fn merge_conflict_text(
     let values = Variables::new()
         .with("pr", pr.number.to_string())?
         .with("base", base.as_str())?
-        .with("passes", ctx.settings.config.merge().conflict_passes.to_string())?;
+        .with(
+            "passes",
+            if investigation.is_some_and(|record| record.answered) {
+                passes.to_string()
+            } else {
+                ctx.settings.config.merge().conflict_passes.to_string()
+            },
+        )?;
     let text = match conflict {
         MergeConflict::MergingBase { .. } => {
+            let answer = if let Some(record) = investigation.filter(|record| record.answered) {
+                let bus = investigation_bus(ctx)?;
+                let request = bus.inv_get(record.id).await?;
+                conflict_investigator_answer(&request.file).await?
+            } else {
+                String::new()
+            };
             let values = values
                 .with("branch", pr.branch.as_str())?
-                .with("pass", passes.to_string())?;
+                .with("pass", passes.to_string())?
+                .with("investigator_answer", answer)?;
             texts.render(AutopilotPrompt::PrMergeConflict, &values)?
         }
         MergeConflict::AskingHuman { at } => {
