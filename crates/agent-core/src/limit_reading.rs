@@ -4,6 +4,8 @@
 //! reading is checked once, when it is made, so that everything that holds one can rely on `used` being a share
 //! between 0 and 1.
 
+use time::UtcDateTime;
+
 use crate::state::{InvalidTimestamp, Timestamp};
 
 #[cfg(test)]
@@ -65,8 +67,15 @@ impl LimitReading {
     /// # Errors
     /// [`InvalidLimitReading::UsedOutOfRange`] when `used` is not a number from 0 to 1.
     pub fn new(window: LimitWindow, used: f64, resets_at: Timestamp) -> Result<Self, InvalidLimitReading> {
-        let _ = (window, resets_at);
-        Err(InvalidLimitReading::UsedOutOfRange { used })
+        // `contains` is false for NaN and the infinities too.
+        if !(0.0..=1.0).contains(&used) {
+            return Err(InvalidLimitReading::UsedOutOfRange { used });
+        }
+        Ok(Self {
+            window,
+            used,
+            resets_at,
+        })
     }
 
     /// A reading of `window` that resets `reset_seconds` seconds after the Unix epoch.
@@ -75,8 +84,18 @@ impl LimitReading {
     /// [`InvalidLimitReading::UsedOutOfRange`] when `used` is not a number from 0 to 1,
     /// [`InvalidLimitReading::ResetOutOfRange`] when the seconds are no time a [`Timestamp`] holds.
     pub fn from_unix(window: LimitWindow, used: f64, reset_seconds: i64) -> Result<Self, InvalidLimitReading> {
-        let _ = (window, reset_seconds);
-        Err(InvalidLimitReading::UsedOutOfRange { used })
+        // The share is checked first: a reading with both wrong is told by its share.
+        if !(0.0..=1.0).contains(&used) {
+            return Err(InvalidLimitReading::UsedOutOfRange { used });
+        }
+        let resets_at = UtcDateTime::from_unix_timestamp(reset_seconds)
+            .map_err(ResetTimeError::Calendar)
+            .and_then(|time| Timestamp::from_utc(time).map_err(ResetTimeError::Year))
+            .map_err(|source| InvalidLimitReading::ResetOutOfRange {
+                seconds: reset_seconds,
+                source,
+            })?;
+        Self::new(window, used, resets_at)
     }
 
     /// The window the reading is of.
