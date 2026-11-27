@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use agent_core::config::{Config, ConfigError, MAX_CONFIG_BYTES, MAX_SECRETS_BYTES, Secrets, SecretsError};
+use agent_core::config::{
+    AccountSecretsError, Config, ConfigError, MAX_CONFIG_BYTES, MAX_SECRETS_BYTES, Secrets, SecretsError,
+};
 
 use crate::store::Home;
 use crate::text_file::{TextFile, TextFileError, read_text_file};
@@ -67,6 +69,14 @@ pub enum SettingsError {
         path: PathBuf,
         /// What is wrong with it.
         source: SecretsError,
+    },
+    /// `secrets.toml` has accounts that `agents.toml` does not have, or sets a variable that the account's `env` sets.
+    #[error("{path:?} does not fit the accounts of the configuration")]
+    AccountSecrets {
+        /// The file.
+        path: PathBuf,
+        /// What does not fit; it names the account and the variable, never a value.
+        source: AccountSecretsError,
     },
 }
 
