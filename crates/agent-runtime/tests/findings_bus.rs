@@ -58,3 +58,27 @@ printf '%s' '[{"id":"F-8","ts":"2026-11-27T00:00:00Z","author":"other","task":"t
         ));
     }
 }
+
+#[tokio::test]
+async fn findings_accepts_bus_local_timestamps_in_the_supplied_zone() {
+    use agent_core::local_time::Zone;
+    let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bus");
+    std::fs::write(&bin, r#"#!/bin/sh
+printf '%s' '[{"id":"F-1","ts":"2026-11-27 12:30:00","author":"other","task":"task-20261127-112701-abcd","kind":"trap","paths":["src/lib.rs"],"text":"lesson"}]'
+"#).unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let bus = agent_runtime::agentbus::AgentBus::new(
+        bin.to_str().unwrap().parse().unwrap(),
+        dir.path().to_str().unwrap().parse().unwrap(),
+    );
+    let rows = bus
+        .findings_in(
+            &"example".parse().unwrap(),
+            Zone::Fixed(time::UtcOffset::from_hms(2, 0, 0).unwrap()),
+        )
+        .await;
+    let expected = "2026-11-27T10:30:00Z".parse::<agent_core::state::Timestamp>().unwrap();
+    assert!(matches!(&rows, Ok(rows) if rows[0].added_at == expected), "{rows:?}");
+}

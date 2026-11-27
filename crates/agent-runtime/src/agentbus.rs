@@ -1676,6 +1676,18 @@ impl AgentBus {
         decode_json(command, &output)
     }
 
+    /// Reads open findings using the bus machine's time zone.
+    ///
+    /// # Errors
+    /// Returns [`AgentBusError`] if the bus fails or its JSON cannot be decoded.
+    pub async fn findings_in(
+        &self,
+        repo: &RepoName,
+        _zone: agent_core::local_time::Zone,
+    ) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
+        self.findings(repo).await
+    }
+
     /// Takes the next queued investigation without restricting its requesting task.
     ///
     /// # Errors
