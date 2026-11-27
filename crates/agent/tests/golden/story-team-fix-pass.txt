@@ -72,11 +72,11 @@ STATUS: DONE
     task <task-8>; worktree <home>/worktrees/example/<task-8>, branch agents/glm-1/<task-8>
     took <duration>
     prompt: <n> lines, <n> bytes
-      # A REQUEST FROM claude-1 (H1)
+      # YOUR SESSION GOES ON
       
-      You are a worker: a cheap model for small, well-defined jobs. claude-1, a stronger model, gave you this one so as not
-      to spend its own tokens on it. You work unattended.
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-8>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-8>/runs/<run-7>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-8>/runs/<run-7>/claude-settings.json --resume <uuid> --scenario 'sleep,done:Result: looked' --as glm-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-8>, at commit <commit-1>
@@ -99,11 +99,11 @@ STATUS: DONE
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/inv-lead/<task-4>
     took <duration>
     prompt: <n> lines, <n> bytes
-      # YOU HAVE BEEN WOKEN UP (team <team-2>)
+      # YOUR SESSION GOES ON
       
-      Call `read_messages` now: a message that stays unread brings this wake-up back.
-      
-      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-4>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-9>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-9>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-1>
@@ -122,11 +122,11 @@ STATUS: DONE
     task <task-6>; worktree <home>/worktrees/example/<task-6>, branch agents/claude-1/<task-6>-1.1
     took <duration>
     prompt: <n> lines, <n> bytes
-      # YOU HAVE BEEN WOKEN UP (team <team-2>)
+      # YOUR SESSION GOES ON
       
-      Call `read_messages` now: a message that stays unread brings this wake-up back.
-      
-      A message to you or to your team has arrived. Everything of this session still holds, the rules of your first message
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-6>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-6>/runs/<run-10>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-6>/runs/<run-10>/claude-settings.json --resume <uuid> --scenario script:wait-for-worker,sleep --as claude-1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-6>, at commit <commit-2>
@@ -288,11 +288,11 @@ or empty, publication continues and says that you supplied no description. If wr
     task <task-4>; worktree <home>/worktrees/example/<task-4>, branch agents/inv-lead/<task-4>
     took <duration>
     prompt: <n> lines, <n> bytes
-      # Working context
+      # YOUR SESSION GOES ON
       
-      You are agent **inv-lead**, working unattended (headless) on this host as an unprivileged user, with a full shell.
-      The human does not answer live: you reach them only through a questions file (below).
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-4>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-4>/runs/<run-15>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-4>/runs/<run-15>/claude-settings.json --resume <uuid> --scenario sleep,lead-gated,fix-gated --as inv-lead --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-4>, at commit <commit-2>
@@ -316,11 +316,11 @@ STATUS: DONE
     task <task-11>; worktree <home>/worktrees/example/<task-11>, branch agents/inv-r1/<task-11>
     took <duration>
     prompt: <n> lines, <n> bytes
-      # Working context
+      # YOUR SESSION GOES ON
       
-      You are agent **inv-r1**, working unattended (headless) on this host as an unprivileged user, with a full shell.
-      The human does not answer live: you reach them only through a questions file (below).
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-11>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-11>/runs/<run-16>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-11>/runs/<run-16>/claude-settings.json --resume <uuid> --scenario 'late-verify:VERDICT: REQUEST_CHANGES\nFINDINGS\n1. [MAJOR] TDD-2 src/lib.rs:7 — the case is untested → add coverage\n   CHECK: read src/lib.rs:7,late-verify:VERDICT: APPROVE\nSUMMARY: fixed' --as inv-r1 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-11>, at commit <commit-3>
@@ -339,11 +339,11 @@ STATUS: DONE
     task <task-12>; worktree <home>/worktrees/example/<task-12>, branch agents/inv-r2/<task-12>
     took <duration>
     prompt: <n> lines, <n> bytes
-      # Working context
+      # YOUR SESSION GOES ON
       
-      You are agent **inv-r2**, working unattended (headless) on this host as an unprivileged user, with a full shell.
-      The human does not answer live: you reach them only through a questions file (below).
-      
+      Your session continues after your last report. Your working context, your rules and the brief from the start of this
+      session still hold; they are not repeated here. If your context was compacted and you no longer have them, read
+      `<home>/tasks/<task-12>/session-prompt.md` before you go on. What happened since your last report follows.
       … <n> more lines
     command: <crate>/tests/fixtures/team-cli.sh -p --output-format stream-json --verbose --dangerously-skip-permissions --mcp-config <home>/tasks/<task-12>/runs/<run-17>/mcp.json --max-turns 300 --strict-mcp-config --disallowedTools CronCreate,CronDelete,CronList,DesignSync,EnterWorktree,ExitWorktree,ListAgents,ListMcpResourcesTool,Monitor,NotebookEdit,PushNotification,ReadMcpResourceDirTool,ReadMcpResourceTool,RemoteTrigger,ReportFindings,ScheduleWakeup,SendMessage,Workflow --disable-slash-commands --settings <home>/tasks/<task-12>/runs/<run-17>/claude-settings.json --resume <uuid> --scenario 'verify:VERDICT: APPROVE\nSUMMARY: fine' --as inv-r2 --home <home> --bus-bin <agentbus> --bus-dir <home>/bus <the prompt>
     started <time> in <home>/worktrees/example/<task-12>, at commit <commit-3>
