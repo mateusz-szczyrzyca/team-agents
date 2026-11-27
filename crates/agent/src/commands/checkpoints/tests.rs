@@ -220,9 +220,15 @@ fn json_prints_the_checkpoint_records_one_object_a_line() {
 
     assert_eq!(status, ExitCode::SUCCESS);
     let values: Vec<serde_json::Value> = out.lines().map(|line| serde_json::from_str(line).unwrap()).collect();
-    let causes: Vec<&str> = values.iter().map(|value| value["record"]["cause"].as_str().unwrap()).collect();
+    let causes: Vec<&str> = values
+        .iter()
+        .map(|value| value["record"]["cause"].as_str().unwrap())
+        .collect();
     assert_eq!(causes, ["round_opened", "commit", "pull_ready"]);
-    assert!(values.iter().all(|value| value["record"]["event"] == "checkpoint"), "{values:?}");
+    assert!(
+        values.iter().all(|value| value["record"]["event"] == "checkpoint"),
+        "{values:?}"
+    );
 }
 
 // Rule: a round with no checkpoint says so and succeeds; one the history does not know exits as `agent log` does.

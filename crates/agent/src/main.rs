@@ -1052,14 +1052,7 @@ async fn execute_checkpoints(
         target: args.target,
         mode,
     };
-    checkpoints_in(
-        &home.history_file(),
-        &home.prompts_dir(),
-        &request,
-        environment.zone(),
-        out,
-    )
-    .await?;
+    checkpoints_in(&home.history_file(), &home.prompts_dir(), &request, out).await?;
     Ok(())
 }
 
