@@ -25,3 +25,22 @@ fn a_split_request_without_an_item_is_refused() {
     }));
     assert!(result.unwrap_err().is_data());
 }
+
+#[test]
+fn non_split_requests_accept_opaque_item_metadata() {
+    for (kind, expected) in [
+        ("", InvestigationKind::Question),
+        ("question", InvestigationKind::Question),
+        ("review", InvestigationKind::Review),
+        ("future-kind", InvestigationKind::Unknown("future-kind".to_owned())),
+        ("conflict", InvestigationKind::Unknown("conflict".to_owned())),
+    ] {
+        let request: Investigation = serde_json::from_value(serde_json::json!({
+            "id": 1, "from_agent": "lead", "from_task": "task-20261127-120000-abcd",
+            "branch": "agents/lead", "question": "Investigate", "kind": kind,
+            "item": "opaque méta", "file": "/tmp/inv.md"
+        }))
+        .unwrap();
+        assert_eq!(request.kind, expected);
+    }
+}
