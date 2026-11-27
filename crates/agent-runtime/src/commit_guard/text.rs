@@ -36,6 +36,18 @@ fn listed(files: &[RepoPath]) -> String {
         .join(", ")
 }
 
+/// What a message with no `Step:` trailer names.
+const NOTHING_NAMED: &str = "nothing";
+
+/// `words` as the words of a sentence: each in backticks, with commas between.
+fn quoted(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| format!("`{word}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// The line of the catalog that tells `refusal`.
 fn finding(texts: &HarnessPrompts, refusal: &Refusal) -> Result<String, RefusalTextError> {
     let render = |id, values: Variables| texts.render(id, &values).map_err(RefusalTextError::Render);
@@ -92,6 +104,16 @@ pub fn refusal_text(texts: &HarnessPrompts, refusals: &[Refusal]) -> Result<Stri
 /// # Errors
 /// [`RefusalTextError`] when a text of the catalog is not loaded or does not fit its values.
 pub fn step_refusal_text(texts: &HarnessPrompts, refusal: &StepRefusal) -> Result<String, RefusalTextError> {
-    let _ = (texts, refusal);
-    Ok(String::new())
+    let (named, steps) = match refusal {
+        StepRefusal::Missing { steps } => (NOTHING_NAMED.to_owned(), steps),
+        StepRefusal::NotInPlan { named, steps } => (quoted(named), steps),
+    };
+    let steps: Vec<String> = steps.iter().map(ToString::to_string).collect();
+    let values = Variables::new()
+        .with("named", &named)
+        .and_then(|values| values.with("steps", &quoted(&steps)))
+        .map_err(RefusalTextError::Variable)?;
+    texts
+        .render(HarnessPrompt::CommitRefusedStep, &values)
+        .map_err(RefusalTextError::Render)
 }

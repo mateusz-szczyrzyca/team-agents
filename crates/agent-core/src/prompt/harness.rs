@@ -163,6 +163,9 @@ pub enum HarnessPrompt {
     CommitRefusedWhole,
     /// The finding of a refused `TEST-FIX:` commit that also changes files that are not tests.
     CommitRefusedMixed,
+    /// What the hook of `git commit` tells an agent whose commit has no `Step:` trailer, or one that names no step of
+    /// its plan.
+    CommitRefusedStep,
 }
 
 impl HarnessPrompt {
@@ -239,6 +242,7 @@ impl HarnessPrompt {
         Self::CommitRefusedLines,
         Self::CommitRefusedWhole,
         Self::CommitRefusedMixed,
+        Self::CommitRefusedStep,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -484,6 +488,11 @@ impl HarnessPrompt {
             Self::CommitRefusedMixed => {
                 PromptSpec::new("harness/run/commit-refused-mixed.md", Audience::Model, &["files"])
             }
+            Self::CommitRefusedStep => PromptSpec::new(
+                "harness/run/commit-refused-step.md",
+                Audience::Model,
+                &["named", "steps"],
+            ),
         }
     }
 }
