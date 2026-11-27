@@ -20,7 +20,7 @@ fn current_attempt_and_failed_investigators_survive_state_reload() {
         failed_with: vec!["inv-codex".parse().unwrap()],
     };
     state.team_mut(&team).unwrap().record_investigation(record.clone());
-    assert_eq!(state.teams()[0].investigations(), &[record.clone()]);
+    assert_eq!(state.teams()[0].investigations(), std::slice::from_ref(&record));
     let restored: State = serde_json::from_value(serde_json::to_value(&state).unwrap()).unwrap();
     assert_eq!(restored.teams()[0].investigations(), &[record]);
 }
