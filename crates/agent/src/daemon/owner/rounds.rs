@@ -1134,3 +1134,7 @@ mod resume_checkpoint_tests;
 #[cfg(test)]
 #[path = "rounds/tests/job_checkpoints.rs"]
 mod job_checkpoints_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/job_handover.rs"]
+mod job_handover_tests;
