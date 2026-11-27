@@ -248,6 +248,11 @@ impl Secrets {
         &self.account_env
     }
 
+    /// Every secret of every account, to cut out of what is shown or stored.
+    pub fn account_secrets(&self) -> impl Iterator<Item = &Secret> {
+        self.account_env.values().flat_map(BTreeMap::values)
+    }
+
     /// The variables for the notification command only, by name.
     #[must_use]
     pub fn notification_env(&self) -> &BTreeMap<EnvName, Secret> {

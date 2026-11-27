@@ -26,6 +26,7 @@ impl SecretsCut {
             .github_token()
             .into_iter()
             .chain(secrets.agent_env().values())
+            .chain(secrets.account_secrets())
             .chain(secrets.notification_env().values())
             .map(|value| value.expose().as_bytes().to_vec())
             .collect();
