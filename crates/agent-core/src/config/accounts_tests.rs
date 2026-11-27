@@ -364,7 +364,7 @@ fn an_env_value_of_the_longest_size_loads_from_the_file_and_a_longer_one_is_refu
     let longest = format!("CLAUDE_CONFIG_DIR = \"{}\"", "v".repeat(4096));
     let too_long = format!("CLAUDE_CONFIG_DIR = \"{}\"", "v".repeat(4097));
 
-    assert!(Config::from_toml_str(&with_account(&format!("env = {{ {longest} }}"))).is_ok());
+    Config::from_toml_str(&with_account(&format!("env = {{ {longest} }}"))).unwrap();
     assert!(matches!(
         Config::from_toml_str(&with_account(&format!("env = {{ {too_long} }}"))).unwrap_err(),
         ConfigError::Parse(_)
