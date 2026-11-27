@@ -354,3 +354,40 @@ fn read_all(dir: &Path) -> Vec<Pending> {
         .block_on(read_pending(dir))
         .expect("read")
 }
+
+// Rule: a step given back after several tries is kept in the request's file under a value of its own, read back whole,
+// and logged with the same word as any step given back; a file of an older daemon keeps reading as before.
+#[tokio::test]
+async fn a_step_given_back_after_several_tries_is_read_back_and_logged_as_returned() {
+    let dir = tempfile::tempdir().expect("a directory");
+    let settlement = Settlement::ReturnedAfterTries {
+        reasons: vec![
+            "the first result: the check failed".to_owned(),
+            "the second result: the check failed".to_owned(),
+        ],
+    };
+    let written = pending(
+        3,
+        Stage::Settled {
+            checked: Box::new(checked()),
+            settlement: settlement.clone(),
+        },
+    );
+
+    write_pending(dir.path(), &written).expect("the file is written");
+    let read = read_pending(dir.path()).await.expect("the file is read");
+
+    assert_eq!(read, vec![written]);
+    assert_eq!(settlement.outcome(), "returned");
+    let value = serde_json::to_value(&settlement).expect("the settlement as JSON");
+    assert_eq!(value["settled"], "returned_after_tries");
+    let older: Settlement =
+        serde_json::from_value(serde_json::json!({"settled": "returned", "reasons": ["the check failed"]}))
+            .expect("an older daemon's settlement");
+    assert_eq!(
+        older,
+        Settlement::Returned {
+            reasons: vec!["the check failed".to_owned()]
+        }
+    );
+}
