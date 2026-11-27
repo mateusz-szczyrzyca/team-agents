@@ -86,12 +86,16 @@ func (s *InvestigationStatus) UnmarshalJSON(data []byte) error {
 type InvestigationKind string
 
 const (
-	KindInvestigation InvestigationKind = ""       // an agent asked for help (request_investigation)
-	KindReview        InvestigationKind = "review" // a PR review of a finished team (agent run --team --verify)
+	KindInvestigation InvestigationKind = ""         // an agent asked for help (request_investigation)
+	KindSplit         InvestigationKind = "split"    // a coordinator requests a task split
+	KindConflict      InvestigationKind = "conflict" // a coordinator requests help resolving a conflict
+	KindReview        InvestigationKind = "review"   // a PR review of a finished team (agent run --team --verify)
 )
 
 // Valid reports whether k is one of the defined kinds.
-func (k InvestigationKind) Valid() bool { return k == KindInvestigation || k == KindReview }
+func (k InvestigationKind) Valid() bool {
+	return k == KindInvestigation || k == KindReview || k == KindSplit || k == KindConflict
+}
 
 // UnmarshalJSON (json.Unmarshaler, hence the plain error type) rejects unknown kinds with a *ValueError.
 func (k *InvestigationKind) UnmarshalJSON(data []byte) error {

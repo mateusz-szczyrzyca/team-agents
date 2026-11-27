@@ -123,7 +123,8 @@ type Investigation struct {
 	Decision      string              `json:"decision,omitempty"`      // requester's decision after the result (record_decision)
 	Justification string              `json:"justification,omitempty"` // why the requester decided so, including how it verified the result
 	DecidedAt     Timestamp           `json:"decided_at,omitempty"`    // when the decision was recorded
-	Kind          InvestigationKind   `json:"kind,omitempty"`          // "" = investigation | "review" = PR review (agent run --team --verify)
+	Kind          InvestigationKind   `json:"kind,omitempty"`          // question (""), PR review ("review"), split or conflict
+	Item          string              `json:"item,omitempty"`          // task-list item for split and conflict requests
 	PRURL         string              `json:"pr_url,omitempty"`        // review only
 	PRNumber      int                 `json:"pr_number,omitempty"`     // review only
 }
@@ -1005,7 +1006,7 @@ func (s *Server) callTool(name string, raw map[string]any) (string, error) {
 	case "list_reservations":
 		return toolResult(s.listReservations())
 	case "request_investigation":
-		return toolResult(s.requestInvestigation(a.str("question"), a.str("context"), a.flag("wait_if_full")))
+		return toolResult(s.requestInvestigationKind(a.str("question"), a.str("context"), a.flag("wait_if_full"), a.str("kind"), a.str("item")))
 	case "record_decision":
 		return toolResult(s.recordDecision(a.num("investigation_id"), a.str("decision"), a.str("justification")))
 	case "investigation_status":

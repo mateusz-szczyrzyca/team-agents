@@ -3,7 +3,7 @@
 use std::num::NonZeroU32;
 use std::path::PathBuf;
 
-use agent_core::ids::{AgentName, BranchName, TaskId};
+use agent_core::ids::{AgentName, BranchName, ItemId, TaskId};
 use serde::{Deserialize, Deserializer};
 
 /// The kind of an investigation request.
@@ -12,24 +12,15 @@ pub enum InvestigationKind {
     /// A question from an agent (`""`).
     #[default]
     Question,
+    /// A coordinator asks for a split of a validated task-list item.
+    Split {
+        /// The parent item to divide.
+        item: ItemId,
+    },
     /// A PR review (`"review"`).
     Review,
     /// Any other kind that an earlier or later bus version wrote.
     Unknown(String),
-}
-
-impl<'de> Deserialize<'de> for InvestigationKind {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let s = String::deserialize(deserializer)?;
-        Ok(match s.as_str() {
-            "" => Self::Question,
-            "review" => Self::Review,
-            _ => Self::Unknown(s),
-        })
-    }
 }
 
 /// The lifecycle status returned by the bus, retaining future values.
@@ -92,7 +83,7 @@ pub struct Investigation {
     #[serde(default)]
     pub context: String,
     /// The kind of investigation.
-    #[serde(default)]
+    #[serde(flatten, deserialize_with = "deserialize_request_kind")]
     pub kind: InvestigationKind,
     /// Bus lifecycle status, including queued and running requests returned by `inv_open`.
     #[serde(default)]
@@ -102,6 +93,35 @@ pub struct Investigation {
     pub inv_task: Option<TaskId>,
     /// Path to the markdown record file.
     pub file: PathBuf,
+}
+
+/// Reads the kind and its item together so split requests carry a validated item.
+fn deserialize_request_kind<'de, D>(deserializer: D) -> Result<InvestigationKind, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    /// Wire fields whose meaning depends on the request kind.
+    #[derive(Deserialize)]
+    struct RequestKind {
+        /// Legacy requests omit their question kind.
+        #[serde(default)]
+        kind: String,
+        /// Split requests must name a valid task-list item.
+        item: Option<String>,
+    }
+    let raw = RequestKind::deserialize(deserializer)?;
+    Ok(match raw.kind.as_str() {
+        "split" => InvestigationKind::Split {
+            item: raw
+                .item
+                .ok_or_else(|| serde::de::Error::missing_field("item"))?
+                .parse()
+                .map_err(serde::de::Error::custom)?,
+        },
+        "" | "question" => InvestigationKind::Question,
+        "review" => InvestigationKind::Review,
+        _ => InvestigationKind::Unknown(raw.kind),
+    })
 }
 
 /// A transition of an investigation request's state on the bus.

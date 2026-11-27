@@ -46,6 +46,7 @@ separate questions to the human. Each part must deliver something useful and che
 work. Give every part a title, deliverable, checks, dependencies and an estimate with a numeric amount and text
 unit. Its optional tier is `investigator`, `normal` or `worker`; omission asks for `normal`. Part a must depend on
 nothing. Declare whether the proposal changes the item's scope, with a reason when it does.
+When you cannot work out a split, request one with `request_investigation` using `kind: "split"`.
 
 Write raw JSON to `split-proposal-<item>.json` in your task directory under AGENTS_HOME. For example:
 

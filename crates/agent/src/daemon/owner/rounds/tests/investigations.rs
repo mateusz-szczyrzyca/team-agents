@@ -725,3 +725,209 @@ async fn a_second_failure_sends_a_decision_notice_and_records_both_events() {
     record_investigation_failure_events(&mut observed).await;
     assert_eq!(observed.len(), 2);
 }
+
+#[tokio::test]
+async fn a_split_request_gives_the_investigator_the_split_prompt_with_the_item() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-split,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "hold"),
+            investigator("inv-r2", "hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    let state = rig
+        .state_where("split investigator running", |state| {
+            state.team(&team).is_some_and(|t| {
+                t.reviewers()
+                    .iter()
+                    .any(|m| m.role() == Some(Role::Investigator) && m.status() == TaskStatus::Running)
+            })
+        })
+        .await;
+    let task = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(Role::Investigator))
+        .unwrap()
+        .task();
+    let prompt = rig.prompt(task, 1).await;
+    rig.stop().await.unwrap();
+    for text in [
+        "1.1",
+        "Do the first thing in the repository.",
+        "the first thing works",
+        "run the first thing",
+        "1500",
+        "Propose a complete split",
+        "```json",
+        "part a depends on nothing",
+    ] {
+        assert!(prompt.contains(text), "missing {text:?}: {prompt}");
+    }
+}
+
+#[tokio::test]
+async fn a_split_answer_reaches_the_coordinator_and_writes_no_proposal_file() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-split,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "inv-done:Complete split proposal"),
+            investigator("inv-r2", "inv-done:Complete split proposal"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.state_where("split investigator done", |state| {
+        state.team(&team).is_some_and(|t| {
+            t.reviewers()
+                .iter()
+                .any(|m| m.role() == Some(Role::Investigator) && m.status() == TaskStatus::Done)
+        })
+    })
+    .await;
+    rig.wait_for("coordinator receives split answer", || rig.runs(&tasks[0]) >= 2)
+        .await;
+    rig.stop().await.unwrap();
+    let bus: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(rig.home.root().join("bus/state.json")).unwrap()).unwrap();
+    assert_eq!(bus["investigations"]["1"]["status"], "done");
+    let messages = std::fs::read_to_string(rig.home.root().join("bus/messages.jsonl")).unwrap();
+    assert!(messages.contains("Complete split proposal"), "{messages}");
+    assert!(!rig.worktree(&tasks[0]).join("split-proposal-1.1.json").exists());
+    assert!(
+        !rig.home
+            .root()
+            .join("tasks")
+            .join(tasks[0].as_str())
+            .join("split-proposal-1.1.json")
+            .exists()
+    );
+}
+
+#[tokio::test]
+async fn a_split_request_records_a_task_allocation() {
+    use agent_core::state::ActivityRequest;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-split,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "hold"),
+            investigator("inv-r2", "hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.state_where("split investigator running", |state| {
+        state.team(&team).is_some_and(|t| {
+            t.reviewers()
+                .iter()
+                .any(|m| m.role() == Some(Role::Investigator) && m.status() == TaskStatus::Running)
+        })
+    })
+    .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let task = team
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(Role::Investigator))
+        .unwrap()
+        .task();
+    let requests: Vec<_> = team
+        .activities()
+        .iter()
+        .filter(|a| a.task() == task)
+        .map(agent_core::state::Activity::request)
+        .collect();
+    assert_eq!(requests, vec![&ActivityRequest::TaskAllocation]);
+}
+
+#[tokio::test]
+async fn a_split_completion_reports_the_task_allocation() {
+    use agent_core::state::{ActivityEnd, ActivityOutcome, ActivityRequest};
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "inv-split,sleep"),
+            normal("claude-1", "sleep"),
+            investigator("inv-r1", "inv-done:Complete split proposal"),
+            investigator("inv-r2", "inv-done:Complete split proposal"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    rig.start().await;
+    let (team, tasks) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::Autopilot,
+            Some("claude-lead"),
+        )
+        .await;
+    rig.wait_for("coordinator receives completed allocation", || rig.runs(&tasks[0]) >= 2)
+        .await;
+    rig.stop().await.unwrap();
+    let state = rig.state();
+    let team = state.team(&team).unwrap();
+    let investigator = team
+        .reviewers()
+        .iter()
+        .find(|m| m.role() == Some(Role::Investigator))
+        .unwrap();
+    assert_eq!(investigator.status(), TaskStatus::Done);
+    let activity = team
+        .activities()
+        .iter()
+        .find(|a| a.task() == investigator.task())
+        .unwrap();
+    assert_eq!(activity.request(), &ActivityRequest::TaskAllocation);
+    assert!(
+        matches!(
+            activity.outcome(),
+            ActivityOutcome::Finished {
+                end: ActivityEnd::Reported,
+                ..
+            }
+        ),
+        "{:?}",
+        activity.outcome()
+    );
+}
