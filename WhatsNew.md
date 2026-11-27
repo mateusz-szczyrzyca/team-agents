@@ -9,6 +9,17 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.127.0 — 27.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] [agent-runtime] A worker's request, a review and an investigation now keep checkpoints like a round's own work: what is meant, what is done in relation to it and what is left, taken after each step, each local commit, the end of a run and the start of the daemon.
+- [agent] [agent-core] [agent-runtime] A worker's request that goes back to the queue, a reviewer that is replaced and an investigation tried a second time start from the last checkpoint of the one before: the commits are in the worktree, the findings so far are the new reviewer's leads, and the pass keeps its number.
+- [agent] [agent-runtime] A reviewer is told to write each finding to a findings file of its own for the pull request and the pass (`review-pr<n>-pass<p>-findings.md` in its task directory); a new checkpoint `findings_written` follows when it changes.
+- [agent] `agent checkpoints <task>` works for the task of a worker, a reviewer and an investigator, and the line of such a checkpoint ends with its job (`job review`).
+
+### Enhancements
+- [agent-core] A checkpoint written by an earlier version, with no job, is read as the checkpoint of an item.
+
 ## agent-runtime 0.126.0 — 27.11.2026 — PR #336
 
 ### Enhancements
