@@ -509,7 +509,7 @@ impl HarnessPrompt {
                 &["agent", "task", "refused_agent", "refused_provider", "return_at"],
             ),
             Self::NoticeAccountPaused => PromptSpec::new(
-                "harness/notify/account-paused.md",
+                "harness/run/notice-account-paused.md",
                 Audience::Human,
                 &["agent", "task", "account", "agents", "until", "reason", "tasks"],
             ),
