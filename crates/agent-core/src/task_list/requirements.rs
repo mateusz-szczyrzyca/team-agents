@@ -132,6 +132,21 @@ impl Item {
     }
 }
 
+impl Item {
+    /// The expected result with each requirement written with its number: `R1. text` in place of the bullet. The text
+    /// around the requirements is kept; `None` when the item has no expected result.
+    #[must_use]
+    pub fn expected_numbered(&self) -> Option<String> {
+        None
+    }
+
+    /// The checks with each line written with its number: `K1. text`; `None` when the item has no checks.
+    #[must_use]
+    pub fn checks_numbered(&self) -> Option<String> {
+        None
+    }
+}
+
 /// The texts `results` as the requirements `R1`, `R2`, ... in order.
 fn numbered_results(results: Vec<String>) -> Vec<Requirement> {
     numbers()

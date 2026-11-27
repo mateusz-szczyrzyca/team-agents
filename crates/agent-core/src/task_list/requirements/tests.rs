@@ -135,3 +135,32 @@ fn a_text_that_is_not_a_number_of_a_requirement_is_refused() {
         );
     }
 }
+
+#[test]
+fn the_expected_result_is_written_with_its_numbers_and_keeps_its_other_lines() {
+    let item = item_of("    Expected result:\n    Intro line.\n    - first\n      - nested\n    - second\n");
+    assert_eq!(
+        item.expected_numbered().as_deref(),
+        Some("Intro line.\nR1. first\n  - nested\nR2. second")
+    );
+}
+
+#[test]
+fn an_expected_result_with_no_bullets_is_numbered_as_one_requirement() {
+    let item = item_of("    Expected result:\n    It works.\n    All of it.\n");
+    assert_eq!(item.expected_numbered().as_deref(), Some("R1. It works.\nAll of it."));
+}
+
+#[test]
+fn the_checks_are_written_with_their_numbers_whether_they_have_them_or_not() {
+    let item = item_of("    Checks:\n    - K1. one\n    - two\n    - K5: three\n");
+    assert_eq!(item.checks_numbered().as_deref(), Some("K1. one\nK2. two\nK5. three"));
+    let lines = item_of("    Checks:\n    run it\n    K2. run that\n");
+    assert_eq!(lines.checks_numbered().as_deref(), Some("K1. run it\nK2. run that"));
+}
+
+#[test]
+fn an_item_without_the_parts_has_nothing_numbered() {
+    let item = item_of("    Only a description.\n");
+    assert_eq!((item.expected_numbered(), item.checks_numbered()), (None, None));
+}
