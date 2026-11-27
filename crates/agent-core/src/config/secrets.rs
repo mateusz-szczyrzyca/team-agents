@@ -10,6 +10,7 @@ use std::num::NonZeroUsize;
 
 use serde::Deserialize;
 
+use super::AccountName;
 use super::values::{EnvName, ValueRule};
 
 /// Largest secrets text accepted, in bytes.
@@ -168,6 +169,8 @@ pub struct Secrets {
     github_token: Option<Secret>,
     /// Variables for every model CLI run: `CLAUDE_CODE_OAUTH_TOKEN`, `OPENROUTER_API_KEY`, ...
     agent_env: BTreeMap<EnvName, Secret>,
+    /// Variables for the runs of the agents of one account, by account: `[account_env.NAME]`.
+    account_env: BTreeMap<AccountName, BTreeMap<EnvName, Secret>>,
     /// Variables for the notification command only.
     notification_env: BTreeMap<EnvName, Secret>,
 }
@@ -182,6 +185,9 @@ struct RawSecrets {
     /// The `[agent_env]` table.
     #[serde(default)]
     agent_env: BTreeMap<EnvName, Secret>,
+    /// The `[account_env.NAME]` tables.
+    #[serde(default)]
+    account_env: BTreeMap<AccountName, BTreeMap<EnvName, Secret>>,
     /// The `[notification_env]` table.
     #[serde(default)]
     notification_env: BTreeMap<EnvName, Secret>,
@@ -211,6 +217,7 @@ impl Secrets {
         let RawSecrets {
             github_token,
             agent_env,
+            account_env,
             notification_env,
         } = toml::from_str(text).map_err(|err| SecretsError::Parse {
             at: position(text, &err),
@@ -218,6 +225,7 @@ impl Secrets {
         Ok(Self {
             github_token,
             agent_env,
+            account_env,
             notification_env,
         })
     }
@@ -232,6 +240,17 @@ impl Secrets {
     #[must_use]
     pub fn agent_env(&self) -> &BTreeMap<EnvName, Secret> {
         &self.agent_env
+    }
+
+    /// The variables for the runs of the agents of each account, by account and name.
+    #[must_use]
+    pub fn account_env(&self) -> &BTreeMap<AccountName, BTreeMap<EnvName, Secret>> {
+        &self.account_env
+    }
+
+    /// Every secret of every account, to cut out of what is shown or stored.
+    pub fn account_secrets(&self) -> impl Iterator<Item = &Secret> {
+        self.account_env.values().flat_map(BTreeMap::values)
     }
 
     /// The variables for the notification command only, by name.

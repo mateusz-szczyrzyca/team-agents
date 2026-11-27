@@ -9,12 +9,28 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-runtime 0.131.0 — 27.11.2026 — PR #353
+## agent-runtime 0.132.0 — 27.11.2026 — PR #353
 
 ### Bug fixes
 - [agent-runtime] opencode agents work in their own worktree again. Before, every opencode run started in the
   directory the daemon was started from (`AGENTS_HOME`), because the daemon passed its own `PWD` to the agent; one
   worker ran `git init` and `git config --global` there.
+
+## agent-core 0.143.0 · agent-runtime 0.131.0 — 27.11.2026 — PR #350
+
+### New features
+- [agent-core] `agents.toml` can define accounts — `[accounts.comp-claude]` with an `owner` and an optional `env` — and an agent or an investigator can name one with `account = "comp-claude"`; a variable of the account's secrets goes to `[account_env.comp-claude]` of `secrets.toml`. This version only reads and checks them; no run uses them yet, and a home without accounts behaves as before.
+- [agent-core] An agent or an investigator with an account must be named `<owner>-…` (`comp-inv-opus` for owner `comp`); an agent that names a missing account, an account nobody names, a bad owner and a name without its owner are refused when the configuration loads, each error naming the account.
+- [agent-core] [agent-runtime] A home whose `secrets.toml` has an `[account_env.NAME]` of an unknown account, or a variable that the account's `env` sets too, is refused, naming the account and the variable and never a value.
+
+### Enhancements
+- [agent-runtime] The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
+
+### Configuration
+- [agent-core] new: `[accounts.NAME] owner` (required, a lowercase word of letters and digits, such as `comp`) — whose subscription or key the account is.
+- [agent-core] new: `[accounts.NAME.env]` (default none) — variables of the environment of a run with the account that are not secret.
+- [agent-core] new: `[agents.NAME] account` and `[investigators.NAME] account` (default none) — the account the agent runs with.
+- [agent-core] new: `[account_env.NAME]` of `secrets.toml` (default none) — the secret variables of the account `NAME`.
 
 ## agent 0.145.0 — 27.11.2026 — PR #349
 

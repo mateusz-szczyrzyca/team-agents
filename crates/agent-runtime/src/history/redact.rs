@@ -39,6 +39,7 @@ impl Redactor {
             .github_token()
             .into_iter()
             .chain(secrets.agent_env().values())
+            .chain(secrets.account_secrets())
             .chain(secrets.notification_env().values())
             .filter_map(|value| {
                 let escaped = value.expose().escape_debug().to_string();
@@ -54,6 +55,7 @@ impl Redactor {
             .github_token()
             .into_iter()
             .chain(self.secrets.agent_env().values())
+            .chain(self.secrets.account_secrets())
             .chain(self.secrets.notification_env().values())
     }
 

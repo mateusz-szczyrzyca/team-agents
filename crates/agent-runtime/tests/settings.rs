@@ -6,7 +6,9 @@ mod settings_files {
     use std::path::Path;
     use std::str::FromStr;
 
-    use agent_core::config::{AbsolutePath, ConfigError, MAX_CONFIG_BYTES, MAX_SECRETS_BYTES, Secret, SecretsError};
+    use agent_core::config::{
+        AbsolutePath, AccountSecretsError, ConfigError, MAX_CONFIG_BYTES, MAX_SECRETS_BYTES, Secret, SecretsError,
+    };
     use agent_runtime::settings::{Settings, SettingsError};
     use agent_runtime::store::Home;
 
@@ -183,5 +185,55 @@ mod settings_files {
         let error = Settings::load(&home).await.unwrap_err();
 
         assert!(matches!(&error, SettingsError::Read { path, .. } if *path == home.config_file()));
+    }
+
+    /// A configuration with an account that an investigator uses.
+    const CONFIG_WITH_ACCOUNT: &str = r#"
+    [accounts.comp-claude]
+    owner = "comp"
+
+    [investigators.comp-inv-opus]
+    cli = "claude"
+    account = "comp-claude"
+    "#;
+
+    #[tokio::test]
+    async fn secrets_of_an_account_the_configuration_has_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        write(&home.config_file(), CONFIG_WITH_ACCOUNT, 0o644);
+        write(
+            &home.secrets_file(),
+            "[account_env.comp-claude]\nTOKEN = \"MARKER-7f3a\"\n",
+            0o600,
+        );
+
+        let settings = Settings::load(&home).await.unwrap();
+
+        assert_eq!(settings.secrets.account_env().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn secrets_of_an_account_the_configuration_lacks_are_refused_without_showing_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = home_in(&dir);
+        write(&home.config_file(), CONFIG_WITH_ACCOUNT, 0o644);
+        write(
+            &home.secrets_file(),
+            "[account_env.other]\nTOKEN = \"MARKER-7f3a\"\n",
+            0o600,
+        );
+
+        let error = Settings::load(&home).await.unwrap_err();
+
+        assert!(
+            matches!(
+                &error,
+                SettingsError::AccountSecrets { path, source: AccountSecretsError::NoAccount { account } }
+                    if *path == home.secrets_file() && account.as_str() == "other"
+            ),
+            "{error:?}"
+        );
+        assert!(!format!("{error:?} {error}").contains("MARKER-7f3a"));
     }
 }
