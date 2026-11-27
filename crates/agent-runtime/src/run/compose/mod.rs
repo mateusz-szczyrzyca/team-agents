@@ -198,11 +198,11 @@ fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result
             .with("item_description", &item.description)?
             .with("who", who)?;
         sections.push(texts.harness.render(HarnessPrompt::TeamItem, &values)?);
-        if let Some(expected) = &item.expected_result {
+        if let Some(expected) = item.expected_numbered() {
             let values = Variables::new().with("expected", expected)?;
             sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
         }
-        if let Some(checks) = &item.checks {
+        if let Some(checks) = item.checks_numbered() {
             let values = Variables::new().with("checks", checks)?;
             sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
         }
@@ -213,7 +213,8 @@ fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result
 /// What a coordinator is told of an item no member works on: it is pending, in review or done.
 const NOBODY_HAS_IT: &str = "nobody has it yet";
 
-/// The sections of an item: the item itself, then its expected result and its checks, those it has.
+/// The sections of an item: the item itself, then its expected result and its checks, those it has, each requirement
+/// with its number (`R1`, `K1`) so that a plan step and a commit can name it.
 ///
 /// # Errors
 /// [`ComposeError`] when a text does not take the values this function gives it.
@@ -223,11 +224,11 @@ pub fn item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>
         .with("item_title", &item.title)?
         .with("item_description", &item.description)?;
     let mut sections = vec![texts.harness.render(HarnessPrompt::Item, &values)?];
-    if let Some(expected) = &item.expected_result {
+    if let Some(expected) = item.expected_numbered() {
         let values = Variables::new().with("expected", expected)?;
         sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
     }
-    if let Some(checks) = &item.checks {
+    if let Some(checks) = item.checks_numbered() {
         let values = Variables::new().with("checks", checks)?;
         sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
     }
