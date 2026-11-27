@@ -227,7 +227,7 @@ async fn account_changed_between_runs_starts_a_reviewer_from_briefing() {
     let reviewer = state
         .teams()
         .iter()
-        .flat_map(|team| team.reviewers())
+        .flat_map(agent_core::state::Team::reviewers)
         .find(|member| member.runs().len() == 1)
         .unwrap()
         .task()
