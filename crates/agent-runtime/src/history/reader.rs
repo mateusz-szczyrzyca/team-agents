@@ -723,37 +723,7 @@ impl Reader {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Option<LastCheckpoint>, ReadError> {
-        let mut newest = None;
-        let mut newest_of_task = None;
-        for stored in self.round_records(round)? {
-            let agent_core::history::Record::Event(event) = stored.record else {
-                continue;
-            };
-            let agent_core::history::HistoryEvent::Checkpoint {
-                task: holder,
-                cause,
-                head,
-                snapshot,
-                content,
-                ..
-            } = event.event
-            else {
-                continue;
-            };
-            let found = LastCheckpoint {
-                at: event.at,
-                task: holder,
-                cause,
-                head,
-                snapshot,
-                content,
-            };
-            if found.task == *task {
-                newest_of_task = Some(found.clone());
-            }
-            newest = Some(found);
-        }
-        Ok(newest_of_task.or(newest))
+        Ok(newest_for(self.round_checkpoints(round)?, task, |_| true))
     }
 
     /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
@@ -767,8 +737,39 @@ impl Reader {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Option<LastCheckpoint>, ReadError> {
-        let _ = (round, task);
-        Ok(None)
+        Ok(newest_for(self.round_checkpoints(round)?, task, |found| {
+            found.cause != agent_core::history::CheckpointCause::HolderChanged
+        }))
+    }
+
+    /// Every checkpoint of `round` with what it says of the work, oldest first.
+    fn round_checkpoints(&self, round: &RoundId) -> Result<Vec<LastCheckpoint>, ReadError> {
+        let mut found = Vec::new();
+        for stored in self.round_records(round)? {
+            let agent_core::history::Record::Event(event) = stored.record else {
+                continue;
+            };
+            let agent_core::history::HistoryEvent::Checkpoint {
+                task,
+                cause,
+                head,
+                snapshot,
+                content,
+                ..
+            } = event.event
+            else {
+                continue;
+            };
+            found.push(LastCheckpoint {
+                at: event.at,
+                task,
+                cause,
+                head,
+                snapshot,
+                content,
+            });
+        }
+        Ok(found)
     }
 
     /// The prompts of the runs of `round`, oldest first.
@@ -1662,4 +1663,22 @@ fn read_daemon_log_rounds(snapshot: &Transaction<'_>, log_id: i64) -> Result<Vec
         rounds.push(here.value("round", RoundId::from_str(&round_text))?);
     }
     Ok(rounds)
+}
+
+/// The newest of `checkpoints` (oldest first) that `wanted` accepts and that keeps the worktree of `task`, else the
+/// newest that `wanted` accepts: the account of the work is the round's, whoever held it.
+fn newest_for(
+    checkpoints: Vec<LastCheckpoint>,
+    task: &TaskId,
+    wanted: impl Fn(&LastCheckpoint) -> bool,
+) -> Option<LastCheckpoint> {
+    let mut accepted = checkpoints
+        .into_iter()
+        .filter(|found| wanted(found))
+        .collect::<Vec<_>>();
+    let own = accepted.iter().rposition(|found| found.task == *task);
+    match own {
+        Some(position) => Some(accepted.swap_remove(position)),
+        None => accepted.pop(),
+    }
 }
