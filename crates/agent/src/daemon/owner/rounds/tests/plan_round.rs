@@ -182,12 +182,12 @@ async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response() {
         config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
     )
     .unwrap();
-    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n";
+    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n";
     committing_plan_script(&rig, "first", finished, "one.txt");
     committing_plan_script(
         &rig,
         "open",
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Cover the case\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[ ] 1.2 Cover the case\n    For: R1\n",
         "two.txt",
     );
     rig.start().await;
@@ -199,7 +199,7 @@ async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response() {
     let held = rig.state();
     std::fs::write(
         worktree.join(".agent/plan.md"),
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Cover the case\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[x] 1.2 Cover the case\n    For: R1\n",
     )
     .unwrap();
     std::fs::write(worktree.join(".fake-release-3"), "").unwrap();
@@ -236,12 +236,12 @@ async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response_of_a_rota
         config.replace("[plan]\nbounces = 0\n", "[plan]\nbounces = 3\n"),
     )
     .unwrap();
-    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n";
+    let finished = "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n";
     committing_plan_script(&rig, "first", finished, "one.txt");
     committing_plan_script(
         &rig,
         "open",
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Cover the case\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[ ] 1.2 Cover the case\n    For: R1\n",
         "two.txt",
     );
     rig.start().await;
@@ -253,7 +253,7 @@ async fn a_fix_pass_held_for_its_plan_is_not_taken_as_the_fix_response_of_a_rota
     let held = rig.state();
     std::fs::write(
         worktree.join(".agent/plan.md"),
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Cover the case\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[x] 1.2 Cover the case\n    For: R1\n",
     )
     .unwrap();
     std::fs::write(worktree.join(".fake-release-3"), "").unwrap();
@@ -300,14 +300,18 @@ async fn a_coordinators_done_after_it_integrated_the_last_member_is_sent_back_fo
     std::fs::create_dir_all(lead.join(".agent")).unwrap();
     std::fs::write(
         lead.join(".agent/plan.md"),
-        "Lead it — zażółć.\n\n1. Integrate\n[x] 1.1 Merge one\n[ ] 1.2 Check the merge\n",
+        "Lead it — zażółć.\n\n1. Integrate\n[x] 1.1 Merge one\n    For: R1\n[ ] 1.2 Check the merge\n    For: R1\n",
     )
     .unwrap();
     let member = rig.worktree(&tasks[1]);
     rig.wait_for("the member's run to start", || member.join(".fake-started-1").exists())
         .await;
     std::fs::create_dir_all(member.join(".agent")).unwrap();
-    std::fs::write(member.join(".agent/plan.md"), "Do one.\n\n1. Work\n[x] 1.1 Write it\n").unwrap();
+    std::fs::write(
+        member.join(".agent/plan.md"),
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n",
+    )
+    .unwrap();
     std::fs::write(member.join(".fake-release-1"), "").unwrap();
     let third = rig.prompt(&tasks[0], 3).await;
     rig.stop().await.unwrap();
@@ -342,7 +346,12 @@ async fn approved_round(lead: &'static str) -> Rig {
 #[tokio::test]
 async fn reviewers_that_write_no_plan_are_not_sent_back() {
     let mut rig = approved_round("script:first").await;
-    committing_plan_script(&rig, "first", "Do one.\n\n1. Work\n[x] 1.1 Write it\n", "one.txt");
+    committing_plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n",
+        "one.txt",
+    );
     rig.start().await;
 
     let (team, _) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
@@ -366,7 +375,7 @@ async fn a_plan_committed_by_mistake_is_not_in_the_published_branch() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("mistake.sh"),
-        "set -eu\nmkdir -p .agent\nprintf 'Do one.\\n\\n1. Work\\n[x] 1.1 Write it\\n' > .agent/plan.md\n\
+        "set -eu\nmkdir -p .agent\nprintf 'Do one.\\n\\n1. Work\\n[x] 1.1 Write it\\n    For: R1\\n' > .agent/plan.md\n\
          echo one > one.txt\ngit add one.txt\ngit add -f .agent/plan.md\n\
          git -c user.name=Fake -c user.email=fake@example.com -c commit.gpgsign=false commit -q -m 'Work, and the plan by mistake'\n",
     )
@@ -432,7 +441,7 @@ async fn plan_steps_are_reported_in_status_summaries() {
     committing_plan_script(
         &rig,
         "first",
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n    Check: exists one.txt\n",
         "one.txt",
     );
     rig.start().await;
@@ -467,7 +476,7 @@ async fn plan_steps_are_preserved_in_status_after_daemon_restart() {
     committing_plan_script(
         &rig,
         "first",
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n    Check: exists one.txt\n",
         "one.txt",
     );
     rig.start().await;
@@ -531,13 +540,18 @@ Do several.
 
 1. Steps
 [x] 1.1 Reviewer
+    For: R1
     Check: reviewer
 [x] 1.2 No check
+    For: R1
 [x] 1.3 Command check
+    For: R1
     Check: printf plan-check
 [x] 1.4 Exists file
+    For: R1
     Check: exists one.txt
 [x] 1.5 Missing file
+    For: R1
     Check: exists missing.txt
 ";
     committing_plan_script(&rig, "first", plan, "one.txt");
@@ -638,8 +652,10 @@ Do two.
 
 1. Steps
 [x] 1.1 First
+    For: R1
     Check: exists one.txt
 [x] 1.2 Second
+    For: R1
     Check: exists missing.txt
 ";
     committing_plan_script(&rig, "first", plan, "one.txt");
@@ -707,7 +723,7 @@ async fn run_with_plan_steps_settles_normally_when_history_is_disabled() {
     committing_plan_script(
         &rig,
         "done",
-        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    Check: exists one.txt\n",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n    Check: exists one.txt\n",
         "one.txt",
     );
     rig.start().await;
@@ -722,7 +738,12 @@ async fn run_with_plan_steps_settles_normally_when_history_is_disabled() {
 #[tokio::test]
 async fn reviewer_tasks_have_no_plan_summaries_in_status() {
     let mut rig = approved_round("script:first").await;
-    committing_plan_script(&rig, "first", "Do one.\n\n1. Work\n[x] 1.1 Write it\n", "one.txt");
+    committing_plan_script(
+        &rig,
+        "first",
+        "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n",
+        "one.txt",
+    );
     rig.start().await;
 
     let (team, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;

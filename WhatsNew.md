@@ -9,6 +9,17 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.136.0 · agent-core 0.133.0 · agent-runtime 0.120.0 — 27.11.2026 — PR #324
+
+### New features
+- [agent-core] [agent-runtime] The requirements of an item are numbered when the item is given to an agent: the bullets of its `Expected result:` are `R1`, `R2`, ... and its checks `K1`, `K2`, ...; an item with neither has one requirement, `R1`, its title. The prompt shows each with its number.
+- [agent-core] [agent-runtime] A step of the plan can say which requirements it serves with a line `For: R1, K2`.
+- [agent] [agent-core] A run on an item whose plan has a step that names no requirement, or one the item does not have, is sent back for its plan. A plan of an older task with no `For:` line is read as before.
+- [agent] [agent-core] [agent-runtime] In the worktree of a task whose plan has `For:` lines, a commit with no `Step: N.M` line naming a step of the plan is refused with what to add (merge, `RED:` and `TEST-FIX:` commits too).
+
+### Enhancements
+- [agent-core] `state.json` can hold a plan reason `no_requirement` and a `requirements_tied` marker of a plan; older states load unchanged, and an older `agent` cannot read a state that has them.
+
 ## agent-core 0.132.0 — 27.11.2026 — PR #327
 
 ### Enhancements

@@ -5,7 +5,7 @@ use agent_core::kinds::Role;
 use agent_core::prompt::{PromptError, TeamPrompt, Variables, VariablesError};
 use agent_core::state::Team;
 use agent_runtime::agentbus::DelegationRequest;
-use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
+use agent_runtime::run::compose::{ComposeError, PromptTexts, numbered_item_sections};
 use agent_runtime::team_prompts::{RenderTeamTextError, TeamPrompts};
 
 /// Why a team's task starts a run now.
@@ -341,7 +341,7 @@ fn assignment(
         .with("branch", run.branch.as_str())?
         .with("base", run.base.as_str())?;
     let mut sections = vec![texts.render(TeamPrompt::Assignment, &values)?];
-    sections.extend(item_sections(harness, listed)?);
+    sections.extend(numbered_item_sections(harness, listed)?);
     Ok(sections)
 }
 

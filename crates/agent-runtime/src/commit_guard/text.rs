@@ -1,7 +1,7 @@
 //! What an agent is told when its commit is refused: the findings, each as a line of the catalog, in the frame that says
 //! how to make the commit the rule allows.
 
-use agent_core::decide::commit_guard::{Refusal, Taken};
+use agent_core::decide::commit_guard::{Refusal, StepRefusal, Taken};
 use agent_core::prompt::{HarnessPrompt, Variables, VariablesError};
 use agent_core::repo_path::RepoPath;
 use agent_core::state::CommitId;
@@ -32,6 +32,18 @@ fn listed(files: &[RepoPath]) -> String {
     files
         .iter()
         .map(|file| format!("`{file}`"))
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// What a message with no `Step:` trailer names.
+const NOTHING_NAMED: &str = "nothing";
+
+/// `words` as the words of a sentence: each in backticks, with commas between.
+fn quoted(words: &[String]) -> String {
+    words
+        .iter()
+        .map(|word| format!("`{word}`"))
         .collect::<Vec<_>>()
         .join(", ")
 }
@@ -83,5 +95,25 @@ pub fn refusal_text(texts: &HarnessPrompts, refusals: &[Refusal]) -> Result<Stri
         .map_err(RefusalTextError::Variable)?;
     texts
         .render(HarnessPrompt::CommitRefused, &values)
+        .map_err(RefusalTextError::Render)
+}
+
+/// The text that tells an agent that the commit with this `refusal` was not made because of its `Step:` trailer, and
+/// what to add.
+///
+/// # Errors
+/// [`RefusalTextError`] when a text of the catalog is not loaded or does not fit its values.
+pub fn step_refusal_text(texts: &HarnessPrompts, refusal: &StepRefusal) -> Result<String, RefusalTextError> {
+    let (named, steps) = match refusal {
+        StepRefusal::Missing { steps } => (NOTHING_NAMED.to_owned(), steps),
+        StepRefusal::NotInPlan { named, steps } => (quoted(named), steps),
+    };
+    let steps: Vec<String> = steps.iter().map(ToString::to_string).collect();
+    let values = Variables::new()
+        .with("named", named)
+        .and_then(|values| values.with("steps", quoted(&steps)))
+        .map_err(RefusalTextError::Variable)?;
+    texts
+        .render(HarnessPrompt::CommitRefusedStep, &values)
         .map_err(RefusalTextError::Render)
 }

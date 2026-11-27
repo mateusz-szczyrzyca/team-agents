@@ -6,9 +6,9 @@ mod commit_guard_text {
     use std::str::FromStr;
 
     use agent_core::config::Language;
-    use agent_core::decide::commit_guard::{Refusal, Taken};
+    use agent_core::decide::commit_guard::{Refusal, StepRefusal, Taken};
     use agent_core::state::CommitId;
-    use agent_runtime::commit_guard::text::refusal_text;
+    use agent_runtime::commit_guard::text::{refusal_text, step_refusal_text};
     use agent_runtime::harness_prompts::HarnessPrompts;
 
     async fn texts() -> HarnessPrompts {
@@ -65,5 +65,42 @@ mod commit_guard_text {
         assert!(text.contains(
             "- This commit is a `TEST-FIX:` commit and also changes files that are not tests: `src/a.rs`, `docs/b.md`. A `TEST-FIX:` commit holds test files only.\n"
         ), "{text}");
+    }
+    fn steps() -> Vec<agent_core::ids::ItemId> {
+        vec!["1.1".parse().unwrap(), "1.2".parse().unwrap()]
+    }
+
+    // Rule: a commit with no trailer is told what the trailer is, and which steps it may name.
+    #[tokio::test]
+    async fn a_commit_with_no_trailer_is_told_to_add_one_and_which_steps_it_may_name() {
+        let refusal = StepRefusal::Missing { steps: steps() };
+
+        let text = step_refusal_text(&texts().await, &refusal).unwrap();
+
+        assert!(text.starts_with("This commit was not made."), "{text}");
+        assert!(
+            text.contains("The `Step:` lines of this message name: nothing."),
+            "{text}"
+        );
+        assert!(text.contains("The steps of your plan are: `1.1`, `1.2`."), "{text}");
+        assert!(text.contains("Step: 1.2"), "{text}");
+        assert!(!text.contains("{{"), "{text}");
+    }
+
+    // Rule: a commit whose trailer names no step of the plan is told what it named.
+    #[tokio::test]
+    async fn a_commit_that_names_no_step_of_the_plan_is_told_what_it_named() {
+        let refusal = StepRefusal::NotInPlan {
+            named: vec!["3.1".to_owned(), "zażółć".to_owned()],
+            steps: steps(),
+        };
+
+        let text = step_refusal_text(&texts().await, &refusal).unwrap();
+
+        assert!(
+            text.contains("The `Step:` lines of this message name: `3.1`, `zażółć`."),
+            "{text}"
+        );
+        assert!(text.contains("The steps of your plan are: `1.1`, `1.2`."), "{text}");
     }
 }

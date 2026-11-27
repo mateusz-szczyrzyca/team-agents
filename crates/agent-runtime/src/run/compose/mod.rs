@@ -178,7 +178,7 @@ fn first_sections(texts: &PromptTexts<'_>, input: &PromptInput<'_>) -> Result<Ve
         sections.push(texts.harness.render(HarnessPrompt::Brief, &values)?);
     }
     if let Some(item) = input.item {
-        sections.extend(item_sections(texts, item)?);
+        sections.extend(numbered_item_sections(texts, item)?);
     }
     sections.extend(team_item_sections(texts, input.team_items)?);
     Ok(sections)
@@ -198,11 +198,11 @@ fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result
             .with("item_description", &item.description)?
             .with("who", who)?;
         sections.push(texts.harness.render(HarnessPrompt::TeamItem, &values)?);
-        if let Some(expected) = &item.expected_result {
+        if let Some(expected) = item.expected_numbered() {
             let values = Variables::new().with("expected", expected)?;
             sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
         }
-        if let Some(checks) = &item.checks {
+        if let Some(checks) = item.checks_numbered() {
             let values = Variables::new().with("checks", checks)?;
             sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
         }
@@ -213,21 +213,49 @@ fn team_item_sections(texts: &PromptTexts<'_>, items: &[TeamItem<'_>]) -> Result
 /// What a coordinator is told of an item no member works on: it is pending, in review or done.
 const NOBODY_HAS_IT: &str = "nobody has it yet";
 
-/// The sections of an item: the item itself, then its expected result and its checks, those it has.
+/// The sections of an item: the item itself, then its expected result and its checks, those it has, as the task list
+/// wrote them: what a reviewer is given.
 ///
 /// # Errors
 /// [`ComposeError`] when a text does not take the values this function gives it.
 pub fn item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>, ComposeError> {
+    sections_of(texts, item, Numbering::Written)
+}
+
+/// The sections of an item as [`item_sections`] gives them, with each requirement written with its number (`R1`, `K1`)
+/// so that a plan step can name it: what the agent that does the item is given.
+///
+/// # Errors
+/// [`ComposeError`] when a text does not take the values this function gives it.
+pub fn numbered_item_sections(texts: &PromptTexts<'_>, item: &Item) -> Result<Vec<String>, ComposeError> {
+    sections_of(texts, item, Numbering::Numbered)
+}
+
+/// Whether the requirements of an item are shown with their numbers.
+#[derive(Debug, Clone, Copy)]
+enum Numbering {
+    /// As the task list wrote them.
+    Written,
+    /// With their `R` and `K` numbers.
+    Numbered,
+}
+
+/// The sections of `item`: the item itself, then its expected result and its checks, those it has.
+fn sections_of(texts: &PromptTexts<'_>, item: &Item, numbering: Numbering) -> Result<Vec<String>, ComposeError> {
     let values = Variables::new()
         .with("item_id", item.id.to_string())?
         .with("item_title", &item.title)?
         .with("item_description", &item.description)?;
     let mut sections = vec![texts.harness.render(HarnessPrompt::Item, &values)?];
-    if let Some(expected) = &item.expected_result {
+    let (expected, checks) = match numbering {
+        Numbering::Written => (item.expected_result.clone(), item.checks.clone()),
+        Numbering::Numbered => (item.expected_numbered(), item.checks_numbered()),
+    };
+    if let Some(expected) = expected {
         let values = Variables::new().with("expected", expected)?;
         sections.push(texts.harness.render(HarnessPrompt::ItemExpected, &values)?);
     }
-    if let Some(checks) = &item.checks {
+    if let Some(checks) = checks {
         let values = Variables::new().with("checks", checks)?;
         sections.push(texts.harness.render(HarnessPrompt::ItemChecks, &values)?);
     }

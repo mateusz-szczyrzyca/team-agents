@@ -99,7 +99,10 @@ const OPERATION_FILES: [(&str, Operation); 5] = [
 ];
 
 /// The operation under way in the checkout of `git`, if one is.
-async fn operation_in_progress(git: &Git) -> Result<Option<Operation>, GuardError> {
+///
+/// # Errors
+/// [`GuardError::Git`] when git cannot say where the files of an operation are; [`GuardError::Look`].
+pub async fn operation_in_progress(git: &Git) -> Result<Option<Operation>, GuardError> {
     for (name, operation) in OPERATION_FILES {
         let path = git.git_path(name).await.map_err(|source| GuardError::Git {
             step: GuardStep::Operation,

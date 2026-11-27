@@ -8,6 +8,8 @@
 
 use crate::config::Checks;
 use crate::decide::checks::{Change, CommitFacts, FileChange, Lines, RED_PREFIX, TEST_FIX_PREFIX};
+use crate::ids::ItemId;
+use crate::plan::{Plan, Step};
 use crate::repo_path::RepoPath;
 use crate::state::CommitId;
 
@@ -118,6 +120,123 @@ pub fn judge_commit(rules: &Checks, frozen: &[FrozenTest], commit: &PendingCommi
         Verdict::Refused(vec![Refusal::TestFixTouchesOtherFiles { others }])
     }
 }
+
+/// Why a commit of a task whose plan ties its steps to requirements is refused for its `Step:` trailer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepRefusal {
+    /// The message has no `Step:` trailer.
+    Missing {
+        /// The steps of the plan, in the order written: what the trailer may name.
+        steps: Vec<ItemId>,
+    },
+    /// The message has `Step:` trailers and some of them name no step of the plan.
+    NotInPlan {
+        /// What those trailers name, as written, in the order of the message.
+        named: Vec<String>,
+        /// The steps of the plan, in the order written.
+        steps: Vec<ItemId>,
+    },
+}
+
+/// What is to happen to a commit that is about to be made, as far as its `Step:` trailer goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum StepVerdict {
+    /// It is made.
+    Allowed,
+    /// It is not made.
+    Refused(StepRefusal),
+}
+
+/// Whether the commit with the message `message` may be made, given the `plan` of the task: when the plan has `For:`
+/// lines, the message ends in a `Step: N.M` trailer that names a step of the plan.
+#[must_use]
+pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
+    if !plan.ties_requirements() {
+        return StepVerdict::Allowed;
+    }
+    let steps = || plan.steps().map(Step::id).collect::<Vec<_>>();
+    let named: Vec<&str> = trailer_block(message).filter_map(step_trailer).collect();
+    if named.is_empty() {
+        return StepVerdict::Refused(StepRefusal::Missing { steps: steps() });
+    }
+    let unknown: Vec<String> = named
+        .into_iter()
+        .filter(|text| !text.parse::<ItemId>().is_ok_and(|id| plan.step(&id).is_some()))
+        .map(str::to_owned)
+        .collect();
+    if unknown.is_empty() {
+        StepVerdict::Allowed
+    } else {
+        StepVerdict::Refused(StepRefusal::NotInPlan {
+            named: unknown,
+            steps: steps(),
+        })
+    }
+}
+
+/// The lines of the trailer block of `message`: its last paragraph, after the blank lines and the comment lines of the
+/// editor at its end, and above the scissors line of `git commit -v`. A paragraph that holds a line which is no trailer
+/// (and no folded line of one) is body, so a `Step:` line in it is not in the block.
+fn trailer_block(message: &str) -> impl Iterator<Item = &str> {
+    let mut lines: Vec<&str> = message.lines().collect();
+    let comment = cut_at_scissors(&mut lines);
+    let mut block: Vec<&str> = lines
+        .into_iter()
+        .rev()
+        .skip_while(|line| line.trim().is_empty() || line.starts_with(comment))
+        .take_while(|line| !line.trim().is_empty())
+        .collect();
+    block.reverse();
+    if !block
+        .iter()
+        .enumerate()
+        .all(|(index, line)| is_trailer_line(line, index))
+    {
+        block.clear();
+    }
+    block.into_iter()
+}
+
+/// Removes from `lines` the scissors line of `git commit -v` and everything under it, and returns the comment
+/// character that line starts with: the character of the editor's comment lines. Without such a line `lines` is whole
+/// and the character is `#`.
+fn cut_at_scissors(lines: &mut Vec<&str>) -> char {
+    let found = lines.iter().enumerate().find_map(|(index, line)| {
+        let mut chars = line.chars();
+        let comment = chars.next()?;
+        (chars.as_str() == SCISSORS).then_some((index, comment))
+    });
+    let Some((index, comment)) = found else {
+        return DEFAULT_COMMENT;
+    };
+    lines.truncate(index);
+    comment
+}
+
+/// Whether `line`, the `index`th of a trailer block, is a trailer (`Token: value`) or, after the first, the folded
+/// continuation of one that starts with white space.
+fn is_trailer_line(line: &str, index: usize) -> bool {
+    if index > 0 && line.starts_with(char::is_whitespace) {
+        return true;
+    }
+    line.split_once(':')
+        .is_some_and(|(token, _)| !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-'))
+}
+
+/// The comment character of git's message file when the configuration does not say another.
+const DEFAULT_COMMENT: char = '#';
+
+/// What follows the comment character in the line that `git commit -v` puts above the diff it shows.
+const SCISSORS: &str = " ------------------------ >8 ------------------------";
+
+/// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
+/// that only mentions the word are no trailer.
+fn step_trailer(line: &str) -> Option<&str> {
+    line.strip_prefix(STEP_TRAILER).map(str::trim)
+}
+
+/// What starts the trailer of a commit message that names the step of the plan the commit belongs to.
+const STEP_TRAILER: &str = "Step:";
 
 /// What `file`, which takes lines out of its file, takes out of it.
 const fn taken_by(file: &FileChange) -> Taken {

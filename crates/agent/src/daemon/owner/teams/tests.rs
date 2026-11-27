@@ -3111,8 +3111,14 @@ async fn a_member_in_a_team_is_sent_back_for_its_plan_and_its_coordinator_is_tol
         &f,
         3,
         &[
-            ("open", "Do one.\n\n1. Work\n[x] 1.1 Write it\n[ ] 1.2 Check it\n"),
-            ("settled", "Do one.\n\n1. Work\n[x] 1.1 Write it\n[x] 1.2 Check it\n"),
+            (
+                "open",
+                "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[ ] 1.2 Check it\n    For: R1\n",
+            ),
+            (
+                "settled",
+                "Do one.\n\n1. Work\n[x] 1.1 Write it\n    For: R1\n[x] 1.2 Check it\n    For: R1\n",
+            ),
         ],
     );
     f.start().await;
