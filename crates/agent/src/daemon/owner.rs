@@ -1401,6 +1401,9 @@ impl Owner {
                 );
             }
         }
+        // Resolved before the task is committed as running: a failure here must not leave a running task without a job.
+        let agent: AgentName = located.agent.parse()?;
+        let account = self.account_of(&agent);
         events.push(EventKind::RunStarted {
             team: located.team.clone(),
             task: task.clone(),
@@ -1452,8 +1455,6 @@ impl Owner {
             }
         }
         Box::pin(self.start_owned_team_request(task, &plan.run)).await?;
-        let agent: AgentName = located.agent.parse()?;
-        let account = self.account_of(&agent);
         self.spawn_job(task.clone(), plan.job, account, run_span);
         Ok(())
     }
