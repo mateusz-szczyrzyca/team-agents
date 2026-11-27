@@ -141,7 +141,7 @@ fn every_cause_reads_back_from_its_snake_case_keyword_and_from_its_json() {
         assert_eq!(json, format!("\"{keyword}\""));
         assert_eq!(serde_json::from_str::<CheckpointCause>(&json).unwrap(), *cause);
     }
-    assert_eq!(CheckpointCause::VARIANTS.len(), 23);
+    assert_eq!(CheckpointCause::VARIANTS.len(), 29);
 }
 
 #[test]
