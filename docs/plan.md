@@ -202,8 +202,10 @@ requirement".
 **Commits name their step.** In the worktree of a lead, a member or a solo agent whose plan has `For:` lines, the commit
 hook (`agent guard-commit`, [`docs/architecture.md`](architecture.md)) refuses a commit whose message has no `Step: N.M`
 line of its own naming a step of the plan, and tells the agent what to add (`prompts/harness/run/commit-refused-step.md`).
-`RED:`, `GREEN:`, `TEST-FIX:` and merge commits name a step as well; commits the harness makes itself are not checked, nor
-are those a cherry-pick, a revert or a rebase replays.
+`RED:`, `GREEN:`, `TEST-FIX:` and merge commits name a step as well; commits the harness makes itself are not checked. The message ends
+with the trailer: a `Step:` line that the body goes on after is none. Git runs the hook only for the commits it asks a message
+for — a plain cherry-pick, revert or rebase replays commits without it, and the agent is asked where it makes the commit itself
+(the resolution of a conflict, a reworded commit).
 
 A run that ends with another status is recorded and never sent back for its plan. **A coordinator** also ends a turn
 with `STATUS: DONE` after it integrated one member while others work: its `DONE` is judged by its plan only when no

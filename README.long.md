@@ -1228,7 +1228,8 @@ harness numbers the item's requirements when it gives the item to the agent (`R1
 or one the item does not have, is sent back for its plan (counted by `[plan] bounces` like the other corrections). A plan
 with no `For:` line that was started before this version reads as before. In the worktree of a task whose plan has `For:` lines
 the same `commit-msg` hook refuses a commit whose message has no `Step: N.M` line naming a step of the plan — `RED:`,
-`TEST-FIX:` and merge commits too — and tells the agent what to add. The commits the harness itself makes are not checked.
+`TEST-FIX:` and merge commits too — and tells the agent what to add; the `Step:` line ends the message. The commits the harness itself makes are not checked, and
+`git commit --no-verify` skips the check. Git runs no commit hook for a plain cherry-pick, revert or rebase.
 It is "Round checks before the review" in [`docs/architecture.md`](docs/architecture.md).
 
 ### The gate

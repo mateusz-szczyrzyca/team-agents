@@ -346,7 +346,8 @@ impl Step {
         }
     }
 
-    /// The text of the step that is not its `Files:`, `Check:` or `For:` line, dedented; for a step given up, why.
+    /// The text of the step that is not its `Files:` or `Check:` line, dedented, with its `For:` line and its `By: worker`
+    /// mark, which stay in it; for a step given up, why.
     #[must_use]
     pub fn note(&self) -> &str {
         &self.note
