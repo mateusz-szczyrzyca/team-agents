@@ -295,9 +295,10 @@ impl Team {
                         ActivityRequest::Investigation | ActivityRequest::TaskAllocation
                     )
             });
-            let asked_at = existing
-                .map(|a| a.asked_at)
-                .unwrap_or_else(|| reviewer.runs().first().map_or(at, super::super::run::Run::started_at));
+            let asked_at = existing.map_or_else(
+                || reviewer.runs().first().map_or(at, super::super::run::Run::started_at),
+                |a| a.asked_at,
+            );
             found.push(Activity {
                 investigator: investigator.clone(),
                 task: reviewer.task().clone(),

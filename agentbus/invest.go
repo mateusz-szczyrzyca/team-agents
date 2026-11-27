@@ -254,13 +254,6 @@ const (
 		"(b) wait — call request_investigation again with wait_if_full=true and end your turn."
 )
 
-// requestInvestigation (MCP request_investigation) queues a request for the investigators. When the queue
-// is full the request is either parked in the waiting room (wait=true) or rejected, and the agent must
-// record a decision. A rejected request without a decision is reused on retry.
-func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
-	return s.requestInvestigationKind(question, context, wait, "", "")
-}
-
 // requestInvestigationKind parses optional MCP arguments while preserving legacy question calls.
 func (s *Server) requestInvestigationKind(question, context string, wait bool, kind, item string) (string, *RequestInvestigationError) {
 	if s.investigations == investigationsOff {

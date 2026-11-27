@@ -95,3 +95,8 @@ func TestRequestInvestigationRejectsUnknownKind(t *testing.T) {
 		t.Fatalf("got %v, want RequestInvestigationInvalidKind", err)
 	}
 }
+
+// requestInvestigation keeps existing tests on the legacy question-call interface.
+func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
+	return s.requestInvestigationKind(question, context, wait, "", "")
+}
