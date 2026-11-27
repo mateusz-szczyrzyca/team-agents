@@ -282,6 +282,23 @@ async fn a_pool_worker_is_told_to_commit_the_requested_files_in_its_own_worktree
     );
 }
 
+// Rule: the commit rule of a pool worker holds over its request: a request that says not to commit is committed anyway,
+// because the harness brings over only a commit (issue #343).
+#[tokio::test]
+async fn a_pool_worker_is_told_to_commit_even_when_the_request_says_not_to() {
+    let texts = texts().await;
+
+    let prompt = shape_pool_worker(&texts.team, "THE COMPOSED PROMPT\n", &request()).unwrap();
+
+    for line in [
+        "This rule holds over the request",
+        "a request that says not to commit, or to leave the edits uncommitted, is committed all the same",
+        "say so under `Notes:`",
+    ] {
+        assert!(prompt.contains(line), "{line:?} is not in:\n{prompt}");
+    }
+}
+
 #[tokio::test]
 async fn a_worker_that_starts_a_session_for_a_request_gets_its_prompt_the_team_and_the_request() {
     let texts = texts().await;

@@ -1802,6 +1802,73 @@ Integrate the guide.
         assert_eq!(world.count_told("claude-1", "went once more"), 0);
     }
 
+    // Rule: a step given back after one result tells the requester of that one result; it never speaks of a second
+    // result or a third worker that did not happen (issue #344).
+    #[test]
+    fn a_step_given_back_after_its_one_allowed_try_speaks_of_one_result() {
+        let (world, _tasks) = second_try_world(
+            &[("glm-1", "sleep,script:nothing"), ("glm-2", "sleep,script:guide")],
+            Some(1),
+        );
+
+        world.request_is("1", "failed");
+
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(
+            told.contains("the worker's result does not serve step 1.1 of your plan"),
+            "{told}"
+        );
+        assert!(told.contains("the check `exists docs/guide.md` failed"), "{told}");
+        assert!(!told.contains("neither result"), "{told}");
+        assert!(!told.contains("a third time"), "{told}");
+    }
+
+    // Rule: a worker that leaves the requested files uncommitted and says it is done has the step given back at once,
+    // and the requester reads of that one result (issue #344, request H35 of 27.11.2026).
+    #[test]
+    fn a_worker_that_leaves_its_files_uncommitted_has_the_step_back_with_one_result() {
+        let mut world = World::new(&[
+            ("inv-opus", "investigator", "sleep"),
+            ("claude-1", "agent", "ask-worker-after:member,sleep"),
+            ("glm-1", "worker", "sleep,script:loose"),
+        ]);
+        world.script("loose", "mkdir -p docs\nprintf 'the walkthrough\\n' > docs/guide.md\n");
+        let tasks = answered_request(&mut world, MEMBER_REQUEST);
+        let member = task(&tasks, "claude-1");
+
+        std::fs::write(world.worktree(member).join(".fake-ask"), "").unwrap();
+
+        world.request_is("1", "failed");
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(told.contains("the worker left files uncommitted"), "{told}");
+        assert!(
+            told.contains("the worker's result does not serve step 1.1 of your plan"),
+            "{told}"
+        );
+        assert!(!told.contains("neither result"), "{told}");
+        assert!(!told.contains("a third time"), "{told}");
+        assert!(!world.worktree(member).join("docs/guide.md").exists());
+    }
+
+    // Rule: a step given back after two wrong results still tells the requester of both, and not to try a third time.
+    #[test]
+    fn a_step_given_back_after_two_wrong_results_speaks_of_both() {
+        let (world, _tasks) = second_try_world(
+            &[
+                ("glm-1", "sleep,script:nothing"),
+                ("glm-2", "sleep,script:nothing"),
+                ("glm-3", "sleep,script:guide"),
+            ],
+            None,
+        );
+
+        world.request_is("1", "failed");
+
+        let told = world.told("claude-1", "Your request H1 to the workers is back with you");
+        assert!(told.contains("neither result serves step 1.1 of your plan"), "{told}");
+        assert!(told.contains("a third time"), "{told}");
+    }
+
     /// The stage file of a result that is wrong and goes to another worker, as the daemon writes it before it asks.
     fn settled_again() -> serde_json::Value {
         serde_json::json!({"stage": "settled",

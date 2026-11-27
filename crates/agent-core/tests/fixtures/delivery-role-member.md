@@ -21,6 +21,7 @@ Give a worker what is simple, so that your own tokens go to what needs you:
   full and nothing else.
 - Never give a worker a decision, a design, a step whose check is `reviewer`, or anything that needs your uncommitted
   work changed.
+- A worker commits the files of its request, and only its commit reaches you: never ask it to leave its edits uncommitted.
 - When a request is refused, comes back failed or with a question, or no worker is free, do the step yourself; do not
   ask again in other words.
 

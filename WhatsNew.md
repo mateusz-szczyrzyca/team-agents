@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-core 0.141.0 — 27.11.2026 — PR pending
+## agent-core 0.142.0 — 27.11.2026 — PR pending
 
 ### Enhancements
 - [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; daemon delivery follows separately.
@@ -18,6 +18,12 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 - [agent-core] new: `[findings] keep_days` (default `30`) — how many days a finding is shown.
 - [agent-core] new: `[findings] max_shown` (default `8`) — findings in one run's message.
 - [agent-core] new: `[findings] max_chars` (default `3000`) — their texts' length in one message.
+
+## agent 0.144.0 · agent-core 0.141.0 · agent-runtime 0.130.0 — 27.11.2026 — PR #346
+
+### Bug fixes
+- [agent] [agent-core] [agent-runtime] A step a worker's one result did not serve is given back with "the worker's result does not serve step 5.3"; before, the requester read "neither result" and "do not send it a third time" after a single try. The old words stay for a step whose two results were both wrong.
+- [agent-core] A worker commits the files of its request also when the request says not to commit, and says so in its notes; before, it obeyed, and its work was thrown away. Members, coordinators and solo agents are told never to ask a worker for uncommitted edits.
 
 ## agent 0.143.0 · agent-core 0.140.0 · agent-runtime 0.129.0 — 27.11.2026 — PR #338
 

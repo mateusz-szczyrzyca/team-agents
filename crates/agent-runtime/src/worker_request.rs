@@ -286,6 +286,12 @@ pub enum Settlement {
         /// The reasons.
         reasons: Vec<String>,
     },
+    /// The result of a later try is wrong too: the reasons of every try, each named by its try, in the words the
+    /// requester reads.
+    ReturnedAfterTries {
+        /// The reasons, one for each try, oldest first.
+        reasons: Vec<String>,
+    },
 }
 
 impl Settlement {
@@ -297,7 +303,7 @@ impl Settlement {
             Self::Brought { .. } => "brought",
             Self::Conflict { .. } => "conflict",
             Self::Again { .. } => "again",
-            Self::Returned { .. } => "returned",
+            Self::Returned { .. } | Self::ReturnedAfterTries { .. } => "returned",
         }
     }
 }
