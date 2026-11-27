@@ -807,19 +807,27 @@ impl State {
     }
 
     /// Starts `task` anew in a new session because the account of its agent changed to `account` (`None`: to none), at
-    /// `at`, and records it as the account of that session. No renewal is counted. Returns whether the task was started
-    /// anew: `false` for a task with no run, which only has the account recorded.
+    /// `at`, and records it as the account of that session. Every role is started anew for it, as for a session above its
+    /// agent's bound, and no renewal is counted. Returns whether the task was started anew: `false` for a task with no run,
+    /// which only has the account recorded.
     ///
     /// # Errors
-    /// [`RenewTaskError`] when the task is not in the state, is of a worker, a reviewer or an investigator, or the session
-    /// does not fit its runs.
+    /// [`RenewTaskError`] when the task is not in the state or the session does not fit its runs.
     pub fn begin_account_session(
         &mut self,
         task: &TaskId,
         account: Option<crate::config::AccountName>,
         at: Timestamp,
     ) -> Result<bool, RenewTaskError> {
-        let begun = self.begin_holder_session(task, crate::decide::ladder::Trouble::AccountChanged, at)?;
+        let (_, mut member) = self
+            .find_task_mut(task)
+            .ok_or_else(|| RenewTaskError::NoTask { task: task.clone() })?;
+        let begun = member
+            .begin_holder_session(crate::decide::ladder::Trouble::AccountChanged, at)
+            .map_err(|source| RenewTaskError::Renewal {
+                task: task.clone(),
+                source,
+            })?;
         self.record_session_account(task, account);
         Ok(begun)
     }

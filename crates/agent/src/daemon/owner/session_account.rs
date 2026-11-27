@@ -5,7 +5,6 @@
 use agent_core::config::AccountName;
 use agent_core::decide::session_account::{AccountSession, session_start};
 use agent_core::ids::{AgentName, TaskId};
-use agent_core::kinds::Role;
 use agent_runtime::history::log_decision;
 
 use super::{Owner, OwnerError};
@@ -21,13 +20,13 @@ impl Owner {
     /// whether a new session began.
     ///
     /// A task with no session to resume — its first run, or a session that was just begun for another reason, which is
-    /// briefed already — only has the account recorded: it is never briefed twice. A task of a worker, a reviewer or an
-    /// investigator is no task a session is begun for; it has the account recorded as well.
+    /// briefed already — only has the account recorded: it is never briefed twice. Every role is started anew, a worker, a
+    /// reviewer and an investigator too: a session of another account is resumed by none.
     ///
     /// # Errors
     /// [`OwnerError`] when the state refuses the new session.
     pub(super) fn renew_for_account(&mut self, task: &TaskId) -> Result<bool, OwnerError> {
-        let (agent, role, resumable) = {
+        let (agent, resumable) = {
             let found = self
                 .parts
                 .state
@@ -35,7 +34,6 @@ impl Owner {
                 .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
             (
                 found.member.agent().name().to_owned(),
-                found.role,
                 found.member.last_session().is_some(),
             )
         };
@@ -49,8 +47,7 @@ impl Owner {
         if session_start(recorded.as_ref(), now.as_ref()) == AccountSession::Resume {
             return Ok(false);
         }
-        let begins_session = resumable && matches!(role, Role::Solo | Role::Coordinator | Role::Member);
-        if !begins_session {
+        if !resumable {
             self.parts.state.record_session_account(task, now);
             return Ok(false);
         }
