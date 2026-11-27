@@ -879,6 +879,64 @@ async fn spent_conflict_passes(
     (rig, task)
 }
 
+/// Like `spent_conflict_passes`, with the member as its own coordinator, so that its runs belong to a round.
+async fn spent_conflict_passes_with_a_round(
+    review_and_answer: &'static str,
+    lead: &'static str,
+    enabled: bool,
+) -> (Rig, agent_core::ids::TaskId) {
+    use std::io::Write as _;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", lead),
+            investigator("inv-r1", review_and_answer),
+            investigator("inv-r2", review_and_answer),
+        ],
+        5,
+        true,
+    )
+    .await;
+    // The key is written only for the disabled compatibility case, so the default is exercised too.
+    if !enabled {
+        writeln!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(rig.home.config_file())
+                .unwrap(),
+            "[merge]\ninvestigator_pass = false"
+        )
+        .unwrap();
+    }
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (_, tasks) = rig
+        .run(&["claude-1"], ONE, MergeMode::Autopilot, Some("claude-1"))
+        .await;
+    let task = tasks[0].clone();
+    for pass in 1..=3 {
+        rig.wait_for("next conflict run", || rig.runs(&task) > pass).await;
+        std::fs::write(rig.repo.join("base-file.txt"), format!("base pass {pass}\n")).unwrap();
+        git(&rig.repo, &["add", "base-file.txt"]);
+        git(&rig.repo, &["commit", "-q", "-m", "Move the base for the next pass"]);
+        git(
+            &rig.repo,
+            &["push", "-q", rig.origin.to_str().unwrap(), "HEAD:refs/heads/main"],
+        );
+        std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    }
+    rig.state_where("investigation or human fallback after spent passes", |state| {
+        let item = state.teams()[0].item("1.1".parse().unwrap()).unwrap();
+        let value = serde_json::to_value(item).unwrap();
+        value.get("conflict_investigation").is_some()
+            || matches!(
+                item.merge_conflict(),
+                Some(agent_core::state::MergeConflict::AskingHuman { .. })
+            )
+    })
+    .await;
+    (rig, task)
+}
+
 /// Requires a durable request before checking any dependent investigation lifecycle behaviour.
 fn assert_investigation_filed(rig: &Rig) {
     let state = rig.state();
@@ -1443,4 +1501,73 @@ async fn a_restart_looks_at_the_pending_merge_without_filing_a_duplicate_request
     .await;
     rig.stop().await.unwrap();
     assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
+}
+
+/// The checkpoints of the investigation jobs of the only team's first round, oldest first.
+fn investigation_checkpoints(rig: &Rig) -> Vec<agent_runtime::history::LastCheckpoint> {
+    let state = rig.state();
+    let Some(round) = state
+        .teams()
+        .first()
+        .and_then(|team| team.rounds().first())
+        .map(|round| round.id().clone())
+    else {
+        return Vec::new();
+    };
+    agent_runtime::history::Reader::open(&rig.home.history_file())
+        .unwrap()
+        .job_checkpoints_of_round(&round)
+        .unwrap()
+        .into_iter()
+        .filter(|checkpoint| checkpoint.job == agent_core::history::CheckpointJob::Investigation)
+        .collect()
+}
+
+#[tokio::test]
+async fn an_answered_conflict_investigation_ends_with_an_investigation_answered_checkpoint() {
+    let (mut rig, _task) = spent_conflict_passes_with_a_round(
+        "conflict-investigator:inv-done:Resolve the conflict",
+        "work,merge-base,merge-base,merge-base,hold,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.wait_for("the start checkpoint of the conflict investigation", || {
+        investigation_checkpoints(&rig)
+            .iter()
+            .any(|checkpoint| checkpoint.cause == agent_core::history::CheckpointCause::InvestigationStarted)
+    })
+    .await;
+    rig.wait_for("the answer checkpoint of the conflict investigation", || {
+        investigation_checkpoints(&rig)
+            .iter()
+            .any(|checkpoint| checkpoint.cause == agent_core::history::CheckpointCause::InvestigationAnswered)
+    })
+    .await;
+    rig.stop().await.unwrap();
+}
+
+#[tokio::test]
+async fn a_failed_conflict_investigation_ends_with_a_run_ended_checkpoint() {
+    let (mut rig, task) = spent_conflict_passes_with_a_round(
+        "conflict-investigator:inv-fail",
+        "work,merge-base,merge-base,merge-base,ask-here",
+        true,
+    )
+    .await;
+    assert_investigation_filed(&rig);
+    rig.status_is(&task, agent_core::status::TaskStatus::Questions).await;
+    assert!(
+        investigation_checkpoints(&rig)
+            .iter()
+            .any(|checkpoint| checkpoint.cause == agent_core::history::CheckpointCause::InvestigationStarted),
+        "the conflict investigation was never checkpointed"
+    );
+    rig.wait_for("the end checkpoint of the failed conflict investigation", || {
+        investigation_checkpoints(&rig)
+            .iter()
+            .any(|checkpoint| checkpoint.cause == agent_core::history::CheckpointCause::RunEnded)
+    })
+    .await;
+    rig.stop().await.unwrap();
 }
