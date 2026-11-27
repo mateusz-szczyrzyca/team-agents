@@ -931,7 +931,19 @@ impl State {
         Ok(member.start_waiting(at))
     }
 
-    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
+    /// Hands `task` over to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a
+    /// solo agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its
+    /// team, so that the state it leaves loads again.
+    ///
+    /// The choice is [`Choice::Harness`].
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
+    pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+        self.hand_over_task_as(task, holder, Choice::Harness, at)
+    }
+
     /// Hands `task` over to `holder`, chosen by `choice` at `at`: only for an agent outside the team, of a solo
     /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
     /// that the state it leaves loads again.
@@ -940,7 +952,7 @@ impl State {
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `choice` is [`Choice::Harness`] and `holder` is of a lower tier than the agent that holds it, `holder` is in its
     /// team, or a run of it is going.
-    pub fn hand_over_task(
+    pub fn hand_over_task_as(
         &mut self,
         task: &TaskId,
         holder: Participant,

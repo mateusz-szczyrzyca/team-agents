@@ -238,7 +238,7 @@ impl Owner {
             .unwrap_or_default();
         self.parts
             .state
-            .hand_over_task(task, holder, agent_core::state::Choice::Harness, at)
+            .hand_over_task(task, holder, at)
             .map_err(|source| OwnerError::HandOver {
                 task: task.clone(),
                 source,

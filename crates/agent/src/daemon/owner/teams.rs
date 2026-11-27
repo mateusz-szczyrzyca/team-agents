@@ -1027,7 +1027,7 @@ impl Owner {
             let now = Timestamp::now(&self.parts.clock)?;
             self.parts
                 .state
-                .hand_over_task(&assigned.task, holder, agent_core::state::Choice::Harness, now)
+                .hand_over_task(&assigned.task, holder, now)
                 .map_err(|source| OwnerError::HandOver {
                     task: assigned.task.clone(),
                     source,
