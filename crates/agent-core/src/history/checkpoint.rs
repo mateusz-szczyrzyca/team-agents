@@ -10,6 +10,10 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 use super::HistoryEvent;
 use crate::kinds::{Keyword, UnknownKeyword};
 
+mod state;
+
+pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, checkpoint_content};
+
 /// What a checkpoint is for: the kind of work whose state it keeps.
 #[derive(
     Debug,
