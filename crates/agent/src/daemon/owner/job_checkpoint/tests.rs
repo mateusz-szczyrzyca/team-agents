@@ -10,7 +10,7 @@ use agent_core::state::CommitId;
 use agent_runtime::history::LastCheckpoint;
 use agent_runtime::store::Home;
 
-use super::{JobsOf, going_jobs};
+use super::{JobsOf, OnlyAStart, going_jobs, pick_newest};
 
 /// A checkpoint of the task `task` of the job `job`, of `cause`, with the head `head` and the content `done` says.
 fn checkpoint(task: &str, job: CheckpointJob, cause: CheckpointCause, head: &str, done: &str) -> LastCheckpoint {
@@ -174,4 +174,61 @@ fn the_tasks_of_a_round_are_read_in_the_order_of_their_first_checkpoint() {
         jobs.iter().map(|facts| facts.task.clone()).collect::<Vec<TaskId>>(),
         vec![other.parse().unwrap(), WORKER.parse().unwrap()]
     );
+}
+
+/// The checkpoints `kept` as one round `round-20261127-090000-aaaa` kept them.
+fn of_one_round(kept: Vec<LastCheckpoint>) -> Vec<(RoundId, LastCheckpoint)> {
+    let round: RoundId = "round-20261127-090000-aaaa".parse().unwrap();
+    kept.into_iter().map(|kept| (round.clone(), kept)).collect()
+}
+
+#[test]
+fn a_job_that_left_only_its_start_hands_its_start_over_but_is_briefed_from_nothing() {
+    let kept = of_one_round(vec![checkpoint(
+        WORKER,
+        CheckpointJob::Review,
+        CheckpointCause::ReviewStarted,
+        FIRST,
+        "no findings",
+    )]);
+    let task: TaskId = WORKER.parse().unwrap();
+
+    let handed = pick_newest(kept.clone(), &task, OnlyAStart::TheStart).expect("the start is handed over");
+    let briefed = pick_newest(kept, &task, OnlyAStart::Nothing);
+
+    assert_eq!(handed.1.cause, CheckpointCause::ReviewStarted);
+    assert_eq!(briefed, None);
+}
+
+#[test]
+fn a_job_that_told_some_work_hands_over_the_work_not_its_start() {
+    let kept = of_one_round(vec![
+        checkpoint(
+            WORKER,
+            CheckpointJob::Review,
+            CheckpointCause::ReviewStarted,
+            FIRST,
+            "none",
+        ),
+        checkpoint(
+            WORKER,
+            CheckpointJob::Review,
+            CheckpointCause::RunEnded,
+            SECOND,
+            "one finding",
+        ),
+        checkpoint(
+            WORKER,
+            CheckpointJob::Review,
+            CheckpointCause::ReviewStarted,
+            FIRST,
+            "none",
+        ),
+    ]);
+    let task: TaskId = WORKER.parse().unwrap();
+
+    for only_a_start in [OnlyAStart::TheStart, OnlyAStart::Nothing] {
+        let picked = pick_newest(kept.clone(), &task, only_a_start).expect("the work is picked");
+        assert_eq!(picked.1.cause, CheckpointCause::RunEnded);
+    }
 }

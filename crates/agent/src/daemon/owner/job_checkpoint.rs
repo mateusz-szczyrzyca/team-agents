@@ -373,7 +373,7 @@ impl Owner {
             if !history.exists() {
                 return Ok(None);
             }
-            newest_checkpoint_of(&Reader::open(&history)?, &lookup, &holder)
+            newest_checkpoint_of(&Reader::open(&history)?, &lookup, &holder, OnlyAStart::TheStart)
         })
         .await;
         let found = match read {
@@ -760,21 +760,51 @@ fn is_a_start(cause: CheckpointCause) -> bool {
     )
 }
 
-/// The newest checkpoint of the job of `task` in `rounds` that tells some work, with the round it was taken in.
+/// What a look for the newest checkpoint of a job does when the job left only its start.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OnlyAStart {
+    /// The job has no checkpoint to go on from: a run of it that has just begun is briefed from none.
+    Nothing,
+    /// The start is the checkpoint: a job that passes to a new holder is handed over with the point it began from.
+    TheStart,
+}
+
+/// The newest checkpoint of the job of `task` in `rounds` that tells some work, with the round it was taken in; when the
+/// job left only its start, `only_a_start` says whether that is told.
 fn newest_checkpoint_of(
     reader: &Reader,
     rounds: &[RoundId],
     task: &TaskId,
+    only_a_start: OnlyAStart,
 ) -> Result<Option<(RoundId, LastCheckpoint)>, agent_runtime::history::ReadError> {
-    let mut newest = None;
+    let mut kept = Vec::new();
     for round in rounds {
-        for kept in reader.job_checkpoints_of_round(round)? {
-            if kept.task == *task && !is_a_start(kept.cause) {
-                newest = Some((round.clone(), kept));
-            }
+        for checkpoint in reader.job_checkpoints_of_round(round)? {
+            kept.push((round.clone(), checkpoint));
         }
     }
-    Ok(newest)
+    Ok(pick_newest(kept, task, only_a_start))
+}
+
+/// The newest of `kept` (oldest first) that `task` took and that tells some work; when `task` left only its start,
+/// `only_a_start` says whether the newest start is picked.
+fn pick_newest(
+    kept: Vec<(RoundId, LastCheckpoint)>,
+    task: &TaskId,
+    only_a_start: OnlyAStart,
+) -> Option<(RoundId, LastCheckpoint)> {
+    let (mut newest, mut start) = (None, None);
+    for (round, checkpoint) in kept.into_iter().filter(|(_, checkpoint)| checkpoint.task == *task) {
+        if is_a_start(checkpoint.cause) {
+            start = Some((round, checkpoint));
+        } else {
+            newest = Some((round, checkpoint));
+        }
+    }
+    match only_a_start {
+        OnlyAStart::Nothing => newest,
+        OnlyAStart::TheStart => newest.or(start),
+    }
 }
 
 /// The briefing a job taken over starts with: the last checkpoint of the holder before, told as `prompt` asks; `None`
@@ -798,7 +828,7 @@ pub(super) async fn job_briefing(
     let read = tokio::task::spawn_blocking(move || {
         let reader = Reader::open(&path)?;
         Ok::<_, agent_runtime::history::ReadError>(
-            newest_checkpoint_of(&reader, &lookup, &task)?
+            newest_checkpoint_of(&reader, &lookup, &task, OnlyAStart::Nothing)?
                 .map(|(_, kept)| kept)
                 .filter(|kept| kept.job == job),
         )
