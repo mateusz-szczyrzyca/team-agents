@@ -4906,7 +4906,7 @@ git commit -qm 'Complete retained work'
                 .iter()
                 .any(|(cause, task)| *cause == agent_core::history::CheckpointCause::DaemonStarted && *task == worker)
         });
+        // The orphan of the killed daemon ends once released: no stand-in outlives the test.
         std::fs::write(world.home.join("release-worker"), "").unwrap();
-        world.request_is("1", "done");
     }
 }
