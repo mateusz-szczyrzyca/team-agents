@@ -574,7 +574,7 @@ of a run that started before — and counts them.
 Migration `33` admits the `investigator` run role and preserves existing runs, related records,
 log IDs, round links, search entries and cursors.
 
-Migration `35` admits `investigation_started`, `investigation_answered` , `investigation_kind_unknown`, `investigation_requeued` and
+Migration `35` admits `investigation_started`, `investigation_answered`, `investigation_kind_unknown`, `investigation_requeued` and
 `investigation_failed` with their daemon emitters. It preserves existing log IDs, round links, search entries and cursors.
 
 `PRAGMA user_version` is the number of the last migration applied. The schema is the result of the migrations of
