@@ -426,6 +426,7 @@ A daemon killed with SIGKILL leaves its runs alive, because they are separate pr
 - **Failure.** A failed checkpoint logs `checkpoint_failed` and never stops the round.
 - **Use.** The briefing of a new session is built from the latest checkpoint. This is how a takeover or a renewal
   continues the work instead of starting it again.
+- **More.** Everything about them is in [`docs/checkpoints.md`](checkpoints.md).
 
 ## 11. The round pipeline: from code to a merged PR
 

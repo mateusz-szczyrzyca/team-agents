@@ -9,10 +9,10 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent-core 0.142.0 — 27.11.2026 — PR pending
+## agent-core 0.142.0 — 27.11.2026 — PR #342
 
 ### Enhancements
-- [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; daemon delivery follows separately.
+- [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; the daemon does not send them to runs in this version.
 
 ### Configuration
 - [agent-core] new: `[findings] keep_days` (default `30`) — how many days a finding is shown.
