@@ -86,9 +86,33 @@ impl Default for RawFindings {
 }
 impl RawFindings {
     /// Checks all bounds before making settings available to decisions.
+    ///
+    /// # Errors
+    /// Returns [`InvalidFindings`] naming the first key outside its inclusive bounds.
     pub(super) fn validate(self) -> Result<Findings, InvalidFindings> {
-        Ok(Findings::default())
+        Ok(Findings {
+            keep_days: bound(self.keep_days, FindingsKey::KeepDays, 0..=365)?,
+            max_shown: bound(self.max_shown, FindingsKey::MaxShown, 1..=20)?,
+            max_chars: bound(self.max_chars, FindingsKey::MaxChars, 500..=10000)?,
+        })
     }
+}
+
+/// Converts once at the boundary, then enforces the key's narrower domain range.
+fn bound(value: i64, key: FindingsKey, range: std::ops::RangeInclusive<u16>) -> Result<u16, InvalidFindings> {
+    let number = u16::try_from(value).map_err(|source| InvalidFindings {
+        key,
+        value,
+        source: Some(source),
+    })?;
+    if !range.contains(&number) {
+        return Err(InvalidFindings {
+            key,
+            value,
+            source: None,
+        });
+    }
+    Ok(number)
 }
 
 #[cfg(test)]

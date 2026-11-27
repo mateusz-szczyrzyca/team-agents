@@ -33,9 +33,18 @@ pub struct InvalidFindingId {
 impl FromStr for FindingId {
     type Err = InvalidFindingId;
     fn from_str(value: &str) -> Result<Self, Self::Err> {
-        Err(InvalidFindingId {
+        let invalid = || InvalidFindingId {
             value: value.to_owned(),
-        })
+        };
+        let digits = value.strip_prefix("F-").ok_or_else(invalid)?;
+        let number = digits.chars().try_fold(0_u64, |number, digit| {
+            let digit = digit.to_digit(10).filter(|_| digit.is_ascii()).ok_or_else(invalid)?;
+            number
+                .checked_mul(10)
+                .and_then(|n| n.checked_add(u64::from(digit)))
+                .ok_or_else(invalid)
+        })?;
+        NonZeroU64::new(number).map(Self).ok_or_else(invalid)
     }
 }
 impl TryFrom<String> for FindingId {
@@ -55,6 +64,9 @@ impl From<FindingId> for String {
     }
 }
 
+/// The bus path limit in Unicode characters.
+const MAX_PATH_CHARS: usize = 200;
+
 /// A normalized relative repository path, without parent traversal or whitespace.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -73,9 +85,28 @@ impl RepoPath {
     /// # Errors
     /// Returns [`InvalidRepoPath`] for absolute, empty, traversing, whitespace-containing or overlong paths.
     pub fn parse(value: &str) -> Result<Self, InvalidRepoPath> {
-        Err(InvalidRepoPath {
+        let invalid = || InvalidRepoPath {
             value: value.to_owned(),
-        })
+        };
+        if value.chars().count() > MAX_PATH_CHARS || value.chars().any(char::is_whitespace) {
+            return Err(invalid());
+        }
+        let normalized = value.replace('\\', "/");
+        if normalized.starts_with('/')
+            || normalized.as_bytes().get(1) == Some(&b':')
+            || normalized.split('/').any(|part| part == "..")
+        {
+            return Err(invalid());
+        }
+        let normalized = normalized
+            .split('/')
+            .filter(|part| !part.is_empty() && *part != ".")
+            .collect::<Vec<_>>()
+            .join("/");
+        if normalized.is_empty() {
+            return Err(invalid());
+        }
+        Ok(Self(normalized))
     }
     /// The normalized path, with `/` separators.
     #[must_use]
@@ -127,14 +158,63 @@ pub struct Selected<'a> {
 /// Extracts backtick paths, excluding commands, URLs, absolute paths and parent traversal.
 /// The daemon checks which of these paths exist in its worktree.
 #[must_use]
-pub fn item_paths(_text: &str) -> Vec<RepoPath> {
-    Vec::new()
+pub fn item_paths(text: &str) -> Vec<RepoPath> {
+    let mut paths = Vec::new();
+    let mut tokens = text.split('`').skip(1);
+    while let Some(token) = tokens.next() {
+        // An unmatched opening backtick does not name a token.
+        if tokens.next().is_none() {
+            break;
+        }
+        if !token.contains('/')
+            || token.starts_with(['/', '-'])
+            || token.starts_with("http")
+            || token.chars().any(char::is_whitespace)
+        {
+            continue;
+        }
+        let token = token.trim_end_matches(['.', ',', ';', ':', ')']);
+        let token = match token.rsplit_once(':') {
+            Some((path, line)) if !line.is_empty() && line.bytes().all(|b| b.is_ascii_digit()) => path,
+            Some(_) | None => token,
+        };
+        let path = match RepoPath::parse(token) {
+            Ok(path) => path,
+            // Invalid tokens are deliberately excluded; the item text also contains commands and prose.
+            Err(InvalidRepoPath { .. }) => continue,
+        };
+        paths.push(path);
+    }
+    paths
 }
 
 /// The best exact (3), ancestor (2) or sufficiently deep sibling (1) match; otherwise 0.
 #[must_use]
-pub fn score(_finding: &Finding, _run_paths: &[RepoPath]) -> u8 {
-    0
+pub fn score(finding: &Finding, run_paths: &[RepoPath]) -> u8 {
+    if finding.kind == FindingKind::Environment && finding.paths.is_empty() {
+        return 1;
+    }
+    finding
+        .paths
+        .iter()
+        .flat_map(|p| run_paths.iter().map(move |t| path_score(p.as_str(), t.as_str())))
+        .max()
+        .unwrap_or(0)
+}
+
+/// Scores one normalized path pair, respecting component boundaries.
+fn path_score(p: &str, t: &str) -> u8 {
+    if p == t {
+        return 3;
+    }
+    let contains = |parent: &str, child: &str| child.strip_prefix(parent).is_some_and(|rest| rest.starts_with('/'));
+    if contains(p, t) || contains(t, p) {
+        return 2;
+    }
+    match (p.rsplit_once('/'), t.rsplit_once('/')) {
+        (Some((parent, _)), Some((other, _))) if parent == other && parent.split('/').count() >= 3 => 1,
+        _ => 0,
+    }
 }
 
 /// Chooses from **open findings**, as returned by `agentbus findings --repo … --json`.
@@ -146,22 +226,68 @@ pub fn score(_finding: &Finding, _run_paths: &[RepoPath]) -> u8 {
     reason = "the pure selector takes the inputs specified by the findings contract"
 )]
 pub fn select_findings<'a>(
-    _findings: &'a [Finding],
-    _run_paths: &[RepoPath],
-    _shown: &BTreeSet<FindingId>,
-    _own_task: &TaskId,
-    _now: Timestamp,
-    _keep_days: u16,
-    _max_shown: usize,
-    _max_chars: usize,
+    findings: &'a [Finding],
+    run_paths: &[RepoPath],
+    shown: &BTreeSet<FindingId>,
+    own_task: &TaskId,
+    now: Timestamp,
+    keep_days: u16,
+    max_shown: usize,
+    max_chars: usize,
 ) -> Vec<Selected<'a>> {
-    Vec::new()
+    if keep_days == 0 {
+        return Vec::new();
+    }
+    let retention = time::Duration::days(i64::from(keep_days));
+    let mut selected: Vec<_> = findings
+        .iter()
+        .filter(|f| f.task != *own_task && !shown.contains(&f.id) && now.as_utc() - f.added_at.as_utc() <= retention)
+        .map(|finding| Selected {
+            finding,
+            score: score(finding, run_paths),
+        })
+        .filter(|s| s.score >= 1)
+        .collect();
+    selected.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then_with(|| b.finding.added_at.cmp(&a.finding.added_at))
+            .then_with(|| b.finding.id.cmp(&a.finding.id))
+    });
+    selected.truncate(max_shown);
+    let mut remaining = max_chars;
+    let fitting = selected
+        .iter()
+        .take_while(|s| match remaining.checked_sub(s.finding.text.chars().count()) {
+            Some(rest) => {
+                remaining = rest;
+                true
+            }
+            None => false,
+        })
+        .count();
+    selected.truncate(fitting);
+    selected
 }
 
 /// Renders the section's lines, using the date in `zone`; no findings produces an empty string.
 #[must_use]
-pub fn render_findings(_selected: &[Selected<'_>], _zone: Zone) -> String {
-    String::new()
+pub fn render_findings(selected: &[Selected<'_>], zone: Zone) -> String {
+    selected
+        .iter()
+        .map(|s| {
+            let f = s.finding;
+            let paths = if f.paths.is_empty() {
+                "the repository".to_owned()
+            } else {
+                f.paths.iter().map(RepoPath::as_str).collect::<Vec<_>>().join(", ")
+            };
+            let local = zone.local_minute(f.added_at);
+            let date = local.split_once(' ').map_or(local.as_str(), |(date, _)| date);
+            format!("- {} [{}] {paths} — {} ({}, {date})", f.id, f.kind, f.text, f.author)
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 #[cfg(test)]

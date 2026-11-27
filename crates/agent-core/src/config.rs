@@ -1242,7 +1242,6 @@ impl RawConfig {
         } = self;
         check_plan(&plan)?;
         commit_reminder.check()?;
-        let findings = findings.validate()?;
         let worker_settings = check_workers(worker_settings)?;
         replacement::check(replacement.agents(), &agents, &investigators)?;
         check_list(Tier::Normal, &normal, &agents)?;
@@ -1304,7 +1303,7 @@ impl RawConfig {
             log,
             serena,
             commit_reminder,
-            findings,
+            findings: findings.validate()?,
             web,
             repos,
         })
