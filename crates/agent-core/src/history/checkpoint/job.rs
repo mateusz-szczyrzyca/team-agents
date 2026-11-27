@@ -145,6 +145,14 @@ fn request_done(last_check: Option<CheckResult<'_>>, commits: &[CommitLine], cha
     lines.join("\n")
 }
 
+/// How the check of a worker's request last ran, as the `done` part of one of its checkpoints tells it: whether it
+/// passed and the line that says so; `None` when the part tells that it has not run yet or has no such line.
+#[must_use]
+pub fn last_check_of(done: &str) -> Option<(bool, String)> {
+    let _ = done;
+    None
+}
+
 /// What is left of a worker's request: its check, until it passes.
 fn request_left(passed: bool, checked: bool) -> String {
     match (checked, passed) {

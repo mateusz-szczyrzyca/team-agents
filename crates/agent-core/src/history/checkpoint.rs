@@ -13,7 +13,9 @@ use crate::kinds::{Keyword, UnknownKeyword};
 mod job;
 mod state;
 
-pub use job::{CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, request_meant, review_meant};
+pub use job::{
+    CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, last_check_of, request_meant, review_meant,
+};
 pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, checkpoint_content};
 
 /// What a checkpoint is for: the kind of work whose state it keeps.

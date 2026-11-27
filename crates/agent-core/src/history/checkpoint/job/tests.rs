@@ -3,7 +3,9 @@
 use std::num::NonZeroU32;
 use std::str::FromStr;
 
-use super::{CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, request_meant, review_meant};
+use super::{
+    CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, last_check_of, request_meant, review_meant,
+};
 use crate::history::{CheckpointCause, CheckpointJob, CommitLine, HistoryEvent};
 use crate::state::PrNumber;
 use crate::task_list::requirements::Requirement;
@@ -218,4 +220,42 @@ fn a_list_longer_than_the_limit_is_cut_and_the_rest_counted() {
 
     assert!(content.done.starts_with("Commits: 45\n- c000000\n"), "{}", content.done);
     assert!(content.done.contains("\n5 more left out\n"), "{}", content.done);
+}
+
+#[test]
+fn the_last_check_of_a_request_reads_back_from_the_part_that_told_it() {
+    let meant = request_meant("Write the guide", Some("make guide"));
+    for (last_check, expected) in [
+        (None, None),
+        (
+            Some(CheckResult {
+                passed: true,
+                line: "guide ok",
+            }),
+            Some((true, "guide ok".to_owned())),
+        ),
+        (
+            Some(CheckResult {
+                passed: false,
+                line: "guide missing — see docs",
+            }),
+            Some((false, "guide missing — see docs".to_owned())),
+        ),
+    ] {
+        let work = JobWork::Request {
+            last_check,
+            commits: &[commit("abc1234")],
+            changed: &["docs/guide.md".to_owned()],
+        };
+
+        let content = job_content(meant.clone(), &work);
+
+        assert_eq!(last_check_of(&content.done), expected, "{}", content.done);
+    }
+}
+
+#[test]
+fn the_last_check_of_a_part_with_no_check_line_is_none() {
+    assert_eq!(last_check_of("Commits: 0\nChanged files: none"), None);
+    assert_eq!(last_check_of(""), None);
 }
