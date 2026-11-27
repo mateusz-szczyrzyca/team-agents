@@ -1405,7 +1405,9 @@ three components deep. It excludes findings from the same task, already shown ID
 `[findings] keep_days` (default `30`, range `0–365`; `0` disables selection). Ties use the newest date, then the
 highest numeric ID. `[findings] max_shown` (default `8`, range `1–20`) limits the count; `max_chars` (default `3000`,
 range `500–10000`) limits the sum of the texts' character lengths by removing findings from the end. Repository-wide
-environment findings match every run. These settings and the findings prompt are available for the daemon wiring
+environment findings match every run. Run paths may contain spaces or exceed the bus finding-input path limit;
+backtick path extraction still excludes tokens containing whitespace. Finding text line breaks become spaces in the
+rendered section, so each finding occupies one line. These settings and the findings prompt are available for the daemon wiring
 to follow separately; this support does not yet inject findings into run prompts.
 
 ### Requests to workers

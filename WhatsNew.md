@@ -12,7 +12,7 @@ code it changes, and only those, and the heading names them (`## agent 0.109.0 �
 ## agent-core 0.141.0 — 27.11.2026 — PR pending
 
 ### Enhancements
-- [agent-core] Repository findings can be matched to a run's paths and prepared as a bounded prompt section; daemon delivery follows separately.
+- [agent-core] Repository findings can be matched to a run's paths, including long paths and names with spaces, and prepared as a bounded prompt section with one line per finding; daemon delivery follows separately.
 
 ### Configuration
 - [agent-core] new: `[findings] keep_days` (default `30`) — how many days a finding is shown.
