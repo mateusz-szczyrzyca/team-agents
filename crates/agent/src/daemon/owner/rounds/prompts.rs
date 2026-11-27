@@ -20,6 +20,7 @@ use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::store::{StoreError, load_checks_record};
 use agent_runtime::text_file::{TextFileError, read_text_file, replace_text_file};
 
+use super::super::job_checkpoint::{TakenOver, job_briefing};
 use super::super::start::{Context, next_number};
 use crate::daemon::checks::{ChecksTextError, answered, relay};
 use crate::daemon::merge::{Decision, decision, exhausted};
@@ -57,6 +58,9 @@ pub(in crate::daemon::owner) enum SectionError {
     /// A text cannot be rendered.
     #[error("cannot render a text of the autopilot")]
     Render(#[from] RenderAutopilotTextError),
+    /// The number of the review pass does not fit a checkpoint's.
+    #[error("the review pass is too large for a checkpoint")]
+    PassTooLarge(#[from] std::num::TryFromIntError),
     /// A text of the harness cannot be rendered.
     #[error("cannot render a text of the harness")]
     Harness(#[from] agent_runtime::harness_prompts::RenderTextError),
@@ -280,7 +284,7 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
                 .with("part_limit", ctx.settings.config.split().part_limit.to_string())?
                 .with("question", &inv.question)?;
             let text = ctx.texts.render(HarnessPrompt::InvestigationSplit, &values)?;
-            return Ok(Some(Addition::Replace(text.trim_end().to_owned())));
+            return with_briefing(ctx, found, text).await;
         }
         if let agent_runtime::agentbus::InvestigationKind::Conflict { item } = inv.kind {
             let pr = super::super::investigations::conflict_pull_request(found.team, item)
@@ -299,7 +303,7 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
                 .with("base", configured.base_branch.as_str())?
                 .with("question", &inv.question)?;
             let text = ctx.texts.render(HarnessPrompt::InvestigationConflict, &values)?;
-            return Ok(Some(Addition::Replace(text.trim_end().to_owned())));
+            return with_briefing(ctx, found, text).await;
         }
         let values = Variables::new()
             .with("investigation_id", inv.id.to_string())?
@@ -308,10 +312,24 @@ async fn investigator_section(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<
             .with("question", &inv.question)?
             .with("context", &inv.context)?;
         let text = ctx.texts.render(HarnessPrompt::InvestigationRequest, &values)?;
-        Ok(Some(Addition::Replace(text.trim_end().to_owned())))
+        with_briefing(ctx, found, text).await
     } else {
         Ok(None)
     }
+}
+
+/// The prompt of an investigation, with the briefing of the checkpoint of the investigator that tried it before, when one did.
+async fn with_briefing(ctx: &Context<'_>, found: &TaskRef<'_>, text: String) -> Result<Option<Addition>, SectionError> {
+    let mut text = text.trim_end().to_owned();
+    let rounds = found.team.open_rounds().map(|round| round.id().clone()).collect();
+    let taken_over = TakenOver::Investigation {
+        task: found.member.task(),
+    };
+    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
+        text.push_str("\n\n");
+        text.push_str(&briefing);
+    }
+    Ok(Some(Addition::Replace(text)))
 }
 
 /// Reads the bounded answer used by an additional conflict pass.
@@ -781,6 +799,54 @@ pub(super) fn verification_of<'a>(items: &[&'a ItemProgress]) -> Verification<'a
     }
 }
 
+/// What a review request says of the findings of the earlier passes: their open ones, or the disputes about them; none
+/// on the first pass or when the pull request has no ledger.
+fn open_findings_section(
+    texts: &AutopilotPrompts,
+    verification: &Verification<'_>,
+) -> Result<Option<String>, SectionError> {
+    if verification.pass <= 1 || verification.findings.is_none() {
+        return Ok(None);
+    }
+    let values = Variables::new().with(
+        "findings",
+        super::findings::verification_text(texts, verification.findings)?,
+    )?;
+    Ok(Some(texts.render(
+        if verification.findings.is_some_and(|l| l.disputes().is_some()) {
+            AutopilotPrompt::ReviewDisputes
+        } else {
+            AutopilotPrompt::ReviewOpenFindings
+        },
+        &values,
+    )?))
+}
+
+/// What a reviewer's request says of its job: the file it writes its findings to as it has them, so that a reviewer that
+/// replaces it starts from them, and, when it replaces one, the briefing of that one's last checkpoint.
+async fn review_job_sections(
+    ctx: &Context<'_>,
+    found: &TaskRef<'_>,
+    pull_request: PrNumber,
+    pass: u32,
+) -> Result<Vec<String>, SectionError> {
+    let team = found.team;
+    let task = found.member.task();
+    let file = ctx.home.review_findings_file(task, pull_request, pass);
+    let file_values = Variables::new().with("file", file.display().to_string())?;
+    let mut sections = vec![ctx.texts.render(HarnessPrompt::ReviewFindingsFile, &file_values)?];
+    let rounds = team.open_rounds().map(|round| round.id().clone()).collect();
+    let taken_over = TakenOver::Review {
+        task,
+        pull_request,
+        pass,
+    };
+    if let Some(briefing) = job_briefing(ctx.texts, ctx.home.history_file(), rounds, taken_over).await? {
+        sections.push(briefing);
+    }
+    Ok(sections)
+}
+
 /// The request for a review that the reviewer `found` has pending, with the items of the pull request.
 pub(super) async fn review_request(
     ctx: &Context<'_>,
@@ -857,20 +923,7 @@ pub(super) async fn review_request(
     if crate::daemon::review::independent_first_review(team, task) {
         sections.push(texts.render(AutopilotPrompt::ReviewIndependent, &Variables::new())?);
     }
-    if verification.pass > 1 && verification.findings.is_some() {
-        let values = Variables::new().with(
-            "findings",
-            super::findings::verification_text(texts, verification.findings)?,
-        )?;
-        sections.push(texts.render(
-            if verification.findings.is_some_and(|l| l.disputes().is_some()) {
-                AutopilotPrompt::ReviewDisputes
-            } else {
-                AutopilotPrompt::ReviewOpenFindings
-            },
-            &values,
-        )?);
-    }
+    sections.extend(open_findings_section(texts, &verification)?);
     let harness = PromptTexts {
         harness: ctx.texts,
         rules: ctx.rules,
@@ -880,6 +933,7 @@ pub(super) async fn review_request(
             sections.extend(item_sections(&harness, item)?);
         }
     }
+    sections.extend(review_job_sections(ctx, found, pr.number, u32::try_from(verification.pass)?).await?);
     Ok(Some(
         sections
             .iter()

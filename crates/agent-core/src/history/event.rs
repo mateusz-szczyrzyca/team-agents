@@ -620,7 +620,9 @@ pub enum HistoryEvent {
         item: Option<ItemId>,
         /// The holder whose worktree the checkpoint keeps.
         task: TaskId,
-        /// The kind of work the checkpoint keeps.
+        /// The kind of work the checkpoint keeps; a record written before the other jobs had checkpoints names none and is an
+        /// item.
+        #[serde(default)]
         job: CheckpointJob,
         /// The tier of the holder.
         tier: Tier,

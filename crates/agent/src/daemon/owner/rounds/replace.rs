@@ -302,6 +302,9 @@ impl Owner {
         let pass = count(self.review_passes_of(team_id, &gone.items));
         let rounds = self.rounds_of_items(team_id, &gone.items);
         for review in prepared.reviews() {
+            // The replacement is briefed from what the reviewer that is gone left, before its run is composed.
+            self.job_handed_over(&gone.task, &review.task, team_id, rounds.clone())
+                .await;
             self.record_event(
                 team_id,
                 rounds.clone(),

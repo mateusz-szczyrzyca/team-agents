@@ -17,7 +17,7 @@ pub(crate) use delivery::DeliveryDaemonError;
 mod human;
 mod merges;
 mod opinions;
-mod prompts;
+pub(in crate::daemon::owner) mod prompts;
 mod publish;
 pub(crate) use publish::PublishQuestionError;
 mod replace;
@@ -1130,3 +1130,11 @@ mod briefing_checkpoint_tests;
 #[cfg(test)]
 #[path = "rounds/tests/resume_checkpoint.rs"]
 mod resume_checkpoint_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/job_checkpoints.rs"]
+mod job_checkpoints_tests;
+
+#[cfg(test)]
+#[path = "rounds/tests/job_handover.rs"]
+mod job_handover_tests;

@@ -361,6 +361,15 @@ case $action in
       result 'Complete commands\nSTATUS: DONE'
     fi
     ;;
+  inv-retry-notes)
+    # Only the first investigator fails, after it left a note in its worktree; its replacement supplies a complete answer.
+    if mkdir "$home/.fake-investigation-notes"; then
+      printf 'what the first investigator found\n' > notes.md
+      result 'Private résumé\nSTATUS: FAILED'
+    else
+      result 'Complete commands\nSTATUS: DONE'
+    fi
+    ;;
   inv-fail) result 'Private résumé\nSTATUS: FAILED' ;;
   inv-done:*) result "${action#inv-done:}"'\nSTATUS: DONE' ;;
   opencode-startup)
@@ -416,6 +425,13 @@ case $action in
     result "$report\nSTATUS: DONE"
     ;;
   turn-limit-quota)
+    printf '%s\n' 'quota exhausted' >&2
+    printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
+    ;;
+  findings-quota)
+    # A reviewer that writes two findings to the file its prompt names, and is then refused by its provider.
+    findings=$(grep -o '`[^`]*review-pr[0-9]*-pass[0-9]*-findings\.md`' ".fake-prompt-$n" | head -n 1 | tr -d '`')
+    printf '%s\n' '1. [MAJOR] ERR-3 a.rs:4 — a panic' '2. [MINOR] DOC-1 b.rs:9 — no docs' >> "$findings"
     printf '%s\n' 'quota exhausted' >&2
     printf '{"type":"result","subtype":"error_max_turns","is_error":true,"session_id":"%s"}\n' "$session"
     ;;

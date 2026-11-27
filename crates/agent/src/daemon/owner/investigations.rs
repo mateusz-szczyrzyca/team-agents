@@ -4,8 +4,9 @@ use std::collections::BTreeSet;
 use std::num::NonZeroUsize;
 
 use agent_core::decide::investigator::Activity;
+use agent_core::history::{CheckpointCause, CheckpointJob, investigation_meant};
 use agent_core::ids::{AgentName, InvestigatorName, ItemId, TaskId, TeamId};
-use agent_core::kinds::Role;
+use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
 use agent_core::state::{InvestigationRecord, ItemPhase, Member, Participant, PullRequest, RunEnd, Team, Timestamp};
 use agent_core::status::TaskStatus;
@@ -13,6 +14,7 @@ use agent_runtime::agentbus::{InvTransition, Investigation, InvestigationKind, I
 use agent_runtime::git::Revision;
 
 use super::Owner;
+use super::job_checkpoint::JobFacts;
 use crate::daemon::owner::OwnerError;
 use crate::daemon::review::investigator_of;
 
@@ -238,11 +240,11 @@ impl Owner {
         let mut next = self.parts.state.clone();
         next.add_reviewer(team_id, member)
             .map_err(OwnerError::InvestigationMember)?;
-        let failed_with = next
+        let earlier = next
             .team(team_id)
-            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id))
-            .map(|record| record.failed_with.clone())
-            .unwrap_or_default();
+            .and_then(|team| team.investigations().iter().find(|record| record.id == req.id));
+        let failed_with = earlier.map(|record| record.failed_with.clone()).unwrap_or_default();
+        let tried_before = earlier.map(|record| record.task.clone());
         next.team_mut(team_id)
             .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?
             .record_investigation(InvestigationRecord {
@@ -273,6 +275,29 @@ impl Owner {
             task = %task,
             from_task = %req.from_task,
         );
+        if let Some((_, round)) = self.checkpoint_round_of(&req.from_task) {
+            let facts = JobFacts {
+                team: team_id.clone(),
+                round,
+                job: CheckpointJob::Investigation,
+                tier: Tier::Investigator,
+                task: task.clone(),
+                worktree: self.parts.store.home().worktree_dir(&lead.repo, &task),
+                meant: investigation_meant(&req.question),
+                start: head,
+                pull_request: None,
+                review_pass: None,
+                findings_file: None,
+                findings_seen: String::new(),
+                last_check: None,
+            };
+            if let Some(before) = &tried_before {
+                // A second try starts from what the first investigator left, and says so in its own checkpoints.
+                self.job_handed_over(before, &task, team_id, vec![facts.round.clone()])
+                    .await;
+            }
+            self.job_started(facts, CheckpointCause::InvestigationStarted).await;
+        }
         self.look_at(team_id);
         Ok(())
     }

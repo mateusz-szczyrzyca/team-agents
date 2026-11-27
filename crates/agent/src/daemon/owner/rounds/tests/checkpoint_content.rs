@@ -1,7 +1,7 @@
 //! What the checkpoints of a round say of its work, told against the requirements of its item, through a daemon in a
 //! temporary home: a stand-in CLI that writes a plan with `For:` lines and commits with a `Step:` trailer.
 
-use agent_core::history::{CheckpointCause, CheckpointContent, HistoryEvent, Record};
+use agent_core::history::{CheckpointCause, CheckpointContent, CheckpointJob, HistoryEvent, Record};
 use agent_core::ids::TeamId;
 use agent_core::log::LogEvent;
 use agent_core::state::{ItemPhase, MergeMode};
@@ -153,7 +153,12 @@ fn taken(rig: &Rig, team: &TeamId) -> Vec<(CheckpointCause, Option<CheckpointCon
         .into_iter()
         .filter_map(|stored| match stored.record {
             Record::Event(event) => match event.event {
-                HistoryEvent::Checkpoint { cause, content, .. } => Some((cause, content)),
+                HistoryEvent::Checkpoint {
+                    job: CheckpointJob::Item,
+                    cause,
+                    content,
+                    ..
+                } => Some((cause, content)),
                 _ => None,
             },
             _ => None,
@@ -217,6 +222,7 @@ fn expected_listing(rig: &Rig, team: &TeamId) -> Vec<String> {
         .filter_map(|stored| match stored.record {
             Record::Event(event) => match event.event {
                 HistoryEvent::Checkpoint {
+                    job: CheckpointJob::Item,
                     cause,
                     pull_request,
                     head,

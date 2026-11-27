@@ -465,6 +465,7 @@ impl Owner {
     /// # Errors
     /// [`OwnerError`] when the clock or the state fails.
     async fn release_workspace(&mut self, team: &TeamId, record: &RequestWorkspace) -> Result<(), OwnerError> {
+        self.checkpoints.jobs.remove(&record.record().worker_task);
         let Some(git) = self.git_of(team, &record.record().requester_task, &record.record().requester) else {
             if self
                 .unreadable_requests
@@ -1087,12 +1088,17 @@ impl Owner {
             mut pending,
             mut checked,
         } = checking;
+        let worker_task = pending.worker_task.clone();
+        let passed = found.outcome == CheckOutcome::Passed;
+        self.checkpoints.note_check(&worker_task, passed, &found.line);
         checked.found = Some(found);
         let team = pending.team.clone();
         pending.stage = Stage::Checked(Box::new(checked));
         if let Err(error) = write_pending(&task_dir, &pending) {
             return self.settle_unkept(&task_dir, pending, &error).await;
         }
+        self.job_checkpoint(&worker_task, agent_core::history::CheckpointCause::RequestChecked)
+            .await;
         self.look_at(&team);
         Ok(())
     }

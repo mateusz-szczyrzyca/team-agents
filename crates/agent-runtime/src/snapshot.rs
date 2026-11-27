@@ -5,7 +5,7 @@ use agent_core::config::AbsolutePath;
 use agent_core::history::SnapshotRecord;
 use agent_core::ids::{BranchName, RoundId, TaskId};
 use agent_core::log::LogEvent;
-use agent_core::state::Timestamp;
+use agent_core::state::{CommitId, Timestamp};
 
 use crate::git::{CheckpointSnapshot, CommitIdentity, CommitMessage, Git, GitError, Revision};
 
@@ -133,6 +133,64 @@ pub async fn branch_commits(
         .await
         .map_err(failed)?;
     git.range_messages(&forked, &head).await.map_err(failed)
+}
+
+/// Where the work of a worktree stands, for [`work_since`].
+#[derive(Debug, Clone, Copy)]
+pub struct WorkSpan<'a> {
+    /// The commit the worktree started at.
+    pub start: &'a CommitId,
+    /// The tip of the worktree's branch.
+    pub head: &'a CommitId,
+    /// The commit that holds the tree of the worktree, uncommitted files included: the snapshot's.
+    pub tree: &'a CommitId,
+}
+
+/// What a worktree has done since it started.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkSince {
+    /// The commits after the start, oldest first, each with its whole message.
+    pub commits: Vec<CommitMessage>,
+    /// The files whose content differs from the start's in the tree, each once.
+    pub changed: Vec<String>,
+}
+
+/// Why the work of a worktree since its start could not be read.
+#[derive(Debug, thiserror::Error)]
+#[error("cannot read the work of task {task} since it started")]
+pub struct WorkSinceError {
+    /// The task whose work was to be read.
+    pub task: TaskId,
+    /// What git said.
+    #[source]
+    pub source: GitError,
+}
+
+/// The commits of the worktree at `worktree` of `task` after its start and the files that differ from the start's: what a
+/// worker's request, a review or an investigation has done in a worktree made for it.
+///
+/// # Errors
+/// [`WorkSinceError`] when git cannot find a commit of `span` or cannot read the range or the files.
+pub async fn work_since(
+    worktree: &AbsolutePath,
+    task: &TaskId,
+    span: &WorkSpan<'_>,
+) -> Result<WorkSince, WorkSinceError> {
+    let identity = CommitIdentity::new(SNAPSHOT_NAME.to_owned(), SNAPSHOT_EMAIL.to_owned(), None);
+    let git = Git::new(worktree.clone(), identity);
+    let failed = |source| WorkSinceError {
+        task: task.clone(),
+        source,
+    };
+    let commits = git.range_messages(span.start, span.head).await.map_err(failed)?;
+    let changed = git
+        .changed_between(span.start, span.tree)
+        .await
+        .map_err(failed)?
+        .iter()
+        .map(ToString::to_string)
+        .collect();
+    Ok(WorkSince { commits, changed })
 }
 
 /// Why the snapshot references of a round could not be removed.

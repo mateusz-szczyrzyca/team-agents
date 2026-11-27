@@ -166,6 +166,9 @@ pub(super) enum PoolDispatchError {
     /// Prompt composition failed.
     #[error("cannot compose prompt for pool worker: {0}")]
     PromptCompose(#[from] agent_runtime::run::compose::ComposeError),
+    /// The briefing of a request taken over cannot be made.
+    #[error("cannot brief a worker that takes a request over")]
+    Briefing(#[from] super::rounds::prompts::SectionError),
     /// Prompt shaping failed.
     #[error("cannot shape prompt for pool worker: {0}")]
     PromptShape(#[from] crate::daemon::team::TeamPromptError),
@@ -544,6 +547,7 @@ impl Owner {
                 self.remind_of_context(&task).await;
                 self.cut_overdue_round(&task);
             }
+            self.look_at_jobs(team).await;
             if look.changed {
                 self.parts.state.record_activities(Timestamp::now(&self.parts.clock)?);
                 self.save().await?;
@@ -1589,7 +1593,21 @@ impl Owner {
             };
             let composed = compose(&texts, &input)?;
 
-            let prompt = crate::daemon::team::shape_pool_worker(&self.parts.team_texts, &composed, &given)?;
+            let mut prompt = crate::daemon::team::shape_pool_worker(&self.parts.team_texts, &composed, &given)?;
+            if retained.is_some() {
+                // A request that goes back to the queue is started by the next worker from the last checkpoint.
+                let history = self.parts.store.home().history_file();
+                let taken_over = super::job_checkpoint::TakenOver::Request { task: &worker_task };
+                let rounds = vec![workspace.record().requester_round.clone()];
+                self.job_handed_over(&worker_task, &worker_task, team.id(), rounds.clone())
+                    .await;
+                if let Some(briefing) =
+                    super::job_checkpoint::job_briefing(&self.parts.texts, history, rounds, taken_over).await?
+                {
+                    prompt.push_str("\n\n");
+                    prompt.push_str(&briefing);
+                }
+            }
 
             let binaries = self.parts.settings.config.binaries();
             let home_abs = self.parts.store.home().absolute_root().clone();
@@ -1693,6 +1711,35 @@ impl Owner {
                 .find_task(&requester_task)
                 .and_then(|f| f.member.current_run().map(|run| run.id().clone()));
 
+            let check = match self.parts.bus.helper_work(request.id).await {
+                Ok(work) => work.check,
+                Err(error) => {
+                    tracing::warn!(
+                        event = LogEvent::CheckpointFailed.as_str(),
+                        request = %request.id,
+                        cause = "request_check",
+                        error = %error_chain(&error),
+                        "the check of a request cannot be read: its checkpoints do not tell it"
+                    );
+                    None
+                }
+            };
+            let facts = super::job_checkpoint::JobFacts {
+                team: team.id().clone(),
+                round: workspace.record().requester_round.clone(),
+                job: agent_core::history::CheckpointJob::WorkerRequest,
+                tier: Tier::Worker,
+                task: worker_task.clone(),
+                worktree: worker_worktree_path.as_path().to_path_buf(),
+                meant: agent_core::history::request_meant(&request.request, check.as_deref()),
+                start: base_commit.clone(),
+                pull_request: None,
+                review_pass: None,
+                findings_file: None,
+                findings_seen: String::new(),
+                last_check: None,
+            };
+            self.job_started(facts, CheckpointCause::RequestStarted).await;
             self.record_pool_run(
                 worker_task.clone(),
                 Served {

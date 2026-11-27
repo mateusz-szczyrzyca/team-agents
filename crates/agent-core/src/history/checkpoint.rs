@@ -10,8 +10,12 @@ use strum::{Display, EnumString, IntoStaticStr, VariantArray, VariantNames};
 use super::HistoryEvent;
 use crate::kinds::{Keyword, UnknownKeyword};
 
+mod job;
 mod state;
 
+pub use job::{
+    CheckResult, JobWork, ReviewedItem, investigation_meant, job_content, last_check_of, request_meant, review_meant,
+};
 pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, checkpoint_content};
 
 /// What a checkpoint is for: the kind of work whose state it keeps.
@@ -19,6 +23,7 @@ pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, c
     Debug,
     Clone,
     Copy,
+    Default,
     PartialEq,
     Eq,
     Hash,
@@ -33,7 +38,9 @@ pub use state::{CommitLine, Counts, FindingLine, LIST_LIMIT, Next, StateInput, c
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case", parse_err_ty = UnknownKeyword, parse_err_fn = UnknownKeyword::of::<CheckpointJob>)]
 pub enum CheckpointJob {
-    /// An item of a task list: a lead, a member, a solo agent or a coordinator working on its round.
+    /// An item of a task list: a lead, a member, a solo agent or a coordinator working on its round. The job of a record that
+    /// names none: those written before the other jobs had checkpoints are all items.
+    #[default]
     Item,
     /// A request a worker serves for a member.
     WorkerRequest,
@@ -112,6 +119,18 @@ pub enum CheckpointCause {
     HolderChanged,
     /// The daemon started and found the worktree of a task of an open round changed since its last checkpoint.
     DaemonStarted,
+    /// A worker started serving a request.
+    RequestStarted,
+    /// The check of a worker's request ran.
+    RequestChecked,
+    /// A reviewer started its review.
+    ReviewStarted,
+    /// The reviewer's findings file has findings that the last checkpoint did not have.
+    FindingsWritten,
+    /// An investigator started an investigation.
+    InvestigationStarted,
+    /// An investigator answered the question of its investigation.
+    InvestigationAnswered,
 }
 
 impl Keyword for CheckpointCause {

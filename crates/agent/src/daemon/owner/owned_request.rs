@@ -393,6 +393,8 @@ impl Owner {
             .ok_or(OwnerError::RequestOwnership)?;
         let round = &journal.current_workspace().record().requester_round;
         let snapshot = git.snapshot(round, task).await.map_err(OwnerError::RequestSnapshot)?;
+        self.job_ended(task, agent_core::history::CheckpointCause::RunEnded)
+            .await;
         let updated = recovery::advance(
             &self.parts.store.home().task_dir(&served.requester_task),
             served.request,

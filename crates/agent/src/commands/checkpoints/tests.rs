@@ -350,3 +350,95 @@ fn json_with_no_checkpoint_prints_no_line_and_says_so_on_stderr() {
         )
     );
 }
+
+const JOB_TASK: &str = "task-20261127-040003-j4b7";
+
+/// `home()` with one more task that did a job of the round: a review that left two checkpoints.
+fn home_with_a_review() -> tempfile::TempDir {
+    let dir = home();
+    let task: TaskId = JOB_TASK.parse().unwrap();
+    let head: CommitId = format!("{}{}", "0123abc", "0".repeat(33)).parse().unwrap();
+    let job_checkpoint = |seconds: i64, cause: CheckpointCause| {
+        Record::Event(Box::new(EventRecord {
+            at: at(seconds),
+            team: team(),
+            rounds: vec![round()],
+            event: HistoryEvent::Checkpoint {
+                round: round(),
+                item: None,
+                task: task.clone(),
+                job: CheckpointJob::Review,
+                tier: Tier::Investigator,
+                cause,
+                pull_request: Some(PrNumber::new(NonZeroU32::new(7).unwrap())),
+                head: Some(head.clone()),
+                draft: false,
+                phase: PhaseKind::InProgress,
+                review_pass: Some(1),
+                fix_pass: None,
+                snapshot: None,
+                content: Some(CheckpointContent {
+                    meant: "Review PR #7.".to_owned(),
+                    done: "Findings so far: 2.".to_owned(),
+                    left: "next: finish the review of pass 1 and submit it with a verdict".to_owned(),
+                }),
+            },
+        }))
+    };
+    let mut db = HistoryDb::open(&dir.path().join("history.db"), MaxTextBytes::default()).unwrap();
+    db.write(&[
+        Record::Run(Box::new(RunStart {
+            run: "run-20261127-040003-r8q3".parse().unwrap(),
+            team: team(),
+            task: task.clone(),
+            at: at(3),
+            agent: AgentIdentity {
+                name: "inv-1".to_owned(),
+                tier: Tier::Investigator,
+                cli: CliKind::Claude,
+                model: None,
+            },
+            role: Role::Reviewer,
+            rounds: vec![round()],
+            why: RunWhy::Item {
+                item: "1.1".parse().unwrap(),
+            },
+            prompt: "Review it.".to_owned(),
+            worktree: "/work/review".parse().unwrap(),
+            branch: "agents/inv-1/1".parse().unwrap(),
+            session: None,
+        })),
+        job_checkpoint(40, CheckpointCause::ReviewStarted),
+        job_checkpoint(50, CheckpointCause::FindingsWritten),
+    ])
+    .unwrap();
+    dir
+}
+
+// Rule: the checkpoints of a reviewer's, a worker's or an investigator's task are listed as an item's are, and a line
+// of a job names it; the line of an item's checkpoint does not change.
+#[test]
+fn the_listing_of_the_task_of_a_review_names_its_job() {
+    let dir = home_with_a_review();
+
+    let (status, out, err) = run(dir.path(), &[JOB_TASK]);
+
+    assert_eq!((status, err.as_str()), (ExitCode::SUCCESS, ""));
+    assert_eq!(
+        out,
+        "2026-11-27T04:00:40Z  review_started  PR #7 ready  head 0123abc  pass 1  done n/a  left n/a  snapshot none  job review\n\
+         2026-11-27T04:00:50Z  findings_written  PR #7 ready  head 0123abc  pass 1  done n/a  left n/a  snapshot none  job review\n"
+    );
+}
+
+// Rule: `--show` of a job's checkpoint tells what is meant, done and left of the job.
+#[test]
+fn show_of_the_task_of_a_review_tells_the_findings_so_far() {
+    let dir = home_with_a_review();
+
+    let (status, out, err) = run(dir.path(), &[JOB_TASK, "--show"]);
+
+    assert_eq!((status, err.as_str()), (ExitCode::SUCCESS, ""));
+    assert!(out.contains("Findings so far: 2."), "{out}");
+    assert!(out.contains("next: finish the review of pass 1"), "{out}");
+}
