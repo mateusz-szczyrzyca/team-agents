@@ -431,3 +431,27 @@ fn configure_another_investigator(daemon: &Daemon) {
         .unwrap();
     writeln!(config, "\n[investigators.inv-2]\ncli = \"claude\"").unwrap();
 }
+
+#[tokio::test]
+async fn a_first_failure_with_one_configured_investigator_ends_with_a_notice() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    owner
+        .investigation_ended(
+            &task(3),
+            &located,
+            &RunEnd::Reported {
+                outcome: RunOutcome::Failed,
+            },
+            None,
+        )
+        .await
+        .unwrap();
+    let calls = attempt.calls();
+    assert!(calls.contains("failed"), "{calls}");
+    assert!(calls.contains("no other configured investigator"), "{calls}");
+    assert!(calls.contains("send"), "{calls}");
+    assert!(!calls.contains("queued"), "{calls}");
+}
