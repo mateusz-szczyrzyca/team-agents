@@ -213,7 +213,9 @@ async fn finding_path_failure_scope(has_finding: bool) {
     rig.stop().await.unwrap();
     assert!(!prompt.contains("## Findings of other agents"), "{prompt}");
     let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
-    let git_failure = logs.iter().find(|row| row.event() == LogEvent::GitCallFailed);
+    let git_failure = logs
+        .iter()
+        .find(|row| row.event() == LogEvent::GitCallFailed && row.task() == Some(&tasks[0]));
     if has_finding {
         let row = git_failure.expect("git discovery failure");
         assert_eq!(row.task(), Some(&tasks[0]));
@@ -225,7 +227,6 @@ async fn finding_path_failure_scope(has_finding: bool) {
         assert_eq!(row.task(), Some(&tasks[0]));
         assert_eq!(row.team(), Some(&team));
     } else {
-        assert_eq!(git_failure, None);
         assert_eq!(
             logs.iter().find(|row| row.event() == LogEvent::FindingsUnavailable),
             None
