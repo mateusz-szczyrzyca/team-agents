@@ -1421,6 +1421,13 @@ At the start of each new or resumed run, findings from other tasks on files the 
 section of the prompt. These findings help the agent avoid repeating mistakes or rediscovering issues that other tasks
 have already found. The agent's own findings and findings that are already resolved are excluded from this list.
 
+Run paths combine committed and uncommitted changes against the merge base with `origin/main`, including untracked
+and deleted files, with existing repository paths named in backticks in the item's text. Investigators use the branch
+of the task they answer; reviewers use the branch under review. Workers use the files assigned to their step.
+
+If the bus query or delivery bookkeeping fails, the daemon logs `findings_unavailable` and starts the run without the
+section. Selected IDs are saved before the run starts; `findings_shown` records their IDs and relevance scores.
+
 The findings are selected according to the `[findings]` configuration section: `keep_days` controls which findings are
 fresh enough to be considered (default 30 days, range 0-365 days), `max_shown` limits how many findings are displayed
 (default 8, range 1-20), and `max_chars` limits the total character count of all findings text (default 3000,
