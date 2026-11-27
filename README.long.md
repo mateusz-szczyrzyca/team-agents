@@ -1328,6 +1328,9 @@ branch tip. Accepted, waiting-room and already-pending replies ask you to end yo
 the answer arrives as a message, which wakes the requester.
 Coordinators and members ask an investigator before writing a technical question for the human, following the
 exceptions in their role prompts.
+Split and conflict items use `FEATURE.ITEM`: each number is 1–65535, without leading zeros. Invalid items are
+refused before queueing; optional item metadata on other kinds does not constrain their decoding.
+
 The optional `kind` argument defaults to `question`. Only the team's coordinator may request `split` or `conflict`,
 and both require an `item` argument. A split investigator reads the task-list item and code, then returns a complete
 proposal in a JSON block with parts within the configured line limit. The assignment records a task-allocation

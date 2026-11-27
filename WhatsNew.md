@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.136.0 · agent-core 0.133.0 · agent-runtime 0.120.0 — 27.11.2026 — PR pending
+## agent 0.136.0 · agent-core 0.133.0 · agent-runtime 0.120.0 — 27.11.2026 — PR #328
 
 ### New features
 - [agent] [agent-core] [agent-runtime] Coordinators can ask an investigator for a complete split proposal with `kind: "split"` and `item`, then submit the returned JSON through the normal split checks.
