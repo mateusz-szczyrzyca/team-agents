@@ -198,7 +198,7 @@ fn every_bullet_of_the_expected_result_is_a_requirement_past_65535() {
     );
     let numbered = item.expected_numbered().unwrap();
     assert_eq!(numbered.lines().count(), PAST_SIXTEEN_BITS);
-    assert!(numbered.ends_with("R65536. x"), "{}", &numbered[numbered.len() - 20..]);
+    assert_eq!(numbered.lines().last(), Some("R65536. x"));
 }
 
 // Rule: no check line is dropped either, and the unnumbered ones go on from the last number.
