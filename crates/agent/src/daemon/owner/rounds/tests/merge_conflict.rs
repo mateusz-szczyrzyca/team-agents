@@ -1128,3 +1128,53 @@ async fn the_human_is_asked_when_the_extra_published_tip_still_conflicts() {
     );
     assert_eq!(conflict_requests(&rig)["investigations"].as_object().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_verified_conflict_change_gets_an_investigation_and_the_extra_pass() {
+    use std::io::Write as _;
+    let mut rig = Rig::new(
+        &[
+            normal("claude-1", "work,merge-base-other,hold,ask-here"),
+            investigator("inv-r1", "conflict-investigator:inv-done:Resolve the verified conflict"),
+            investigator("inv-r2", "conflict-investigator:inv-done:Resolve the verified conflict"),
+        ],
+        5,
+        true,
+    )
+    .await;
+    writeln!(
+        std::fs::OpenOptions::new()
+            .append(true)
+            .open(rig.home.config_file())
+            .unwrap(),
+        "[merge]\nconflict_passes = 1"
+    )
+    .unwrap();
+    rig.github.answer_merges(MergeAnswer::Refuse(405));
+    rig.start().await;
+    let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let task = tasks[0].clone();
+    rig.wait_for("the first conflict run", || rig.runs(&task) >= 2).await;
+    move_base(&rig);
+    std::fs::write(rig.worktree(&task).join(".fake-base-ready"), "").unwrap();
+    rig.state_where("investigation or repeated refused merges after verification", |state| {
+        let Some(item) = state.teams().first().and_then(|team| team.item("1.1".parse().unwrap())) else {
+            return false;
+        };
+        serde_json::to_value(item)
+            .unwrap()
+            .get("conflict_investigation")
+            .is_some()
+            || rig.github.calls("PUT", &format!("/repos/{SLUG}/pulls/1/merge")).len() >= 3
+    })
+    .await;
+    assert_investigation_filed(&rig);
+    rig.wait_for("the extra prompt after verification", || {
+        rig.worktree(&task).join(".fake-prompt-3").is_file()
+    })
+    .await;
+    let prompt = std::fs::read_to_string(rig.worktree(&task).join(".fake-prompt-3")).unwrap();
+    rig.stop().await.unwrap();
+    assert!(prompt.contains("pass 2 of 2"), "{prompt}");
+    assert!(prompt.contains("Resolve the verified conflict"), "{prompt}");
+}
