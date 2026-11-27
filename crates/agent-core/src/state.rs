@@ -134,6 +134,14 @@ pub struct UnsupportedSchema {
     pub found: u64,
 }
 
+/// The accounts the sessions of the tasks began under, kept behind a box: a [`State`] lies inline in every owner and in the
+/// futures that hold one, which clippy's `large_futures` refuses once they pass 16 KiB.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SessionAccounts {
+    /// The account each task's session began under; see [`State::session_account`].
+    by_task: BTreeMap<TaskId, crate::config::AccountName>,
+}
+
 /// The state of the harness: every team and, in them, every task.
 ///
 /// Task IDs are unique in the whole state, team IDs too; [`State::insert_team`] and [`State::add_reviewer`] keep
@@ -160,7 +168,7 @@ pub struct State {
     /// account without an entry is not paused.
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
     /// The account the session of each task began under; a task without an entry has a session with no account, or none.
-    session_accounts: BTreeMap<TaskId, crate::config::AccountName>,
+    session_accounts: Box<SessionAccounts>,
     /// The tasks the pause of their account holds: the daemon paused them for it, so only the end of that pause wakes
     /// them, never a pause of the human. A task without an entry is not held.
     account_held: BTreeSet<TaskId>,
@@ -228,7 +236,7 @@ impl Serialize for State {
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
             accounts: &self.accounts,
-            session_accounts: &self.session_accounts,
+            session_accounts: &self.session_accounts.by_task,
             account_held_tasks: &self.account_held,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
@@ -571,7 +579,7 @@ impl State {
 
     /// A state without teams.
     #[must_use]
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             schema_version: SchemaVersion,
             teams: Vec::new(),
@@ -581,7 +589,9 @@ impl State {
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
             accounts: BTreeMap::new(),
-            session_accounts: BTreeMap::new(),
+            session_accounts: Box::new(SessionAccounts {
+                by_task: BTreeMap::new(),
+            }),
             account_held: BTreeSet::new(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
@@ -826,17 +836,17 @@ impl State {
     /// before accounts kept it.
     #[must_use]
     pub fn session_account(&self, task: &TaskId) -> Option<&crate::config::AccountName> {
-        self.session_accounts.get(task)
+        self.session_accounts.by_task.get(task)
     }
 
     /// Records that the session of `task` runs under `account` (`None`: under none).
     pub fn record_session_account(&mut self, task: &TaskId, account: Option<crate::config::AccountName>) {
         match account {
             Some(account) => {
-                self.session_accounts.insert(task.clone(), account);
+                self.session_accounts.by_task.insert(task.clone(), account);
             }
             None => {
-                self.session_accounts.remove(task);
+                self.session_accounts.by_task.remove(task);
             }
         }
     }
@@ -1154,7 +1164,7 @@ impl State {
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
         self.limit_refusals.retain(|task, _| !tasks.contains(task));
         self.commit_cuts.retain(|task, _| !tasks.contains(task));
-        self.session_accounts.retain(|task, _| !tasks.contains(task));
+        self.session_accounts.by_task.retain(|task, _| !tasks.contains(task));
         self.account_held.retain(|task| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
@@ -1321,7 +1331,9 @@ impl TryFrom<StateWire> for State {
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
             accounts: wire.accounts,
-            session_accounts: wire.session_accounts,
+            session_accounts: Box::new(SessionAccounts {
+                by_task: wire.session_accounts,
+            }),
             account_held: wire.account_held_tasks,
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
