@@ -178,3 +178,57 @@ async fn findings_delivery_and_bus_failure_emit_scoped_events_without_blocking_r
         .collect()
     );
 }
+
+#[tokio::test]
+async fn findings_without_open_records_do_not_discover_git_paths() {
+    finding_path_failure_scope(false).await;
+}
+
+#[tokio::test]
+async fn findings_path_failures_keep_task_and_team_scope() {
+    finding_path_failure_scope(true).await;
+}
+
+async fn finding_path_failure_scope(has_finding: bool) {
+    use agent_core::config::Secrets;
+    use agent_core::log::{LogEvent, LogLevel};
+    use agent_runtime::history::{HistoryLayer, Reader};
+
+    let mut rig = rig().await;
+    let layer = HistoryLayer::deferred(LogLevel::Info, rig.history_test_clock(), Secrets::default());
+    rig.start_with_log_layer(layer).await;
+    let (team, tasks) = rig.run(&["codex-1"], ONE, MergeMode::Autopilot, None).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    git(
+        &rig.worktree(&tasks[0]),
+        &["update-ref", "-d", "refs/remotes/origin/main"],
+    );
+    if has_finding {
+        let author: TaskId = "task-20261120-000000-aaaa".parse().unwrap();
+        write_finding(&rig, &author, false);
+    }
+    rig.resume(&tasks[0]).await;
+    let prompt = rig.prompt(&tasks[0], 2).await;
+    rig.status_is(&tasks[0], TaskStatus::Waiting).await;
+    rig.stop().await.unwrap();
+    assert!(!prompt.contains("## Findings of other agents"), "{prompt}");
+    let logs = Reader::open(&rig.home.history_file()).unwrap().daemon_logs().unwrap();
+    let git_failure = logs.iter().find(|row| row.event() == LogEvent::GitCallFailed);
+    if has_finding {
+        let row = git_failure.expect("git discovery failure");
+        assert_eq!(row.task(), Some(&tasks[0]));
+        assert_eq!(row.team(), Some(&team));
+        let row = logs
+            .iter()
+            .find(|row| row.event() == LogEvent::FindingsUnavailable)
+            .expect("optional fallback");
+        assert_eq!(row.task(), Some(&tasks[0]));
+        assert_eq!(row.team(), Some(&team));
+    } else {
+        assert_eq!(git_failure, None);
+        assert_eq!(
+            logs.iter().find(|row| row.event() == LogEvent::FindingsUnavailable),
+            None
+        );
+    }
+}
