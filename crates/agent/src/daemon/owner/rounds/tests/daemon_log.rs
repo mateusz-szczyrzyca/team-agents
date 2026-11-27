@@ -856,6 +856,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::WorktreeSwitchRefused,
             LogEvent::PublishOffBranch,
             LogEvent::InvestigationKindUnknown,
+            LogEvent::FindingsUnavailable,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::warn!(
@@ -892,6 +893,7 @@ fn every_log_event_variant_is_produced_with_its_level_and_ids() {
             LogEvent::MergeConflictInvestigated,
             LogEvent::InvestigationRequeued,
             LogEvent::InvestigationFailed,
+            LogEvent::FindingsShown,
         ] {
             daemon.clock.advance(time::Duration::seconds(1));
             tracing::info!(event = variant.as_str(), variant_name = variant.as_str(), "info event");
@@ -1408,6 +1410,7 @@ fn assert_owner_and_gate_failure_logs(logs: &[agent_core::log::LogEntry], observ
 async fn every_production_log_event_cause_is_recorded_with_its_level_and_scope_ids() {
     let mut observed = BTreeSet::new();
     record_autopilot_round_events(&mut observed).await;
+    super::findings_tests::record_findings_events(&mut observed).await;
 
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("history.db");
