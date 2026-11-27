@@ -1260,7 +1260,8 @@ The gates of all the tasks wait in one queue in the daemon and run one at a time
 asked; the command waits for its turn and then for the gate (at most 16 wait; the next is refused). The command is stopped,
 with everything it started, after `gate_timeout_minutes` (default 30, counted from the start of the gate, not from the
 wait) and is recorded as failed. The daemon runs the command with `TEST_LOCK_WAIT=1`, so a gate that finds the machine's
-test lock held by another test run waits in line for it instead of being refused; that wait is part of the gate's time; stopping or pausing the task stops its gate too. The result is recorded with the commit
+test lock held by another test run waits in line for it instead of being refused; that wait is part of the gate's time. Only `tools/test-lock.sh` itself holds the lock, not the
+commands it runs, so a process a test leaves behind does not keep it once the gate is over; stopping or pausing the task stops its gate too. The result is recorded with the commit
 (`HEAD`) and whether the tree was clean, in `tasks/<task>/gate.json` and the task's activity log, and the full output is
 in `tasks/<task>/gate-<n>.log`. The preceding record is kept in `tasks/<task>/gate-previous.json` to disclose a
 second-run pass; older task directories without that optional file remain readable. A tree is not clean when a file is changed or untracked, when a merge waits to be committed
