@@ -471,12 +471,12 @@ impl State {
 
     /// Records that the pause of an account holds `task`: the daemon paused it for that pause.
     pub fn hold_task_for_account(&mut self, task: TaskId) {
-        let _ = task;
+        self.account_held.insert(task);
     }
 
     /// Records that no pause of an account holds `task` any more.
     pub fn release_task_from_account(&mut self, task: &TaskId) {
-        let _ = task;
+        self.account_held.remove(task);
     }
 
     /// The tasks the pause of an account holds, in the order of their IDs.
