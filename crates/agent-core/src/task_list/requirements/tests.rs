@@ -126,7 +126,7 @@ fn a_number_is_read_from_its_text_and_written_back() {
 #[test]
 fn a_text_that_is_not_a_number_of_a_requirement_is_refused() {
     for text in [
-        "", "R", "R0", "R01", "r1", "X1", "R1 ", " R1", "R-1", "R65536", "RR1", "1", "R1.2",
+        "", "R", "R0", "R01", "r1", "X1", "R1 ", " R1", "R-1", "R4294967296", "RR1", "1", "R1.2",
     ] {
         assert_eq!(
             text.parse::<RequirementId>(),
