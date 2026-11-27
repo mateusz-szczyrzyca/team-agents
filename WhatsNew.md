@@ -9,7 +9,7 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.144.0 · agent-core 0.141.0 · agent-runtime 0.130.0 — 27.11.2026 — PR pending
+## agent 0.144.0 · agent-core 0.141.0 · agent-runtime 0.130.0 — 27.11.2026 — PR #346
 
 ### Bug fixes
 - [agent] [agent-core] [agent-runtime] A step a worker's one result did not serve is given back with "the worker's result does not serve step 5.3"; before, the requester read "neither result" and "do not send it a third time" after a single try. The old words stay for a step whose two results were both wrong.
