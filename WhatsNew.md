@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-core 0.144.0 · agent-runtime 0.133.0 — 27.11.2026 — PR #355
+
+### Enhancements
+- [agent-core] [agent-runtime] A Claude Code run's `rate_limit_event` records are read into readings of the five-hour and the seven-day window (how much is used, when it resets); the newest record of each window wins, and a record of another shape gives no reading and no error. Nothing stores or shows the readings in this version.
+
 ## agent-runtime 0.132.0 — 27.11.2026 — PR #353
 
 ### Bug fixes

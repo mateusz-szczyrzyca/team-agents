@@ -21,6 +21,7 @@ use agent_core::cli::{
 };
 use agent_core::config::Limits;
 use agent_core::kinds::CliKind;
+use agent_core::limit_reading::{LimitReading, LimitWindow};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -184,6 +185,7 @@ impl CliAdapter for ClaudeAdapter {
             progress: Progress::new(),
             usage: UsageTally::default(),
             total_cost_usd: None,
+            windows: BTreeMap::new(),
         })
     }
 }
@@ -219,6 +221,46 @@ struct RateLimitEvent {
 struct RateLimitInfo {
     /// `allowed`, or `rejected` when the window refused the request.
     status: Option<String>,
+    /// The windows of the account with their use; any JSON, because Claude Code's shape of it is observed and not a
+    /// contract: what [`readings_of`] cannot read is no reading.
+    #[serde(rename = "unifiedWindows")]
+    unified_windows: Option<Value>,
+}
+
+/// The windows a `rate_limit_event` of Claude Code 2.1 can tell of, by their key in `unifiedWindows`.
+const READ_WINDOWS: [(&str, LimitWindow); 2] = [
+    ("five_hour", LimitWindow::FiveHour),
+    ("seven_day", LimitWindow::SevenDay),
+];
+
+/// One window in `unifiedWindows`.
+#[derive(Debug, Deserialize)]
+struct UnifiedWindow {
+    /// The used share of the window, 0 to 1.
+    utilization: f64,
+    /// When the window resets, in seconds since the Unix epoch.
+    #[serde(rename = "resetsAt")]
+    resets_at: i64,
+}
+
+/// The readings `unified` tells of the windows the harness knows. A window that is missing, is not the shape Claude Code
+/// 2.1 writes or tells a value no reading can hold is skipped: that is no error, so that a change of Claude Code's
+/// records costs a reading and never the run.
+fn readings_of(unified: &Value) -> Vec<LimitReading> {
+    READ_WINDOWS
+        .iter()
+        .filter_map(|&(key, window)| {
+            // Only an object is the shape of a window: serde would also read a struct from a two-element array.
+            let value = unified.get(key).filter(|value| value.is_object())?;
+            let Ok(raw) = UnifiedWindow::deserialize(value) else {
+                return None;
+            };
+            let Ok(reading) = LimitReading::from_unix(window, raw.utilization, raw.resets_at) else {
+                return None;
+            };
+            Some(reading)
+        })
+        .collect()
 }
 
 impl RateLimitEvent {
@@ -418,6 +460,8 @@ struct ClaudeParser {
     usage: UsageTally,
     /// The cost of the run the result line reports; none until it comes.
     total_cost_usd: Option<f64>,
+    /// The newest reading of each window the stream has told.
+    windows: BTreeMap<LimitWindow, LimitReading>,
 }
 
 impl ClaudeParser {
@@ -504,6 +548,15 @@ impl OutputParser for ClaudeParser {
             }
             Event::RateLimitEvent(window) => {
                 // Only a refusal is kept: an allowed window of every turn would push the lines of the error out of the tail.
+                if let Some(unified) = window
+                    .rate_limit_info
+                    .as_ref()
+                    .and_then(|info| info.unified_windows.as_ref())
+                {
+                    for reading in readings_of(unified) {
+                        self.windows.insert(reading.window(), reading);
+                    }
+                }
                 if window.rejected() {
                     self.progress.note_error_line(line);
                     self.progress.note_refusal(line);
@@ -519,6 +572,10 @@ impl OutputParser for ClaudeParser {
             cost_usd: self.total_cost_usd,
             ..self.usage.usage()
         }
+    }
+
+    fn readings(&self) -> Vec<LimitReading> {
+        self.windows.values().copied().collect()
     }
 
     fn latest_context(&self) -> Option<u64> {
