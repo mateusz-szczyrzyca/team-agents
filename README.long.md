@@ -263,6 +263,11 @@ date too when the reset is more than a day away). The pause is in `state.json` (
 the daemon keeps it and its reset. The pause and its end are `decision_taken` records with `decision` `account`
 ([`docs/log.md`](docs/log.md)).
 
+While an account is paused, **no agent of it is picked**: not an investigator for a review or for an investigation, not a
+replacement for a task that waits or whose agent is changed, not a worker for a request. They are chosen among the agents
+of accounts that are not paused and agents without an account; when every agent that could be picked is of a paused
+account, the review, the hand-over or the request waits in the queue, not failed, and goes on at the reset.
+
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
 ## Usage

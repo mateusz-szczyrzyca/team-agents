@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.149.0 · agent-core 0.149.0 — 27.11.2026 — PR #363
+
+### New features
+- [agent] [agent-core] While an account is paused, none of its agents is picked: not an investigator for a review or an investigation, not a replacement for a waiting task, not a worker for a request. Another account of the same owner and agents without an account are picked as before; when only agents of a paused account could be picked, the work waits in the queue, not failed, until the reset.
+
 ## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
 
 ### New features
