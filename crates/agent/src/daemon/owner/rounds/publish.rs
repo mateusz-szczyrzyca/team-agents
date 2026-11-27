@@ -5,7 +5,7 @@ use agent_core::decide::fix::{Answers, Budget, Progress, Step, fix_step};
 use agent_core::decide::publish::{GateHold, GateStep, HarnessGate, Waiting, gate_step};
 use agent_core::decide::round::{RoundEvent, RoundPolicy, RoundState, Stage};
 use agent_core::decide::wait::Obligation;
-use agent_core::history::HistoryEvent;
+use agent_core::history::{CheckpointCause, HistoryEvent};
 use std::num::NonZeroU32;
 
 use crate::daemon::pr::description::RequestWithSummary;
@@ -576,6 +576,19 @@ impl Owner {
             .collect()
     }
 
+    /// Finds the rounds whose items this publication carries and that are still open: a round of an item that closed
+    /// before (the merged part of a split item) has no step left to take a checkpoint of.
+    fn open_publication_rounds(&self, team: &TeamId, items: &[String]) -> Vec<agent_core::ids::RoundId> {
+        self.parts
+            .state
+            .team(team)
+            .into_iter()
+            .flat_map(agent_core::state::Team::open_rounds)
+            .filter(|round| round.item().is_some_and(|id| items.contains(&id.to_string())))
+            .map(|round| round.id().clone())
+            .collect()
+    }
+
     /// Retains the pending operation when publication leaves an idle round open.
     fn remember_publication_wait(
         &mut self,
@@ -654,6 +667,8 @@ impl Owner {
             (GateStep::SendBack(hold), _) => return Ok(Attempt::SentBack { tip, hold }),
         };
         let ready = Ready { git, tip, record };
+        // The checkpoints of the steps so far are in the history before the branch is pushed.
+        self.flush_checkpoints().await;
         match &publication.publish {
             Publish::Open { items } => {
                 self.open_pull_request(site, &publication.head_branch, items, &ready, now)
@@ -692,6 +707,7 @@ impl Owner {
             }
             Ok(found)
         } else {
+            self.flush_checkpoints().await;
             let body = self.link_commits(&ready.git, &ready.tip, &text.body).await;
             let created = github
                 .create_pull_request(&NewPullRequest {
@@ -742,6 +758,8 @@ impl Owner {
             };
             github.update_pull_request(remote.number, &update).await?;
         }
+        // The checkpoint of the opening is in the history before the pull request is marked ready.
+        self.flush_checkpoints().await;
         github.mark_ready(remote.number).await?;
         self.record_event(
             team,
@@ -1562,20 +1580,40 @@ impl Owner {
                     .and_then(|values| values.with("items", items_of(publication).join(", ")))
                     .and_then(|values| values.with("reason", &reason));
                 let items = items_of(publication);
-                let rounds = self
-                    .parts
-                    .state
-                    .team(team)
-                    .into_iter()
-                    .flat_map(agent_core::state::Team::rounds)
-                    .filter(|round| round.item().is_some_and(|item| items.contains(&item.to_string())))
-                    .map(|round| round.id().to_string())
-                    .collect::<Vec<_>>()
-                    .join(", ");
+                let round_ids = self.open_publication_rounds(team, &items);
+                let rounds = round_ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
                 let values = values
                     .and_then(|v| v.with("rounds", rounds))
                     .and_then(|v| v.with("task", lead.task.as_str()));
                 self.tell_human(pulls, AutopilotNotice::HandoverHeld, values, lead, now);
+                // Every round of a joint publication waits for the human, not only the lead's newest one.
+                match Timestamp::now(&self.parts.clock) {
+                    Ok(at) => {
+                        for round in &round_ids {
+                            self.queue_checkpoint(
+                                at,
+                                team,
+                                round,
+                                CheckpointCause::WaitsForHuman,
+                                Some(&lead.task),
+                                None,
+                            );
+                        }
+                    }
+                    Err(error) => {
+                        for round in &round_ids {
+                            tracing::warn!(
+                                event = LogEvent::CheckpointFailed.as_str(),
+                                team = %team,
+                                round = %round,
+                                task = %lead.task,
+                                cause = %CheckpointCause::WaitsForHuman,
+                                error = %error_chain(&error),
+                                "the clock gives no time for a checkpoint: it is not taken, the round goes on"
+                            );
+                        }
+                    }
+                }
             }
             return Ok(());
         }

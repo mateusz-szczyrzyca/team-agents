@@ -280,6 +280,8 @@ impl Owner {
             commit_title: None,
             commit_message: None,
         };
+        // The checkpoint of the approval is in the history before the pull request is merged.
+        self.flush_checkpoints().await;
         match github.merge_pull_request(pr.number, &request).await {
             Ok(merged) => Ok(Merge::Merged {
                 commit: Some(merged.commit),

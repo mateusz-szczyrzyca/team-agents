@@ -19,7 +19,7 @@ use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
 };
-use agent_core::history::{AgentIdentity, HistoryEvent, RunStart, RunWhy};
+use agent_core::history::{AgentIdentity, CheckpointCause, HistoryEvent, RunStart, RunWhy};
 use agent_core::ids::{AgentName, BranchName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{Role, Tier};
 use agent_core::log::LogEvent;
@@ -539,6 +539,7 @@ impl Owner {
             self.close_if_finished(team, &mut look)?;
             self.observe_round_waits(team);
             for task in self.tasks_with_a_run(team) {
+                self.look_for_commits(&task).await;
                 self.remind_to_commit(&task).await;
                 self.remind_of_context(&task).await;
                 self.cut_overdue_round(&task);
@@ -1029,6 +1030,7 @@ impl Owner {
                 })?;
             self.move_to(&assigned.task, team_id, TaskStatus::Queued, &mut look.events)?;
             look.changed = true;
+            self.queue_for_task(&assigned.task, CheckpointCause::HolderChanged);
             tracing::info!(event = LogEvent::TaskHandedOver.as_str(), team = %team_id,
                 task = %assigned.task, from, to = %assigned.agent,
                 "the next split part goes to a configured replacement in a fresh session");
@@ -1634,6 +1636,8 @@ impl Owner {
                 branch.to_string(),
                 "--tier".to_owned(),
                 "worker".to_owned(),
+                "--investigations".to_owned(),
+                "off".to_owned(),
                 "--home".to_owned(),
                 home_str,
                 "--dir".to_owned(),

@@ -23,8 +23,10 @@ use crate::kinds::{CliKind, Keyword, Role, Tier, UnknownKeyword};
 use crate::protocol::Client;
 use crate::state::{CommitId, MergeMode, PrNumber, RunEnd, SessionId, Timestamp};
 
+mod checkpoint;
 mod event;
 
+pub use checkpoint::{CheckpointCause, CheckpointContent, CheckpointJob};
 pub use event::{CheckOutcome, EventKind, EventRecord, HistoryEvent, LostCause, LostKind, RecordKind, SplitDecision};
 
 /// The longest text of one field the history keeps, in bytes, unless `[history] max_text_bytes` says otherwise: a prompt

@@ -116,6 +116,11 @@
    "what": "the MCP tool request_investigation",
    "causes": [
     {
+     "name": "NotAllowed",
+     "class": "Permission",
+     "doc": "the daemon disabled investigation tools for this run"
+    },
+    {
      "name": "Investigator",
      "class": "Permission",
      "doc": "an investigator called it (investigators cannot request investigations)"

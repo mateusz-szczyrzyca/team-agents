@@ -397,6 +397,7 @@ Every daemon log entry uses one of the fixed `LogEvent` names below. A test comp
 | `investigation_kind_unknown` | `warn` | An unsupported request kind is failed without starting a task, once per request: `id`, `kind`. |
 | `investigation_requeued` | `info` | An unsuccessful attempt is requeued privately: `id`, `investigator`, `reason`. |
 | `investigation_failed` | `info` | A request ends unsuccessfully: `id`, `reason`. |
+| `checkpoint_failed` | `warn` | A checkpoint of a round could not be taken or recorded (the snapshot of the worktree failed, the worktree is gone, the history refused the record): the round goes on, and the record is written without a snapshot where it can be. Fields: `round`, `task`, `cause` (the step), `error`. Also logged once, with `cause` `history_stalled` and no `task`, when the history's writer did not answer in 2 seconds: the daemon does not wait for it again until it answers. Stored in daemon history from schema 33. |
 
 The bus/tracing diagnostic `worker_result_dropped` reports stale or replayed owned request transitions
 with `request`, `worker`, `task`, `run` and `outcome`. The bus writes it at `warn` to its JSON logs and

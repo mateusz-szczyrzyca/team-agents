@@ -918,7 +918,8 @@ fn event_block(page: &mut Page, stored: &SequencedRecord, record: &EventRecord) 
         } => {
             entry(page, at, &format!("a {what} record is missing ({cause}): {detail}"));
         }
-        event @ (HistoryEvent::PullOpened { .. }
+        event @ (HistoryEvent::Checkpoint { .. }
+        | HistoryEvent::PullOpened { .. }
         | HistoryEvent::PullPushed { .. }
         | HistoryEvent::PullReady { .. }
         | HistoryEvent::ReviewAsked { .. }
@@ -1060,6 +1061,7 @@ fn pull_request_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::SerenaReminded { .. }
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
+        | HistoryEvent::Checkpoint { .. }
         | HistoryEvent::Lost { .. }
         | HistoryEvent::TeamEnded {} => pull_lifecycle_event(page, at, event),
     }
@@ -1143,6 +1145,9 @@ fn pull_lifecycle_event(page: &mut Page, at: Timestamp, event: &HistoryEvent) {
         | HistoryEvent::Notified { .. }
         | HistoryEvent::RoundClosed { .. }
         | HistoryEvent::Lost { .. }
+        // A checkpoint is a recovery point that the history's queries read; the story does not tell it, or it
+        // would repeat after every step of the round the step it follows.
+        | HistoryEvent::Checkpoint { .. }
         | HistoryEvent::TeamEnded {} => {}
     }
 }

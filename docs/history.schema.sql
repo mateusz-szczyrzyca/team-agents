@@ -1,4 +1,4 @@
-PRAGMA user_version = 34;
+PRAGMA user_version = 35;
 
 CREATE TABLE teams (
     team TEXT NOT NULL PRIMARY KEY,
@@ -239,6 +239,46 @@ CREATE TABLE run_usage (
     cost_usd REAL CHECK (cost_usd IS NULL OR (cost_usd >= 0 AND cost_usd < 1e18))
 ) STRICT, WITHOUT ROWID;
 
+CREATE TABLE runs (
+    run TEXT NOT NULL PRIMARY KEY,
+    team TEXT NOT NULL,
+    task TEXT NOT NULL,
+    at TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
+    cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
+    model TEXT,
+    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer', 'investigator')),
+    why TEXT NOT NULL CHECK (why IN (
+        'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
+        'answers', 'resumed_by_human', 'continuation', 'turn_limit', 'second_opinion'
+    )),
+    why_item TEXT,
+    why_asked_by TEXT,
+    why_pass INTEGER,
+    why_pr INTEGER,
+    prompt TEXT NOT NULL,
+    worktree TEXT NOT NULL,
+    branch TEXT NOT NULL,
+    session TEXT,
+    cut TEXT NOT NULL,
+    CHECK (
+        (why = 'item') = (why_item IS NOT NULL)
+        AND (why = 'request' OR why_asked_by IS NULL)
+        AND ((why IN ('fix_pass', 'review', 'second_opinion')) = (why_pass IS NOT NULL))
+        AND ((why IN ('review', 'second_opinion')) = (why_pr IS NOT NULL))
+        AND (why <> 'fix_pass' OR why_pass >= 1)
+        AND (why_pass IS NULL OR why_pass >= 0)
+        AND (why_pr IS NULL OR why_pr >= 1)
+    )
+) STRICT;
+
+CREATE INDEX runs_by_team ON runs (team, at);
+
+CREATE INDEX runs_by_task ON runs (task, at);
+
+CREATE INDEX runs_by_agent ON runs(agent,run);
+
 CREATE TABLE history_records (
     sequence INTEGER PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN (
@@ -247,7 +287,7 @@ CREATE TABLE history_records (
         'finding_explained', 'finding_accepted', 'finding_rejected', 'finding_raised',
         'second_opinion_asked', 'second_opinion_ended', 'finding_confirmed', 'finding_not_confirmed',
         'fix_pass_started', 'pull_approved', 'pull_merged', 'pull_handed_over', 'pull_closed', 'question_asked',
-        'question_answered', 'controlled', 'serena_reminded', 'notified', 'round_closed', 'team_ended', 'lost'
+        'question_answered', 'controlled', 'serena_reminded', 'notified', 'round_closed', 'team_ended', 'checkpoint', 'lost'
     )),
     key TEXT,
     at TEXT NOT NULL,
@@ -299,46 +339,6 @@ END,'') AS body
 FROM history_records h WHERE sequence=new.sequence;
 END;
 
-CREATE TABLE runs (
-    run TEXT NOT NULL PRIMARY KEY,
-    team TEXT NOT NULL,
-    task TEXT NOT NULL,
-    at TEXT NOT NULL,
-    agent TEXT NOT NULL,
-    tier TEXT NOT NULL CHECK (tier IN ('normal', 'worker', 'investigator')),
-    cli TEXT NOT NULL CHECK (cli IN ('claude', 'codex', 'gemini', 'opencode')),
-    model TEXT,
-    role TEXT NOT NULL CHECK (role IN ('solo', 'coordinator', 'member', 'worker', 'reviewer', 'investigator')),
-    why TEXT NOT NULL CHECK (why IN (
-        'first_run', 'item', 'wake_up', 'request', 'fix_pass', 'review', 'ask_human', 'verdict_missing', 'checks',
-        'answers', 'resumed_by_human', 'continuation', 'turn_limit', 'second_opinion'
-    )),
-    why_item TEXT,
-    why_asked_by TEXT,
-    why_pass INTEGER,
-    why_pr INTEGER,
-    prompt TEXT NOT NULL,
-    worktree TEXT NOT NULL,
-    branch TEXT NOT NULL,
-    session TEXT,
-    cut TEXT NOT NULL,
-    CHECK (
-        (why = 'item') = (why_item IS NOT NULL)
-        AND (why = 'request' OR why_asked_by IS NULL)
-        AND ((why IN ('fix_pass', 'review', 'second_opinion')) = (why_pass IS NOT NULL))
-        AND ((why IN ('review', 'second_opinion')) = (why_pr IS NOT NULL))
-        AND (why <> 'fix_pass' OR why_pass >= 1)
-        AND (why_pass IS NULL OR why_pass >= 0)
-        AND (why_pr IS NULL OR why_pr >= 1)
-    )
-) STRICT;
-
-CREATE INDEX runs_by_team ON runs (team, at);
-
-CREATE INDEX runs_by_task ON runs (task, at);
-
-CREATE INDEX runs_by_agent ON runs(agent,run);
-
 CREATE TABLE daemon_logs (
     id INTEGER PRIMARY KEY,
     first_at TEXT NOT NULL,
@@ -356,7 +356,7 @@ CREATE TABLE daemon_logs (
         'notification_sent', 'questions_file_opened', 'build_directory_removed', 'decision_taken',
         'outside_call_completed', 'peer_gone', 'github_step_waiting', 'github_step_resumed', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
         'task_handed_over', 'task_waits_for_agent', 'worker_request_damaged', 'run_no_tool_retry',
-        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'worktree_switch_refused', 'publish_off_branch', 'investigation_started', 'investigation_answered', 'investigation_requeued', 'investigation_failed', 'investigation_kind_unknown'
+        'commit_reminded', 'commit_followed', 'context_reminded', 'commit_cut', 'worker_request_returned', 'worker_request_requeued', 'worker_wait_returned', 'worker_request_ended', 'task_agent_changed', 'task_wait_for_free_agent', 'worktree_switched', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed', 'investigation_started', 'investigation_answered', 'investigation_requeued', 'investigation_failed', 'investigation_kind_unknown'
     )),
     team TEXT,
     task TEXT,
@@ -377,7 +377,7 @@ CREATE TABLE daemon_logs (
             'bus_down', 'git_call_failed', 'github_call_failed', 'gate_cannot_start', 'gate_timed_out',
             'gate_dirty_tree', 'questions_file_invalid', 'restart_corrected', 'request_refused',
             'history_record_incomplete', 'github_step_waiting', 'snapshot_failed', 'snapshot_large', 'delivery_closed',
-            'worker_request_damaged', 'worktree_switch_refused', 'publish_off_branch', 'investigation_kind_unknown'
+            'worker_request_damaged', 'worktree_switch_refused', 'publish_off_branch', 'checkpoint_failed', 'investigation_kind_unknown'
         ))
         OR (level = 'info' AND event IN (
             'team_changed', 'team_removed', 'round_changed', 'item_phase_changed', 'task_status_changed', 'run_started', 'run_ended',

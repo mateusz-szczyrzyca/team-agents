@@ -58,6 +58,8 @@ impl Owner {
 
     /// Records `event` of `team` for `rounds` as having happened at `at`.
     pub(super) fn record_event_at(&self, at: Timestamp, team: &TeamId, rounds: Vec<RoundId>, event: HistoryEvent) {
+        let step = super::checkpoint::Step::of(&event);
+        let queued = rounds.clone();
         let record = EventRecord {
             at,
             team: team.clone(),
@@ -65,6 +67,7 @@ impl Owner {
             event,
         };
         self.history.record(Record::Event(Box::new(record)));
+        self.checkpoints_after(at, team, &queued, &step);
     }
 
     /// Counts an unbuildable fix-pass event under its capture cause and leaves a loss note in its round.

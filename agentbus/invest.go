@@ -239,14 +239,14 @@ func fmtInv(inv *Investigation) string {
 const (
 	// replyAlreadyPending: the task already has a pending investigation.
 	replyAlreadyPending = "You already have a pending investigation #%d (status: %s). Do not request another — " +
-		"end your turn with STATUS: INVESTIGATING and wait for the result."
+		"END YOUR TURN with STATUS: SLEEPING and wait for the result."
 	// replyAccepted: the request is in the queue (it starts when an investigator is free).
 	replyAccepted = "ACCEPTED: investigation #%d (%s). Now: commit your current work on your branch " +
-		"(the investigator starts from its state), release reservations and END YOUR TURN with STATUS: INVESTIGATING. " +
+		"(the investigator starts from its state), release reservations and END YOUR TURN with STATUS: SLEEPING. " +
 		"The result arrives automatically in your next turn."
 	// replyWaitroom: the queue is full and the agent chose to wait.
 	replyWaitroom = "WAITING ROOM: investigation #%d is waiting for a queue slot (waiting: %d/%d). " +
-		"It will enter the queue automatically. Commit your work, release reservations and END YOUR TURN with STATUS: INVESTIGATING."
+		"It will enter the queue automatically. Commit your work, release reservations and END YOUR TURN with STATUS: SLEEPING."
 	// replyQueueFull: the queue is full; the agent must decide (solve it itself or wait).
 	replyQueueFull = "QUEUE FULL: investigation #%d was not accepted (investigators busy, waiting: %d/%d). Choose:\n" +
 		"(a) solve the problem yourself — FIRST call record_decision(investigation_id=%d, decision, justification) " +
@@ -258,7 +258,10 @@ const (
 // is full the request is either parked in the waiting room (wait=true) or rejected, and the agent must
 // record a decision. A rejected request without a decision is reused on retry.
 func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
-	if s.role == RoleInvestigator {
+	if s.investigations == investigationsOff {
+		return "", opErr(RequestInvestigationNotAllowed, "%s", investigationNotAllowedMessage)
+	}
+	if s.role == RoleInvestigator && s.investigations != investigationsOn {
 		return "", opErr(RequestInvestigationInvestigator, "an investigator cannot request investigations")
 	}
 	question = strings.TrimSpace(question)
@@ -331,7 +334,7 @@ func (s *Server) requestInvestigation(question, context string, wait bool) (stri
 
 // recordDecision (MCP record_decision) stores the requester's decision after an investigation result or rejection.
 func (s *Server) recordDecision(id int, decision, justification string) (string, *RecordDecisionError) {
-	if s.role == RoleInvestigator {
+	if s.role == RoleInvestigator && s.investigations != investigationsOn {
 		return "", opErr(RecordDecisionInvestigator, "record_decision is for the agent that requested the investigation")
 	}
 	decision, justification = strings.TrimSpace(decision), strings.TrimSpace(justification)

@@ -78,7 +78,7 @@ so its ledger row starts with `runs.at` and takes `run_ends.at` once the end is 
 | `synchronous` | `NORMAL` | in WAL mode a crash may lose the last commits, never corrupt the file |
 | `foreign_keys` | `ON` (each connection of the writer) | the rows of one record hold together |
 | `busy_timeout` | 5 seconds | a person with `sqlite3` open does not make the writer lose a batch at once |
-| `user_version` | the version of the schema, `33` | forward-only migrations (below) |
+| `user_version` | the version of the schema, `35` | forward-only migrations (below) |
 
 Every ordinary table is `STRICT` (FTS5 manages its virtual and shadow tables): a column holds the type it says. The `CHECK`s of the schema repeat the rules of the typed records
 (a step of the kind `message` has a text and no path), so a row that something else wrote is refused by SQLite or, if
@@ -497,7 +497,11 @@ linked to every round of its team; a team-wide control or loss note when no roun
 | `notified` | a notification was sent | `task`, `title`, `body` | — |
 | `round_closed` | a round closed | `round`, `end` | `round R` |
 | `team_ended` | a team ended | — | `team` |
+| `checkpoint` | a point of a round to go on from, taken right after a step of the round or a local commit | `round`, optional `item`, `task` (the holder whose worktree it keeps), `job`, `tier`, `cause`, optional `pull_request`, optional `head` (the branch tip), `draft`, `phase`, optional `review_pass`, optional `fix_pass`, optional `snapshot` (the ref of the worktree's snapshot, `refs/agents/snapshots/<round>/<task>/c<n>`), optional `content` (`meant`, `done`, `left`; absent until checkpoints carry it) | — |
 | `lost` | a record was refused by the database or could not be captured (starting head, changes, gate, questions file, event clock, daemon event) while the history could be written to | `what` (the `kind` of the missing record), `cause` (`write_disk_full`, `capture_head`, `capture_changes`, `capture_gate`, `capture_questions`, `capture_clock`, `capture_event`, ...), `detail`, optional `task` | — |
+
+A `checkpoint` is read through the history's queries (`checkpoints_of_round`) and by the replacement of a holder; the told
+story of a round does not print it, or the step it follows would be told twice after every step of the round.
 
 For `checked`, an `allowed` outcome carries exactly the issues the human allowed, including when other issues in a
 mixed answer were refused and sent back separately. A `review_submitted` is retained even when it arrives after its
@@ -570,8 +574,8 @@ of a run that started before — and counts them.
 Migration `33` admits the `investigator` run role and preserves existing runs, related records,
 log IDs, round links, search entries and cursors.
 
-Migration `34` admits `investigation_started`, `investigation_answered` and `investigation_kind_unknown`
-with their daemon emitters. It preserves existing log IDs, round links, search entries and cursors.
+Migration `35` admits `investigation_started`, `investigation_answered` , `investigation_kind_unknown`, `investigation_requeued` and
+`investigation_failed` with their daemon emitters. It preserves existing log IDs, round links, search entries and cursors.
 
 `PRAGMA user_version` is the number of the last migration applied. The schema is the result of the migrations of
 `schema.rs` applied in order to an empty database — a new database and an old one end up the same. A migration is never
@@ -902,3 +906,7 @@ upgrading if you need to return to an older daemon.
 
 History version 32 admits the `publish_off_branch` warning. Its migration (`032-publish-off-branch.sql`) preserves existing daemon
 logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older daemon.
+
+History version 34 admits the `checkpoint` record and the `checkpoint_failed` warning. Its migration (`034-checkpoints.sql`) preserves existing records,
+round links, search entries and daemon logs. Older daemons refuse the upgraded history; keep a backup before upgrading if you need to return to an older
+daemon.

@@ -264,6 +264,8 @@ pub enum LogEvent {
     InvestigationRequeued,
     /// An investigation ends without an answer.
     InvestigationFailed,
+    /// A checkpoint of a round could not be taken or recorded: the round goes on without it.
+    CheckpointFailed,
 }
 
 impl Keyword for LogEvent {
@@ -313,6 +315,7 @@ impl LogEvent {
             | Self::WorktreeSwitchRefused
             | Self::PublishOffBranch
             | Self::InvestigationKindUnknown
+            | Self::CheckpointFailed
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::RunNoToolRetry

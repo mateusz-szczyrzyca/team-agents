@@ -260,7 +260,8 @@ func (c ListReservationsCause) String() string { return c.info().name }
 type RequestInvestigationCause int
 
 const (
-	RequestInvestigationInvestigator    RequestInvestigationCause = iota // an investigator called it (investigators cannot request investigations) [Permission]
+	RequestInvestigationNotAllowed      RequestInvestigationCause = iota // the daemon disabled investigation tools for this run [Permission]
+	RequestInvestigationInvestigator                                     // an investigator called it (investigators cannot request investigations) [Permission]
 	RequestInvestigationMissingQuestion                                  // the question is missing [InvalidArgument]
 	RequestInvestigationStorage                                          // the shared state or a file could not be read or written [Storage]
 )
@@ -270,6 +271,7 @@ type RequestInvestigationError = OpError[RequestInvestigationCause]
 
 // requestInvestigationCauses describes the RequestInvestigationCause values (same order as the constants).
 var requestInvestigationCauses = [...]causeInfo{
+	{"NotAllowed", ClassPermission},
 	{"Investigator", ClassPermission},
 	{"MissingQuestion", ClassInvalidArgument},
 	{"Storage", ClassStorage},
