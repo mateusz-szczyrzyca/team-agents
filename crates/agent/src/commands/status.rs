@@ -178,6 +178,30 @@ impl Activity {
         Ok(refusals::refused_line(&state.refusals_at(now), self.zone))
     }
 
+    /// The lines of the accounts that are paused at the time of the status and the line of the agents their provider
+    /// refused, read from the state of the daemon; `None` when nothing is paused or refused.
+    ///
+    /// # Errors
+    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
+    pub(crate) async fn provider_lines(&self) -> Result<Option<String>, StatusError> {
+        let agents = self.refused_line().await?;
+        let state = match load_debug_state(&self.home).await {
+            Ok(state) => state,
+            Err(DebugRuntimeError::Missing { .. }) => return Ok(agents),
+            Err(source) => return Err(StatusError::Refusals(source)),
+        };
+        let now = Timestamp::now(&self.clock).map_err(StatusError::Clock)?;
+        let accounts = accounts::account_lines(state.account_pauses(), now, self.zone);
+        Ok(match (accounts, agents) {
+            (None, None) => None,
+            (accounts, agents) => Some(format!(
+                "{}{}",
+                accounts.unwrap_or_default(),
+                agents.unwrap_or_default()
+            )),
+        })
+    }
+
     /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
     /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
     /// configured CLIs and is the only reason a configuration is omitted.
@@ -406,7 +430,7 @@ async fn listing_text(
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.refused_line().await?;
+    let refused = activity.provider_lines().await?;
     let text = render_with_requests(
         &listing.teams,
         View::Full,
@@ -443,7 +467,7 @@ async fn running_text(
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.refused_line().await?;
+    let refused = activity.provider_lines().await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
