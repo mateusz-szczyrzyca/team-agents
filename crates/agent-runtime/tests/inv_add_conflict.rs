@@ -20,11 +20,11 @@ mod tests {
             .arg(".")
             .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agentbus"))
             .kill_on_drop(true);
-        let built = tokio::time::timeout(Duration::from_secs(60), build.output())
+        let compilation = tokio::time::timeout(Duration::from_secs(60), build.output())
             .await
             .unwrap()
             .unwrap();
-        assert!(built.status.success(), "go build: {:?}", built.stderr);
+        assert!(compilation.status.success(), "go build: {:?}", compilation.stderr);
         let bus = AgentBus::new(
             binary.to_str().unwrap().parse().unwrap(),
             home.path().to_str().unwrap().parse().unwrap(),
