@@ -261,6 +261,8 @@ impl Owner {
     ) -> Result<(), OwnerError> {
         use tokio::io::AsyncWriteExt;
 
+        let reason = investigation_end_reason(end);
+
         if let Some(message) = message.filter(|text| !text.trim().is_empty()) {
             let mut file = tokio::fs::OpenOptions::new()
                 .append(true)
@@ -271,7 +273,7 @@ impl Owner {
                     path: req.file.clone(),
                     source,
                 })?;
-            let text = format!("\n## Unfinished answer of {} ({end:?})\n\n{message}\n", located.agent);
+            let text = format!("\n## Unfinished answer of {} ({reason})\n\n{message}\n", located.agent);
             file.write_all(text.as_bytes())
                 .await
                 .map_err(|source| OwnerError::WriteRecord {
@@ -308,7 +310,7 @@ impl Owner {
                 .await;
         }
         if !record.failed_with.is_empty() {
-            return self.fail_investigation(req, &format!("{end:?}"), Some(located)).await;
+            return self.fail_investigation(req, &reason, Some(located)).await;
         }
         record.failed_with.push(located.agent.parse()?);
         let requester = self
@@ -347,7 +349,7 @@ impl Owner {
             .inv_set(req.id, &InvTransition::Requeued)
             .await
             .map_err(|source| OwnerError::Bus { source })?;
-        tracing::info!(event = LogEvent::InvestigationRequeued.as_str(), team = %located.team, id = %req.id, investigator = %located.agent, reason = ?end);
+        tracing::info!(event = LogEvent::InvestigationRequeued.as_str(), team = %located.team, id = %req.id, investigator = %located.agent, reason = %reason);
         Ok(())
     }
 }
@@ -495,5 +497,18 @@ impl Owner {
             }
         }
         Ok(())
+    }
+}
+
+/// Stable descriptions for private attempt headings, failure notices and logs.
+fn investigation_end_reason(end: &RunEnd) -> String {
+    match end {
+        RunEnd::Reported { outcome } => format!("reported {}", outcome.as_str()),
+        RunEnd::NoStatus { .. } => "no status".to_owned(),
+        RunEnd::QuotaExhausted { .. } => "quota exhausted".to_owned(),
+        RunEnd::RateLimited => "rate limited".to_owned(),
+        RunEnd::Hung => "hung".to_owned(),
+        RunEnd::TurnLimit => "turn limit".to_owned(),
+        RunEnd::Stopped => "stopped by the human".to_owned(),
     }
 }
