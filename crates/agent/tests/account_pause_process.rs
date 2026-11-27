@@ -459,13 +459,13 @@ mod account_pause_process {
     }
 
     #[test]
-    fn a_task_the_human_pauses_is_no_longer_held_by_the_account() {
+    fn a_task_the_human_unpauses_is_no_longer_held_by_the_account() {
         let mut world = World::new();
         world.start();
         let Paused { refused, waiting } = pause_the_account(&world);
 
-        let paused = world.agent(&["pause", &waiting]);
-        assert!(paused.status.success(), "{}", String::from_utf8_lossy(&paused.stderr));
+        let unpaused = world.agent(&["unpause", &waiting]);
+        assert!(unpaused.status.success(), "{}", String::from_utf8_lossy(&unpaused.stderr));
 
         let held = world.held_tasks();
         assert!(!held.contains(&waiting), "{held:?}");
