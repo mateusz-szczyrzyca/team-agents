@@ -33,6 +33,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use tracing::Instrument;
 
+mod findings;
 mod investigations;
 mod latest;
 mod unread;
@@ -265,6 +266,14 @@ pub enum AgentBusError {
         /// What the decoder said.
         source: serde_json::Error,
     },
+    /// A finding has an invalid addition time.
+    #[error("agentbus findings returned an invalid time for {id}")]
+    FindingTime {
+        /// Finding with the invalid timestamp.
+        id: agent_core::decide::findings::FindingId,
+        /// Timestamp parsing failure.
+        source: agent_core::local_time::TypedTimeError,
+    },
     /// The output is not in the format of the command.
     #[error("agentbus {command} printed something unexpected: {output:?}")]
     Unexpected {
@@ -288,6 +297,7 @@ impl AgentBusError {
             | Self::Killed { .. }
             | Self::OutputTooLong { .. }
             | Self::NotUtf8 { .. }
+            | Self::FindingTime { .. }
             | Self::Decode { .. }
             | Self::Unexpected { .. } => None,
         }
@@ -1658,34 +1668,6 @@ impl AgentBus {
     pub async fn status(&self) -> Result<BusStatus, AgentBusError> {
         let output = self.run(BusCommand::Status, Args::new(), None).await?;
         parse_status(&output)
-    }
-
-    /// Reads open findings for a repository.
-    ///
-    /// # Errors
-    /// Returns [`AgentBusError`] if the bus fails or its JSON cannot be decoded.
-    pub async fn findings(&self, repo: &RepoName) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
-        let command = BusCommand::Findings;
-        let output = self
-            .run(
-                command,
-                Args::new().flag("--repo", repo.as_str()).switch("--json"),
-                None,
-            )
-            .await?;
-        decode_json(command, &output)
-    }
-
-    /// Reads open findings using the bus machine's time zone.
-    ///
-    /// # Errors
-    /// Returns [`AgentBusError`] if the bus fails or its JSON cannot be decoded.
-    pub async fn findings_in(
-        &self,
-        repo: &RepoName,
-        _zone: agent_core::local_time::Zone,
-    ) -> Result<Vec<agent_core::decide::findings::Finding>, AgentBusError> {
-        self.findings(repo).await
     }
 
     /// Takes the next queued investigation without restricting its requesting task.
