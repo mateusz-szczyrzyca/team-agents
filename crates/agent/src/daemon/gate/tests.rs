@@ -1580,3 +1580,77 @@ async fn a_refusal_by_the_busy_lock_between_two_failures_does_not_reset_or_add_t
     );
     assert_eq!(fourth.result.finished_at, third.result.finished_at);
 }
+
+/// Waits, polling, until `path` exists.
+async fn exists_eventually(path: &Path) {
+    let deadline = Instant::now() + PATIENCE;
+    while !path.exists() {
+        assert!(Instant::now() < deadline, "timed out waiting for {}", path.display());
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_gate_command_is_told_to_wait_in_line_for_the_machine_test_lock() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+
+    let record = recorded(rig.ask(1, "test \"${TEST_LOCK_WAIT-unset}\" = 1", LONG)).await;
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed, "{}", told(&record));
+}
+
+#[tokio::test]
+async fn a_gate_that_finds_the_machine_test_lock_held_waits_for_it_and_runs_instead_of_being_refused() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let lock = rig.home.root().join("test.lck");
+    let held = rig.home.root().join("held");
+    let mut holder = Command::new("flock")
+        .arg(&lock)
+        .args(["sh", "-c", &format!("touch {held:?}; sleep 2")])
+        .spawn()
+        .unwrap();
+    exists_eventually(&held).await;
+    let test_lock = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/test-lock.sh");
+    let ran = rig.home.root().join("ran");
+    // The lock of the machine is replaced by the test's own file; a test run inside the gate's own lock is undone.
+    let script =
+        format!("env -u TEST_LOCK_HELD -u GATE_WAIT TEST_LOCK_FILE={lock:?} {test_lock:?} label touch {ran:?}");
+
+    let record = recorded(rig.ask(1, &script, LONG)).await;
+    holder.wait().unwrap();
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed, "{}", told(&record));
+    assert!(ran.exists(), "the gate's command must run once the lock is free");
+}
+
+#[tokio::test]
+async fn a_process_the_test_run_of_a_gate_leaves_behind_in_a_group_of_its_own_does_not_keep_the_machine_test_lock() {
+    let mut rig = Rig::new().await;
+    rig.worktree(1);
+    rig.start();
+    let lock = rig.home.root().join("test.lck");
+    let pid_file = rig.home.root().join("left.pid");
+    let test_lock = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/test-lock.sh");
+    // What a test that dies before its cleanup leaves: a process in a session and group of its own, still running.
+    let left = format!("setsid sh -c 'echo $$ > {pid_file:?}; exec sleep 30' < /dev/null > /dev/null 2>&1 &");
+    let script =
+        format!("env -u TEST_LOCK_HELD -u GATE_WAIT TEST_LOCK_FILE={lock:?} {test_lock:?} label sh -c {left:?}");
+
+    let record = recorded(rig.ask(1, &script, LONG)).await;
+    exists_eventually(&pid_file).await;
+    let free = Command::new("flock")
+        .args(["-n"])
+        .arg(&lock)
+        .arg("true")
+        .status()
+        .unwrap();
+    let pid = std::fs::read_to_string(&pid_file).unwrap();
+    Command::new("kill").arg(pid.trim()).status().unwrap();
+
+    assert_eq!(record.result.outcome, GateOutcome::Passed, "{}", told(&record));
+    assert!(free.success(), "the lock must be free once the gate is over");
+}

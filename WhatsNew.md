@@ -9,6 +9,12 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.145.0 — 27.11.2026 — PR #349
+
+### Bug fixes
+- [agent] A gate that finds the machine's test lock held by another test run now waits in line for it. Before, it was refused at once ("another tests are running now"), was recorded as a failed gate, and its round waited until the agent asked again.
+- [agent] A process that a test left behind no longer keeps the machine's test lock after its test run or gate is over. Before, it held every later gate, for example after a daemon restart stopped a gate halfway.
+
 ## agent-core 0.142.0 — 27.11.2026 — PR #342
 
 ### Enhancements

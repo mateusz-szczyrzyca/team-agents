@@ -447,7 +447,8 @@ A daemon killed with SIGKILL leaves its runs alive, because they are separate pr
   A gate that changes the tree or moves HEAD is recorded **not clean** (`gate_dirty_tree`) and does not count.
 - **No useless reruns.** On a clean tree at the same head, with the same command, a gate that passed, or failed
   twice in a row, is not run again. The reply says "gate: not run again" (`gate_reused`).
-- **The test lock.** A gate refused by a busy test lock exits 75. It is recorded as failed, but it does not count
+- **The test lock.** The daemon runs a gate with `TEST_LOCK_WAIT=1`: a gate that finds the test lock held waits in
+  line for it. A gate still refused by a busy test lock exits 75. It is recorded as failed, but it does not count
   toward the two failures, because it tells nothing about the commit.
 - **Publish only on a passed, clean tip.**
   - While the lead works, the daemon publishes only when a record passes at the tip.

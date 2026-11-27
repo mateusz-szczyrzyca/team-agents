@@ -8,7 +8,8 @@
 #   runs hold "the" lock at once.
 # - Busy: refuses at once with the message every agent knows, and who holds it; exit 75. TEST_LOCK_WAIT=1 (or
 #   GATE_WAIT=1) waits instead.
-# - A holder that died frees the lock at once: the kernel releases a flock with the last process holding it.
+# - A holder that died frees the lock at once: the kernel releases a flock with the last process holding it, and only
+#   this script holds it (the command does not inherit its descriptor).
 # - A holder alive past TEST_LOCK_STALE_MIN (10) minutes is taken for hung: its test run (process group) is stopped
 #   and the lock taken over. A test run takes some 5 minutes.
 # - A run inside a run (make gate's steps, the tests of the gate) does not lock again: TEST_LOCK_HELD is set.
@@ -137,9 +138,10 @@ export TEST_LOCK_HELD=$$
 
 # the command in its own process group: a hung run is stopped as a whole, the agent's shell around it is not. Job
 # control leaves a background command the caller's stdin: from an interactive terminal, a test that read it would be
-# stopped (SIGTTIN) and hang the run, so the tests read /dev/null
+# stopped (SIGTTIN) and hang the run, so the tests read /dev/null. The command does not inherit the lock's descriptor:
+# only this script holds the lock, so a process a test leaves behind in a group of its own cannot keep it
 set -m
-"$@" < /dev/null &
+"$@" < /dev/null 9>&- &
 child=$!
 set +m
 {
