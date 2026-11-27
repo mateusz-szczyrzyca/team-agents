@@ -10,6 +10,7 @@ use agent_core::ids::{BranchName, InvalidName, ItemId};
 use agent_core::kinds::Role;
 use agent_core::local_time::Zone;
 use agent_core::log::LogEvent;
+use agent_core::plan::Plan;
 use agent_core::prompt::{AutopilotPrompt, HarnessPrompt, Variables, VariablesError};
 use agent_core::state::{
     CommitId, Findings, ItemPhase, ItemProgress, MergeConflict, PrNumber, PullRequest, QuestionState, Review,
@@ -21,6 +22,7 @@ use agent_runtime::run::compose::{ComposeError, PromptTexts, item_sections};
 use agent_runtime::store::{StoreError, load_checks_record};
 use agent_runtime::text_file::{TextFileError, read_text_file, replace_text_file};
 
+use super::super::briefing::read_plan;
 use super::super::job_checkpoint::{TakenOver, job_briefing};
 use super::super::start::{Context, next_number};
 use crate::daemon::checks::{ChecksTextError, answered, relay};
@@ -340,8 +342,34 @@ async fn with_briefing(ctx: &Context<'_>, found: &TaskRef<'_>, text: String) -> 
                 .render(HarnessPrompt::BriefingInvestigationAccountChanged, &Variables::new())?
                 .trim_end(),
         );
+        if let Some(plan) = saved_plan(ctx, found).await? {
+            text.push_str("\n\n");
+            text.push_str(
+                ctx.texts
+                    .render(
+                        HarnessPrompt::BriefingInvestigationPlan,
+                        &Variables::new().with("plan", plan.to_text().trim_end())?,
+                    )?
+                    .trim_end(),
+            );
+        }
     }
     Ok(Some(Addition::Replace(text)))
+}
+
+/// The plan the session before left in the worktree of the investigator `found`; `None` when there is none or it does not
+/// read (it is logged, and the new session reads the file itself).
+async fn saved_plan(ctx: &Context<'_>, found: &TaskRef<'_>) -> Result<Option<Plan>, SectionError> {
+    let path = ctx.home.worktree_dir(found.team.repo(), found.member.task());
+    let text = path.to_str().ok_or_else(|| SectionError::Path {
+        path: path.clone(),
+        source: None,
+    })?;
+    let worktree = AbsolutePath::from_str(text).map_err(|source| SectionError::Path {
+        path: path.clone(),
+        source: Some(source),
+    })?;
+    Ok(read_plan(&worktree, found.member.task()).await)
 }
 
 /// Reads the bounded answer used by an additional conflict pass.
