@@ -49,6 +49,8 @@ pub struct BriefingNotes<'a> {
     pub headings: PlanHeadings<'a>,
     /// The pull request of the task's item and its review; the default is an item with no pull request.
     pub review: BriefingReview<'a>,
+    /// The last checkpoint of the task's round, rendered; the default is a round with no checkpoint.
+    pub checkpoint: Option<&'a str>,
 }
 
 /// The headings of the four groups of the plan's steps, as the catalog words them. Its default has no words: a briefing
@@ -162,7 +164,7 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
             .chain(message.text.lines().map(|line| format!("  {line}")))
     }));
     let review = review::review_values(&notes.review);
-    let pairs: [(&str, &str); 18] = [
+    let pairs: [(&str, &str); 19] = [
         ("reason", facts.reason),
         ("task", facts.task),
         ("prompt", facts.prompt.trim_end()),
@@ -184,6 +186,7 @@ pub fn briefing_variables_with(facts: &Briefing<'_>, notes: &BriefingNotes<'_>) 
         ("pull_request", &review.pull_request),
         ("review_state", &review.review_state),
         ("findings", &review.findings),
+        ("checkpoint", ""),
     ];
     pairs
         .iter()

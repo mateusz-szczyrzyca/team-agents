@@ -328,6 +328,7 @@ impl HarnessPrompt {
                     "pull_request",
                     "review_state",
                     "findings",
+                    "checkpoint",
                 ],
             ),
             Self::LeadBriefing => lead_briefing_spec(),

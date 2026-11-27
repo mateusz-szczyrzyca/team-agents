@@ -132,9 +132,10 @@ pub(super) fn lead_last_message_paragraph(
 /// The variable of the briefing that holds the task's own prompt, which a lead's text leaves out.
 const PROMPT_VARIABLE: &str = "prompt";
 
-/// The variables of the briefing that tell the pull request of the task's item and its review, which a lead's text leaves
-/// out: the lead is told the work of a member, not the review of its own.
-const REVIEW_VARIABLES: [&str; 3] = ["pull_request", "review_state", "findings"];
+/// The variables of the briefing that a lead's text leaves out: the pull request of the task's item and its review (the
+/// lead is told the work of a member, not the review of its own), and the checkpoint, which the lead is given in a
+/// paragraph of its own.
+const REVIEW_VARIABLES: [&str; 4] = ["pull_request", "review_state", "findings", "checkpoint"];
 
 /// One megabyte, in bytes: the unit of `[snapshot] warn_mb`.
 const MEGABYTE: u64 = 1024 * 1024;
