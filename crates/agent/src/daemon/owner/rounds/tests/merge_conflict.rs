@@ -139,7 +139,7 @@ async fn when_the_conflict_pass_limit_is_reached_the_human_is_asked_once_in_a_qu
             .append(true)
             .open(rig.home.config_file())
             .unwrap();
-        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1\ninvestigator_pass = false").unwrap();
     }
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
@@ -374,7 +374,7 @@ async fn a_pull_request_merged_by_the_human_while_a_conflict_question_is_open_co
             .append(true)
             .open(rig.home.config_file())
             .unwrap();
-        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1\ninvestigator_pass = false").unwrap();
     }
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
@@ -426,7 +426,7 @@ async fn assert_answered_conflict_correction_is_pushed_and_verified(scenario: &'
             .append(true)
             .open(rig.home.config_file())
             .unwrap();
-        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1\ninvestigator_pass = false").unwrap();
     }
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
@@ -553,7 +553,7 @@ async fn an_answered_conflict_question_on_a_legacy_ledger_without_verification_c
             .append(true)
             .open(rig.home.config_file())
             .unwrap();
-        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1\ninvestigator_pass = false").unwrap();
     }
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
@@ -678,7 +678,7 @@ async fn an_answered_conflict_question_after_a_conflict_verification_review_runs
             .append(true)
             .open(rig.home.config_file())
             .unwrap();
-        writeln!(config, "[merge]\nconflict_passes = 1").unwrap();
+        writeln!(config, "[merge]\nconflict_passes = 1\ninvestigator_pass = false").unwrap();
     }
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
@@ -752,6 +752,14 @@ async fn reopening_review_after_allowed_only_conflict_passes_and_an_answered_que
         false,
     )
     .await;
+    std::fs::write(
+        rig.home.config_file(),
+        format!(
+            "{}\n[merge]\ninvestigator_pass = false\n",
+            std::fs::read_to_string(rig.home.config_file()).unwrap()
+        ),
+    )
+    .unwrap();
     rig.github.answer_merges(MergeAnswer::Refuse(405));
     rig.start().await;
 
