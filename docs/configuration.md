@@ -122,7 +122,7 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
 - **Every account is used.** An account that no agent or investigator names is refused, naming the account.
 - **The environment of a run**, later wins: the daemon's, `[agent_env]` of `secrets.toml`, the account's `env`, the
   account's `[account_env.NAME]`. A variable is set in the `env` of an account or in its `[account_env.NAME]`, not in
-  both: `Settings::load` refuses the pair, naming the account and the variable and never a value. A
+  both: loading the home refuses the pair, naming the account and the variable and never a value. A
   `[account_env.NAME]` without an `[accounts.NAME]` is refused too.
 - `max_runs` and `hold_at` are unknown keys until the versions that bring them.
 - The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
