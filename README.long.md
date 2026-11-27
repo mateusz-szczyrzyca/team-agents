@@ -74,7 +74,9 @@ human, failed, sleeping.
 The documents: [`docs/architecture.md`](docs/architecture.md) (the layout and the process model),
 [`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md) (what is kept and how old states
 are read), [`docs/history.md`](docs/history.md), [`docs/log.md`](docs/log.md), [`docs/task-list.md`](docs/task-list.md),
-[`docs/plan.md`](docs/plan.md) (the form and verification of a task's plan of steps), [`docs/tdd.md`](docs/tdd.md).
+[`docs/plan.md`](docs/plan.md) (the form and verification of a task's plan of steps), [`docs/tdd.md`](docs/tdd.md),
+[`docs/daemon-overview.md`](docs/daemon-overview.md) (what the daemon watches and when it acts),
+[`docs/checkpoints.md`](docs/checkpoints.md) (how work survives a lost session).
 [`WhatsNew.md`](WhatsNew.md) says what each version brought.
 
 ## Security
