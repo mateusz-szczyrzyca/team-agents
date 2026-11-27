@@ -260,7 +260,7 @@ fn with_run_sections(
     let prompt = match briefing {
         Some(briefed) => briefed
             .draft
-            .render_reviewed(ctx.texts, task, &prompt, briefed.review)?,
+            .render_reviewed(ctx.texts, task, &prompt, briefed.review, briefed.checkpoint)?,
         None => prompt,
     };
     // A session that outgrew its agent's bound is said so before its briefing, with the size that ended it.

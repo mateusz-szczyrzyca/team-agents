@@ -240,3 +240,23 @@ fn a_step_the_harness_judged_declared_is_listed_as_declared() {
         "Declared (the agent says so; no check ran, or it waits for a reviewer):\n- 1.1 Ask the reviewer"
     );
 }
+
+#[test]
+fn a_round_with_no_checkpoint_is_told_so() {
+    let values = variables(None, &BriefingNotes::default());
+
+    assert_eq!(value(&values, "checkpoint"), "No checkpoint yet.");
+}
+
+#[test]
+fn the_checkpoint_of_the_round_is_passed_through_without_its_trailing_newline() {
+    let notes = BriefingNotes {
+        checkpoint: Some("## Checkpoint: commit at 2026-11-27 05:00:00, head a1b2c3d\n"),
+        ..BriefingNotes::default()
+    };
+
+    assert_eq!(
+        value(&variables(None, &notes), "checkpoint"),
+        "## Checkpoint: commit at 2026-11-27 05:00:00, head a1b2c3d"
+    );
+}

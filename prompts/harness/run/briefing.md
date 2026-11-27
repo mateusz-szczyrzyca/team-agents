@@ -16,6 +16,10 @@ You work on task {{task}} again, in a new session. The session before you went b
 
 You do not have its memory; this briefing is what you need to go on without asking anybody.
 
+{{checkpoint}}
+
+This is where the work stands. Go on from it: do what is left, do not do again what is done.
+
 Go on from this state. Do not start over, and do not undo the commits below: the work in the worktree and on the
 branch is the work of the runs before yours and is yours to finish.
 

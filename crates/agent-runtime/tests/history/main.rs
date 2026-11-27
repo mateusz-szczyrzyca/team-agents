@@ -101,4 +101,6 @@ mod worker_request_ended;
 mod worker_wait;
 
 mod checkpoints;
+#[cfg(test)]
+mod last_checkpoint;
 mod task_agent_changed;
