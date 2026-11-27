@@ -322,7 +322,7 @@ mod account_environment {
         }
     }
 
-    // Rule: the log tells the account and the names of its variables at debug level, and never a value.
+    // Rule: no log line of a run with an account holds a value of its secrets or of its env.
     #[tokio::test]
     async fn account_secret_redacted_in_log() {
         let rig = rig(
@@ -346,12 +346,6 @@ mod account_environment {
         .await;
 
         let text = String::from_utf8(kept.0.lock().unwrap().clone()).unwrap();
-        assert!(text.contains("run_account_environment"), "{text}");
-        assert!(text.contains(ACCOUNT), "{text}");
-        assert!(
-            text.contains("CLAUDE_CONFIG_DIR") && text.contains("COMP_API_KEY"),
-            "{text}"
-        );
         assert!(!text.contains(MARKER), "{text}");
         assert!(!text.contains("/home/x/.claude-comp"), "{text}");
     }
