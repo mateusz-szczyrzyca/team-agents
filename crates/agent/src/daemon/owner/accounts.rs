@@ -7,7 +7,9 @@
 use std::collections::BTreeSet;
 
 use agent_core::config::AccountName;
-use agent_core::decide::account_candidates::agents_of_paused_accounts;
+use agent_core::decide::account_candidates::{
+    Candidate, agents_of_paused_accounts, candidates_with_accounts, investigators_of_paused_accounts, paused_accounts,
+};
 use agent_core::decide::account_pause::{AccountPauseOutcome, decide};
 use agent_core::decide::limit::Limit;
 use agent_core::decide::outcome::PauseReason;
@@ -49,16 +51,39 @@ impl Owner {
             .unwrap_or(false)
     }
 
-    /// The agents that take nothing new at `now`: those their provider refused and those whose account is paused. An
-    /// agent of a paused account is picked for nothing — no replacement, no hand-over, no worker for a request.
+    /// The agents that take nothing new at `now`: those their provider refused and the agents and investigators whose
+    /// account is paused. An agent of a paused account is picked for nothing — no replacement, no hand-over, no worker
+    /// for a request.
     pub(super) fn unavailable_agents_at(&self, now: Timestamp) -> Vec<AgentName> {
         let mut agents = self.parts.state.refused_agents_at(now);
-        agents.extend(agents_of_paused_accounts(
-            &self.parts.state,
-            &self.parts.settings.config,
-            now,
-        ));
+        let (state, config) = (&self.parts.state, &self.parts.settings.config);
+        agents.extend(agents_of_paused_accounts(state, config, now));
+        agents.extend(
+            investigators_of_paused_accounts(state, config, now)
+                .iter()
+                .map(AgentName::from),
+        );
         agents
+    }
+
+    /// The agents of `names` that may be picked at `now`, in their order: those whose account is not paused. An agent
+    /// without an account is always one of them. This is [`candidates_with_accounts`] on the accounts of the
+    /// configuration.
+    pub(super) fn not_of_paused_accounts(&self, names: &[AgentName], now: Timestamp) -> Vec<AgentName> {
+        let paused = paused_accounts(&self.parts.state, now);
+        let accounts: Vec<Option<AccountName>> = names.iter().map(|name| self.account_of(name)).collect();
+        let candidates: Vec<Candidate<'_, AgentName>> = names
+            .iter()
+            .zip(&accounts)
+            .map(|(name, account)| Candidate {
+                name,
+                account: account.as_ref(),
+            })
+            .collect();
+        candidates_with_accounts(&candidates, &paused)
+            .into_iter()
+            .cloned()
+            .collect()
     }
 
     /// The agents and investigators that have `account`, in name order.

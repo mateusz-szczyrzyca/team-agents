@@ -2532,10 +2532,14 @@ impl Owner {
         names: &'a [AgentName],
         holder_tier: Tier,
         going: &[Going],
+        now: Timestamp,
     ) -> Vec<agent_core::decide::replacement::refused::Candidate<'a>> {
         use agent_core::decide::replacement::refused::Candidate;
+        // An agent of a paused account takes nothing over, whatever its provider says.
+        let free = self.not_of_paused_accounts(names, now);
         names
             .iter()
+            .filter(|name| free.contains(name))
             .filter_map(|name| {
                 let tier = self.tier_of(name)?;
                 if tier < holder_tier {
@@ -2601,10 +2605,10 @@ impl Owner {
         let holder_tier = found.member.agent().tier();
         let return_at = self.parts.state.refused_until(agent).unwrap_or(until);
         let going = self.all_runs_going();
-        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going);
-        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going);
+        let replacement_agents = self.refusal_candidates(replacement.agents(), holder_tier, &going, now);
+        let normal_agents = self.refusal_candidates(config.normal_agents(), holder_tier, &going, now);
         let inv_names: Vec<AgentName> = config.investigators().keys().map(AgentName::from).collect();
-        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going);
+        let investigators = self.refusal_candidates(&inv_names, holder_tier, &going, now);
         let request = Request {
             role: located.role,
             team: &team_names,

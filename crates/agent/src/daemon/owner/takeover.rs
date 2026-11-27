@@ -188,8 +188,14 @@ impl Owner {
             .collect();
         let chosen = match choose(role, held.tier(), &candidates, replacement.mode()) {
             Handover::Agent(name) => Some(Chosen::Agent(name.clone())),
-            Handover::Lead => agent_core::decide::assign::dispatch::coordinator_can_take_over(found.team, member)
-                .then_some(Chosen::Lead),
+            // The lead's account may be paused: its work would wait for the reset, so it is no one to give work to now.
+            Handover::Lead => (agent_core::decide::assign::dispatch::coordinator_can_take_over(found.team, member)
+                && !found
+                    .team
+                    .crew()
+                    .coordinator()
+                    .is_some_and(|lead| self.account_is_paused(lead.agent().name(), now)))
+            .then_some(Chosen::Lead),
             // The question to the human after the last step is not asked yet: the task fails as before.
             Handover::Human => None,
         };
