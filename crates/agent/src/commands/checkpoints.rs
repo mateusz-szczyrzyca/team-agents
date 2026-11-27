@@ -15,11 +15,10 @@ use agent_core::story::{Selection, json_lines};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError, RenderTextError};
 use agent_runtime::history::{ReadError, Reader};
 
+use super::log::UNKNOWN_ID_EXIT;
+
 #[cfg(test)]
 mod tests;
-
-/// The exit status of `agent checkpoints` when the round or the task asked for is not in the history, as `agent log`.
-pub(crate) const UNKNOWN_ID_EXIT: u8 = 3;
 
 /// What `agent checkpoints` is asked about: a round or a task.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -84,6 +83,35 @@ pub(crate) struct CheckpointsRequest {
     pub(crate) target: Target,
     /// What to print of them.
     pub(crate) mode: Mode,
+}
+
+/// What `agent checkpoints` did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Outcome {
+    /// What was asked is printed.
+    Printed,
+    /// There is no checkpoint, and `--json` prints nothing: the command line says it on the error stream, so that what is
+    /// printed stays JSON lines.
+    NoneForJson {
+        /// Whose checkpoints were asked for.
+        target: Target,
+    },
+}
+
+impl Outcome {
+    /// The words for the error stream, when the answer has none on the output.
+    #[must_use]
+    pub(crate) fn notice(&self) -> Option<String> {
+        match self {
+            Self::Printed => None,
+            Self::NoneForJson { target } => Some(none_found(target)),
+        }
+    }
+}
+
+/// The answer to a target that has no checkpoint.
+fn none_found(target: &Target) -> String {
+    format!("No checkpoints for {target}.\n")
 }
 
 /// Why `agent checkpoints` failed.
@@ -275,7 +303,8 @@ fn records_of(reader: &Reader, target: &Target) -> Result<(Vec<SequencedRecord>,
 }
 
 /// Prints what `request` asks of the history in `history`, with its times as the files hold them; `prompts` is the
-/// directory of the harness's texts, which `--show` renders a checkpoint with.
+/// directory of the harness's texts, which `--show` renders a checkpoint with. With `--json` and no checkpoint nothing is
+/// printed and the answer says so: [`Outcome::NoneForJson`].
 ///
 /// # Errors
 /// [`CheckpointsError`].
@@ -284,13 +313,18 @@ pub(crate) async fn checkpoints_in(
     prompts: &Path,
     request: &CheckpointsRequest,
     out: &mut impl Write,
-) -> Result<(), CheckpointsError> {
+) -> Result<Outcome, CheckpointsError> {
     let reader = Reader::open(history)?;
     let (records, selection) = records_of(&reader, &request.target)?;
     let taken: Vec<(SequencedRecord, Row)> = records
         .into_iter()
         .filter_map(|record| Row::of(&record, &request.target).map(|row| (record, row)))
         .collect();
+    if taken.is_empty() && request.mode == Mode::Json {
+        return Ok(Outcome::NoneForJson {
+            target: request.target.clone(),
+        });
+    }
     let text = match request.mode {
         Mode::Json => {
             let records: Vec<SequencedRecord> = taken.iter().map(|(record, _)| record.clone()).collect();
@@ -302,7 +336,7 @@ pub(crate) async fn checkpoints_in(
                     text
                 })
         }
-        _ if taken.is_empty() => format!("No checkpoints for {}.\n", request.target),
+        _ if taken.is_empty() => none_found(&request.target),
         Mode::Listing => taken.iter().fold(String::new(), |mut text, (_, row)| {
             text.push_str(&row.line());
             text.push('\n');
@@ -322,5 +356,6 @@ pub(crate) async fn checkpoints_in(
         }
     };
     out.write_all(text.as_bytes()).map_err(CheckpointsError::Output)?;
-    out.flush().map_err(CheckpointsError::Output)
+    out.flush().map_err(CheckpointsError::Output)?;
+    Ok(Outcome::Printed)
 }

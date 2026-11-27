@@ -751,7 +751,15 @@ where
         Ok(Invocation::GuardCommit(args)) => finish(execute_blocking(environment, Work::GuardCommit(args), out), err)?,
         // `log` reads a file and needs no runtime: it runs on the thread of the command.
         Ok(Invocation::Log(args)) => finish(execute_log(environment, args, out), err)?,
-        Ok(Invocation::Checkpoints(args)) => finish(execute_blocking(environment, Work::Checkpoints(args), out), err)?,
+        Ok(Invocation::Checkpoints(args)) => match execute_checkpoints_blocking(environment, args, out) {
+            Ok(outcome) => {
+                if let Some(notice) = outcome.notice() {
+                    write_text(err, &notice)?;
+                }
+                ExitCode::SUCCESS
+            }
+            Err(error) => finish(Err(error), err)?,
+        },
         Ok(Invocation::Debug(args)) => finish(execute_blocking(environment, Work::Debug(args), out), err)?,
         Ok(Invocation::DelegationCheck(args)) => finish(execute_nonblocking(environment, &args, out), err)?,
         // `--version` and `--help` arrive here too, as "errors" meant for stdout.
@@ -815,8 +823,6 @@ enum Work {
     Gate(GateArgs),
     /// `guard-commit`.
     GuardCommit(GuardCommitArgs),
-    /// `checkpoints`.
-    Checkpoints(CheckpointsArgs),
     /// `debug`.
     Debug(DebugArgs),
 }
@@ -834,7 +840,6 @@ fn execute_blocking(environment: &Environment, work: Work, out: &mut impl Write)
             Work::Steer(steer) => execute_steer(environment, steer, out).await,
             Work::Gate(args) => execute_gate(environment, args, out).await,
             Work::GuardCommit(args) => Ok(guard_commit(environment, &args.message_file, out).await?),
-            Work::Checkpoints(args) => execute_checkpoints(environment, args, out).await,
             Work::Debug(args) => execute_debug_cmd(environment, args, out).await,
         }
     })
@@ -1043,7 +1048,7 @@ async fn execute_checkpoints(
     environment: &Environment,
     args: CheckpointsArgs,
     out: &mut impl Write,
-) -> Result<(), CommandError> {
+) -> Result<commands::checkpoints::Outcome, CommandError> {
     use commands::checkpoints::{CheckpointsRequest, Mode, checkpoints_in};
 
     let home = environment.home()?;
@@ -1056,8 +1061,23 @@ async fn execute_checkpoints(
         target: args.target,
         mode,
     };
-    checkpoints_in(&home.history_file(), &home.prompts_dir(), &request, out).await?;
-    Ok(())
+    Ok(checkpoints_in(&home.history_file(), &home.prompts_dir(), &request, out).await?)
+}
+
+/// Runs `agent checkpoints` on a runtime of its own.
+///
+/// # Errors
+/// [`CommandError::Runtime`] when the runtime cannot be built, and what `execute_checkpoints` gives.
+fn execute_checkpoints_blocking(
+    environment: &Environment,
+    args: CheckpointsArgs,
+    out: &mut impl Write,
+) -> Result<commands::checkpoints::Outcome, CommandError> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(CommandError::Runtime)?;
+    runtime.block_on(execute_checkpoints(environment, args, out))
 }
 
 /// Carries out `agent gate`.
