@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent-runtime 0.127.0 — 27.11.2026 — PR pending
+
+### Enhancements
+- [agent-runtime] [agentbus] The daemon can file a conflict investigation for an item with `agentbus inv-add --kind conflict --item 2.3`.
+
 ## agent-runtime 0.126.0 — 27.11.2026 — PR #336
 
 ### Enhancements
