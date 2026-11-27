@@ -383,7 +383,11 @@ impl Owner {
             )
             .await
             .map_err(|source| OwnerError::Bus { source })?;
-        tracing::info!(event = LogEvent::InvestigationFailed.as_str(), id = %req.id, reason);
+        if let Some(located) = located {
+            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), team = %located.team, id = %req.id, reason);
+        } else {
+            tracing::info!(event = LogEvent::InvestigationFailed.as_str(), id = %req.id, reason);
+        }
         if let Some(task) = &req.inv_task {
             self.close_investigation_task(task).await?;
         }
