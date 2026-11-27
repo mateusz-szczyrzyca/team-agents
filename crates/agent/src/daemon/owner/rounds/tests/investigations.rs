@@ -874,7 +874,7 @@ async fn a_split_request_records_a_task_allocation() {
         .activities()
         .iter()
         .filter(|a| a.task() == task)
-        .map(|a| a.request())
+        .map(agent_core::state::Activity::request)
         .collect();
     assert_eq!(requests, vec![&ActivityRequest::TaskAllocation]);
 }
