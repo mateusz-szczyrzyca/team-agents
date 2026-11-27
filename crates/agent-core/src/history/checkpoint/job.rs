@@ -131,14 +131,26 @@ fn work_lines(commits: &[CommitLine], changed: &[String]) -> Vec<String> {
     lines
 }
 
+/// How the line of a request's `done` part that tells its check begins.
+const CHECK_RESULT_LABEL: &str = "Check: ";
+
+/// What stands between the verdict of a check and the line of its output in a `done` part.
+const CHECK_RESULT_SEPARATOR: &str = " — ";
+
+/// The verdict of a check that passed, as a `done` part tells it.
+const CHECK_PASSED: &str = "passed";
+
+/// The verdict of a check that failed, as a `done` part tells it.
+const CHECK_FAILED: &str = "failed";
+
 /// What a worker's request has done: the work of its worktree and how its check last ran.
 fn request_done(last_check: Option<CheckResult<'_>>, commits: &[CommitLine], changed: &[String]) -> String {
     let mut lines = work_lines(commits, changed);
     lines.push(match last_check {
-        None => "Check: not run yet".to_owned(),
+        None => format!("{CHECK_RESULT_LABEL}not run yet"),
         Some(result) => format!(
-            "Check: {} — {}",
-            if result.passed { "passed" } else { "failed" },
+            "{CHECK_RESULT_LABEL}{}{CHECK_RESULT_SEPARATOR}{}",
+            if result.passed { CHECK_PASSED } else { CHECK_FAILED },
             one_line(result.line)
         ),
     });
@@ -149,8 +161,13 @@ fn request_done(last_check: Option<CheckResult<'_>>, commits: &[CommitLine], cha
 /// passed and the line that says so; `None` when the part tells that it has not run yet or has no such line.
 #[must_use]
 pub fn last_check_of(done: &str) -> Option<(bool, String)> {
-    let _ = done;
-    None
+    let told = done.lines().find_map(|line| line.strip_prefix(CHECK_RESULT_LABEL))?;
+    let (verdict, line) = told.split_once(CHECK_RESULT_SEPARATOR)?;
+    match verdict {
+        CHECK_PASSED => Some((true, line.to_owned())),
+        CHECK_FAILED => Some((false, line.to_owned())),
+        _ => None,
+    }
 }
 
 /// What is left of a worker's request: its check, until it passes.
