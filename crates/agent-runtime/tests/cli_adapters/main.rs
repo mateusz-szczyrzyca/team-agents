@@ -3,6 +3,7 @@
 
 mod agy;
 mod claude;
+mod claude_readings;
 mod codex;
 mod opencode;
 mod support;
