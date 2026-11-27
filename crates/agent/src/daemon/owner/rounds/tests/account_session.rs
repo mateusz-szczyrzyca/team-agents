@@ -48,6 +48,15 @@ git add -A
 git -c user.name=Fixture -c user.email=fixture@example.com commit -q -m 'Finish the work'
 "#;
 
+/// The script of a run that commits a file of its own.
+const WORK: &str = r#"
+exclude=$(git rev-parse --git-path info/exclude)
+grep -qxF '.fake-*' "$exclude" || printf '%s\n' '.fake-*' >> "$exclude"
+printf 'work\n' > work.txt
+git add work.txt
+git -c user.name=Fixture -c user.email=fixture@example.com commit -q -m 'Add work.txt'
+"#;
+
 /// The account the agent of these tests gets.
 const ACCOUNT: &str = "comp-claude";
 
@@ -168,4 +177,70 @@ async fn account_changed_between_runs_starts_from_briefing_across_a_daemon_resta
         state.session_account(&tasks[0]),
         Some(&ACCOUNT.parse::<AccountName>().unwrap())
     );
+}
+
+/// Gives the investigators `inv-r1` and `inv-r2` the account `inv-claude` in the configuration of `rig`.
+fn give_the_reviewers_an_account(rig: &Rig) {
+    let path = rig.home.config_file();
+    let mut text = std::fs::read_to_string(&path).unwrap();
+    for name in ["inv-r1", "inv-r2"] {
+        let header = format!("[investigators.{name}]\n");
+        assert!(text.contains(&header), "{text}");
+        text = text.replace(&header, &format!("{header}account = \"inv-claude\"\n"));
+    }
+    std::fs::write(path, format!("{text}\n[accounts.inv-claude]\nowner = \"inv\"\n")).unwrap();
+}
+
+// Rule: every role is started anew when its agent's account changed, a reviewer too: the review that was cut by a stop of
+// the daemon is not resumed in its old session but starts one from the briefing.
+#[tokio::test]
+async fn account_changed_between_runs_starts_a_reviewer_from_briefing() {
+    let hold_then_approve = "script:hold,verify:VERDICT: APPROVE\\nSUMMARY: fine";
+    let mut rig = Rig::new(
+        &[
+            normal("comp-claude-1", "script:work"),
+            investigator("inv-r1", hold_then_approve),
+            investigator("inv-r2", hold_then_approve),
+        ],
+        5,
+        false,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("hold.sh"), HOLD).unwrap();
+    std::fs::write(scripts.join("work.sh"), WORK).unwrap();
+    let path = rig.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(path, format!("{text}\n[restart]\nsession = \"same\"\n")).unwrap();
+    rig.start().await;
+    rig.run(&["comp-claude-1"], ONE, MergeMode::Autopilot, None).await;
+    let state = rig
+        .state_where("a reviewer to hold its first run", |state| {
+            state.teams().iter().any(|team| {
+                team.reviewers()
+                    .iter()
+                    .any(|member| member.runs().len() == 1 && member.last_session().is_some())
+            })
+        })
+        .await;
+    let reviewer = state
+        .teams()
+        .iter()
+        .flat_map(|team| team.reviewers())
+        .find(|member| member.runs().len() == 1)
+        .unwrap()
+        .task()
+        .clone();
+
+    rig.stop().await.unwrap();
+    give_the_reviewers_an_account(&rig);
+    rig.start().await;
+    let briefing = rig.prompt(&reviewer, 2).await;
+    let args = std::fs::read_to_string(rig.worktree(&reviewer).join(".fake-args-2")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(!args.contains("--resume"), "not the old session: {args}");
+    assert!(args.contains("--session-id"), "a new session: {args}");
+    assert!(briefing.contains(BRIEFING), "{briefing}");
 }
