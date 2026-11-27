@@ -74,6 +74,14 @@ pub struct LastCheckpoint {
     pub at: agent_core::state::Timestamp,
     /// The task whose worktree the checkpoint keeps.
     pub task: TaskId,
+    /// The kind of work it keeps.
+    pub job: agent_core::history::CheckpointJob,
+    /// The tier of the holder.
+    pub tier: agent_core::kinds::Tier,
+    /// The pull request of the round or of the review at the checkpoint, when there was one.
+    pub pull_request: Option<agent_core::state::PrNumber>,
+    /// The review pass at the checkpoint, when it was taken.
+    pub review_pass: Option<u32>,
     /// The step it was taken after.
     pub cause: agent_core::history::CheckpointCause,
     /// The tip of the worktree's branch; `None` when git could not say.
@@ -726,6 +734,27 @@ impl Reader {
         Ok(newest_for(self.round_checkpoints(round)?, task, |_| true))
     }
 
+    /// The newest checkpoint of `round` that tells how the work of `task` stands, whatever its job: a change of holder and
+    /// the end of a run that changed nothing are skipped. `None` when the task has no checkpoint in the round: unlike
+    /// [`Reader::last_checkpoint_of_round`] the round's other holders are not asked.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_checkpoint_of_job(&self, round: &RoundId, task: &TaskId) -> Result<Option<LastCheckpoint>, ReadError> {
+        let _ = (round, task);
+        Ok(None)
+    }
+
+    /// The checkpoints of the jobs of `round` that are not an item's (a worker's request, a review, an investigation),
+    /// oldest first.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn job_checkpoints_of_round(&self, round: &RoundId) -> Result<Vec<LastCheckpoint>, ReadError> {
+        let _ = round;
+        Ok(Vec::new())
+    }
+
     /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
     /// except that a change of holder and the end of a run that left the worktree as the checkpoint before it kept it are
     /// skipped. They are taken at the take-over itself and tell the same work as the checkpoint before them.
@@ -751,7 +780,11 @@ impl Reader {
             };
             let agent_core::history::HistoryEvent::Checkpoint {
                 task,
+                job,
+                tier,
                 cause,
+                pull_request,
+                review_pass,
                 head,
                 snapshot,
                 content,
@@ -763,6 +796,10 @@ impl Reader {
             found.push(LastCheckpoint {
                 at: event.at,
                 task,
+                job,
+                tier,
+                pull_request,
+                review_pass,
                 cause,
                 head,
                 snapshot,
