@@ -285,3 +285,71 @@ async fn a_session_that_began_under_an_account_is_resumed_after_a_restart_with_t
         Some(&ACCOUNT.parse::<AccountName>().unwrap())
     );
 }
+
+/// What the prompt of an investigator tells of a changed account.
+const INVESTIGATOR_ACCOUNT_NOTE: &str = "# THE ACCOUNT OF YOUR AGENT CHANGED";
+
+// Rule: an investigator has no round to brief from, but its new session is told why it began: the investigation that was cut
+// by a stop of the daemon is not resumed in its old session, and its prompt says the account changed.
+#[tokio::test]
+async fn account_changed_between_runs_starts_an_investigator_with_the_reason() {
+    let mut rig = Rig::new(
+        &[
+            normal("claude-lead", "sleep"),
+            normal("claude-1", "inv-add:Check account,sleep"),
+            investigator("comp-inv", "script:hold,script:hold"),
+            investigator("comp-inv2", "script:hold,script:hold"),
+        ],
+        1,
+        true,
+    )
+    .await;
+    let scripts = rig.home.root().join("fake-scripts");
+    std::fs::create_dir_all(&scripts).unwrap();
+    std::fs::write(scripts.join("hold.sh"), HOLD).unwrap();
+    let path = rig.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(&path, format!("{text}\n[restart]\nsession = \"same\"\n")).unwrap();
+    rig.start().await;
+    let (team, _) = rig
+        .run(
+            &["claude-lead", "claude-1"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-lead"),
+        )
+        .await;
+    let running = |state: &agent_core::state::State| {
+        state.team(&team).is_some_and(|team| {
+            team.reviewers().iter().any(|member| {
+                member.role() == Some(agent_core::kinds::Role::Investigator)
+                    && member.status() == agent_core::status::TaskStatus::Running
+            })
+        })
+    };
+    let state = rig.state_where("an investigator is running", running).await;
+    let member = state
+        .team(&team)
+        .unwrap()
+        .reviewers()
+        .iter()
+        .find(|member| member.role() == Some(agent_core::kinds::Role::Investigator))
+        .unwrap();
+    let name = member.agent().name().to_owned();
+    let task = member.task().clone();
+    rig.prompt(&task, 1).await;
+
+    rig.stop().await.unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let header = format!("[investigators.{name}]\n");
+    assert!(text.contains(&header), "{text}");
+    let text = text.replace(&header, &format!("{header}account = \"{ACCOUNT}\"\n"));
+    std::fs::write(&path, format!("{text}\n[accounts.{ACCOUNT}]\nowner = \"comp\"\n")).unwrap();
+    rig.start().await;
+    let prompt = rig.prompt(&task, 2).await;
+    let args = std::fs::read_to_string(rig.worktree(&task).join(".fake-args-2")).unwrap();
+    rig.stop().await.unwrap();
+
+    assert!(!args.contains("--resume"), "not the old session: {args}");
+    assert!(prompt.contains(INVESTIGATOR_ACCOUNT_NOTE), "{prompt}");
+}
