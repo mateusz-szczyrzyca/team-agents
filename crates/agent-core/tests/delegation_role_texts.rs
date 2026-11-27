@@ -31,3 +31,21 @@ fn a_worker_is_not_told_to_delegate() {
 
     assert!(!text.contains("`delegate`"), "{text}");
 }
+
+// Rule: a requester is told that a worker's result reaches it only as a commit, so a request never forbids the commit.
+#[test]
+fn the_member_the_coordinator_and_the_solo_agent_are_told_never_to_forbid_a_workers_commit() {
+    for (role, text) in [
+        ("member", include_str!("../../../prompts/harness/run/role-member.md")),
+        (
+            "coordinator",
+            include_str!("../../../prompts/harness/run/role-coordinator.md"),
+        ),
+        ("solo", include_str!("../../../prompts/harness/run/role-solo.md")),
+    ] {
+        assert!(
+            text.contains("only its commit reaches you: never ask it to leave its edits uncommitted"),
+            "the {role}'s text does not say a worker always commits"
+        );
+    }
+}

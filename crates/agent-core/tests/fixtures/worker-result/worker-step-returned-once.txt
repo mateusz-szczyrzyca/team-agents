@@ -1,0 +1,5 @@
+Your request H35 to the workers is back with you: the worker's result does not serve step 5.3 of your plan.
+
+- the worker left files uncommitted that a commit does not hold: docs/configuration.md
+
+Do the step yourself. Do not send it to a worker again, in other words too.

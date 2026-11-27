@@ -112,4 +112,24 @@ mod worker_result_texts {
 
         assert_eq!(text, golden("worker-step-returned.txt"));
     }
+
+    // Rule: a step given back after one result says one result, and never speaks of a second result or a third worker.
+    #[test]
+    fn the_requester_is_told_the_step_is_back_after_one_result_without_a_second_or_a_third_try() {
+        let text = rendered(
+            TeamPrompt::WorkerStepReturnedOnce,
+            &[
+                ("request_id", "35"),
+                ("step", "5.3"),
+                (
+                    "reasons",
+                    "- the worker left files uncommitted that a commit does not hold: docs/configuration.md",
+                ),
+            ],
+        );
+
+        assert_eq!(text, golden("worker-step-returned-once.txt"));
+        assert!(!text.contains("neither"), "{text}");
+        assert!(!text.contains("third"), "{text}");
+    }
 }

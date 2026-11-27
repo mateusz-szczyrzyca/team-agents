@@ -129,6 +129,8 @@ pub enum TeamPrompt {
     WorkerGivenAgain,
     /// The message to a member that no result serves its step, which it does itself.
     WorkerStepReturned,
+    /// The message to a member that the one result of its request does not serve its step, which it does itself.
+    WorkerStepReturnedOnce,
     /// The step returned after bounded attempts supplied no result.
     WorkerInterruptedReturned,
     /// The request returned to its requester because no worker of the pool took it in time.
@@ -203,6 +205,7 @@ impl TeamPrompt {
         Self::WorkerResultConflict,
         Self::WorkerGivenAgain,
         Self::WorkerStepReturned,
+        Self::WorkerStepReturnedOnce,
         Self::WorkerInterruptedReturned,
         Self::WorkerWaitReturned,
         Self::NoticeTeamDone,
@@ -377,6 +380,11 @@ impl TeamPrompt {
             ),
             Self::WorkerGivenAgain => given_again_spec(),
             Self::WorkerStepReturned => step_returned_spec(),
+            Self::WorkerStepReturnedOnce => PromptSpec::new(
+                "harness/team/worker-step-returned-once.md",
+                Audience::Model,
+                &["request_id", "step", "reasons"],
+            ),
             Self::WorkerInterruptedReturned => PromptSpec::new(
                 "harness/team/worker-interrupted-returned.md",
                 Audience::Model,
