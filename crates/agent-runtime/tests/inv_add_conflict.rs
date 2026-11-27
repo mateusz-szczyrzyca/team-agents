@@ -49,6 +49,12 @@ mod tests {
             assert_eq!(stored.from_task, request.from_task);
             assert_eq!(stored.branch, request.branch);
             assert_eq!(stored.question, request.question);
+            let state_bytes = tokio::fs::read(bus.bus_dir().join("state.json")).await.unwrap();
+            let state: serde_json::Value = serde_json::from_slice(&state_bytes).unwrap();
+            let metadata = &state["investigations"][id.to_string()];
+            assert_eq!(metadata["repo"], serde_json::json!(request.repo));
+            assert_eq!(metadata["pr_url"], serde_json::json!(request.pr_url));
+            assert_eq!(metadata["pr_number"], serde_json::json!(request.pr_number));
             assert_eq!(
                 stored.file,
                 home.path()
