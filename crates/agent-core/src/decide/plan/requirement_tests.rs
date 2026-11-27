@@ -221,3 +221,16 @@ fn a_task_whose_first_run_started_before_stays_untied_when_a_later_run_starts() 
 
     assert!(!member.plan().unwrap().requirements_tied());
 }
+
+#[test]
+fn a_task_created_now_whose_plan_has_no_for_line_at_all_is_sent_back_for_every_step_not_given_up() {
+    let text = "1. Work\n[x] 1.1 One\n[x] 1.2 Two\n[-] 1.3 Skipped\n    Not needed.\n";
+    assert_eq!(
+        verdict(text, true, Some(&known())),
+        PlanVerdict::SendBack(PlanReason::NoRequirement {
+            without: vec![item("1.1"), item("1.2")],
+            unknown: Vec::new(),
+            known: known(),
+        })
+    );
+}
