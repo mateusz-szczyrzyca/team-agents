@@ -311,6 +311,27 @@ impl Owner {
             return self.fail_investigation(req, &format!("{end:?}"), Some(located)).await;
         }
         record.failed_with.push(located.agent.parse()?);
+        let requester = self
+            .parts
+            .state
+            .find_task(&req.from_task)
+            .and_then(|found| investigator_of(found.member));
+        let can_retry = self
+            .parts
+            .settings
+            .config
+            .investigators()
+            .keys()
+            .any(|candidate| !record.failed_with.contains(candidate) && requester != Some(candidate));
+        if !can_retry {
+            return self
+                .fail_investigation(
+                    req,
+                    "no other configured investigator can answer this request",
+                    Some(located),
+                )
+                .await;
+        }
         let task = record.task.clone();
         self.parts
             .state
