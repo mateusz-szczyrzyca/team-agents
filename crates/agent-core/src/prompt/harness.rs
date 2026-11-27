@@ -28,6 +28,8 @@ pub enum HarnessPrompt {
     RoleReviewer,
     /// An investigation request given to an investigator, `harness/run/role-investigation.md`.
     InvestigationRequest,
+    /// A coordinator asks for a complete split proposal for one item.
+    InvestigationSplit,
     /// The brief of the task list: the text before its first feature.
     Brief,
     /// The item an agent is given: its number, title and description.
@@ -180,6 +182,7 @@ impl HarnessPrompt {
         Self::RoleWorker,
         Self::RoleReviewer,
         Self::InvestigationRequest,
+        Self::InvestigationSplit,
         Self::Brief,
         Self::Item,
         Self::ItemExpected,
@@ -269,6 +272,11 @@ impl HarnessPrompt {
                 "harness/run/role-investigation.md",
                 Audience::Model,
                 &["investigation_id", "from_agent", "branch", "question", "context"],
+            ),
+            Self::InvestigationSplit => PromptSpec::new(
+                "harness/run/role-investigation-split.md",
+                Audience::Model,
+                &["item", "item_text", "part_limit", "question"],
             ),
             Self::Brief => PromptSpec::new("harness/run/brief.md", Audience::Model, &["brief"]),
             Self::Item => PromptSpec::new(

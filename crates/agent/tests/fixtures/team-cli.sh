@@ -300,6 +300,14 @@ fi
 init
 read_messages
 case $action in
+  inv-split)
+    team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
+    task=$(basename "$PWD")
+    branch=$(git symbolic-ref --short HEAD)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"request_investigation","arguments":{"kind":"split","item":"1.1","question":"Propose a complete split"}}}' |
+      "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" --repo example --branch "$branch" --worktree "$PWD" > .fake-split-reply
+    result 'Asked split.\nSTATUS: SLEEPING'
+    ;;
   inv-add:*)
     branch=$(git symbolic-ref --short HEAD)
     "$bus_bin" inv-add --dir "$bus_dir" --from-agent "$name" --from-task "$(basename "$PWD")" --repo example --branch "$branch" --tasks-dir "$home/tasks" --question "${action#inv-add:}" --kind "" > /dev/null

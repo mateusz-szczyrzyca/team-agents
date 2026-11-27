@@ -129,6 +129,26 @@
      "name": "MissingQuestion",
      "class": "InvalidArgument",
      "doc": "the question is missing"
+    },
+    {
+     "name": "NotLead",
+     "class": "Permission",
+     "doc": "a split or conflict request was not made by the team lead"
+    },
+    {
+     "name": "MissingItem",
+     "class": "InvalidArgument",
+     "doc": "a split or conflict request has no item"
+    },
+    {
+     "name": "InvalidItem",
+     "class": "InvalidArgument",
+     "doc": "a split or conflict item is not two positive 16-bit numbers without leading zeros"
+    },
+    {
+     "name": "InvalidKind",
+     "class": "InvalidArgument",
+     "doc": "the request kind is unknown"
     }
    ]
   },

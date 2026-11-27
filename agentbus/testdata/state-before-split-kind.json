@@ -1,0 +1,55 @@
+{
+  "next_id": 42,
+  "agents": {
+    "claude-1": {"agent": "claude-1", "task": "20261015-101500-team-claude-1", "repo": "firmware", "branch": "agents/claude-1/20261015-101500",
+      "worktree": "/home/dev/agents/worktrees/firmware/20261015-101500-claude-1", "status": "flashing", "started": "2026-10-15 10:15:00",
+      "last_seen": "2026-10-15 11:02:13", "pid": 4242}
+  },
+  "reservations": {
+    "probe-1": {"resource": "probe-1", "agent": "claude-1", "task": "20261015-101500-team-claude-1", "note": "flash", "since": "2026-10-15 11:00:00"}
+  },
+  "cursors": {"claude-1": 40, "codex-1": 38},
+  "next_inv_id": 2,
+  "investigations": {
+    "1": {"id": 1, "from_agent": "codex-1", "from_task": "20261014-090000-codex-1", "repo": "firmware", "branch": "agents/codex-1/20261014-090000",
+      "worktree": "/home/dev/agents/worktrees/firmware/20261014-090000-codex-1", "question": "Why does DMA stall?", "context": "",
+      "status": "done", "created": "2026-10-14 09:30:00", "started": "2026-10-14 09:31:00", "finished": "2026-10-14 10:10:00",
+      "inv_task": "20261014-093100-inv-opus", "file": ".agents/investigations/1.md", "summary": "channel reused",
+      "decision": "move UART to channel 3", "justification": "simplest", "decided_at": "2026-10-14 10:20:00"},
+    "2": {"id": 2, "from_agent": "team", "from_task": "20261013-080000-team", "repo": "firmware", "branch": "agents/claude-1/20261013-080000",
+      "worktree": "", "question": "Review PR #7", "context": "", "status": "rejected", "created": "2026-10-13 12:00:00",
+      "file": "", "kind": "review", "pr_url": "https://github.com/example/firmware/pull/7", "pr_number": 7}
+  },
+  "teams": {
+    "20261013-080000-team": {"id": "20261013-080000-team", "repo": "firmware", "lead": "claude-1", "wake_cmd": "/home/dev/.local/bin/agent",
+      "home": "/home/dev/agents", "done": true, "created": "2026-10-13 08:00:00",
+      "members": {
+        "claude-1": {"agent": "claude-1", "task": "20261013-080000-claude-1", "branch": "agents/claude-1/20261013-080000",
+          "worktree": "/home/dev/agents/worktrees/firmware/20261013-080000-claude-1", "state": "done", "tier": ""},
+        "openrouter-haiku": {"agent": "openrouter-haiku", "task": "20261013-080000-openrouter-haiku", "branch": "agents/openrouter-haiku/20261013-080000",
+          "worktree": "/home/dev/agents/worktrees/firmware/20261013-080000-openrouter-haiku", "state": "done", "tier": "worker", "provider": "openrouter"}
+      },
+      "quiz": {"question": "How many bits in a byte?", "asked_by": "claude-1", "asked_at": "2026-10-13 08:05:00",
+        "answers": {"openrouter-haiku": {"answer": "8", "at": "2026-10-13 08:05:40", "secs": 40}}},
+      "board": {
+        "B1": {"id": "B1", "title": "list GPIO users", "details": "grep", "level": "easy", "status": "done", "creator": "claude-1",
+          "assignee": "openrouter-haiku", "result": "3 files", "updated": "2026-10-13 08:20:00"}
+      },
+      "next_board_id": 1},
+    "20261015-101500-team": {"id": "20261015-101500-team", "repo": "firmware", "lead": "", "wake_cmd": "/home/dev/.local/bin/agent",
+      "home": "/home/dev/agents", "done": false, "created": "2026-10-15 10:15:00",
+      "members": {
+        "claude-1": {"agent": "claude-1", "task": "20261015-101500-team-claude-1", "branch": "agents/claude-1/20261015-101500",
+          "worktree": "/home/dev/agents/worktrees/firmware/20261015-101500-claude-1", "state": "active", "tier": ""},
+        "codex-1": {"agent": "codex-1", "task": "20261015-101500-team-codex-1", "branch": "agents/codex-1/20261015-101500",
+          "worktree": "/home/dev/agents/worktrees/firmware/20261015-101500-codex-1", "state": "sleeping", "tier": ""}
+      },
+      "next_board_id": 0}
+  },
+  "next_helper_id": 1,
+  "helpers": {
+    "1": {"id": 1, "from": "codex-1", "from_task": "20261014-090000-codex-1", "repo": "firmware", "branch": "agents/codex-1/20261014-090000",
+      "worktree": "/home/dev/agents/worktrees/firmware/20261014-090000-codex-1", "request": "count TODOs", "context": "",
+      "status": "done", "worker": "openrouter-haiku", "helper_task": "20261014-091000-openrouter-haiku", "summary": "12", "created": "2026-10-14 09:05:00"}
+  }
+}

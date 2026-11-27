@@ -254,10 +254,8 @@ const (
 		"(b) wait — call request_investigation again with wait_if_full=true and end your turn."
 )
 
-// requestInvestigation (MCP request_investigation) queues a request for the investigators. When the queue
-// is full the request is either parked in the waiting room (wait=true) or rejected, and the agent must
-// record a decision. A rejected request without a decision is reused on retry.
-func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
+// requestInvestigationKind parses optional MCP arguments while preserving legacy question calls.
+func (s *Server) requestInvestigationKind(question, context string, wait bool, kind, item string) (string, *RequestInvestigationError) {
 	if s.investigations == investigationsOff {
 		return "", opErr(RequestInvestigationNotAllowed, "%s", investigationNotAllowedMessage)
 	}
@@ -268,8 +266,27 @@ func (s *Server) requestInvestigation(question, context string, wait bool) (stri
 	if question == "" {
 		return "", opErr(RequestInvestigationMissingQuestion, "%s", missing("question"))
 	}
+	if kind == "question" {
+		kind = ""
+	}
+	k, verr := parseEnum[InvestigationKind](kind, "investigation kind")
+	if verr != nil {
+		return "", fromValue(RequestInvestigationInvalidKind, verr)
+	}
+	item = strings.TrimSpace(item)
 	var msg string
 	err := transact(s.bus, RequestInvestigationStorage, func(st *State) *RequestInvestigationError {
+		if k == KindSplit || k == KindConflict {
+			if _, check := s.requireLead(st); check != leadOK {
+				return opErr(RequestInvestigationNotLead, "only the team's lead can request a split or conflict investigation")
+			}
+			if item == "" {
+				return opErr(RequestInvestigationMissingItem, "%s", missing("item"))
+			}
+			if !validInvestigationItem(item) {
+				return opErr(RequestInvestigationInvalidItem, "item must be FEATURE.ITEM, with each number between 1 and 65535 and no leading zeros")
+			}
+		}
 		s.touch(st)
 		s.bus.promote(st, s.queueMax)
 
@@ -305,6 +322,7 @@ func (s *Server) requestInvestigation(question, context string, wait bool) (stri
 			inv.record(recordRetried(Now(), wait))
 		}
 		inv.Question, inv.Context = question, strings.TrimSpace(context)
+		inv.Kind, inv.Item = k, item
 		inv.record(recordQuestion(inv.Question, inv.Context))
 
 		switch {
@@ -397,6 +415,8 @@ func invToolDefs(role Role) []map[string]any {
 				"the result arrives automatically. If the queue is full: solve it yourself (record_decision with a justification) or retry with wait_if_full=true.",
 			"inputSchema": map[string]any{"type": "object", "required": []string{"question"}, "properties": map[string]any{
 				"question":     str("The specific question / problem to investigate"),
+				"kind":         map[string]any{"type": "string", "enum": []string{"question", "split", "conflict"}, "default": "question", "description": "Split and conflict requests are for the team lead only"},
+				"item":         str("Task-list item; required for split and conflict requests"),
 				"context":      str("What you already know and checked, hypotheses, relevant files, commands, logs"),
 				"wait_if_full": map[string]any{"type": "boolean", "description": "true = wait in the waiting room when the queue is full"},
 			}},
@@ -604,6 +624,9 @@ func cmdInvAdd(args []string) {
 	invSlots = *slots
 	k, verr := parseEnum[InvestigationKind](*kind, "investigation kind")
 	exitOn(fromValue(CmdInvAddInvalidKind, verr).asError())
+	if k == KindSplit || k == KindConflict {
+		exitOn(fromValue(CmdInvAddInvalidKind, valueErr("inv-add does not support kind %q; use request_investigation with an item", k)).asError())
+	}
 	b := &Bus{dir: *dir}
 	var out cliWriter
 	exitOn(transact(b, CmdInvAddStorage, func(st *State) *CmdInvAddError {
@@ -662,4 +685,27 @@ func cmdCancelPending(args []string) {
 		out.printf("cancelled: investigations/reviews %d, worker requests %d, teams %d\n", ev.Investigations, ev.Requests, ev.Teams)
 		return fromStorage(CmdCancelPendingStorage, out.err)
 	}).asError())
+}
+
+// validInvestigationItem matches the Rust ItemId boundary for structured requests.
+func validInvestigationItem(item string) bool {
+	parts := strings.Split(item, ".")
+	if len(parts) != 2 {
+		return false
+	}
+	for _, part := range parts {
+		if len(part) == 0 || len(part) > 5 || part[0] == '0' {
+			return false
+		}
+		for _, digit := range part {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+		}
+		number, err := strconv.ParseUint(part, 10, 16)
+		if err != nil || number == 0 {
+			return false
+		}
+	}
+	return true
 }

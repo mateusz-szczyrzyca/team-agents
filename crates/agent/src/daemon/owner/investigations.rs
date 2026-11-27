@@ -228,6 +228,11 @@ impl Owner {
                 started: now,
                 failed_with,
             });
+        if matches!(req.kind, InvestigationKind::Split { .. }) {
+            next.team_mut(team_id)
+                .ok_or_else(|| OwnerError::LostTeam { team: team_id.clone() })?
+                .record_task_allocation(chosen.clone(), task.clone(), now);
+        }
         self.parts.state = next;
         self.save().await?;
         self.parts
