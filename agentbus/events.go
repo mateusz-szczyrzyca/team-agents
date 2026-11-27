@@ -20,6 +20,8 @@ import (
 type MessageKind string
 
 const (
+	KindFindingAdded           MessageKind = "finding_added"           // A repository finding was added.
+	KindFindingResolved        MessageKind = "finding_resolved"        // A repository finding was resolved.
 	KindChat                   MessageKind = "chat"                    // free text from an agent or a human
 	KindReserved               MessageKind = "reserved"                // a resource was reserved
 	KindReleased               MessageKind = "released"                // a resource was released by its holder
@@ -58,7 +60,7 @@ const (
 // Valid reports whether k is a defined kind ("" is accepted for messages written by older versions).
 func (k MessageKind) Valid() bool {
 	switch k {
-	case "", KindChat, KindReserved, KindReleased, KindAutoReleased, KindForcedRelease,
+	case KindFindingAdded, KindFindingResolved, "", KindChat, KindReserved, KindReleased, KindAutoReleased, KindForcedRelease,
 		KindInvestigationRequested, KindInvestigationPromoted, KindInvestigationStarted, KindInvestigationResumed,
 		KindInvestigationWaiting, KindInvestigationRequeued, KindInvestigationFinished, KindDecisionRecorded,
 		KindReviewQueued, KindTeamCreated, KindTeamResumed, KindTeamFinished, KindCoordinatorClaimed,
@@ -567,3 +569,27 @@ func (e memberReplacedEvent) Kind() MessageKind { return KindMemberReplaced }
 func (e memberReplacedEvent) Text() string {
 	return fmt.Sprintf("%s was replaced by %s; send to %s from now on.", e.From, e.To, e.To)
 }
+
+// EventFindingAdded announces a finding to the adding task's team.
+type EventFindingAdded struct {
+	ID            string      `json:"id"`    // Stable finding ID.
+	KindOfFinding FindingKind `json:"kind"`  // Category of the finding.
+	Paths         []string    `json:"paths"` // Files or directories concerned.
+	TextOfFinding string      `json:"text"`  // Note for later agents.
+}
+
+func (e EventFindingAdded) Kind() MessageKind { return KindFindingAdded } // Kind implements busEvent.
+func (e EventFindingAdded) Text() string {
+	return fmt.Sprintf("FINDING %s [%s] %s — %s", e.ID, e.KindOfFinding, strings.Join(e.Paths, ", "), e.TextOfFinding)
+} // Text implements busEvent.
+
+// EventFindingResolved announces why a finding was closed.
+type EventFindingResolved struct {
+	ID     string `json:"id"`     // Finding that was resolved.
+	Reason string `json:"reason"` // Explanation of the resolution.
+}
+
+func (e EventFindingResolved) Kind() MessageKind { return KindFindingResolved } // Kind implements busEvent.
+func (e EventFindingResolved) Text() string {
+	return fmt.Sprintf("FINDING %s resolved — %s", e.ID, e.Reason)
+} // Text implements busEvent.

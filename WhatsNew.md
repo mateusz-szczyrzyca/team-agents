@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agentbus — 27.11.2026 — PR pending
+
+### New features
+- [agentbus] Agents can record findings about repository files with `finding_add`, close them with `finding_resolve`, and list open notes with `agentbus findings --repo <repo> --json`.
+
 ## agent 0.142.0 · agent-core 0.139.0 · agent-runtime 0.128.0 — 27.11.2026 — PR pending
 
 ### Enhancements

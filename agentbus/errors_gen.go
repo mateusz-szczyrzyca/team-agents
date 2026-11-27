@@ -2799,3 +2799,105 @@ func (c CmdHelperOwnedCause) info() causeInfo { return cmdHelperOwnedCauses[c] }
 
 // String returns the cause name.
 func (c CmdHelperOwnedCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- finding_add
+
+// FindingAddCause is a reason why the finding_add operation failed.
+type FindingAddCause int
+
+const (
+	FindingAddMissingText  FindingAddCause = iota // the finding text is missing [InvalidArgument]
+	FindingAddTextTooLong                         // the finding text exceeds 600 characters [InvalidArgument]
+	FindingAddInvalidKind                         // the finding kind is unknown [InvalidArgument]
+	FindingAddMissingPaths                        // this finding kind requires paths [InvalidArgument]
+	FindingAddInvalidPath                         // a finding path is invalid [InvalidArgument]
+	FindingAddTooManyPaths                        // more than ten paths were supplied [InvalidArgument]
+	FindingAddTooManyOpen                         // the task already has ten open findings [Conflict]
+	FindingAddStorage                             // the shared state or a file could not be read or written [Storage]
+)
+
+// FindingAddError is the error of the finding_add operation.
+type FindingAddError = OpError[FindingAddCause]
+
+// findingAddCauses describes the FindingAddCause values (same order as the constants).
+var findingAddCauses = [...]causeInfo{
+	{"MissingText", ClassInvalidArgument},
+	{"TextTooLong", ClassInvalidArgument},
+	{"InvalidKind", ClassInvalidArgument},
+	{"MissingPaths", ClassInvalidArgument},
+	{"InvalidPath", ClassInvalidArgument},
+	{"TooManyPaths", ClassInvalidArgument},
+	{"TooManyOpen", ClassConflict},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (FindingAddCause) op() string { return "finding_add" }
+
+// info implements opCause.
+func (c FindingAddCause) info() causeInfo { return findingAddCauses[c] }
+
+// String returns the cause name.
+func (c FindingAddCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- finding_resolve
+
+// FindingResolveCause is a reason why the finding_resolve operation failed.
+type FindingResolveCause int
+
+const (
+	FindingResolveMissingId      FindingResolveCause = iota // the finding id is missing [InvalidArgument]
+	FindingResolveMissingReason                             // the resolution reason is missing [InvalidArgument]
+	FindingResolveReasonTooLong                             // the reason exceeds 300 characters [InvalidArgument]
+	FindingResolveUnknownFinding                            // the finding does not exist [NotFound]
+	FindingResolveStorage                                   // the shared state or a file could not be read or written [Storage]
+)
+
+// FindingResolveError is the error of the finding_resolve operation.
+type FindingResolveError = OpError[FindingResolveCause]
+
+// findingResolveCauses describes the FindingResolveCause values (same order as the constants).
+var findingResolveCauses = [...]causeInfo{
+	{"MissingId", ClassInvalidArgument},
+	{"MissingReason", ClassInvalidArgument},
+	{"ReasonTooLong", ClassInvalidArgument},
+	{"UnknownFinding", ClassNotFound},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (FindingResolveCause) op() string { return "finding_resolve" }
+
+// info implements opCause.
+func (c FindingResolveCause) info() causeInfo { return findingResolveCauses[c] }
+
+// String returns the cause name.
+func (c FindingResolveCause) String() string { return c.info().name }
+
+// ---------------------------------------------------------------- findings
+
+// FindingsCause is a reason why the findings operation failed.
+type FindingsCause int
+
+const (
+	FindingsMissingRepo FindingsCause = iota // the repository is missing [InvalidArgument]
+	FindingsStorage                          // the shared state or a file could not be read or written [Storage]
+)
+
+// FindingsError is the error of the findings operation.
+type FindingsError = OpError[FindingsCause]
+
+// findingsCauses describes the FindingsCause values (same order as the constants).
+var findingsCauses = [...]causeInfo{
+	{"MissingRepo", ClassInvalidArgument},
+	{"Storage", ClassStorage},
+}
+
+// op implements opCause.
+func (FindingsCause) op() string { return "findings" }
+
+// info implements opCause.
+func (c FindingsCause) info() causeInfo { return findingsCauses[c] }
+
+// String returns the cause name.
+func (c FindingsCause) String() string { return c.info().name }
