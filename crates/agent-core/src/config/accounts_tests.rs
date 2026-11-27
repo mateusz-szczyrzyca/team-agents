@@ -326,3 +326,47 @@ fn secret_marker_not_in_config_errors() {
         assert!(!text.contains(MARKER), "{text}");
     }
 }
+
+#[test]
+fn an_account_name_of_64_bytes_loads_and_one_of_65_is_refused() {
+    let longest = "a".repeat(64);
+    let too_long = "a".repeat(65);
+
+    assert_eq!(longest.parse::<AccountName>().unwrap().to_string(), longest);
+    let refused = too_long.parse::<AccountName>().unwrap_err();
+    assert_eq!(refused.rule, ValueRule::TooLong { max: 64 });
+    assert_eq!(refused.value, too_long);
+}
+
+#[test]
+fn an_owner_of_32_bytes_loads_and_one_of_33_is_refused() {
+    let longest = "a".repeat(32);
+    let too_long = "a".repeat(33);
+
+    assert_eq!(longest.parse::<OwnerName>().unwrap().to_string(), longest);
+    let refused = too_long.parse::<OwnerName>().unwrap_err();
+    assert_eq!(refused.rule, ValueRule::TooLong { max: 32 });
+    assert_eq!(refused.value, too_long);
+}
+
+#[test]
+fn an_env_value_of_4096_bytes_loads_and_one_of_4097_is_refused() {
+    let longest = "v".repeat(4096);
+    let too_long = "v".repeat(4097);
+
+    assert_eq!(longest.parse::<EnvValue>().unwrap().to_string(), longest);
+    let refused = too_long.parse::<EnvValue>().unwrap_err();
+    assert_eq!(refused.rule, ValueRule::TooLong { max: 4096 });
+}
+
+#[test]
+fn an_env_value_of_the_longest_size_loads_from_the_file_and_a_longer_one_is_refused_there() {
+    let longest = format!("CLAUDE_CONFIG_DIR = \"{}\"", "v".repeat(4096));
+    let too_long = format!("CLAUDE_CONFIG_DIR = \"{}\"", "v".repeat(4097));
+
+    assert!(Config::from_toml_str(&with_account(&format!("env = {{ {longest} }}"))).is_ok());
+    assert!(matches!(
+        Config::from_toml_str(&with_account(&format!("env = {{ {too_long} }}"))).unwrap_err(),
+        ConfigError::Parse(_)
+    ));
+}
