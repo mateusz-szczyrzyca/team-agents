@@ -1343,6 +1343,8 @@ type CmdInvAddCause int
 
 const (
 	CmdInvAddInvalidKind CmdInvAddCause = iota // --kind is not an investigation kind [InvalidArgument]
+	CmdInvAddMissingItem                       // a conflict request has no --item [InvalidArgument]
+	CmdInvAddInvalidItem                       // --item is invalid or supplied for another kind [InvalidArgument]
 	CmdInvAddStorage                           // the shared state or a file could not be read or written [Storage]
 )
 
@@ -1352,6 +1354,8 @@ type CmdInvAddError = OpError[CmdInvAddCause]
 // cmdInvAddCauses describes the CmdInvAddCause values (same order as the constants).
 var cmdInvAddCauses = [...]causeInfo{
 	{"InvalidKind", ClassInvalidArgument},
+	{"MissingItem", ClassInvalidArgument},
+	{"InvalidItem", ClassInvalidArgument},
 	{"Storage", ClassStorage},
 }
 
