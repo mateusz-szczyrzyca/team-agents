@@ -1338,8 +1338,9 @@ three tools; calls to them are refused. `agentbus serve --investigations=off|on`
 option defaults to `on` with the legacy role checks, so an older daemon with a newer bus keeps its previous behavior.
 Explicit `on` grants the tools to a team task regardless of its agent tier.
 
-Use `request_investigation` only when an investigator would help. Commit first: the investigator starts from your
-branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with `STATUS: SLEEPING`;
+Use `request_investigation` only when an investigator would help. Commit first: question and split investigators
+start from your branch tip. Accepted, waiting-room and already-pending replies ask you to end your turn with
+`STATUS: SLEEPING`;
 the answer arrives as a message, which wakes the requester.
 Coordinators and members ask an investigator before writing a technical question for the human, following the
 exceptions in their role prompts.
@@ -1350,7 +1351,16 @@ The optional `kind` argument defaults to `question`. Only the team's coordinator
 and both require an `item` argument. A split investigator reads the task-list item and code, then returns a complete
 proposal in a JSON block with parts within the configured line limit. The assignment records a task-allocation
 activity. The coordinator saves the answer's JSON as its own `split-proposal-<item>.json` and submits it through the
-normal split checks; the investigator writes no proposal file for it. Conflict execution is not available yet.
+normal split checks; the investigator writes no proposal file for it.
+
+A coordinator can request a conflict investigation with `kind: "conflict"` and `item: "5.1"`. The daemon fetches
+the item's open pull request branch and starts the investigator detached at its current remote tip. The investigator
+fetches and merges the configured base locally, resolves conflicts and runs affected tests; it never pushes. Its
+answer gives the coordinator exact commands, resolved hunks (or complete files when shorter) and the version to set.
+An item without an open pull request fails the request and notifies the coordinator. Answers and execution failures
+use the same delivery as other investigations. Conflict requests are explicit; exhausted merge passes still ask the
+human as before.
+
 Older bus states without these kinds or the optional item still load; legacy question and review kinds retain
 their meaning.
 

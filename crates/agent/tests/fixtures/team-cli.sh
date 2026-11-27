@@ -304,6 +304,17 @@ fi
 init
 read_messages
 case $action in
+  inv-conflict)
+    while [[ ! -f .fake-conflict-ready ]]; do
+      sleep 0.05
+    done
+    team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' .fake-prompt-1 | head -n 1)
+    task=$(basename "$PWD")
+    branch=$(git symbolic-ref --short HEAD)
+    printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"request_investigation","arguments":{"kind":"conflict","item":"1.1","question":"Resolve this merge conflict"}}}' |
+      "$bus_bin" serve --agent "$name" --task "$task" --team "$team" --dir "$bus_dir" --home "$home" --repo example --branch "$branch" --worktree "$PWD" > .fake-conflict-reply
+    result 'Asked conflict.\nSTATUS: SLEEPING'
+    ;;
   inv-split)
     team=$(grep -o 'team-[0-9]\{8\}-[0-9]\{6\}-[a-z0-9]\{4\}' <<< "$prompt" | head -n 1)
     task=$(basename "$PWD")
