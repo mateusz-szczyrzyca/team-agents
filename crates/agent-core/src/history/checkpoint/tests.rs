@@ -494,3 +494,15 @@ fn the_free_texts_of_a_checkpoint_are_the_parts_of_its_content() {
 fn a_checkpoint_without_content_has_no_free_text() {
     assert_eq!(checkpoint(None).texts_mut().len(), 0);
 }
+
+#[test]
+fn a_checkpoint_of_an_earlier_version_with_no_job_reads_as_the_checkpoint_of_an_item() {
+    let json = r#"{"event":"checkpoint","round":"round-20261126-180909-vet6","task":"task-20261126-180909-yiy0","tier":"normal","cause":"commit","draft":false,"phase":"in_progress"}"#;
+
+    let HistoryEvent::Checkpoint { job, .. } = serde_json::from_str::<HistoryEvent>(json).unwrap() else {
+        panic!("not a checkpoint");
+    };
+
+    assert_eq!(job, CheckpointJob::Item);
+    assert_eq!(CheckpointJob::default(), CheckpointJob::Item);
+}

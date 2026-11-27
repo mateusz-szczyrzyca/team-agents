@@ -129,3 +129,35 @@ fn the_checkpoints_of_the_jobs_of_a_round_are_listed_oldest_first_without_the_it
     let causes: Vec<CheckpointCause> = found.iter().map(|checkpoint| checkpoint.cause).collect();
     assert_eq!(causes, [CheckpointCause::RequestStarted, CheckpointCause::Commit]);
 }
+
+#[test]
+fn a_checkpoint_written_before_the_jobs_with_no_job_is_the_checkpoint_of_an_item_and_no_job_is_listed() {
+    let (_dir, path) = database();
+    let payload = format!(
+        r#"{{"event":"checkpoint","round":"{ROUND}","task":"{WORKER}","tier":"normal","cause":"commit","draft":false,"phase":"in_progress"}}"#
+    );
+    let raw = Connection::open(&path).unwrap();
+    raw.execute(
+        "INSERT INTO history_records (kind, key, at, team, payload, cut) VALUES ('checkpoint', NULL, '2026-11-26T10:00:00Z', 'team-20261126-100000-t0t0', ?1, '')",
+        rusqlite::params![payload],
+    )
+    .unwrap();
+    let sequence = raw.last_insert_rowid();
+    raw.execute(
+        "INSERT INTO history_record_rounds (sequence, position, round) VALUES (?1, 1, ?2)",
+        rusqlite::params![sequence, ROUND],
+    )
+    .unwrap();
+    drop(raw);
+    let reader = Reader::open(&path).unwrap();
+    let round: agent_core::ids::RoundId = ROUND.parse().unwrap();
+
+    let jobs = reader.job_checkpoints_of_round(&round).unwrap();
+    let last = reader
+        .last_checkpoint_of_round(&round, &WORKER.parse().unwrap())
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(jobs, Vec::new());
+    assert_eq!(last.job, agent_core::history::CheckpointJob::Item);
+}
