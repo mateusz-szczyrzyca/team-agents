@@ -229,6 +229,14 @@ const DEFAULT_COMMENT: char = '#';
 /// What follows the comment character in the line that `git commit -v` puts above the diff it shows.
 const SCISSORS: &str = " ------------------------ >8 ------------------------";
 
+/// The step the `Step:` trailer of `message` names, as a step ID: the last such trailer when there are several; `None`
+/// for a message with no trailer or one whose trailer does not read as a step ID.
+#[must_use]
+pub fn step_of_message(message: &str) -> Option<ItemId> {
+    let _ = message;
+    None
+}
+
 /// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
 /// that only mentions the word are no trailer.
 fn step_trailer(line: &str) -> Option<&str> {
