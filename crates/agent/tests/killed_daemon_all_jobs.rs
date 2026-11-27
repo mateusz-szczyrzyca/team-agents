@@ -419,6 +419,11 @@ git commit -qm 'Complete retained work'
         world.run();
         let jobs = world.jobs_going();
         let task_of = |wanted: CheckpointJob| jobs.iter().find(|(_, job)| *job == wanted).unwrap().0.as_str();
+        let count = |wanted: CheckpointJob| jobs.iter().filter(|(_, job)| *job == wanted).count();
+        assert_eq!(
+            (count(CheckpointJob::WorkerRequest), count(CheckpointJob::Investigation)),
+            (1, 1)
+        );
         for (task, _) in &jobs {
             assert!(
                 world.daemon_started(task).is_empty(),
