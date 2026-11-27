@@ -110,8 +110,8 @@ pub fn step_refusal_text(texts: &HarnessPrompts, refusal: &StepRefusal) -> Resul
     };
     let steps: Vec<String> = steps.iter().map(ToString::to_string).collect();
     let values = Variables::new()
-        .with("named", &named)
-        .and_then(|values| values.with("steps", &quoted(&steps)))
+        .with("named", named)
+        .and_then(|values| values.with("steps", quoted(&steps)))
         .map_err(RefusalTextError::Variable)?;
     texts
         .render(HarnessPrompt::CommitRefusedStep, &values)
