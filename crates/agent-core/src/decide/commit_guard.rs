@@ -175,16 +175,56 @@ pub fn judge_step(plan: &Plan, message: &str) -> StepVerdict {
 }
 
 /// The lines of the trailer block of `message`: its last paragraph, after the blank lines and the comment lines of the
-/// editor at its end. A `Step:` line that the body goes on after is not in it.
+/// editor at its end, and above the scissors line of `git commit -v`. A paragraph that holds a line which is no trailer
+/// (and no folded line of one) is body, so a `Step:` line in it is not in the block.
 fn trailer_block(message: &str) -> impl Iterator<Item = &str> {
-    let lines: Vec<&str> = message
-        .lines()
+    let mut lines: Vec<&str> = message.lines().collect();
+    let comment = cut_at_scissors(&mut lines);
+    let mut block: Vec<&str> = lines
+        .into_iter()
         .rev()
-        .skip_while(|line| line.trim().is_empty() || line.starts_with('#'))
+        .skip_while(|line| line.trim().is_empty() || line.starts_with(comment))
         .take_while(|line| !line.trim().is_empty())
         .collect();
-    lines.into_iter().rev()
+    block.reverse();
+    if !block.iter().enumerate().all(|(index, line)| is_trailer_line(line, index)) {
+        block.clear();
+    }
+    block.into_iter()
 }
+
+/// Removes from `lines` the scissors line of `git commit -v` and everything under it, and returns the comment
+/// character that line starts with: the character of the editor's comment lines. Without such a line `lines` is whole
+/// and the character is `#`.
+fn cut_at_scissors(lines: &mut Vec<&str>) -> char {
+    let found = lines.iter().enumerate().find_map(|(index, line)| {
+        let mut chars = line.chars();
+        let comment = chars.next()?;
+        (chars.as_str() == SCISSORS).then_some((index, comment))
+    });
+    let Some((index, comment)) = found else {
+        return DEFAULT_COMMENT;
+    };
+    lines.truncate(index);
+    comment
+}
+
+/// Whether `line`, the `index`th of a trailer block, is a trailer (`Token: value`) or, after the first, the folded
+/// continuation of one that starts with white space.
+fn is_trailer_line(line: &str, index: usize) -> bool {
+    if index > 0 && line.starts_with(char::is_whitespace) {
+        return true;
+    }
+    line.split_once(':').is_some_and(|(token, _)| {
+        !token.is_empty() && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+    })
+}
+
+/// The comment character of git's message file when the configuration does not say another.
+const DEFAULT_COMMENT: char = '#';
+
+/// What follows the comment character in the line that `git commit -v` puts above the diff it shows.
+const SCISSORS: &str = " ------------------------ >8 ------------------------";
 
 /// What a trailer line names: the text after `Step:` when `line` starts with it. A comment of the editor and a line
 /// that only mentions the word are no trailer.
