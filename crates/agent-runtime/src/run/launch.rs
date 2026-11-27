@@ -190,9 +190,6 @@ pub(super) async fn prepare(
         })?;
     let hooks = guard_hooks(parts, job, &run_dir).await;
     let account = account.map(|name| account_variables(parts, name)).transpose()?;
-    if let Some(variables) = &account {
-        variables.log(&job.task, &job.run);
-    }
     let mut env = base_agent_environment(
         &parts.secrets,
         account.as_ref(),
@@ -314,8 +311,6 @@ pub async fn keep_out_of_git(worktree: &AbsolutePath, patterns: &[String]) -> Re
 
 /// The variables of the account an agent runs with: its `env` of `agents.toml` and its secrets of `secrets.toml`.
 struct AccountVariables<'a> {
-    /// The account.
-    name: &'a AccountName,
     /// The variables that are not secret.
     env: &'a BTreeMap<EnvName, EnvValue>,
     /// The secret variables; they win over `env` of the same name.
@@ -330,7 +325,6 @@ fn account_variables<'a>(parts: &'a EngineParts, name: &'a AccountName) -> Resul
         .get(name)
         .ok_or_else(|| RunError::UnknownAccount { account: name.clone() })?;
     Ok(AccountVariables {
-        name,
         env: account.env(),
         secrets: parts.secrets.account_env().get(name),
     })
@@ -345,24 +339,6 @@ impl AccountVariables<'_> {
         for (name, secret) in self.secrets.into_iter().flatten() {
             env.insert(name.clone(), secret.expose().to_owned());
         }
-    }
-
-    /// Logs which account the run has and the names of the variables it adds, never a value.
-    fn log(&self, task: &agent_core::ids::TaskId, run: &agent_core::ids::RunId) {
-        let names: Vec<&str> = self
-            .env
-            .keys()
-            .chain(self.secrets.into_iter().flat_map(BTreeMap::keys))
-            .map(EnvName::as_str)
-            .collect();
-        tracing::debug!(
-            event = LogEvent::RunAccountEnvironment.as_str(),
-            task = %task,
-            run = %run,
-            account = %self.name,
-            variables = %names.join(","),
-            "the run gets the environment of its account"
-        );
     }
 }
 

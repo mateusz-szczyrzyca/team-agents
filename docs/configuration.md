@@ -126,8 +126,7 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
   both: loading the home refuses the pair, naming the account and the variable and never a value. A
   `[account_env.NAME]` without an `[accounts.NAME]` is refused too.
 - `max_runs` and `hold_at` are unknown keys until the versions that bring them.
-- The run of an agent with an account logs `run_account_environment` at `debug` level: the account and the names of the
-  variables it adds, never a value. An agent without an account gets the environment it always got.
+- An agent without an account gets the environment it always got.
 - The values of `[account_env.NAME]` are cut from `agent debug` bundles and from the history, like every secret.
 
 The harness knows no provider: it only sets variables. Each provider reads its login from a place you can point it

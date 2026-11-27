@@ -111,8 +111,6 @@ impl TryFrom<String> for LogLevel {
 pub enum LogEvent {
     /// A line of a model CLI's output cannot be read as its event format.
     CliOutputUnreadable,
-    /// A run gets the environment of its account: the account and the names of the variables it adds, never a value.
-    RunAccountEnvironment,
     /// A model CLI run cannot start, ends without reporting a status or a reviewer's verdict, or fails.
     RunEndedWithoutStatus,
     /// A first failed run without a tool call is queued once in a new session.
@@ -361,9 +359,7 @@ impl LogEvent {
             | Self::InvestigationRequeued
             | Self::InvestigationFailed
             | Self::TaskWaitForFreeAgent => LogLevel::Info,
-            Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone | Self::RunAccountEnvironment => {
-                LogLevel::Debug
-            }
+            Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
 }
