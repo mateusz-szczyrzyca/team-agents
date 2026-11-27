@@ -198,3 +198,120 @@ fn human_resumed_workers_and_reviewers_keep_the_full_prompt_after_no_status() {
         );
     }
 }
+
+#[test]
+fn reported_sessions_resume_for_every_report_outcome_and_role() {
+    use crate::fixtures::{at, run, task, team_state};
+    use agent_core::status::TaskStatus;
+
+    for outcome in [RunOutcome::Done, RunOutcome::Questions] {
+        for (role, number) in [
+            (Role::Solo, 1),
+            (Role::Coordinator, 1),
+            (Role::Member, 2),
+            (Role::Worker, 3),
+            (Role::Reviewer, 4),
+        ] {
+            let mut state = team_state();
+            let session = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+            let (_, mut member) = state.find_task_mut(&task(number)).unwrap();
+            member.transition(TaskStatus::Running).unwrap();
+            member.begin_run(run(1), at(1), Some(session)).unwrap();
+            member.end_run(at(2), RunEnd::Reported { outcome }).unwrap();
+            let found = state.find_task(&task(number)).unwrap();
+            let cli_session = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+            assert_eq!(
+                prompt_kind_for_role(role, found.member, Some(&cli_session), &Config::default()),
+                PromptKind::Resume(ResumeReason::Reported),
+                "{role:?} {outcome:?}"
+            );
+            assert_eq!(prompt_kind(found.member, None, &Config::default()), PromptKind::First);
+        }
+    }
+}
+
+#[test]
+fn stopped_sessions_restart_and_hung_sessions_keep_the_hang_prompt() {
+    use crate::fixtures::{at, run, task, team_state};
+    use agent_core::status::TaskStatus;
+
+    let config = Config::default();
+    for (end, expected) in [
+        (RunEnd::Stopped, PromptKind::First),
+        (
+            RunEnd::Hung,
+            PromptKind::Resume(ResumeReason::Hang {
+                after: config.watchdog().hang_minutes,
+            }),
+        ),
+    ] {
+        let mut state = team_state();
+        let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(1), None).unwrap();
+        member.end_run(at(2), end).unwrap();
+        let session = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+        assert_eq!(
+            prompt_kind(state.find_task(&task(2)).unwrap().member, Some(&session), &config),
+            expected
+        );
+    }
+}
+
+#[test]
+fn no_status_beyond_the_retry_bound_gets_the_whole_prompt() {
+    use crate::fixtures::{at, run, task, team_state};
+    use agent_core::status::TaskStatus;
+
+    let mut state = team_state();
+    let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+    for number in 1..=NO_STATUS_RETRIES + 1 {
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run(run(u32::try_from(number).unwrap()), at(1), None)
+            .unwrap();
+        member.end_run(at(2), RunEnd::NoStatus { exit_code: Some(0) }).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+    }
+    let session = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+    assert_eq!(
+        prompt_kind(
+            state.find_task(&task(2)).unwrap().member,
+            Some(&session),
+            &Config::default()
+        ),
+        PromptKind::First
+    );
+}
+
+#[test]
+fn a_session_replaced_by_its_bound_keeps_priority_over_a_reported_end() {
+    use crate::fixtures::{at, run, task, team_state};
+    use agent_core::status::TaskStatus;
+    let mut state = team_state();
+    let (_, mut member) = state.find_task_mut(&task(2)).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member
+        .begin_run(
+            run(1),
+            at(1),
+            Some("00000000-0000-4000-8000-000000000001".parse().unwrap()),
+        )
+        .unwrap();
+    member
+        .end_run(
+            at(2),
+            RunEnd::Reported {
+                outcome: RunOutcome::Done,
+            },
+        )
+        .unwrap();
+    assert!(state.begin_context_session(&task(2), at(3)).unwrap());
+    let member = state.find_task(&task(2)).unwrap().member;
+    assert!(replaced_by_bound(member));
+    let session = "00000000-0000-4000-8000-000000000001".parse().unwrap();
+    assert_eq!(
+        prompt_kind(member, Some(&session), &Config::default()),
+        PromptKind::First
+    );
+}

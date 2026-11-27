@@ -348,6 +348,7 @@ fn with_commit_order(ctx: &Context<'_>, kind: PromptKind, prompt: String) -> Res
         PromptKind::First
         | PromptKind::Resume(
             ResumeReason::Hang { .. }
+            | ResumeReason::Reported
             | ResumeReason::Restart
             | ResumeReason::Limit
             | ResumeReason::TurnLimit
@@ -422,6 +423,8 @@ pub(super) async fn plan(
         number,
         brief: team.task_list().list().brief(),
         item,
+        item_changed: false,
+        session_prompt: None,
         team_items: &team_items,
         // Checkpoints live on the agentbus, which a team's life (the next item) creates: none yet.
         checkpoint: None,

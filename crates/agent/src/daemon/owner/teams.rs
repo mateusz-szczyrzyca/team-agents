@@ -1577,6 +1577,8 @@ impl Owner {
                 number: NonZeroU32::MIN,
                 brief: "",
                 item: None,
+                item_changed: false,
+                session_prompt: None,
                 team_items: &[],
                 checkpoint: None,
                 serena: Serena::Without,

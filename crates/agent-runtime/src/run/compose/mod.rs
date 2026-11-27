@@ -43,6 +43,8 @@ pub enum ResumeReason {
     TurnLimit,
     /// The previous run ended without a STATUS: line.
     NoStatus,
+    /// The previous run ended with a report in this session.
+    Reported,
     /// The harness cut the previous run because `lines` changed lines stayed uncommitted for `minutes` minutes after the
     /// reminder to commit. Its text is of the team catalog, which this module has no part of: the daemon puts it in
     /// place of the prompt this module composes for it, which is empty.
@@ -88,6 +90,10 @@ pub struct PromptInput<'a> {
     pub brief: &'a str,
     /// The item the agent works on, if it has one.
     pub item: Option<&'a Item>,
+    /// Whether the assignment differs from the previous run's last round (or it had no round).
+    pub item_changed: bool,
+    /// The saved first prompt of this session, when available.
+    pub session_prompt: Option<&'a Path>,
     /// The items of the team, for the coordinator that leads it; empty for everybody else.
     pub team_items: &'a [TeamItem<'a>],
     /// The agent's last checkpoint, if there is one.
@@ -270,6 +276,7 @@ fn resume_section(texts: &PromptTexts<'_>, reason: ResumeReason) -> Result<Strin
             let values = Variables::new().with("minutes", minutes.to_string())?;
             texts.harness.render(HarnessPrompt::ResumeHang, &values)?
         }
+        ResumeReason::Reported => String::new(),
         ResumeReason::Restart => texts.harness.render(HarnessPrompt::ResumeRestart, &Variables::new())?,
         ResumeReason::TurnLimit => texts
             .harness
@@ -309,3 +316,6 @@ const fn rules_prompt(role: Role, tier: Tier) -> PromptId {
         }
     }
 }
+
+#[cfg(test)]
+mod tests;
