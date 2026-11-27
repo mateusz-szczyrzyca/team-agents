@@ -29,6 +29,8 @@ use crate::ids::{AgentName, InvalidItemId, InvalidName, ItemId};
 use crate::kinds::{Tier, UnknownKeyword};
 use crate::task_title::{MAX_SHORT_DESC_CHARS, derived_short_desc};
 
+pub mod requirements;
+
 /// Largest task list accepted, in bytes: a bound on untrusted input, far above any real list.
 pub const MAX_TASK_LIST_BYTES: usize = 1 << 20;
 

@@ -32,6 +32,9 @@
 #   commit                commits work.txt in the repository it runs in, leaves left.txt uncommitted, ends like `done`
 #   commit-frozen-test    rewrites tests/a.rs, tries to commit it with `git commit`, writes git's exit status to
 #                         .fake-commit-code and what git said to .fake-commit-err, ends like `done`
+#   commit-no-step        stages work.txt and tries to commit it with a message that has no `Step:` trailer, writes git's exit
+#                         status to .fake-commit-code and what git said to .fake-commit-err, then commits it again with
+#                         `Step: 1.1` and writes that exit status to .fake-retry-code, ends like `done`
 #   commit-busy           commits work.txt, leaves left.txt, then says something every 0.2 s until it is stopped
 #   context-from-file     reads the size N in `.fake-context`, reports one model call whose input is N tokens (usage with
 #                         its ID, and a cost of 0.5 dollars in the result), ends like `done`
@@ -342,6 +345,19 @@ case $scenario in
     git commit -q -m "Format the test" 2> .fake-commit-err || code=$?
     printf '%s\n' "$code" > .fake-commit-code
     say "tried to commit"
+    result false 'Finished the item.\nSTATUS: DONE'
+    ;;
+  commit-no-step)
+    init
+    printf 'the work\n' > work.txt
+    git add work.txt
+    code=0
+    git commit -q -m "Add the work" 2> .fake-commit-err || code=$?
+    printf '%s\n' "$code" > .fake-commit-code
+    retry=0
+    git commit -q -m "Add the work" -m "Step: 1.1" 2> .fake-retry-err || retry=$?
+    printf '%s\n' "$retry" > .fake-retry-code
+    say "tried to commit twice"
     result false 'Finished the item.\nSTATUS: DONE'
     ;;
   commit-busy)

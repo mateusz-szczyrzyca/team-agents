@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, InvalidValue, RepoName};
-use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan_with_mismatch, done_ends_with};
+use agent_core::decide::plan::{DoneEnds, PlanFacts, PlanRead, PlanVerdict, decide_plan_for_item, done_ends_with};
 use agent_core::ids::RunId;
 use agent_core::ids::{AgentName, BranchName, InvalidName, ItemId, TaskId, TeamId};
 use agent_core::kinds::Role;
@@ -22,6 +22,7 @@ use agent_core::state::{ItemProgress, PlanFault, PlanKeeping, PlanReason, PlanSt
 use agent_core::state::{RunEnd, RunState, Team, Timestamp};
 use agent_core::status::{RunOutcome, TaskStatus};
 use agent_core::task_list::MAX_TASK_LIST_BYTES;
+use agent_core::task_list::requirements::RequirementId;
 use agent_runtime::clock::SharedClock;
 use agent_runtime::git::{CommitIdentity, Git, GitError, Revision, Untracked};
 use agent_runtime::harness_prompts::{HarnessPrompts, RenderTextError};
@@ -35,7 +36,7 @@ use agent_runtime::process::error_chain;
 use agent_runtime::run::compose::ComposeError;
 use agent_runtime::text_file::{ReplaceError, TextFileError, read_text_file, replace_text_file};
 
-use super::start::next_number;
+use super::start::{assigned_item, next_number};
 use super::{FinishedRun, Located, Owner, OwnerError};
 use crate::daemon::settle::Settled;
 
@@ -687,7 +688,7 @@ impl Owner {
 impl Owner {
     /// What the end `end` of a run of `task` does with its plan: what the worktree has is kept in the history, its
     /// command checks are started in the background, and a run that reported `DONE` against its plan is sent back or the
-    /// human asked, by [`decide_plan_with_mismatch`]. `settled` is what the run's end comes to otherwise. The decision is
+    /// human asked, by [`decide_plan_for_item`]. `settled` is what the run's end comes to otherwise. The decision is
     /// [`PlanStep::Waiting`] while command checks run: [`Owner::check_batch_done`] makes it when they have ended.
     ///
     /// # Errors
@@ -847,18 +848,24 @@ impl Owner {
             return Ok((settled, PlanHeld::No));
         }
         let verdict = {
-            let member = self
+            let holder = self
                 .parts
                 .state
                 .find_task(task)
-                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
-                .member;
+                .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
+            let member = holder.member;
+            let known: Option<Vec<RequirementId>> = assigned_item(holder.team, member.agent()).map(|item| {
+                item.requirements()
+                    .into_iter()
+                    .map(|requirement| requirement.id)
+                    .collect()
+            });
             let mismatch = if member.plan().is_some_and(PlanKeeping::judging) {
                 mismatch
             } else {
                 None
             };
-            decide_plan_with_mismatch(
+            decide_plan_for_item(
                 PlanFacts {
                     role: located.role,
                     end,
@@ -868,6 +875,7 @@ impl Owner {
                     policy: self.parts.settings.config.plan(),
                 },
                 mismatch,
+                known.as_deref(),
             )
         };
         log_decision("plan", &task.as_str(), &format!("{verdict:?}"));
@@ -1824,6 +1832,26 @@ pub(super) fn correction(texts: &HarnessPrompts, reason: &PlanReason) -> Result<
             HarnessPrompt::PlanLostStep,
             &Variables::new().with("steps", steps(ids))?,
         )?,
+        PlanReason::NoRequirement {
+            without,
+            unknown,
+            known,
+        } => {
+            let listed = |names: Vec<String>| {
+                if names.is_empty() {
+                    "none".to_owned()
+                } else {
+                    names.join(", ")
+                }
+            };
+            texts.render(
+                HarnessPrompt::PlanNoRequirement,
+                &Variables::new()
+                    .with("without", listed(without.iter().map(ToString::to_string).collect()))?
+                    .with("unknown", listed(unknown.iter().map(ToString::to_string).collect()))?
+                    .with("known", listed(known.iter().map(ToString::to_string).collect()))?,
+            )?
+        }
         PlanReason::Mismatch {
             step,
             title,

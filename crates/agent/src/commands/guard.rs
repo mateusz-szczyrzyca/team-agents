@@ -2,18 +2,21 @@
 //!
 //! The commit is judged by the rule of the checks before a review, asked while it is only staged
 //! ([`agent_core::decide::commit_guard`]): a commit that takes lines out of a test a `RED:` commit froze is made as a
-//! `TEST-FIX:` commit of test files only, or not at all. The command reads and writes nothing in the repository and asks
-//! no human. It judges a commit only in the worktree of a task of this home, for a repository with a `[checks]` table;
-//! everywhere else the commit is allowed without a word, and where it cannot judge (a home that does not load, git that
-//! fails) it says so and allows it: the checks before the review look at the commit again.
+//! `TEST-FIX:` commit of test files only, or not at all. In a worktree whose plan has `For:` lines every commit also
+//! names a step of the plan in a `Step: N.M` trailer, with or without a `[checks]` table. The command reads and writes
+//! nothing in the repository and asks no human. It judges a commit only in the worktree of a task of this home; the
+//! frozen tests are judged for a repository with a `[checks]` table. Everywhere else the commit is allowed without a
+//! word, and where it cannot judge (a home that does not load, git that fails) it says so and allows it: the checks
+//! before the review look at the commit again.
 
 use std::io::{self, Write};
 use std::path::Path;
 use std::str::FromStr;
 
 use agent_core::config::{AbsolutePath, CommitGuard, RepoName};
-use agent_core::decide::commit_guard::Verdict;
-use agent_runtime::commit_guard::text::{RefusalTextError, refusal_text};
+use agent_core::decide::commit_guard::{StepRefusal, StepVerdict, Verdict, judge_step};
+use agent_core::plan::{PLAN_FILE, PlanError, parse_plan};
+use agent_runtime::commit_guard::text::{RefusalTextError, refusal_text, step_refusal_text};
 use agent_runtime::commit_guard::{CommitKind, GuardError, Judged, judge_staged};
 use agent_runtime::git::{CommitIdentity, Git};
 use agent_runtime::harness_prompts::{HarnessPrompts, HarnessPromptsError};
@@ -172,6 +175,17 @@ enum Unjudged {
         /// What the operating system said.
         source: io::Error,
     },
+    /// The plan of the task cannot be read.
+    #[error("cannot read the plan {path:?}")]
+    PlanFile {
+        /// The file.
+        path: std::path::PathBuf,
+        /// What the operating system said.
+        source: io::Error,
+    },
+    /// The plan of the task is not a plan.
+    #[error(transparent)]
+    PlanText(#[from] PlanError),
     /// The texts of the harness cannot be loaded.
     #[error(transparent)]
     Texts(#[from] HarnessPromptsError),
@@ -212,6 +226,26 @@ async fn amend_requested() -> bool {
     false
 }
 
+/// Why the commit with `message` is refused for its `Step:` trailer, if it is: in a worktree whose plan has `For:`
+/// lines, every commit names a step of the plan, also one that a cherry-pick, a revert or a rebase makes.
+async fn step_refusal(directory: &Path, message: &str) -> Result<Option<StepRefusal>, Unjudged> {
+    let path = directory.join(PLAN_FILE);
+    let text = match tokio::fs::read_to_string(&path).await {
+        Ok(text) => text,
+        // A worktree with no plan (a reviewer's, a worker's) has no step to name.
+        Err(source) if source.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => return Err(Unjudged::PlanFile { path, source }),
+    };
+    let plan = parse_plan(&text)?;
+    if !plan.ties_requirements() {
+        return Ok(None);
+    }
+    Ok(match judge_step(&plan, message) {
+        StepVerdict::Allowed => None,
+        StepVerdict::Refused(refusal) => Some(refusal),
+    })
+}
+
 /// The text that tells why the commit may not be made, or nothing when it may.
 async fn judge(environment: &Environment, message_file: &Path) -> Result<Option<String>, Unjudged> {
     let home = environment.home()?;
@@ -223,13 +257,9 @@ async fn judge(environment: &Environment, message_file: &Path) -> Result<Option<
     let Some(repo) = settings.config.repo(&repository) else {
         return Err(Unjudged::Repository { repository });
     };
-    let Some(rules) = repo
-        .checks
-        .as_ref()
-        .filter(|_| repo.commit_guard == CommitGuard::Enabled)
-    else {
+    if repo.commit_guard != CommitGuard::Enabled {
         return Ok(None);
-    };
+    }
     let message = tokio::fs::read_to_string(message_file)
         .await
         .map_err(|source| Unjudged::Message {
@@ -256,13 +286,26 @@ async fn judge(environment: &Environment, message_file: &Path) -> Result<Option<
         AbsolutePath::from_str(text).map_err(invalid)?,
         CommitIdentity::new(READER_NAME.to_owned(), READER_EMAIL.to_owned(), None),
     );
-    match judge_staged(&git, rules, &repo.base_branch, subject, kind).await? {
-        Judged::NotAuthored(_) | Judged::Verdict(Verdict::Allowed) => Ok(None),
-        Judged::Verdict(Verdict::Refused(refusals)) => {
-            let texts = HarnessPrompts::load(&home.prompts_dir(), settings.config.language()).await?;
-            Ok(Some(refusal_text(&texts, &refusals)?))
-        }
+    let step = step_refusal(directory, &message).await?;
+    let frozen = match repo.checks.as_ref() {
+        Some(rules) => match judge_staged(&git, rules, &repo.base_branch, subject, kind).await? {
+            Judged::NotAuthored(_) | Judged::Verdict(Verdict::Allowed) => None,
+            Judged::Verdict(Verdict::Refused(refusals)) => Some(refusals),
+        },
+        None => None,
+    };
+    if step.is_none() && frozen.is_none() {
+        return Ok(None);
     }
+    let texts = HarnessPrompts::load(&home.prompts_dir(), settings.config.language()).await?;
+    let mut told = Vec::new();
+    if let Some(refusals) = frozen {
+        told.push(refusal_text(&texts, &refusals)?);
+    }
+    if let Some(refusal) = step {
+        told.push(step_refusal_text(&texts, &refusal)?);
+    }
+    Ok(Some(told.join("\n")))
 }
 
 /// Asks whether the commit whose message is in `message_file` may be made, in the directory of `environment`.

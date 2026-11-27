@@ -110,6 +110,10 @@ Both parse with `TaskList::parse`.
   with text after it on the line, deeper or shallower, in a bullet, in another case — is ordinary text. A part with no
   text, and a label used twice in one item, are errors. The two parts may come in either order and are both optional.
   `Item::expected_result` is what the reviewers check the pull request against; `Item::checks` is what they run.
+  `Item::requirements()` numbers them for the agent that does the item: the top-level bullets of `Expected result:` are
+  `R1`, `R2`, ... (a nested bullet stays inside its `R`), the lines of `Checks:` keep their `K1`, `K2`, ... and a check
+  line with no `K` gets the next free number; an item with no such part has one requirement, `R1`, its title. The
+  plan's `For:` line names them ([`plan.md`](plan.md)).
 
 Line ends may be `\n` or `\r\n`, the last line needs no newline, and a byte order mark at the start of a file is
 ignored. A text may be 1 MiB at most.

@@ -143,6 +143,9 @@ pub enum HarnessPrompt {
     PlanUnfinished,
     /// What a run sent back because its plan lost a step of the version before is told.
     PlanLostStep,
+    /// What a run sent back because steps of its plan name no requirement of its item, or one it does not have, is
+    /// told.
+    PlanNoRequirement,
     /// What a run sent back because a step check failed is told.
     PlanMismatch,
     /// What a run whose step check was refused because it ran the gate is told on its next run.
@@ -162,6 +165,9 @@ pub enum HarnessPrompt {
     CommitRefusedWhole,
     /// The finding of a refused `TEST-FIX:` commit that also changes files that are not tests.
     CommitRefusedMixed,
+    /// What the hook of `git commit` tells an agent whose commit has no `Step:` trailer, or one that names no step of
+    /// its plan.
+    CommitRefusedStep,
 }
 
 impl HarnessPrompt {
@@ -230,6 +236,7 @@ impl HarnessPrompt {
         Self::PlanUnreadable,
         Self::PlanUnfinished,
         Self::PlanLostStep,
+        Self::PlanNoRequirement,
         Self::PlanMismatch,
         Self::PlanGateRefused,
         Self::NoticePlanQuestion,
@@ -238,6 +245,7 @@ impl HarnessPrompt {
         Self::CommitRefusedLines,
         Self::CommitRefusedWhole,
         Self::CommitRefusedMixed,
+        Self::CommitRefusedStep,
     ];
 
     /// Where the text is, who reads it and which variables it uses.
@@ -455,6 +463,11 @@ impl HarnessPrompt {
             Self::PlanUnreadable => PromptSpec::new("harness/run/plan-unreadable.md", Audience::Model, &["error"]),
             Self::PlanUnfinished => PromptSpec::new("harness/run/plan-unfinished.md", Audience::Model, &["steps"]),
             Self::PlanLostStep => PromptSpec::new("harness/run/plan-lost-step.md", Audience::Model, &["steps"]),
+            Self::PlanNoRequirement => PromptSpec::new(
+                "harness/run/plan-no-requirement.md",
+                Audience::Model,
+                &["known", "unknown", "without"],
+            ),
             Self::PlanMismatch => PromptSpec::new(
                 "harness/run/plan-mismatch.md",
                 Audience::Model,
@@ -483,6 +496,11 @@ impl HarnessPrompt {
             Self::CommitRefusedMixed => {
                 PromptSpec::new("harness/run/commit-refused-mixed.md", Audience::Model, &["files"])
             }
+            Self::CommitRefusedStep => PromptSpec::new(
+                "harness/run/commit-refused-step.md",
+                Audience::Model,
+                &["named", "steps"],
+            ),
         }
     }
 }

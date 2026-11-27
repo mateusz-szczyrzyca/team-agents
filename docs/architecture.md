@@ -1146,6 +1146,12 @@ tests of `RoundState` list its phases and events):
   the passes are; it is never sent back to the team and spends none of its passes. A question about commits alone leaves the
   count of passes as it is.
 
+**The step of a commit** (`judge_step`). In the worktree of a task whose `.agent/plan.md` has `For:` lines the same hook asks
+whether the message has a `Step: N.M` line naming a step of the plan (`StepRefusal::Missing`, `StepRefusal::NotInPlan`; the text
+is `commit-refused-step.md`). It reads only the trailer block at the end of the message, needs no `[checks]` table and asks every commit that reaches the
+hook, a cherry-pick's, a revert's, a rebase's and a merge's among them; git runs no commit hook for a plain cherry-pick,
+revert or rebase, which the hook cannot see. A plan that cannot be read lets the commit through with the note that it was not judged.
+
 **The early refusal** (`agent_core::decide::commit_guard`, `agent_runtime::commit_guard`, `agent guard-commit`). The same rule
 asked while the commit is only staged, so that the mistake is told to the agent while it can be undone. `frozen_tests` lists the
 test files that the `RED:` commits of the branch since its merge base with the fetched base branch touched, and `judge_commit`

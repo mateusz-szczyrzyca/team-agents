@@ -216,8 +216,8 @@ mod run_compose {
                 "[harness/run/team-items.md]\n\n\
                  [harness/run/team-item.md] item_id=2.3 item_title=The daemon item_description=Build it. \
                  who=gemini-1 works on it\n\n\
-                 [harness/run/item-expected.md] expected=it works\n\n\
-                 [harness/run/item-checks.md] checks=run it\n\n\
+                 [harness/run/item-expected.md] expected=R1. it works\n\n\
+                 [harness/run/item-checks.md] checks=K1. run it\n\n\
                  [harness/run/team-item.md] item_id=2.4 item_title=The socket item_description=Build it. \
                  who=nobody has it yet\n"
             ),
@@ -243,14 +243,32 @@ mod run_compose {
         assert!(
             with.ends_with(
                 "[harness/run/item.md] item_id=2.3 item_title=The daemon item_description=Build it.\n\n\
-                 [harness/run/item-expected.md] expected=it works\n\n\
-                 [harness/run/item-checks.md] checks=run it\n"
+                 [harness/run/item-expected.md] expected=R1. it works\n\n\
+                 [harness/run/item-checks.md] checks=K1. run it\n"
             ),
             "{with}"
         );
         assert!(
             without.ends_with("[harness/run/item.md] item_id=2.3 item_title=The daemon item_description=Build it.\n"),
             "{without}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_bullets_of_an_item_are_given_with_their_requirement_numbers() {
+        let f = fixture().await;
+        let numbered = item(Some("- one\n- two"), Some("- K1. run it\n- run that"));
+        let mut input = f.input(Role::Member, Tier::Normal);
+        input.item = Some(&numbered);
+
+        let prompt = f.compose(&input);
+
+        assert!(
+            prompt.ends_with(
+                "[harness/run/item-expected.md] expected=R1. one\nR2. two\n\n\
+                 [harness/run/item-checks.md] checks=K1. run it\nK2. run that\n"
+            ),
+            "{prompt}"
         );
     }
 

@@ -16,9 +16,13 @@ use crate::kinds::Role;
 use crate::plan::{Plan, PlanError, Step, StepState};
 use crate::state::{ItemPhase, PlanFault, PlanKeeping, PlanReason, PlanStage, RunEnd, StepMismatch};
 use crate::status::RunOutcome;
+use crate::task_list::requirements::RequirementId;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod requirement_tests;
 
 /// What the daemon read at the end of the run.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +144,19 @@ pub enum PlanVerdict {
 /// Decides what happens to the plan of a task whose run ended as `end`, taking into account any step check mismatch.
 #[must_use]
 pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReason>) -> PlanVerdict {
+    decide_plan_for_item(facts, mismatch, None)
+}
+
+/// Decides as [`decide_plan_with_mismatch`], and for a task of an item, whose requirements are `known`, also sends back
+/// a plan whose steps do not name them: every step that is not given up needs a `For:` line naming requirements the
+/// item has. `None` when the task has no item. A task created before numbered requirements keeps its plan as it reads
+/// until a step has a `For:` line.
+#[must_use]
+pub fn decide_plan_for_item(
+    facts: PlanFacts<'_>,
+    mismatch: Option<PlanReason>,
+    known: Option<&[RequirementId]>,
+) -> PlanVerdict {
     if !matches!(
         facts.end,
         RunEnd::Reported {
@@ -160,7 +177,11 @@ pub fn decide_plan_with_mismatch(facts: PlanFacts<'_>, mismatch: Option<PlanReas
         return PlanVerdict::Accept;
     }
     let mismatch = if keeping.judging() { mismatch } else { None };
-    let reason = match (fault(facts.read, facts.earlier), mismatch) {
+    let tie = known.map(|known| Tie {
+        known,
+        tied: keeping.requirements_tied(),
+    });
+    let reason = match (fault(facts.read, facts.earlier, tie), mismatch) {
         (
             Some(PlanReason::Unfinished { steps }),
             Some(PlanReason::Mismatch {
@@ -230,15 +251,50 @@ pub fn decide_plan(facts: PlanFacts<'_>) -> PlanVerdict {
 }
 
 /// Why the plan a task read has a fault, the first of them being the one reported; `None` when it has none.
-fn fault(read: &PlanRead, earlier: &[Plan]) -> Option<PlanReason> {
+fn fault(read: &PlanRead, earlier: &[Plan], tie: Option<Tie<'_>>) -> Option<PlanReason> {
     match read {
         PlanRead::Missing => Some(PlanReason::Missing),
         PlanRead::Unreadable { line, detail } => Some(PlanReason::Unreadable {
             line: *line,
             detail: detail.clone(),
         }),
-        PlanRead::Parsed(plan) => lost(earlier, plan).or_else(|| unfinished(plan)),
+        PlanRead::Parsed(plan) => lost(earlier, plan)
+            .or_else(|| tie.and_then(|tie| untied(plan, tie)))
+            .or_else(|| unfinished(plan)),
     }
+}
+
+/// What a task of an item is held to: the requirements of the item, and whether the task was created under them.
+#[derive(Debug, Clone, Copy)]
+struct Tie<'a> {
+    /// The requirements the item has.
+    known: &'a [RequirementId],
+    /// Whether the task was created under numbered requirements; if not, its plan is held to them only once a step
+    /// has a `For:` line.
+    tied: bool,
+}
+
+/// The steps of `plan` that are not given up and name no requirement of the item, or name one it does not have;
+/// `None` when every such step names only requirements of the item, or the plan is a legacy one that names none.
+fn untied(plan: &Plan, tie: Tie<'_>) -> Option<PlanReason> {
+    if !tie.tied && !plan.ties_requirements() {
+        return None;
+    }
+    let mut without = Vec::new();
+    let mut unknown = Vec::new();
+    for step in plan.steps().filter(|step| step.state() != StepState::GivenUp) {
+        match step.requirements() {
+            Ok(named) if named.is_empty() => without.push(step.id()),
+            Ok(named) if named.iter().all(|id| tie.known.contains(id)) => {}
+            // A step of a parsed plan always reads; one that does not names nothing the item has.
+            Ok(_) | Err(_) => unknown.push(step.id()),
+        }
+    }
+    (!without.is_empty() || !unknown.is_empty()).then(|| PlanReason::NoRequirement {
+        without,
+        unknown,
+        known: tie.known.to_vec(),
+    })
 }
 
 /// The steps of `plan` that are still to do or in hand, in the order of the plan; `None` when none is.

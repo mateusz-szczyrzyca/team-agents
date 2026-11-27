@@ -25,6 +25,7 @@ use std::num::{NonZeroU16, NonZeroUsize};
 
 use crate::ids::ItemId;
 use crate::repo_path::RepoPath;
+use crate::task_list::requirements::{InvalidRequirementId, RequirementId};
 use crate::task_list::{self, MAX_TASK_LIST_BYTES, NumberProblem};
 
 pub mod judge;
@@ -44,6 +45,9 @@ const FILES_PREFIX: &str = "Files:";
 
 /// The text that starts the line naming the check of a step.
 const CHECK_PREFIX: &str = "Check:";
+
+/// The text that starts the line naming the requirements of the item that a step serves.
+const FOR_PREFIX: &str = "For:";
 
 /// The line of a step's text that marks the step for a worker; it stays a line of the step's note, so it is written
 /// back with the plan. Only this line is the mark: any other line that starts with `By:` is a note like any other, so
@@ -138,6 +142,12 @@ impl Plan {
     /// Every step, stage by stage, in the order written.
     pub fn steps(&self) -> impl Iterator<Item = &Step> {
         self.stages.iter().flat_map(Stage::steps)
+    }
+
+    /// Whether any step names the requirements it serves: a plan that does is tied to its item's requirements.
+    #[must_use]
+    pub fn ties_requirements(&self) -> bool {
+        self.steps().any(Step::has_for_line)
     }
 
     /// The plan as the text of `.agent/plan.md`; [`parse_plan`] reads it back into an equal plan.
@@ -305,6 +315,27 @@ impl Step {
         self.check.as_ref()
     }
 
+    /// The requirements of the item the step serves, as its `For:` line names them; empty when it has none.
+    ///
+    /// The `For:` line stays a line of the step's note, as the `By: worker` mark does, so that it is written back with
+    /// the plan; [`parse_plan`] refuses a line that does not read, so a parsed plan never fails here.
+    ///
+    /// # Errors
+    /// [`InvalidRequirementId`] for a `For:` line of a step that was not read by [`parse_plan`] and names something
+    /// that is not a requirement.
+    pub fn requirements(&self) -> Result<Vec<RequirementId>, InvalidRequirementId> {
+        let mut named = Vec::new();
+        for rest in self.note.lines().filter_map(for_line) {
+            named.extend(read_requirements(rest)?);
+        }
+        Ok(named)
+    }
+
+    /// Whether the step has a `For:` line.
+    fn has_for_line(&self) -> bool {
+        self.note.lines().any(|line| for_line(line).is_some())
+    }
+
     /// Who does the step: its holder, or a worker the holder gives it to (`By: worker`).
     #[must_use]
     pub fn doer(&self) -> Doer {
@@ -315,7 +346,8 @@ impl Step {
         }
     }
 
-    /// The text of the step that is not its `Files:` or `Check:` line, dedented; for a step given up, why.
+    /// The text of the step that is not its `Files:` or `Check:` line, dedented, with its `For:` line and its `By: worker`
+    /// mark, which stay in it; for a step given up, why.
     #[must_use]
     pub fn note(&self) -> &str {
         &self.note
@@ -450,6 +482,8 @@ pub enum StepPart {
     Files,
     /// The part after `Check:`.
     Check,
+    /// The part after `For:`.
+    For,
 }
 
 impl std::fmt::Display for StepPart {
@@ -457,6 +491,7 @@ impl std::fmt::Display for StepPart {
         f.write_str(match self {
             Self::Files => "Files:",
             Self::Check => "Check:",
+            Self::For => "For:",
         })
     }
 }
@@ -619,6 +654,21 @@ pub enum PlanError {
         /// The line of the label.
         line: NonZeroUsize,
     },
+    /// A `For:` line with nothing after it.
+    #[error("line {line}: For: names no requirement")]
+    EmptyFor {
+        /// The line of the label.
+        line: NonZeroUsize,
+    },
+    /// A `For:` line names something that is not the number of a requirement, such as `R1` or `K2`.
+    #[error("line {line}: invalid requirement in For:")]
+    BadRequirement {
+        /// The line.
+        line: NonZeroUsize,
+        /// Why the text was refused.
+        #[source]
+        problem: InvalidRequirementId,
+    },
     /// A check read alone, outside a plan, that is more than one line: a step's `Check:` is one line.
     #[error("line {line}: Check: is more than one line")]
     MultilineCheck {
@@ -657,6 +707,8 @@ impl PlanError {
             | Self::BadFile { line, .. }
             | Self::DuplicatePart { line, .. }
             | Self::EmptyCheck { line }
+            | Self::EmptyFor { line }
+            | Self::BadRequirement { line, .. }
             | Self::ExistsWithoutPath { line }
             | Self::MultilineCheck { line }
             | Self::BadCheck { line, .. } => Some(*line),
@@ -982,6 +1034,7 @@ struct Labeled<'a> {
 fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result<Labeled<'a>, PlanError> {
     let mut files: Option<Vec<RepoPath>> = None;
     let mut check: Option<Check> = None;
+    let mut seen_for = false;
     let mut note: Vec<&'a str> = Vec::new();
     for &(line, text) in body {
         let part = task_list::dedent(text, narrowest);
@@ -1001,6 +1054,16 @@ fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result
                 });
             }
             check = Some(read_check(line, rest)?);
+        } else if let Some(rest) = for_line(part) {
+            if seen_for {
+                return Err(PlanError::DuplicatePart {
+                    line,
+                    part: StepPart::For,
+                });
+            }
+            seen_for = true;
+            read_for(line, rest)?;
+            note.push(part);
         } else {
             note.push(part);
         }
@@ -1010,6 +1073,26 @@ fn read_labels<'a>(body: &[(NonZeroUsize, &'a str)], narrowest: usize) -> Result
         check,
         note,
     })
+}
+
+/// The text after `For:` when `line` is a `For:` line.
+fn for_line(line: &str) -> Option<&str> {
+    line.trim_end().strip_prefix(FOR_PREFIX)
+}
+
+/// The requirements a `For:` line names, separated by commas.
+fn read_requirements(rest: &str) -> Result<Vec<RequirementId>, InvalidRequirementId> {
+    rest.split(',').map(|text| text.trim().parse()).collect()
+}
+
+/// Checks the `For:` line that is on `line`: it names at least one requirement, and each one reads.
+fn read_for(line: NonZeroUsize, rest: &str) -> Result<(), PlanError> {
+    if rest.trim().is_empty() {
+        return Err(PlanError::EmptyFor { line });
+    }
+    read_requirements(rest)
+        .map(drop)
+        .map_err(|problem| PlanError::BadRequirement { line, problem })
 }
 
 /// The paths of a `Files:` line that is on `line`, separated by commas; an empty entry is an empty path, refused.
@@ -1048,3 +1131,6 @@ fn read_check(line: NonZeroUsize, rest: &str) -> Result<Check, PlanError> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod requirement_tests;

@@ -360,4 +360,234 @@ mod guard_process {
         assert!(output.status.success(), "{}", stderr(&output));
         assert_eq!(stderr(&output), "");
     }
+    /// Writes the plan of the task into its worktree, as the agent keeps it; `with_for` gives each step a `For:` line.
+    fn write_plan(world: &World, with_for: bool) {
+        let for_line = if with_for { "    For: R1\n" } else { "" };
+        std::fs::create_dir_all(world.worktree.join(".agent")).unwrap();
+        std::fs::write(
+            world.worktree.join(".agent/plan.md"),
+            format!("Do it.\n\n1. Work\n[ ] 1.1 First\n{for_line}[ ] 1.2 Second\n{for_line}"),
+        )
+        .unwrap();
+    }
+
+    // Rule: in the worktree of a task whose plan has `For:` lines, a commit with no `Step:` trailer is refused with
+    // what to add, and the same commit with `Step: 1.1` is made.
+    #[tokio::test]
+    async fn a_commit_with_no_step_trailer_is_refused_and_made_once_it_names_a_step() {
+        let world = World::new(true).await;
+        write_plan(&world, true);
+        let before = world.count();
+
+        let refused = world.commit("src/a.rs", "fn a() {}\n", "Add a");
+
+        assert!(!refused.status.success());
+        let text = stderr(&refused);
+        assert!(text.contains("This commit was not made."), "{text}");
+        assert!(
+            text.contains("The `Step:` lines of this message name: nothing."),
+            "{text}"
+        );
+        assert!(text.contains("The steps of your plan are: `1.1`, `1.2`."), "{text}");
+        assert_eq!(world.count(), before);
+
+        let made = world.git(&world.worktree, &["commit", "-q", "-m", "Add a", "-m", "Step: 1.1"]);
+
+        assert!(made.status.success(), "{}", stderr(&made));
+        assert_eq!(world.count(), before + 1);
+    }
+
+    // Rule: a trailer that names a step the plan does not have is refused with what it named.
+    #[tokio::test]
+    async fn a_commit_that_names_a_step_the_plan_does_not_have_is_refused() {
+        let world = World::new(true).await;
+        write_plan(&world, true);
+
+        std::fs::write(world.worktree.join("a.txt"), "a\n").unwrap();
+        assert!(world.git(&world.worktree, &["add", "-A"]).status.success());
+        let output = world.git(&world.worktree, &["commit", "-q", "-m", "Add a", "-m", "Step: 7.3"]);
+
+        assert!(!output.status.success());
+        let text = stderr(&output);
+        assert!(text.contains("name: `7.3`."), "{text}");
+    }
+
+    // Rule: a plan with no `For:` line (legacy) does not check commits.
+    #[tokio::test]
+    async fn a_plan_with_no_for_line_leaves_the_commits_unchecked() {
+        let world = World::new(true).await;
+        write_plan(&world, false);
+
+        let output = world.commit("src/a.rs", "fn a() {}\n", "Add a");
+
+        assert!(output.status.success(), "{}", stderr(&output));
+    }
+
+    // Rule: the step is asked for also where the repository has no `[checks]` table.
+    #[tokio::test]
+    async fn the_step_trailer_is_asked_for_without_a_checks_table() {
+        let world = World::new(false).await;
+        write_plan(&world, true);
+
+        let output = world.commit("src/a.rs", "fn a() {}\n", "Add a");
+
+        assert!(!output.status.success());
+        assert!(
+            stderr(&output).contains("This commit was not made."),
+            "{}",
+            stderr(&output)
+        );
+    }
+
+    // Rule: a merge commit names a step as well; the harness's own commits are made without these hooks.
+    #[tokio::test]
+    async fn a_merge_commit_names_a_step_too() {
+        let world = World::new(true).await;
+        let run = |args: &[&str]| {
+            let output = world.git(&world.worktree, args);
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        };
+        run(&["checkout", "-q", "-b", "other"]);
+        let other = world.commit("src/other.rs", "fn o() {}\n", "Other work");
+        assert!(other.status.success(), "{}", stderr(&other));
+        run(&["checkout", "-q", "feature"]);
+        let mine = world.commit("src/mine.rs", "fn m() {}\n", "My work");
+        assert!(mine.status.success(), "{}", stderr(&mine));
+        write_plan(&world, true);
+
+        let refused = world.git(
+            &world.worktree,
+            &["merge", "-q", "--no-ff", "-m", "Merge other", "other"],
+        );
+        assert!(!refused.status.success());
+        assert!(
+            stderr(&refused).contains("This commit was not made."),
+            "{}",
+            stderr(&refused)
+        );
+        run(&["merge", "--abort"]);
+
+        let made = world.git(
+            &world.worktree,
+            &[
+                "merge",
+                "-q",
+                "--no-ff",
+                "-m",
+                "Merge other",
+                "-m",
+                "Step: 1.2",
+                "other",
+            ],
+        );
+        assert!(made.status.success(), "{}", stderr(&made));
+    }
+
+    /// A world with one commit `Other work` on the branch `other` and one on `feature`, both made before the plan has
+    /// `For:` lines; returns it with the plan written.
+    async fn world_with_two_branches() -> World {
+        let world = World::new(true).await;
+        let run = |args: &[&str]| {
+            let output = world.git(&world.worktree, args);
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        };
+        run(&["checkout", "-q", "-b", "other"]);
+        let other = world.commit("src/other.rs", "fn o() {}\n", "Other work");
+        assert!(other.status.success(), "{}", stderr(&other));
+        run(&["checkout", "-q", "feature"]);
+        let mine = world.commit("src/mine.rs", "fn m() {}\n", "My work");
+        assert!(mine.status.success(), "{}", stderr(&mine));
+        write_plan(&world, true);
+        world
+    }
+
+    /// A world in which `other` and `feature` each wrote `src/shared.rs` and `feature` wrote it again, before the plan
+    /// has `For:` lines; it is returned with the plan written.
+    async fn world_with_a_conflict() -> World {
+        let world = World::new(true).await;
+        let run = |args: &[&str]| {
+            let output = world.git(&world.worktree, args);
+            assert!(output.status.success(), "{args:?}: {}", stderr(&output));
+        };
+        run(&["checkout", "-q", "-b", "other"]);
+        let other = world.commit("src/shared.rs", "fn o() {}\n", "Other work");
+        assert!(other.status.success(), "{}", stderr(&other));
+        run(&["checkout", "-q", "feature"]);
+        for (text, subject) in [("fn a() {}\n", "My work"), ("fn b() {}\n", "More of my work")] {
+            let made = world.commit("src/shared.rs", text, subject);
+            assert!(made.status.success(), "{}", stderr(&made));
+        }
+        write_plan(&world, true);
+        world
+    }
+
+    /// Resolves the conflict git stopped at and makes its commit with the message git prepared.
+    fn commit_the_resolution(world: &World) -> Output {
+        let added = world.git(&world.worktree, &["add", "-A"]);
+        assert!(added.status.success(), "{}", stderr(&added));
+        world.git(&world.worktree, &["commit", "-q", "--no-edit"])
+    }
+
+    // Rule: git runs no `commit-msg` hook for a plain cherry-pick, so a cherry-pick that stops at a conflict is asked
+    // for its step where the agent commits the resolution, with the message of the picked commit.
+    #[tokio::test]
+    async fn a_cherry_pick_resolution_whose_message_has_no_step_trailer_is_refused() {
+        let world = world_with_a_conflict().await;
+        let stopped = world.git(&world.worktree, &["cherry-pick", "other"]);
+        assert!(!stopped.status.success(), "{}", stderr(&stopped));
+
+        let refused = commit_the_resolution(&world);
+
+        assert!(!refused.status.success());
+        assert!(
+            stderr(&refused).contains("This commit was not made."),
+            "{}",
+            stderr(&refused)
+        );
+    }
+
+    // Rule: the same holds for a revert that stops at a conflict, whose message git writes with no trailer.
+    #[tokio::test]
+    async fn a_revert_resolution_whose_message_has_no_step_trailer_is_refused() {
+        let world = world_with_a_conflict().await;
+        let stopped = world.git(&world.worktree, &["revert", "--no-edit", "HEAD~1"]);
+        assert!(!stopped.status.success(), "{}", stderr(&stopped));
+
+        let refused = commit_the_resolution(&world);
+
+        assert!(!refused.status.success());
+        assert!(
+            stderr(&refused).contains("This commit was not made."),
+            "{}",
+            stderr(&refused)
+        );
+    }
+
+    // Rule: a rebase that replays a commit whose message has no `Step:` trailer is refused at that commit.
+    #[tokio::test]
+    async fn a_rebase_that_replays_a_commit_with_no_step_trailer_is_refused() {
+        let world = world_with_two_branches().await;
+
+        let refused = world.git(
+            &world.worktree,
+            &[
+                "-c",
+                "core.editor=true",
+                "-c",
+                "sequence.editor=sed -i s/^pick/reword/",
+                "rebase",
+                "-i",
+                "other",
+            ],
+        );
+
+        assert!(!refused.status.success());
+        assert!(
+            stderr(&refused).contains("This commit was not made."),
+            "{}",
+            stderr(&refused)
+        );
+        let abort = world.git(&world.worktree, &["rebase", "--abort"]);
+        assert!(abort.status.success(), "{}", stderr(&abort));
+    }
 }
