@@ -126,9 +126,12 @@ pub async fn branch_commits(
         base: base.clone(),
         source,
     };
-    let _ = &git;
-    let _ = failed;
-    Ok(Vec::new())
+    let head = git.rev_parse(&Revision::Head).await.map_err(failed)?;
+    let forked = git
+        .merge_base(&Revision::Head, &Revision::Branch(base.clone()))
+        .await
+        .map_err(failed)?;
+    git.range_messages(&forked, &head).await.map_err(failed)
 }
 
 /// Why the snapshot references of a round could not be removed.
