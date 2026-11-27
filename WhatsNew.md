@@ -9,6 +9,18 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.140.0 · agent-core 0.137.0 · agent-runtime 0.124.0 — 27.11.2026 — PR #333
+
+### New features
+- [agent] [agent-core] [agent-runtime] A new session of a task now opens with the last checkpoint of its round: what is to be done, what is done per requirement and what is left, then "Go on from it: do what is left, do not do again what is done." This holds for `agent renew`, an agent replaced because it was busy or failed, a round the round limit cut, a restart of the daemon or of the machine, and a session that ended without a status.
+- [agent] [agent-core] A lead that is given the work of a member that went bad is told the member's last checkpoint as well.
+
+### Enhancements
+- [agent] [agent-runtime] The briefing of a new session keeps the snapshot of the last checkpoint when the worktree has not changed since, and takes no new snapshot reference.
+
+### Bug fixes
+- [agent-runtime] A checkpoint whose texts the history cut (`[history] max_text_bytes`) can be read again, so that a new session starts.
+
 ## agent 0.139.0 · agent-core 0.136.0 · agent-runtime 0.123.0 — 27.11.2026 — PR #332
 
 ### New features
