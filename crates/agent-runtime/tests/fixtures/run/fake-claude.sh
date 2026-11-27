@@ -30,7 +30,7 @@
 #   env-git               ends like `done` after writing to .fake-git who a commit would be by and how git would sign it
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
 #   env-names NAME...     ends like `done` after writing each NAME and its value (or <unset>) to .fake-env-names, one NAME=value
-#                         line each; a final message that names every value too, to show that a secret is cut from the history
+#                         line each; a message and a final message that name every value too, to show that a secret is cut from the history
 #   commit                commits work.txt in the repository it runs in, leaves left.txt uncommitted, ends like `done`
 #   commit-frozen-test    rewrites tests/a.rs, tries to commit it with `git commit`, writes git's exit status to
 #                         .fake-commit-code and what git said to .fake-commit-err, ends like `done`
@@ -415,7 +415,7 @@ case $scenario in
       seen+=" $value"
     done
     init
-    say "working"
+    say "Saw:${seen}"
     result false "Saw:${seen}\nSTATUS: DONE"
     ;;
   done-on-resume-after\ *)
