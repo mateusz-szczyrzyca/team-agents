@@ -111,11 +111,11 @@ impl Attempt {
                 failed_with: vec![],
             });
         let attempt = Self { dir, bus, state };
-        attempt.request("running", Some(task(3)));
+        attempt.request("running", Some(&task(3)));
         attempt
     }
 
-    fn request(&self, status: &str, assigned: Option<agent_core::ids::TaskId>) {
+    fn request(&self, status: &str, assigned: Option<&agent_core::ids::TaskId>) {
         let request = serde_json::json!({"id":1,"from_agent":"claude-2","from_task":task(2),"branch":"main","question":"help","status":status,"inv_task":assigned,"file":self.dir.path().join("answer.md")});
         std::fs::write(
             self.dir.path().join("request.json"),
@@ -189,7 +189,7 @@ async fn an_ended_requester_fails_without_a_message() {
 #[tokio::test]
 async fn a_restart_requeues_an_assignment_without_a_live_task() {
     let attempt = Attempt::new();
-    attempt.request("starting", Some(task(9)));
+    attempt.request("starting", Some(&task(9)));
     let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
     let (mut owner, _sinks) = daemon.bare_owner().await;
     owner.reconcile_investigations().await.unwrap();
@@ -239,7 +239,7 @@ async fn time_in_the_queue_does_not_count_toward_answer_minutes() {
             started: agent_core::state::Timestamp::now(&owner.parts.clock).unwrap(),
             failed_with: vec![],
         });
-    attempt.request("running", Some(task(3)));
+    attempt.request("running", Some(&task(3)));
     owner.reconcile_investigations().await.unwrap();
     assert_eq!(attempt.calls(), "");
 }
@@ -380,4 +380,42 @@ async fn removing_the_requesters_team_fails_its_open_requests_without_messaging(
     let calls = attempt.calls();
     assert!(calls.contains("the requester's task ended"), "{calls}");
     assert!(!calls.contains("send"), "{calls}");
+}
+
+#[tokio::test]
+async fn a_classified_provider_pause_is_discarded_for_an_investigator() {
+    let attempt = Attempt::new();
+    let daemon = Daemon::new(&attempt.state, Some(&attempt.bus));
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let located = owner.locate(&task(3)).unwrap();
+    let end = RunEnd::QuotaExhausted { resets_at: None };
+    let settled = crate::daemon::settle::settle(
+        Role::Investigator,
+        &end,
+        Some(&agent_core::decide::outcome::Pause {
+            until: at(59),
+            reason: agent_core::decide::outcome::PauseReason::Quota,
+            kind: agent_core::decide::refusal::Kind::Quota,
+            evidence: "quota exhausted".to_owned(),
+        }),
+        None,
+    );
+    let (status, notice) = owner
+        .settled_status(
+            super::Ended {
+                task: &task(3),
+                located: &located,
+                now: at(0),
+                settled,
+                progress: agent_runtime::run::Progress::Nothing,
+                end,
+                used_tool: false,
+            },
+            &mut vec![],
+        )
+        .await
+        .unwrap();
+    assert_eq!(status, agent_core::status::TaskStatus::Failed);
+    assert!(notice.is_none());
+    assert_eq!(owner.locate(&task(3)).unwrap().agent, "inv-1");
 }
