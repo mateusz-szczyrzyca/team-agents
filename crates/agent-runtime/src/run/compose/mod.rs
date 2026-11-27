@@ -18,6 +18,7 @@ use crate::harness_prompts::{HarnessPrompts, RenderTextError};
 use crate::prompts::{PromptLoader, RenderPromptError};
 
 mod briefing;
+mod checkpoint;
 mod serena;
 
 pub use briefing::{
@@ -25,6 +26,7 @@ pub use briefing::{
     BriefingReview, BriefingRun, BriefingStep, PlanHeadings, ReviewStanding, briefing_variables,
     briefing_variables_with,
 };
+pub use checkpoint::{CheckpointFacts, NO_CONTENT, checkpoint_state_variables};
 pub use serena::{Serena, serena_section};
 
 /// Why a run is resumed instead of started: what its prompt tells the agent about the interruption.
