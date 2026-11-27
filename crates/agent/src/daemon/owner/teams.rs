@@ -1609,6 +1609,22 @@ impl Owner {
                 }
             }
 
+            let delivery = super::findings::Delivery {
+                config: &self.parts.settings.config,
+                home: self.parts.store.home(),
+                bus: &self.parts.bus,
+                texts: &self.parts.texts,
+                clock: &self.parts.clock,
+                zone: self.parts.zone,
+            };
+            if let Some(section) = delivery
+                .for_request(team.id(), &worker_task, &requester_repo, request.id)
+                .await
+            {
+                prompt.push_str("\n\n");
+                prompt.push_str(&section);
+            }
+
             let binaries = self.parts.settings.config.binaries();
             let home_abs = self.parts.store.home().absolute_root().clone();
             let bus_dir = AgentBus::new(binaries.agentbus.clone(), home_abs.clone()).bus_dir();
@@ -2482,3 +2498,7 @@ pub(in crate::daemon::owner) struct CleanupObligation {
 
 #[cfg(test)]
 pub(in crate::daemon::owner) mod tests;
+
+#[cfg(test)]
+#[path = "teams/tests/findings.rs"]
+mod findings_tests;

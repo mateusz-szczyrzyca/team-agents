@@ -23,7 +23,7 @@ fn version_20_history_keeps_its_logs_and_accepts_both_no_tool_events_after_upgra
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 36);
+    assert_eq!(version, 37);
     drop(connection);
     let records = [LogEvent::RunNoToolRetry, LogEvent::RunNoToolFailed].map(|event| LogRecord {
         at: at(2, 0),

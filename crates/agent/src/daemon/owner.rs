@@ -13,6 +13,7 @@ mod commit_reminder;
 mod context_reminder;
 mod controls;
 mod disk;
+mod findings;
 #[cfg(test)]
 mod fixture;
 mod gate;
