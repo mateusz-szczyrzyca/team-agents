@@ -723,8 +723,37 @@ impl Reader {
         round: &RoundId,
         task: &TaskId,
     ) -> Result<Option<LastCheckpoint>, ReadError> {
-        let _ = (round, task);
-        Ok(None)
+        let mut newest = None;
+        let mut newest_of_task = None;
+        for stored in self.round_records(round)? {
+            let agent_core::history::Record::Event(event) = stored.record else {
+                continue;
+            };
+            let agent_core::history::HistoryEvent::Checkpoint {
+                task: holder,
+                cause,
+                head,
+                snapshot,
+                content,
+                ..
+            } = event.event
+            else {
+                continue;
+            };
+            let found = LastCheckpoint {
+                at: event.at,
+                task: holder,
+                cause,
+                head,
+                snapshot,
+                content,
+            };
+            if found.task == *task {
+                newest_of_task = Some(found.clone());
+            }
+            newest = Some(found);
+        }
+        Ok(newest_of_task.or(newest))
     }
 
     /// The prompts of the runs of `round`, oldest first.
