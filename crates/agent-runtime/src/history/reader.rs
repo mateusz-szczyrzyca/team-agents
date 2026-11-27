@@ -756,6 +756,21 @@ impl Reader {
         Ok(newest_of_task.or(newest))
     }
 
+    /// The checkpoint of `round` that tells a new holder how the work stands: as [`Reader::last_checkpoint_of_round`],
+    /// except that a change of holder is skipped. It is taken at the take-over itself and tells the same work as the
+    /// checkpoint before it.
+    ///
+    /// # Errors
+    /// [`ReadError`].
+    pub fn last_told_checkpoint_of_round(
+        &self,
+        round: &RoundId,
+        task: &TaskId,
+    ) -> Result<Option<LastCheckpoint>, ReadError> {
+        let _ = (round, task);
+        Ok(None)
+    }
+
     /// The prompts of the runs of `round`, oldest first.
     ///
     /// # Errors

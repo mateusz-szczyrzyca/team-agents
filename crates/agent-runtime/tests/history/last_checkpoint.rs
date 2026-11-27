@@ -112,3 +112,41 @@ fn a_round_with_no_checkpoint_has_none() {
 
     assert_eq!(last(&path, HOLDER), None);
 }
+
+/// The checkpoint of the round that tells a new holder how the work stands, for `task`.
+fn told(path: &PathBuf, task: &str) -> Option<LastCheckpoint> {
+    Reader::open(path)
+        .unwrap()
+        .last_told_checkpoint_of_round(&ROUND.parse().unwrap(), &task.parse().unwrap())
+        .unwrap()
+}
+
+#[test]
+fn a_change_of_holder_is_skipped_for_the_checkpoint_that_tells_how_the_work_stands() {
+    let (_dir, path) = database();
+    checkpoint(&path, HOLDER, "2026-11-26T09:01:00Z", "round_overdue", "");
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "holder_changed", "");
+
+    assert_eq!(told(&path, HOLDER).unwrap().cause, CheckpointCause::RoundOverdue);
+    assert_eq!(last(&path, HOLDER).unwrap().cause, CheckpointCause::HolderChanged);
+}
+
+#[test]
+fn a_holder_with_only_a_change_of_holder_is_told_the_newest_other_checkpoint_of_the_round() {
+    let (_dir, path) = database();
+    checkpoint(&path, OTHER, "2026-11-26T09:01:00Z", "commit", "");
+    checkpoint(&path, HOLDER, "2026-11-26T09:02:00Z", "holder_changed", "");
+
+    let found = told(&path, HOLDER).unwrap();
+
+    assert_eq!(found.cause, CheckpointCause::Commit);
+    assert_eq!(found.task, OTHER.parse().unwrap());
+}
+
+#[test]
+fn a_round_with_only_changes_of_holder_tells_no_checkpoint() {
+    let (_dir, path) = database();
+    checkpoint(&path, HOLDER, "2026-11-26T09:01:00Z", "holder_changed", "");
+
+    assert_eq!(told(&path, HOLDER), None);
+}
