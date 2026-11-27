@@ -100,3 +100,16 @@ func TestRequestInvestigationRejectsUnknownKind(t *testing.T) {
 func (s *Server) requestInvestigation(question, context string, wait bool) (string, *RequestInvestigationError) {
 	return s.requestInvestigationKind(question, context, wait, "", "")
 }
+
+func TestLegacyQuestionPreservesContext(t *testing.T) {
+	s := splitRequester(t, "lead")
+	if _, err := s.requestInvestigation("Investigate", "Contexte vérifié", false); err != nil {
+		t.Fatal(err)
+	}
+	mustWith(t, s.bus, func(st *State) {
+		inv := st.Investigations["1"]
+		if inv == nil || inv.Kind != KindInvestigation || inv.Context != "Contexte vérifié" {
+			t.Fatalf("legacy question lost context: %+v", inv)
+		}
+	})
+}
