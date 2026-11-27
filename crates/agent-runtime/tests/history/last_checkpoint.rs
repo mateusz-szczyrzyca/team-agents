@@ -3,7 +3,7 @@
 use agent_core::history::CheckpointCause;
 use agent_runtime::history::{HistoryDb, LastCheckpoint, Reader};
 use rusqlite::Connection;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use super::support::roomy;
 
@@ -27,7 +27,7 @@ fn database() -> (tempfile::TempDir, PathBuf) {
 }
 
 /// Records a checkpoint of `task` in the round taken at `at` after `cause`, with `extra` as more members of its JSON.
-fn checkpoint(path: &PathBuf, task: &str, at: &str, cause: &str, extra: &str) {
+fn checkpoint(path: &Path, task: &str, at: &str, cause: &str, extra: &str) {
     let payload = format!(
         r#"{{"event":"checkpoint","round":"{ROUND}","task":"{task}","job":"item","tier":"normal","cause":"{cause}","draft":false,"phase":"in_progress"{extra}}}"#
     );
@@ -46,7 +46,7 @@ fn checkpoint(path: &PathBuf, task: &str, at: &str, cause: &str, extra: &str) {
 }
 
 /// The newest checkpoint of the round for `task`.
-fn last(path: &PathBuf, task: &str) -> Option<LastCheckpoint> {
+fn last(path: &Path, task: &str) -> Option<LastCheckpoint> {
     Reader::open(path)
         .unwrap()
         .last_checkpoint_of_round(&ROUND.parse().unwrap(), &task.parse().unwrap())
@@ -114,7 +114,7 @@ fn a_round_with_no_checkpoint_has_none() {
 }
 
 /// The checkpoint of the round that tells a new holder how the work stands, for `task`.
-fn told(path: &PathBuf, task: &str) -> Option<LastCheckpoint> {
+fn told(path: &Path, task: &str) -> Option<LastCheckpoint> {
     Reader::open(path)
         .unwrap()
         .last_told_checkpoint_of_round(&ROUND.parse().unwrap(), &task.parse().unwrap())
