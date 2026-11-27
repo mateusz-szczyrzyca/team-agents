@@ -36,6 +36,14 @@ const (
 	findingOpResolve findingOp = "resolve" // Closes the named finding.
 )
 
+// Valid reports whether op is a journal operation.
+func (op findingOp) Valid() bool { return op == findingOpAdd || op == findingOpResolve }
+
+// UnmarshalJSON implements json.Unmarshaler; failures contain a *ValueError.
+func (op *findingOp) UnmarshalJSON(data []byte) error {
+	return unmarshalEnum(data, op, "finding operation").asError()
+}
+
 // findingRecord is the read representation of either journal operation.
 type findingRecord struct {
 	Op      findingOp `json:"op"` // Operation to replay.
@@ -63,6 +71,9 @@ type findingJournal struct {
 // readFindings replays the journal while the caller holds the bus lock. Missing journals are empty.
 func (b *Bus) readFindings(repo string) (journal findingJournal, serr *StorageError) {
 	journal.resolved = map[string]bool{}
+	if name := safeName(repo); name == "." || name == ".." {
+		return journal, storageErr(valueErr("invalid repository name %q", repo), "cannot read findings")
+	}
 	file := filepath.Join(b.notebookDir(repo), "findings.jsonl")
 	f, err := os.Open(file) //nolint:gosec // G304: fixed findings file under the configured bus notebook directory.
 	if errors.Is(err, os.ErrNotExist) {
@@ -186,7 +197,15 @@ func (s *Server) findingAdd(kind string, paths []string, text string) (string, *
 		}
 		id = fmt.Sprintf("F-%d", journal.highest+1)
 		finding := Finding{ID: id, TS: Now(), Author: s.me, Task: s.info.Task, Kind: k, Paths: normalized, Text: text}
-		return fromStorage(FindingAddStorage, s.bus.appendFinding(s.info.Repo, findingRecord{Op: findingOpAdd, Finding: finding}))
+		if serr := s.bus.appendFinding(s.info.Repo, findingRecord{Op: findingOpAdd, Finding: finding}); serr != nil {
+			return fromStorage(FindingAddStorage, serr)
+		}
+		logInfo(LogFindingAdded, "repo", s.info.Repo, "id", id, "author", s.me, "task", s.info.Task)
+		if s.team != "" {
+			_, serr := s.bus.post(st, s.me, teamRecipient(s.team), EventFindingAdded{ID: id, KindOfFinding: k, Paths: normalized, TextOfFinding: text})
+			return fromStorage(FindingAddStorage, serr)
+		}
+		return nil
 	})
 	if err != nil {
 		return "", err
@@ -231,6 +250,12 @@ func (s *Server) findingResolve(id, reason string) (string, *FindingResolveError
 		if serr := s.bus.appendFinding(s.info.Repo, record); serr != nil {
 			return fromStorage(FindingResolveStorage, serr)
 		}
+		logInfo(LogFindingResolved, "repo", s.info.Repo, "id", id, "author", s.me, "task", s.info.Task)
+		if s.team != "" {
+			if _, serr := s.bus.post(st, s.me, teamRecipient(s.team), EventFindingResolved{ID: id, Reason: reason}); serr != nil {
+				return fromStorage(FindingResolveStorage, serr)
+			}
+		}
 		out = "RESOLVED " + id
 		return nil
 	})
@@ -263,4 +288,16 @@ func (b *Bus) findings(repo string) ([]Finding, *FindingsError) {
 		return nil, fromStorage(FindingsStorage, serr)
 	}
 	return out, nil
+}
+
+// cmdFindings prints the open repository findings as JSON for the daemon.
+func cmdFindings(args []string) {
+	fs := newFlagSet("findings")
+	dir := fs.String("dir", defaultDir(), "state directory")
+	repo := fs.String("repo", "", "repository name")
+	fs.Bool("json", false, "print JSON (also the default)")
+	parseFlags(fs, args)
+	findings, err := (&Bus{dir: *dir}).findings(*repo)
+	exitOn(err.asError())
+	exitOn(fromStorage(FindingsStorage, printJSON(findings)).asError())
 }
