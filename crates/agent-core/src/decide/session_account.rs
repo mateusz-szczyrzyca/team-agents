@@ -21,6 +21,10 @@ pub enum AccountSession {
 /// What the next run of a task does with its session, given the account `recorded` for the session (`None` for a session
 /// without one, and for one begun before accounts) and the account `now` of the agent that runs it.
 #[must_use]
-pub fn session_start(_recorded: Option<&AccountName>, _now: Option<&AccountName>) -> AccountSession {
-    AccountSession::Resume
+pub fn session_start(recorded: Option<&AccountName>, now: Option<&AccountName>) -> AccountSession {
+    if recorded == now {
+        AccountSession::Resume
+    } else {
+        AccountSession::New
+    }
 }

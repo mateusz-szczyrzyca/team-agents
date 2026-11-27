@@ -156,6 +156,8 @@ pub struct State {
     /// The accounts whose provider refused a run and no run of their agents starts before the time of their pause; an
     /// account without an entry is not paused.
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// The account the session of each task began under; a task without an entry has a session with no account, or none.
+    session_accounts: BTreeMap<TaskId, crate::config::AccountName>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -189,6 +191,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no account is paused.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     accounts: &'a BTreeMap<crate::config::AccountName, AccountPause>,
+    /// See [`State`]; omitted when no session runs under an account.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    session_accounts: &'a BTreeMap<TaskId, crate::config::AccountName>,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -214,6 +219,7 @@ impl Serialize for State {
             limit_refusals: &self.limit_refusals,
             refused_agents: &self.refused_agents,
             accounts: &self.accounts,
+            session_accounts: &self.session_accounts,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -230,6 +236,7 @@ impl PartialEq for State {
             && self.limit_refusals == other.limit_refusals
             && self.refused_agents == other.refused_agents
             && self.accounts == other.accounts
+            && self.session_accounts == other.session_accounts
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -262,6 +269,9 @@ struct StateWire {
     /// Optional in state written before the pauses of accounts were persisted.
     #[serde(default)]
     accounts: BTreeMap<crate::config::AccountName, AccountPause>,
+    /// Optional in state written before the accounts of sessions were persisted.
+    #[serde(default)]
+    session_accounts: BTreeMap<TaskId, crate::config::AccountName>,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -537,6 +547,7 @@ impl State {
             limit_refusals: BTreeMap::new(),
             refused_agents: BTreeMap::new(),
             accounts: BTreeMap::new(),
+            session_accounts: BTreeMap::new(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -779,12 +790,21 @@ impl State {
     /// The account the session of `task` began under; `None` for a session without one, and for a task of a state written
     /// before accounts kept it.
     #[must_use]
-    pub fn session_account(&self, _task: &TaskId) -> Option<&crate::config::AccountName> {
-        None
+    pub fn session_account(&self, task: &TaskId) -> Option<&crate::config::AccountName> {
+        self.session_accounts.get(task)
     }
 
     /// Records that the session of `task` runs under `account` (`None`: under none).
-    pub fn record_session_account(&mut self, _task: &TaskId, _account: Option<crate::config::AccountName>) {}
+    pub fn record_session_account(&mut self, task: &TaskId, account: Option<crate::config::AccountName>) {
+        match account {
+            Some(account) => {
+                self.session_accounts.insert(task.clone(), account);
+            }
+            None => {
+                self.session_accounts.remove(task);
+            }
+        }
+    }
 
     /// Starts `task` anew in a new session because the account of its agent changed to `account` (`None`: to none), at
     /// `at`, and records it as the account of that session. No renewal is counted. Returns whether the task was started
@@ -795,11 +815,13 @@ impl State {
     /// does not fit its runs.
     pub fn begin_account_session(
         &mut self,
-        _task: &TaskId,
-        _account: Option<crate::config::AccountName>,
-        _at: Timestamp,
+        task: &TaskId,
+        account: Option<crate::config::AccountName>,
+        at: Timestamp,
     ) -> Result<bool, RenewTaskError> {
-        Ok(false)
+        let begun = self.begin_holder_session(task, crate::decide::ladder::Trouble::AccountChanged, at)?;
+        self.record_session_account(task, account);
+        Ok(begun)
     }
 
     /// Begins the session of the agent that holds `task` now, after a hand-over that followed `trouble`, at `at`: no
@@ -1089,6 +1111,7 @@ impl State {
         self.wake_deliveries.retain(|task, _| !tasks.contains(task));
         self.limit_refusals.retain(|task, _| !tasks.contains(task));
         self.commit_cuts.retain(|task, _| !tasks.contains(task));
+        self.session_accounts.retain(|task, _| !tasks.contains(task));
         self.queued.retain(|task| !tasks.contains(task));
         Some(team)
     }
@@ -1254,6 +1277,7 @@ impl TryFrom<StateWire> for State {
             limit_refusals: wire.limit_refusals,
             refused_agents: wire.refused_agents,
             accounts: wire.accounts,
+            session_accounts: wire.session_accounts,
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };
