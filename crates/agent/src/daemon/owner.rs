@@ -5,6 +5,8 @@
 //! applies the end of each run to its task, wakes paused tasks when their time comes and publishes what happens as
 //! events. A state it cannot save ends the daemon: models must not go on working with a state that is not kept.
 
+#[cfg(test)]
+mod account_pick_tests;
 mod accounts;
 mod answers;
 mod bound;
