@@ -292,7 +292,13 @@ them loads with none, and a version that does not know them refuses a state that
 of `agents.toml`) to its pause: `{"until": TIMESTAMP, "reason": LIMIT}`. `until` is when no run of any agent of the account starts
 before; `reason` is the limit that started the pause, `{"kind": "rate_limit"}` or `{"kind": "quota"}` with
 `"reset_in_nanoseconds": N` (positive; absent when the provider named no reset). Written only when not empty. A state
-without it loads with none; a version that does not know it refuses a state that has it. Nothing records a pause yet.
+without it loads with none; a version that does not know it refuses a state that has it. The daemon writes a pause when a run of an
+agent of the account is refused and forgets it when its time has passed.
+
+**Tasks held by the pause of an account (optional, absent in a state written before agent-core 0.148.0).** `account_held_tasks`
+lists the IDs of the tasks the daemon paused for the pause of their account, in the order of the IDs: they are woken at the end of
+that pause and by nothing else, so a restart does not wake a task the human paused. Written only when not empty. A state without it
+loads with none; a version that does not know it refuses a state that has it.
 
 **Commit cuts (optional, absent in a state written before agent 0.122.0).** `commit_cuts` maps a task to the IDs of its
 runs that the daemon cut for an order to commit (`[commit_reminder] cut_after`) and resumed in their session; the clock
