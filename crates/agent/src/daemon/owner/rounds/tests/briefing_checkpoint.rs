@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use agent_core::history::{CheckpointCause, HistoryEvent, Record};
+use agent_core::history::CheckpointCause;
 use agent_core::ids::{TaskId, TeamId};
 use agent_core::protocol::{Client, Command, ControlRequest, Reply, Target};
 use agent_core::state::MergeMode;
@@ -38,29 +38,18 @@ struct Kept {
     snapshot: Option<String>,
 }
 
-/// The checkpoints of `team` in the order they were written.
-fn kept(rig: &Rig, team: &TeamId) -> Vec<Kept> {
-    Reader::open(&rig.home.history_file())
+/// The checkpoint of the round of `team` that tells `task`'s next holder how the work stands, as the history gives it.
+fn last_told(rig: &Rig, team: &TeamId, task: &TaskId) -> Kept {
+    let round = rig.state().team(team).unwrap().rounds()[0].id().clone();
+    let found = Reader::open(&rig.home.history_file())
         .unwrap()
-        .team_records(team)
+        .last_told_checkpoint_of_round(&round, task)
         .unwrap()
-        .into_iter()
-        .filter_map(|stored| match stored.record {
-            Record::Event(event) => match event.event {
-                HistoryEvent::Checkpoint { cause, snapshot, .. } => Some(Kept { cause, snapshot }),
-                _ => None,
-            },
-            _ => None,
-        })
-        .collect()
-}
-
-/// The newest checkpoint of `team` that is no change of holder.
-fn last_told(rig: &Rig, team: &TeamId) -> Kept {
-    kept(rig, team)
-        .into_iter()
-        .rfind(|checkpoint| checkpoint.cause != CheckpointCause::HolderChanged)
-        .unwrap()
+        .expect("the round has a checkpoint");
+    Kept {
+        cause: found.cause,
+        snapshot: found.snapshot,
+    }
 }
 
 /// The snapshot references the repository of the worktree holds.
@@ -173,7 +162,7 @@ async fn the_new_holder_of_a_round_the_limit_cut_is_briefed_with_the_checkpoint_
         (head, branch),
         "the same branch at the same head"
     );
-    assert_eq!(last_told(&rig, &team).cause, CheckpointCause::RoundOverdue);
+    assert_eq!(last_told(&rig, &team, &tasks[0]).cause, CheckpointCause::RoundOverdue);
 }
 
 /// Sends `command` as the command line does and returns the reply.
@@ -213,7 +202,7 @@ async fn waiting_with_a_finding() -> (Rig, TeamId, TaskId, std::path::PathBuf) {
 async fn a_renewal_is_briefed_with_the_last_checkpoint_and_makes_no_new_snapshot() {
     let (mut rig, team, task, worktree) = waiting_with_a_finding().await;
     let runs_before = rig.runs(&task);
-    let told = last_told(&rig, &team);
+    let told = last_told(&rig, &team, &task);
     let reference = told.snapshot.clone().expect("the checkpoint kept a snapshot");
     let before = snapshot_refs(&worktree);
 
@@ -251,7 +240,7 @@ async fn a_renewal_is_briefed_with_the_last_checkpoint_and_makes_no_new_snapshot
 async fn a_worktree_changed_after_the_checkpoint_is_kept_in_a_new_snapshot_and_the_checkpoint_is_still_named() {
     let (mut rig, team, task, worktree) = waiting_with_a_finding().await;
     let runs_before = rig.runs(&task);
-    let told = last_told(&rig, &team);
+    let told = last_told(&rig, &team, &task);
     let checkpoint_reference = told.snapshot.clone().expect("the checkpoint kept a snapshot");
     let before = snapshot_refs(&worktree);
     std::fs::write(worktree.join("changed-after.txt"), "after\n").unwrap();
