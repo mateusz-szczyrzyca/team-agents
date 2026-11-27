@@ -35,6 +35,7 @@ mod branch_commits {
         std::fs::create_dir(&repo).unwrap();
         raw(&repo, &["init", "-q", "-b", "main"]);
         raw(&repo, &["commit", "-q", "--allow-empty", "-m", "base"]);
+        raw(&repo, &["update-ref", "refs/remotes/origin/main", "main"]);
         (tmp, repo)
     }
 
