@@ -10,7 +10,7 @@ use agent_core::config::AccountName;
 use agent_core::decide::account_pause::{AccountPauseOutcome, decide};
 use agent_core::decide::limit::Limit;
 use agent_core::decide::outcome::PauseReason;
-use agent_core::ids::TaskId;
+use agent_core::ids::{AgentName, TaskId};
 use agent_core::kinds::Role;
 use agent_core::log::LogEvent;
 use agent_core::state::{AccountPause, RunEnd, Timestamp};
@@ -32,23 +32,13 @@ pub(super) enum AccountHandled {
 }
 
 impl Owner {
-    /// The account of the agent or investigator `agent`, found by the name the state records (see also `account_of`,
-    /// which resolves a validated name); `None` for one without an account or one the configuration
-    /// does not have any more.
+    /// The account of the agent or investigator `agent`, as the state records its name: the rule of
+    /// [`Owner::account_of`], for a name that has not been parsed yet. `None` for an agent without an account and for
+    /// one the configuration does not have any more.
     pub(super) fn account_named(&self, agent: &str) -> Option<AccountName> {
-        let config = &self.parts.settings.config;
-        let of_agent = config
-            .agents()
-            .iter()
-            .find(|(name, _)| name.as_str() == agent)
-            .map(|(_, found)| found.account.clone());
-        of_agent.unwrap_or_else(|| {
-            config
-                .investigators()
-                .iter()
-                .find(|(name, _)| name.as_str() == agent)
-                .and_then(|(_, found)| found.account.clone())
-        })
+        // A name that is not valid is not one of the configuration either, so it has no account.
+        let name: AgentName = agent.parse().ok()?;
+        self.account_of(&name)
     }
 
     /// Whether the account of `agent` is paused at `now`: none of its runs starts.
@@ -107,7 +97,8 @@ impl Owner {
                     .parts
                     .state
                     .account_pause(&account)
-                    .map_or(now, |pause| pause.until);
+                    .map(|pause| pause.until)
+                    .ok_or_else(|| OwnerError::LostAccountPause { account: account.clone() })?;
                 self.hold(task, until);
                 Ok(AccountHandled::Paused { until, notice: None })
             }
@@ -184,6 +175,9 @@ impl Owner {
                 continue;
             }
             let located = self.locate(&item.task)?;
+            // Only the tasks of a team's own agents are paused. The task of a worker, a reviewer or an investigator
+            // stays queued: the queue filter of the owner starts none of the account's runs while its pause lasts, so
+            // the task waits there, not failed, and starts when the pause ends.
             if matches!(located.role, Role::Worker | Role::Reviewer | Role::Investigator) {
                 continue;
             }

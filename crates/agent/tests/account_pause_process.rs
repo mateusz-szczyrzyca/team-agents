@@ -414,6 +414,26 @@ mod account_pause_process {
     }
 
     #[test]
+    fn held_task_without_the_pause_of_its_account_runs_after_a_restart() {
+        let mut world = World::new();
+        world.start();
+        let Paused { refused, waiting } = pause_the_account(&world);
+        world.stop();
+        world.edit_state(|state| {
+            let accounts = state["accounts"].as_object_mut().unwrap();
+            accounts.remove(ACCOUNT).unwrap();
+            state.as_object_mut().unwrap().remove("refused_agents");
+            assert!(state["account_held_tasks"].as_array().unwrap().len() >= 2, "{state}");
+        });
+
+        world.start();
+
+        world.status_where("the held tasks to run, their account has no pause", |_| {
+            world.runs(&refused) == 2 && world.runs(&waiting) == 1
+        });
+    }
+
+    #[test]
     fn restart_keeps_account_pause() {
         let mut world = World::new();
         world.start();

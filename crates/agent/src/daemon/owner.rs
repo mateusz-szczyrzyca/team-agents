@@ -257,6 +257,12 @@ pub(crate) enum OwnerError {
     /// The end of the pause of an account cannot be computed.
     #[error("the pause of an account cannot be computed")]
     AccountPause(#[from] agent_core::decide::outcome::ClassifyError),
+    /// The pause of an account that was found paused is not in the state.
+    #[error("the pause of account {account} is not in the state")]
+    LostAccountPause {
+        /// The account whose pause is missing.
+        account: agent_core::config::AccountName,
+    },
     /// A task that must be in the state is not.
     #[error("task {task} is not in the state")]
     LostTask {

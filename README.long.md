@@ -250,10 +250,12 @@ account and never a value; the values of `[account_env.NAME]` are cut from `agen
 Files without accounts load as before. See [`docs/configuration.md`](docs/configuration.md), `[accounts.NAME]`.
 
 **The pause of an account.** When the provider refuses a run of an agent that has an account — an exhausted quota or a rate
-limit — the daemon pauses the account: every queued task of every agent of the account, and the task of the refused run, is
-paused until the same moment (the reset the provider named, or `[limits] quota_pause_minutes` / `rate_limit_pause_minutes`),
+limit — the daemon pauses the account: every queued task of every agent of the account that a team's own agent works on, and the
+task of the refused run, is paused until the same moment (the reset the provider named, or `[limits] quota_pause_minutes` / `rate_limit_pause_minutes`),
 without a run of its own, and you get one notification, `Account NAME is paused until ...`, that names the account's agents.
-No run of the account starts while the pause lasts, also not one of a task started after it: it waits queued. A run of the
+No run of the account starts while the pause lasts, also not one of a task started after it: it waits queued. The queued
+tasks of its workers, reviewers and investigators are not paused and not counted in the notification: they wait in the
+queue, not failed, and start when the pause ends. A run of the
 account that is going finishes; if it is refused too, its task is paused until the same reset, without another notification. At
 the reset the paused tasks are queued again. Another account — also another account of the same owner — and agents without an
 account are not touched. `agent status` shows a line per paused account: `account comp-claude paused until 15:30 (quota)` (the
