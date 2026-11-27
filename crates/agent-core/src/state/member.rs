@@ -902,7 +902,13 @@ impl Member {
             return Err(RunError::DuplicateRun { run: id });
         }
         self.waiting_since = None;
+        let first = self.runs.is_empty();
         self.runs.push(Run::started_for(id, at, session, rounds)?);
+        // The first run of a task is the one whose prompt numbers the requirements of its item: a task whose first run
+        // started before keeps its plan as it is, and is sent back for the requirements only once its plan names one.
+        if let Some(plan) = self.plan.as_mut().filter(|_| first) {
+            plan.tie_requirements();
+        }
         Ok(())
     }
 

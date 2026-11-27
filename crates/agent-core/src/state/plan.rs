@@ -171,9 +171,9 @@ pub struct PlanKeeping {
     /// mismatch. Tasks created between `0.35.0` and `#163` have a plan record without this marker.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     judging: bool,
-    /// Whether the task was created under numbered requirements: its plan names the requirements of its item in `For:`
-    /// lines, and a run that reports `DONE` with a step that names none is sent back. A task created before has no
-    /// marker and is sent back only once its plan has a `For:` line.
+    /// Whether the task's first run was started under numbered requirements: its plan names the requirements of its
+    /// item in `For:` lines, and a run that reports `DONE` with a step that names none is sent back. A task whose first
+    /// run started before has no marker and is sent back only once its plan has a `For:` line.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     requirements_tied: bool,
     /// The reason of a send-back the next run of the task delivers; `None` when none waits, and not written then.
@@ -196,7 +196,6 @@ impl PlanKeeping {
     pub fn new() -> Self {
         Self {
             judging: true,
-            requirements_tied: true,
             ..Self::default()
         }
     }
@@ -212,6 +211,11 @@ impl PlanKeeping {
     #[must_use]
     pub const fn judging(&self) -> bool {
         self.judging
+    }
+
+    /// Marks the task as started under numbered requirements: the first run of a task is given them in its prompt.
+    pub(super) const fn tie_requirements(&mut self) {
+        self.requirements_tied = true;
     }
 
     /// Sets whether the task's plan was created under step judging.

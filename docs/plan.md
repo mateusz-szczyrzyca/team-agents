@@ -194,8 +194,8 @@ four reasons, in this order, each with its own text of the catalog (`prompts/har
 | unfinished | a step is to do (`[ ]`) or in hand (`[>]`) | the step IDs, and to finish them or give them up with a reason |
 | no requirement | a step that is not given up has no `For:` line, or names a requirement the item does not have | the step IDs of each kind and the requirements the item has |
 
-The "no requirement" send-back is for a task of an item that was created under numbered requirements (the marker
-`requirements_tied` of its plan in `state.json`). A task created before is checked only once a step of its plan has a
+The "no requirement" send-back is for a task of an item whose first run started under numbered requirements (the marker
+`requirements_tied` of its plan in `state.json`). A task whose first run started before is checked only once a step of its plan has a
 `For:` line; a plan with no `For:` line, written before this rule, reads as before: its steps count as "not tied to a
 requirement".
 
