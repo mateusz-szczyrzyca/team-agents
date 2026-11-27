@@ -3643,3 +3643,6 @@ async fn a_pool_worker_run_gets_investigations_off() {
         "{args:?}"
     );
 }
+
+#[path = "tests/findings.rs"]
+mod findings;
