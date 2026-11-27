@@ -1683,21 +1683,23 @@ fn newest_for(
     }
 }
 
-/// The checkpoints of `all` (oldest first) that tell the work: all but a change of holder and the end of a run whose
-/// snapshot is the one the task's checkpoint before it kept, which changed nothing in the worktree.
+/// The checkpoints of `all` (oldest first) that tell the work: all but a change of holder and the end of a run that
+/// keeps the snapshot and says what the task's last told checkpoint before it says, which changed nothing.
 fn tells_the_work(all: &[LastCheckpoint]) -> Vec<LastCheckpoint> {
     use agent_core::history::CheckpointCause;
-    let mut told = Vec::new();
-    for (position, found) in all.iter().enumerate() {
+    let mut told: Vec<LastCheckpoint> = Vec::new();
+    // The position in `told` of the last told checkpoint of each task: one pass, no search back.
+    let mut last_of_task: HashMap<&TaskId, usize> = HashMap::new();
+    for found in all {
         let unchanged = found.snapshot.is_some()
-            && all
-                .iter()
-                .take(position)
-                .rfind(|earlier| earlier.task == found.task)
-                .is_some_and(|earlier| earlier.snapshot == found.snapshot);
+            && last_of_task
+                .get(&found.task)
+                .and_then(|position| told.get(*position))
+                .is_some_and(|earlier| earlier.snapshot == found.snapshot && earlier.content == found.content);
         let adds_nothing =
             found.cause == CheckpointCause::HolderChanged || (found.cause == CheckpointCause::RunEnded && unchanged);
         if !adds_nothing {
+            last_of_task.insert(&found.task, told.len());
             told.push(found.clone());
         }
     }
