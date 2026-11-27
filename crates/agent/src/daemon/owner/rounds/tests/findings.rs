@@ -235,13 +235,20 @@ async fn finding_path_failure_scope(has_finding: bool) {
 }
 
 #[tokio::test]
-async fn findings_lookup_finishes_initial_launch_before_the_started_reply() {
+async fn findings_lookup_preserves_registered_tasks_and_eventual_launch() {
     let mut rig = rig().await;
     rig.start().await;
     let (_, tasks) = rig.run(&["codex-1"], ONE, MergeMode::NoMerge, None).await;
     let text = std::fs::read_to_string(rig.home.state_file()).unwrap();
     let state = agent_core::state::State::from_json(&text).unwrap();
-    let runs = state.find_task(&tasks[0]).unwrap().member.runs().len();
+    assert_eq!(state.find_task(&tasks[0]).unwrap().member.task(), &tasks[0]);
+    let launched = rig
+        .state_where("the initial findings lookup finishes before launch", |state| {
+            state
+                .find_task(&tasks[0])
+                .is_some_and(|found| !found.member.runs().is_empty())
+        })
+        .await;
     rig.stop().await.unwrap();
-    assert_eq!(runs, 1);
+    assert_eq!(launched.find_task(&tasks[0]).unwrap().member.runs().len(), 1);
 }
