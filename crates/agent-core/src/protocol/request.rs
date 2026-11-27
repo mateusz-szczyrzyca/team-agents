@@ -453,6 +453,7 @@ impl Request {
             super::ReplyFormat::Executor => super::encode_executor(self),
             super::ReplyFormat::Versions => super::encode_versions(self),
             super::ReplyFormat::FailedReason => super::encode_failed_reason(self),
+            super::ReplyFormat::Swap => super::encode_swap(self),
         }
     }
 

@@ -53,6 +53,9 @@ pub const VERSIONS_PROTOCOL_VERSION: u32 = 7;
 /// The negotiated version carrying the reason a member's task failed, on status replies and team updated events.
 pub const FAILED_REASON_PROTOCOL_VERSION: u32 = 8;
 
+/// The negotiated version carrying the swap command and swap refusals.
+pub const SWAP_PROTOCOL_VERSION: u32 = 10;
+
 /// Wire format requested by a client, with metadata limited to the negotiated version.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplyFormat {
@@ -68,6 +71,8 @@ pub enum ReplyFormat {
     Versions,
     /// Version eight, including the reason a member's task failed.
     FailedReason,
+    /// Version ten, including the swap command and swap refusals.
+    Swap,
 }
 
 /// Longest line a client may send, in bytes: a task list (1 MiB at most) with room for the rest of the request.
@@ -211,6 +216,11 @@ fn encode_failed_reason<T: Serialize>(message: &T) -> Result<String, EncodeError
         *protocol = serde_json::Value::from(FAILED_REASON_PROTOCOL_VERSION);
     }
     encode(&value)
+}
+
+/// Serializes protocol-ten messages carrying the swap command.
+fn encode_swap<T: Serialize>(message: &T) -> Result<String, EncodeError> {
+    encode(message)
 }
 
 /// Checks the wire boundary before decoding a supported format into the shared domain types.
@@ -487,6 +497,7 @@ impl Frame {
             ReplyFormat::Executor => encode_executor(self),
             ReplyFormat::Versions => encode_versions(self),
             ReplyFormat::FailedReason => encode_failed_reason(self),
+            ReplyFormat::Swap => encode_swap(self),
         }
     }
 
