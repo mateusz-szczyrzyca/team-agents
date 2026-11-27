@@ -7,6 +7,7 @@
 
 use std::path::PathBuf;
 
+use agent_core::config::RepoName;
 use agent_core::history::{
     CheckResult, CheckpointCause, CheckpointContent, CheckpointJob, CommitLine, EventRecord, HistoryEvent, JobWork,
     Record, ReviewedItem, review_meant,
@@ -57,6 +58,51 @@ pub(super) struct JobFacts {
     pub(super) findings_seen: String,
     /// The last result of the check of a worker's request, when it ran.
     pub(super) last_check: Option<(bool, String)>,
+}
+
+/// The round whose jobs are read back after a start of the daemon, with its team and the repository of the team.
+struct JobsOf<'a> {
+    /// The team of the round.
+    team: &'a TeamId,
+    /// The round.
+    round: &'a RoundId,
+    /// The repository of the team, whose worktrees the jobs have.
+    repo: &'a RepoName,
+}
+
+/// Whether a job whose last checkpoint is of `cause` has ended: no run of it is going, and none is started again.
+fn is_an_end(cause: CheckpointCause) -> bool {
+    match cause {
+        CheckpointCause::RunEnded
+        | CheckpointCause::ReviewSubmitted
+        | CheckpointCause::InvestigationAnswered
+        | CheckpointCause::HolderChanged => true,
+        CheckpointCause::RoundOpened
+        | CheckpointCause::Commit
+        | CheckpointCause::PullOpened
+        | CheckpointCause::PullPushed
+        | CheckpointCause::PullReady
+        | CheckpointCause::Checked
+        | CheckpointCause::SplitDecided
+        | CheckpointCause::FixPassStarted
+        | CheckpointCause::FindingAnswered
+        | CheckpointCause::FindingJudged
+        | CheckpointCause::WaitsForHuman
+        | CheckpointCause::QuestionAsked
+        | CheckpointCause::QuestionAnswered
+        | CheckpointCause::PullApproved
+        | CheckpointCause::MergeRefused
+        | CheckpointCause::PullMerged
+        | CheckpointCause::PullHandedOver
+        | CheckpointCause::PullClosed
+        | CheckpointCause::RoundOverdue
+        | CheckpointCause::DaemonStarted
+        | CheckpointCause::RequestStarted
+        | CheckpointCause::RequestChecked
+        | CheckpointCause::ReviewStarted
+        | CheckpointCause::FindingsWritten
+        | CheckpointCause::InvestigationStarted => false,
+    }
 }
 
 /// The first seven characters of a commit's hash: how a checkpoint names a commit.
@@ -235,6 +281,112 @@ impl Owner {
         })));
         // Whoever takes the job over reads this checkpoint from the history: it is there before the owner goes on.
         self.wait_for_history(&round).await;
+    }
+
+    /// After a start of the daemon: registers again the jobs of the open rounds that were going when it ended, from their
+    /// last checkpoints, and takes a `daemon_started` checkpoint of each whose worktree is not as that checkpoint kept it.
+    /// A history that cannot be read is logged and leaves the jobs of that round without one.
+    pub(super) async fn jobs_daemon_started(&mut self) {
+        let history_file = self.parts.store.home().history_file();
+        let mut going = Vec::new();
+        for team in self.parts.state.teams() {
+            for round in team.open_rounds() {
+                let kept =
+                    match Reader::open(&history_file).and_then(|reader| reader.job_checkpoints_of_round(round.id())) {
+                        Ok(kept) => kept,
+                        Err(error) => {
+                            tracing::warn!(
+                                event = LogEvent::CheckpointFailed.as_str(),
+                                team = %team.id(),
+                                round = %round.id(),
+                                cause = %CheckpointCause::DaemonStarted,
+                                error = %error_chain(&error),
+                                "the checkpoints of the jobs of an open round cannot be read at the start of the daemon"
+                            );
+                            continue;
+                        }
+                    };
+                let whose = JobsOf {
+                    team: team.id(),
+                    round: round.id(),
+                    repo: team.repo(),
+                };
+                going.extend(self.going_jobs(&whose, &kept));
+            }
+        }
+        for (facts, last) in going {
+            let task = facts.task.clone();
+            self.checkpoints.last.insert((facts.round.clone(), task.clone()), last);
+            self.checkpoints.jobs.insert(task.clone(), facts);
+            self.job_checkpoint(&task, CheckpointCause::DaemonStarted).await;
+        }
+    }
+
+    /// The jobs `kept` (the checkpoints of the jobs of one round, oldest first) leaves going: each with the facts the
+    /// registry holds of a job and the last checkpoint it kept. A job whose last checkpoint ended it, or tells nothing of
+    /// what is meant or where its worktree started, is not going: the latter is logged.
+    fn going_jobs(&self, whose: &JobsOf<'_>, kept: &[LastCheckpoint]) -> Vec<(JobFacts, Kept)> {
+        let mut tasks: Vec<&TaskId> = Vec::new();
+        for checkpoint in kept {
+            if !tasks.contains(&&checkpoint.task) {
+                tasks.push(&checkpoint.task);
+            }
+        }
+        let mut going = Vec::new();
+        for task in tasks {
+            let own: Vec<&LastCheckpoint> = kept.iter().filter(|checkpoint| checkpoint.task == *task).collect();
+            let (Some(first), Some(last)) = (own.first(), own.last()) else {
+                continue;
+            };
+            if is_an_end(last.cause) {
+                continue;
+            }
+            let (Some(start), Some(meant)) = (
+                first.head.clone(),
+                own.iter()
+                    .rev()
+                    .find_map(|checkpoint| checkpoint.content.as_ref().map(|content| content.meant.clone())),
+            ) else {
+                tracing::warn!(
+                    event = LogEvent::CheckpointFailed.as_str(),
+                    team = %whose.team,
+                    round = %whose.round,
+                    task = %task,
+                    cause = %CheckpointCause::DaemonStarted,
+                    error = "the first checkpoint of the job has no head, or none tells what is meant",
+                    "the job has no checkpoint at the start of the daemon"
+                );
+                continue;
+            };
+            let home = self.parts.store.home();
+            let findings_file = match (last.job, last.pull_request, last.review_pass) {
+                (CheckpointJob::Review, Some(pr), Some(pass)) => Some(home.review_findings_file(task, pr, pass)),
+                _ => None,
+            };
+            let facts = JobFacts {
+                team: whose.team.clone(),
+                round: whose.round.clone(),
+                job: last.job,
+                tier: last.tier,
+                task: task.clone(),
+                worktree: home.worktree_dir(whose.repo, task),
+                meant,
+                start,
+                pull_request: last.pull_request,
+                review_pass: last.review_pass,
+                findings_file,
+                findings_seen: String::new(),
+                last_check: None,
+            };
+            going.push((
+                facts,
+                Kept {
+                    head: last.head.clone(),
+                    snapshot: own.iter().rev().find_map(|checkpoint| checkpoint.snapshot.clone()),
+                },
+            ));
+        }
+        going
     }
 
     /// Takes the checkpoint of the end of the run of the job of `task`, of `cause`, and forgets the job: no run of the task

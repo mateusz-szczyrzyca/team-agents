@@ -866,6 +866,7 @@ impl Owner {
             self.queue_for_task(&task, CheckpointCause::DaemonStarted);
         }
         self.flush_checkpoints().await;
+        self.jobs_daemon_started().await;
     }
 
     /// Looks at the worktree of `task`, when it has a run going for an open round, once a minute, and queues a
