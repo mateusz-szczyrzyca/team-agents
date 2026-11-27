@@ -4822,4 +4822,91 @@ git -c user.name=Worker -c user.email=worker@example.com commit -qm 'Complete re
             "retained partial work\n"
         );
     }
+    impl World {
+        /// Ends the daemon with `SIGKILL`, as a crash of the machine would, and waits for it to end.
+        fn kill(&mut self) {
+            if let Some(mut daemon) = self.daemon.take() {
+                let pid = Pid::from_raw(i32::try_from(daemon.id()).unwrap()).unwrap();
+                rustix::process::kill_process(pid, Signal::KILL).unwrap();
+                daemon.wait().unwrap();
+            }
+        }
+
+        /// The causes and tasks of the checkpoints of the jobs the history holds, oldest first.
+        fn job_checkpoints(&self) -> Vec<(agent_core::history::CheckpointCause, String)> {
+            let Ok(reader) = agent_runtime::history::Reader::open(&self.home.join("history.db")) else {
+                return Vec::new();
+            };
+            let mut taken = Vec::new();
+            for team in reader.teams().unwrap() {
+                for stored in reader.team_records(&team.value.team).unwrap() {
+                    if let agent_core::history::Record::Event(event) = stored.record
+                        && let agent_core::history::HistoryEvent::Checkpoint { cause, task, job, .. } = event.event
+                        && job == agent_core::history::CheckpointJob::WorkerRequest
+                    {
+                        taken.push((cause, task.to_string()));
+                    }
+                }
+            }
+            taken
+        }
+    }
+
+    #[test]
+    fn a_daemon_killed_with_a_request_going_takes_a_checkpoint_of_its_worker_when_it_starts_again() {
+        let mut world = World::new(&[
+            ("claude-1", "agent", "ask-worker:member,sleep"),
+            ("w-one", "worker", "script:durable-restart"),
+            ("inv-opus", "investigator", "sleep"),
+        ]);
+        world.script(
+            "durable-restart",
+            r#"
+if test ! -f .fake-started; then
+    mkdir -p docs
+    printf 'partial\n' > docs/partial.txt
+    touch .fake-started
+    while test ! -f "$AGENTS_HOME/release-worker"; do sleep 0.05; done
+fi
+printf 'the walkthrough\n' > docs/guide.md
+git add docs
+git commit -qm 'Complete retained work'
+"#,
+        );
+        let request = MEMBER_REQUEST.replace(
+            "\"files\":\"docs/guide.md\"",
+            "\"files\":\"docs/guide.md, docs/partial.txt\"",
+        );
+        world.asks("member", Some(MEMBER_PLAN), &[&request]);
+        world.start();
+        let tasks = world.run(&["claude-1", "inv-opus"]);
+        world.ended(task(&tasks, "claude-1"), 1);
+        eventually("the running worker", || {
+            world
+                .requests()
+                .get("1")
+                .and_then(|r| r["helper_task"].as_str())
+                .is_some_and(|t| world.worktree(t).join(".fake-started").exists())
+        });
+        let worker = world.requests()["1"]["helper_task"].as_str().unwrap().to_owned();
+        let started = world.job_checkpoints();
+        assert!(
+            started.iter().any(|(cause, task)| {
+                *cause == agent_core::history::CheckpointCause::RequestStarted && *task == worker
+            }),
+            "{started:?}"
+        );
+
+        world.kill();
+        world.start();
+
+        eventually("a daemon_started checkpoint of the worker", || {
+            world
+                .job_checkpoints()
+                .iter()
+                .any(|(cause, task)| *cause == agent_core::history::CheckpointCause::DaemonStarted && *task == worker)
+        });
+        std::fs::write(world.home.join("release-worker"), "").unwrap();
+        world.request_is("1", "done");
+    }
 }
