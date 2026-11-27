@@ -2239,6 +2239,7 @@ impl Owner {
                 .await
                 .map_err(|source| OwnerError::Bus { source })?;
             if let Some(team) = self.automatic_conflict_team(&inv) {
+                self.job_ended(task, CheckpointCause::InvestigationAnswered).await;
                 self.look_at(&team);
                 return Ok(());
             }
@@ -2267,6 +2268,7 @@ impl Owner {
                 chars = answer.chars().count(),
             );
         } else if let Some(team) = self.automatic_conflict_team(&inv) {
+            self.job_ended(task, CheckpointCause::RunEnded).await;
             self.fail_investigation(&inv, "the conflict investigator's run failed", Some(located))
                 .await?;
             self.look_at(&team);
