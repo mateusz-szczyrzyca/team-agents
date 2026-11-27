@@ -2789,6 +2789,13 @@ async fn split_part_restart_after_push_preserves_fallback_approved_head() {
     let task_id: agent_core::ids::TaskId = "task-20261111-193011-k3x9".parse().unwrap();
     let team_id: agent_core::ids::TeamId = "team-20261111-193000-a1b2".parse().unwrap();
     let (refused_head, gated_tip) = setup_gated_split_worktree(&rig, &task_id, branch);
+    std::fs::write(
+        rig.home.config_file(),
+        std::fs::read_to_string(rig.home.config_file())
+            .unwrap()
+            .replace("[merge]\n", "[merge]\ninvestigator_pass = false\n"),
+    )
+    .unwrap();
 
     let pr_number = rig.github.foreign_pull(branch);
     assert_eq!(pr_number, 1);

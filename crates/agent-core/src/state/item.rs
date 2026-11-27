@@ -539,6 +539,8 @@ pub struct ItemProgress {
     publish_question: Option<PublishQuestion>,
     /// The rejections the lead made since the agent that held the item last had none, oldest first; absent while none.
     rejections: Option<Vec<Rejection>>,
+    /// Automatic conflict request already filed for this item's pull request head.
+    conflict_investigation: Option<ConflictInvestigation>,
 }
 
 /// Borrowed reference adapter for serializing [`ItemProgress`] into wire/storage format.
@@ -587,6 +589,9 @@ struct ItemProgressWireRef<'a> {
     /// The rejections the lead made since the agent that held the item last had none.
     #[serde(skip_serializing_if = "Option::is_none")]
     rejections: Option<&'a Vec<Rejection>>,
+    /// Automatic conflict request, absent before the first investigation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    conflict_investigation: Option<&'a ConflictInvestigation>,
 }
 
 impl Serialize for ItemProgress {
@@ -610,6 +615,7 @@ impl Serialize for ItemProgress {
             conflict_accounted_head: accounted,
             conflict_provisional_head: provisional,
             merge_conflict: self.merge_conflict.as_ref(),
+            conflict_investigation: self.conflict_investigation.as_ref(),
             publish_tries: self.publish_tries,
             publish_question: self.publish_question.as_ref(),
             rejections: self.rejections.as_ref(),
@@ -724,6 +730,9 @@ struct ItemProgressWire {
     /// See [`ItemProgress`]; a state written before a lead could return an item has none.
     #[serde(default)]
     rejections: Option<Vec<Rejection>>,
+    /// Optional automatic investigation; absent in older state files.
+    #[serde(default)]
+    conflict_investigation: Option<ConflictInvestigation>,
 }
 
 impl<'de> Deserialize<'de> for ItemProgress {
@@ -769,6 +778,7 @@ impl<'de> Deserialize<'de> for ItemProgress {
             conflict_approved_head: wire.conflict_approved_head,
             conflict_head,
             merge_conflict: wire.merge_conflict,
+            conflict_investigation: wire.conflict_investigation,
             publish_tries: wire.publish_tries,
             publish_question,
             rejections: wire.rejections,
@@ -776,6 +786,17 @@ impl<'de> Deserialize<'de> for ItemProgress {
         check_item_progress(&value).map_err(serde::de::Error::custom)?;
         Ok(value)
     }
+}
+
+/// An automatic conflict investigation, retained across daemon restarts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConflictInvestigation {
+    /// Requested head, advanced to the tip published by its answer pass.
+    pub head: CommitId,
+    /// The request's bus id.
+    pub id: NonZeroU32,
+    /// Whether the request has been consumed by an answer pass or human fallback.
+    pub answered: bool,
 }
 
 /// An item's progress inside a team, to change through its operations only.
@@ -786,6 +807,11 @@ impl<'de> Deserialize<'de> for ItemProgress {
 pub type ItemMut<'a> = CheckedMut<'a, ItemProgress>;
 
 impl CheckedMut<'_, ItemProgress> {
+    /// Records the automatic request for this item's pull request head.
+    pub fn set_conflict_investigation(&mut self, investigation: ConflictInvestigation) {
+        self.value.conflict_investigation = Some(investigation);
+    }
+
     /// See [`ItemProgress::begin_merge_conflict`].
     pub fn begin_merge_conflict(&mut self, approved_head: CommitId, at: Timestamp) -> u32 {
         self.value.begin_merge_conflict(approved_head, at)
@@ -1427,6 +1453,7 @@ impl ItemProgress {
             conflict_approved_head: None,
             conflict_head: None,
             merge_conflict: None,
+            conflict_investigation: None,
             publish_tries: 0,
             publish_question: None,
             rejections: None,
@@ -1533,6 +1560,12 @@ impl ItemProgress {
     getter!("The fix passes so far, oldest first.", pub fn fix_passes(&self) -> &[FixPass] = &self.fix_passes);
 
     getter!("The findings ledger, or none for a legacy round.", pub fn findings(&self) -> Option<&Findings> = self.findings.as_ref());
+
+    /// The automatic investigation most recently filed for this item.
+    #[must_use]
+    pub const fn conflict_investigation(&self) -> Option<&ConflictInvestigation> {
+        self.conflict_investigation.as_ref()
+    }
 
     /// The lead passes spent on merge conflicts so far; zero for an item that never met one.
     #[must_use]

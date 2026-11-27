@@ -274,6 +274,17 @@ impl Owner {
         if self.watch.refused.contains(&key) || self.asking_human_for_conflict(team, pr.number) {
             return Ok(Merge::Waits);
         }
+        if self.parts.state.team(team).is_some_and(|found| {
+            items_of(found, pr.number).iter().any(|id| {
+                found.item(*id).is_some_and(|item| {
+                    item.conflict_investigation()
+                        .is_some_and(|record| &record.head == head && !record.answered)
+                        && item.merge_conflict().is_none()
+                })
+            })
+        }) {
+            return Ok(Merge::Waits);
+        }
         let request = MergeRequest {
             method: MergeMethod::Merge,
             expected_head: head.clone(),
@@ -296,7 +307,21 @@ impl Owner {
                         MergeRefusalKind::Conflict => Refusal::Conflict,
                         MergeRefusalKind::Other => Refusal::Other,
                     };
-                    let decided = after_refusal(refusal, budget);
+                    let decided = after_refusal(
+                        refusal,
+                        budget,
+                        agent_core::decide::merge_refusal::InvestigatorPass {
+                            enabled: self.parts.settings.config.merge().investigator_pass,
+                            filed_for_head: self.parts.state.team(team).is_some_and(|found| {
+                                items_of(found, pr.number).iter().any(|id| {
+                                    found
+                                        .item(*id)
+                                        .and_then(agent_core::state::ItemProgress::conflict_investigation)
+                                        .is_some_and(|record| &record.head == head)
+                                })
+                            }),
+                        },
+                    );
                     agent_runtime::history::log_decision(
                         "after_refusal",
                         &format!("pr={}, refusal={refusal:?}, budget={budget:?}", pr.number),
@@ -308,9 +333,14 @@ impl Owner {
                             self.tell_about(about, Telling::MergeFailed(&error_chain(&error)));
                             Ok(Merge::Waits)
                         }
-                        after @ (AfterRefusal::LeadMergesBase | AfterRefusal::AskHuman) => Ok(Merge::Conflict {
+                        after @ (AfterRefusal::LeadMergesBase
+                        | AfterRefusal::AskHuman
+                        | AfterRefusal::AskInvestigator) => Ok(Merge::Conflict {
                             step: match after {
                                 AfterRefusal::AskHuman => ConflictStep::AskHuman,
+                                AfterRefusal::AskInvestigator => ConflictStep::AskInvestigator {
+                                    url: about.url.to_owned(),
+                                },
                                 AfterRefusal::LeadMergesBase | AfterRefusal::TellHuman => ConflictStep::MergeBase,
                             },
                             head: head.clone(),

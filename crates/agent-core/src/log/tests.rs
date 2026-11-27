@@ -207,6 +207,11 @@ fn every_log_event_has_its_fixed_snake_case_name_and_level() {
             LogLevel::Info,
         ),
         (
+            LogEvent::MergeConflictInvestigated,
+            "merge_conflict_investigated",
+            LogLevel::Info,
+        ),
+        (
             LogEvent::InvestigationKindUnknown,
             "investigation_kind_unknown",
             LogLevel::Warn,

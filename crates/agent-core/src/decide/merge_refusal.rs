@@ -23,9 +23,20 @@ pub struct ConflictBudget {
     pub limit: u32,
 }
 
+/// Whether the optional investigation can still be filed for this pull request head.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InvestigatorPass {
+    /// Whether the automatic investigation is configured.
+    pub enabled: bool,
+    /// Whether an investigation was already filed for this head.
+    pub filed_for_head: bool,
+}
+
 /// What the daemon does after a refused merge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AfterRefusal {
+    /// An investigator resolves the conflict before one final lead pass.
+    AskInvestigator,
     /// The lead merges the base into its branch in a pass of its own.
     LeadMergesBase,
     /// The human is told about the refusal, as for any refusal.
@@ -59,11 +70,17 @@ pub enum AfterLead {
 
 #[must_use]
 /// What follows a refused merge, given the refusal and the conflict passes the round has left.
-pub fn after_refusal(refusal: Refusal, budget: ConflictBudget) -> AfterRefusal {
+pub fn after_refusal(refusal: Refusal, budget: ConflictBudget, investigator: InvestigatorPass) -> AfterRefusal {
     match refusal {
         Refusal::Other => AfterRefusal::TellHuman,
         Refusal::Conflict if budget.limit == 0 => AfterRefusal::TellHuman,
-        Refusal::Conflict if budget.spent >= budget.limit => AfterRefusal::AskHuman,
+        Refusal::Conflict if budget.spent >= budget.limit => {
+            if investigator.enabled && !investigator.filed_for_head {
+                AfterRefusal::AskInvestigator
+            } else {
+                AfterRefusal::AskHuman
+            }
+        }
         Refusal::Conflict => AfterRefusal::LeadMergesBase,
     }
 }

@@ -211,3 +211,11 @@ async fn the_other_branch_text_names_both_branches_only_for_another_branch() {
     assert!(told.contains("git switch item-1"), "{told}");
     assert_eq!(own, None);
 }
+
+#[tokio::test]
+async fn a_missing_conflict_investigator_answer_refuses_the_extra_pass() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("missing-answer.md");
+    let result = conflict_investigator_answer(&path).await;
+    assert!(matches!(result, Err(SectionError::MissingInvestigationAnswer { path: missing }) if missing == path));
+}

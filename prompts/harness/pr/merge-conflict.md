@@ -16,3 +16,4 @@ is conflict pass {{pass}} of {{passes}} for this round. Do this on your branch `
 
 End with `STATUS: DONE`. If you cannot resolve a conflict, do not guess: end with `STATUS: QUESTIONS` and name the
 files that conflict.
+{{investigator_answer}}

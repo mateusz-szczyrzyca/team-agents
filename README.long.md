@@ -966,8 +966,11 @@ reviewer is replaced. A reviewer that is quiet for another reason is replaced af
 A merge GitHub refuses because the pull request conflicts with its base does not reach you at once: the lead of the round
 is sent to merge the base into its branch (at most `[merge] conflict_passes` times per round, default 3). Its change is
 gated and pushed, and the merge is tried again; a change to files the task does not allow is reviewed again first. When
-the passes are used up, or the lead gives no result, the lead asks you once in its questions file. Set
-`conflict_passes = 0` to be told at once, as before. A conflict pass that fails during publication does not consume
+the passes are used up, the daemon asks an investigator once for that item and pull request head. A completed answer
+gives the lead one extra pass with the proposed resolution. If the request or that pass fails, the lead asks you once
+in its questions file. A new head may receive a new investigation. Set `[merge] investigator_pass = false` to keep
+the direct human fallback. With `conflict_passes = 0`, you are told at once regardless of `investigator_pass`. The
+`merge_conflict_investigated` log event records the item and request ID. A conflict pass that fails during publication does not consume
 a pass from the budget; successful publication accounts for the pass once, surviving daemon restarts. Exhausted
 split rounds whose resolutions were never published resume merge attempts automatically once gated work is ready.
 

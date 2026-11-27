@@ -620,6 +620,8 @@ pub struct Merge {
     /// Passes the lead may spend, per round, on merging the base into its branch after a conflict; zero keeps the
     /// behaviour before the passes existed: the human is told.
     pub conflict_passes: u32,
+    /// Whether spent lead passes are followed by an investigation and one final lead pass.
+    pub investigator_pass: bool,
 }
 
 impl Default for Merge {
@@ -627,6 +629,7 @@ impl Default for Merge {
     fn default() -> Self {
         Self {
             conflict_passes: DEFAULT_CONFLICT_PASSES,
+            investigator_pass: true,
         }
     }
 }

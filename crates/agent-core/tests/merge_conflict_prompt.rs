@@ -17,6 +17,7 @@ mod merge_conflict_prompt {
             .and_then(|values| values.with("branch", "agents/claude-1/task-1-1.1"))
             .and_then(|values| values.with("pass", "1"))
             .and_then(|values| values.with("passes", "3"))
+            .and_then(|values| values.with("investigator_answer", ""))
             .expect("distinct variables");
         let template = std::fs::read_to_string(
             std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
