@@ -2,7 +2,7 @@
 //!
 //! An account names its `owner` and may set variables of the environment that are not secret (`env`); its secret
 //! variables are `[account_env.NAME]` of `secrets.toml`. An agent or an investigator names its account with
-//! `account = "NAME"` and is then named `<owner>-…`. This module only reads and checks; nothing runs with an account yet.
+//! `account = "NAME"` and is then named `<owner>-…`. This module only reads and checks; the run engine puts the variables into the environment of a run.
 
 use std::collections::BTreeMap;
 use std::fmt;

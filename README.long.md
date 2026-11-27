@@ -241,8 +241,9 @@ repositories) and `secrets.toml`, both in `AGENTS_HOME`. The reference is
 [`config/agents.example.toml`](config/agents.example.toml). A key the reference does not know is an error.
 
 **Accounts.** `[accounts.NAME]` of `agents.toml` (an `owner`, optional `env`), `[account_env.NAME]` of `secrets.toml` and
-`account = "NAME"` of an agent or an investigator describe more than one subscription or key. This version reads and
-checks them; no run uses them yet. An agent with an account is named `<owner>-…`; an account that no agent names, an
+`account = "NAME"` of an agent or an investigator describe more than one subscription or key. A run of an agent with an account gets
+the account's variables in its environment, over `[agent_env]` (the daemon's environment, `[agent_env]`, the account's
+`env`, the account's secrets: the later wins); the quota of an account is not shared between its agents yet. An agent with an account is named `<owner>-…`; an account that no agent names, an
 agent that names a missing account, a name without its owner, a variable set in both `env` and `[account_env.NAME]`
 and an `[account_env.NAME]` without an account are refused when the home is loaded, naming the
 account and never a value; the values of `[account_env.NAME]` are cut from `agent debug` bundles and the history.
