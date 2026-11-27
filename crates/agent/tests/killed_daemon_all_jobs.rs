@@ -75,6 +75,9 @@ git commit -qm 'Complete retained work'
     /// The tasks of the jobs, each with its kind of job: one worker, one investigator and the reviewers.
     type Jobs = Vec<(String, CheckpointJob)>;
 
+    /// How many jobs go when the daemon is killed: the request, the investigation and the two reviewers' reviews.
+    const JOBS_GOING: usize = 4;
+
     /// A checkpoint of a job, as the history holds it.
     struct Taken {
         /// The kind of job.
@@ -355,6 +358,25 @@ git commit -qm 'Complete retained work'
                 .collect()
         }
 
+        /// The tasks of the reviewers whose report the history holds as a submitted review with a report.
+        fn reports_recorded(&self) -> Vec<String> {
+            let Ok(reader) = Reader::open(&self.home.join("history.db")) else {
+                return Vec::new();
+            };
+            let mut tasks = Vec::new();
+            for team in reader.teams().unwrap() {
+                for stored in reader.team_records(&team.value.team).unwrap() {
+                    if let Record::Event(event) = stored.record
+                        && let HistoryEvent::ReviewSubmitted { task, report, .. } = event.event
+                        && !report.is_empty()
+                    {
+                        tasks.push(task.to_string());
+                    }
+                }
+            }
+            tasks
+        }
+
         /// Whether the bus has the investigation held by `task` answered.
         fn investigation_answered(&self, task: &str) -> bool {
             self.bus()["investigations"].as_object().is_some_and(|all| {
@@ -401,7 +423,7 @@ git commit -qm 'Complete retained work'
                     CheckpointJob::WorkerRequest => self.worktree(task).join(".fake-started").exists(),
                     _ => self.prompt(task, 1).is_some(),
                 };
-                jobs.len() >= 3 && jobs.iter().all(begun)
+                jobs.len() == JOBS_GOING && jobs.iter().all(begun)
             });
             jobs
         }
@@ -422,8 +444,12 @@ git commit -qm 'Complete retained work'
         let task_of = |wanted: CheckpointJob| jobs.iter().find(|(_, job)| *job == wanted).unwrap().0.as_str();
         let count = |wanted: CheckpointJob| jobs.iter().filter(|(_, job)| *job == wanted).count();
         assert_eq!(
-            (count(CheckpointJob::WorkerRequest), count(CheckpointJob::Investigation)),
-            (1, 1)
+            (
+                count(CheckpointJob::WorkerRequest),
+                count(CheckpointJob::Review),
+                count(CheckpointJob::Investigation)
+            ),
+            (1, 2, 1)
         );
         for (task, _) in &jobs {
             assert!(
@@ -471,7 +497,7 @@ git commit -qm 'Complete retained work'
             world.investigation_answered(task_of(CheckpointJob::Investigation))
         });
         eventually("the reviews recorded", || {
-            let submitted = world.tasks_with(CheckpointJob::Review, CheckpointCause::ReviewSubmitted);
+            let submitted = world.reports_recorded();
             jobs.iter()
                 .filter(|(_, job)| *job == CheckpointJob::Review)
                 .all(|(task, _)| submitted.contains(task))
@@ -498,11 +524,13 @@ git commit -qm 'Complete retained work'
                 title.ends_with(&format!(", head {}", started[0].head.as_ref().unwrap())),
                 "{title}"
             );
-            // A worker's request is handed over to its next run by the checkpoint that tells what the start took.
-            assert!(
-                title.starts_with("daemon_started at ") || title.starts_with("holder_changed at "),
-                "{title}"
-            );
+            // A worker's request is handed over to its next run by the checkpoint that tells what the start took; the
+            // other jobs are briefed from the `daemon_started` checkpoint itself.
+            let cause = match job {
+                CheckpointJob::WorkerRequest => "holder_changed at ",
+                _ => "daemon_started at ",
+            };
+            assert!(title.starts_with(cause), "{title}");
             for (kind, left) in JOBS_LEFT {
                 assert_eq!(
                     briefing.contains(left),
