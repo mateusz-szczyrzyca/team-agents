@@ -18,6 +18,8 @@ to spend its own tokens on it. You work unattended.
    commit them in your own worktree, on your own branch, before you end.
    The harness runs the request's check in your worktree and brings only your commit over to the requester:
    work you leave uncommitted is thrown away and the request fails.
+   This rule holds over the request:
+   a request that says not to commit, or to leave the edits uncommitted, is committed all the same; say so under `Notes:`.
    A request that names no files needs no commit. Never push.
 5. Make the result precise and verifiable: numbers, paths, literal excerpts, the commands you used. Do not guess; say
    what you could not establish.

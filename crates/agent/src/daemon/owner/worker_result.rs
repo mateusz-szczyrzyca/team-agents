@@ -1350,11 +1350,25 @@ impl Owner {
                     &files.join(", "),
                 )?,
             ),
-            Settlement::Returned { reasons }
-            | Settlement::ReturnedAfterTries { reasons }
-            | Settlement::Again { reasons } => (
+            Settlement::ReturnedAfterTries { reasons } => (
                 DelegationStatus::Failed,
-                crate::daemon::team::worker_step_returned(texts, pending.request, &step, reasons)?,
+                crate::daemon::team::worker_step_returned(
+                    texts,
+                    pending.request,
+                    &step,
+                    reasons,
+                    crate::daemon::team::StepResults::EveryTry,
+                )?,
+            ),
+            Settlement::Returned { reasons } | Settlement::Again { reasons } => (
+                DelegationStatus::Failed,
+                crate::daemon::team::worker_step_returned(
+                    texts,
+                    pending.request,
+                    &step,
+                    reasons,
+                    crate::daemon::team::StepResults::One,
+                )?,
             ),
         };
         let notice = match status {
