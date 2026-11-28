@@ -124,3 +124,22 @@ async fn debug_lists_accounts_without_values() {
         assert!(!text.contains(MARKER), "{} holds the secret", path.display());
     }
 }
+
+#[tokio::test]
+async fn debug_says_the_accounts_cannot_be_read_when_the_configuration_does_not_load() {
+    let (_dir, home, args) = home_with_accounts();
+    std::fs::write(home.config_file(), "[accounts.comp-claude]\n").unwrap();
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    let section = summary
+        .split("## Accounts\n")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(section.contains("Could not read accounts: "), "{section}");
+    assert!(!section.contains("No accounts are configured."), "{section}");
+}
