@@ -143,3 +143,22 @@ async fn debug_says_the_accounts_cannot_be_read_when_the_configuration_does_not_
     assert!(section.contains("Could not read accounts: "), "{section}");
     assert!(!section.contains("No accounts are configured."), "{section}");
 }
+
+#[tokio::test]
+async fn debug_says_the_accounts_cannot_be_read_when_the_configuration_file_is_missing() {
+    let (_dir, home, args) = home_with_accounts();
+    std::fs::remove_file(home.config_file()).unwrap();
+
+    let result = execute_debug(&home, args, None, &mut Vec::new()).await.unwrap();
+
+    let summary = std::fs::read_to_string(&result.summary_path).unwrap();
+    let section = summary
+        .split("## Accounts\n")
+        .nth(1)
+        .unwrap()
+        .split("\n## ")
+        .next()
+        .unwrap();
+    assert!(section.contains("Could not read accounts: "), "{section}");
+    assert!(!section.contains("No accounts are configured."), "{section}");
+}
