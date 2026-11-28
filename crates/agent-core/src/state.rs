@@ -1205,8 +1205,12 @@ impl State {
         member_task: &TaskId,
         at: Timestamp,
     ) -> Result<(Participant, Participant), HandOverError> {
-        let _ = (team_id, coord_task, member_task, at);
-        Err(HandOverError::NoTask { task: coord_task.clone() })
+        let mut team = self
+            .team_mut(team_id)
+            .ok_or_else(|| HandOverError::NoTask {
+                task: coord_task.clone(),
+            })?;
+        team.trade_tasks(coord_task, member_task, at)
     }
 
     /// The round `round` with its team.

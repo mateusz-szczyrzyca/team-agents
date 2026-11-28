@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::checked::CheckedMut;
+use super::holding::HandOverError;
 use super::item::{Completion, ItemMut, ItemPhase, ItemProgress};
 use super::member::{Member, MemberMut, Participant};
 use super::round::{Round, RoundEnd};
@@ -334,6 +335,56 @@ impl Crew {
         }?;
         Some((role, MemberMut::new(member)))
     }
+
+    /// Trades the participants of the coordinator task and a member task in a team.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the role is wrong, a task is missing, or a task is running.
+    pub fn trade_tasks(
+        &mut self,
+        coord_task: &TaskId,
+        member_task: &TaskId,
+        at: Timestamp,
+    ) -> Result<(Participant, Participant), HandOverError> {
+        let Shape::Team {
+            coordinator,
+            members,
+            ..
+        } = &mut self.shape
+        else {
+            return Err(HandOverError::Role {
+                task: coord_task.clone(),
+                role: Role::Solo,
+            });
+        };
+        if coordinator.task() != coord_task {
+            return Err(HandOverError::NoTask {
+                task: coord_task.clone(),
+            });
+        }
+        let Some(member) = members.iter_mut().find(|m| m.task() == member_task) else {
+            return Err(HandOverError::NoTask {
+                task: member_task.clone(),
+            });
+        };
+        if coordinator.current_run().is_some() {
+            return Err(HandOverError::InRun {
+                task: coord_task.clone(),
+            });
+        }
+        if member.current_run().is_some() {
+            return Err(HandOverError::InRun {
+                task: member_task.clone(),
+            });
+        }
+        let agent_a = coordinator.agent().clone();
+        let agent_b = member.agent().clone();
+        coordinator.held_task(agent_b.clone(), at);
+        coordinator.record_human_handover();
+        member.held_task(agent_a.clone(), at);
+        member.record_human_handover();
+        Ok((agent_a, agent_b))
+    }
 }
 
 /// The people of a team inside a state, to change through their members' operations only.
@@ -623,6 +674,18 @@ pub enum ReviewerProblem {
 }
 
 impl Team {
+    /// Trades the participants of the coordinator task and a member task in the team.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the role is wrong, a task is missing, or a task is running.
+    pub fn trade_tasks(
+        &mut self,
+        coord_task: &TaskId,
+        member_task: &TaskId,
+        at: Timestamp,
+    ) -> Result<(Participant, Participant), HandOverError> {
+        self.crew.trade_tasks(coord_task, member_task, at)
+    }
     /// The task-authored permissions, retained with the team's original task list across every round and restart.
     #[must_use]
     pub fn allowances(&self) -> &[crate::task_allowance::TaskAllowance] {
@@ -754,6 +817,19 @@ impl CheckedMut<'_, Team> {
     /// See [`Team::item_mut`].
     pub fn item_mut(&mut self, id: ItemId) -> Option<ItemMut<'_>> {
         self.value.item_mut(id)
+    }
+
+    /// See [`Team::trade_tasks`].
+    ///
+    /// # Errors
+    /// [`HandOverError`].
+    pub fn trade_tasks(
+        &mut self,
+        coord_task: &TaskId,
+        member_task: &TaskId,
+        at: Timestamp,
+    ) -> Result<(Participant, Participant), HandOverError> {
+        self.value.trade_tasks(coord_task, member_task, at)
     }
 
     /// See [`Team::open_round`].
