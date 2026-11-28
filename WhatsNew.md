@@ -9,11 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.151.0 · agent-core 0.151.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #365
+## agent 0.151.0 · agent-core 0.151.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #368
 
 ### New features
-- [agent] [agent-core] `agent status` writes the account in brackets after an agent that has one: `comp-claude-1 [comp-claude]`. The line of an agent without an account is as before.
-- [agent-core] [agent-runtime] `agent debug` has an `## Accounts` section in its summary: each account with its owner, its agents and investigators, and the names — never the values — of its `env` and secret variables. A configuration that does not load is reported there as unreadable.
+- [agent] [agent-core] `agent status` writes the account in brackets after an agent that has one: `comp-claude-1 [comp-claude]`. The same goes for the tasks of `agent status <round>`. The line of an agent without an account is as before.
+- [agent-core] [agent-runtime] `agent debug` has an `## Accounts` section in its summary: each account with its owner, its agents and investigators, and the names — never the values — of its `env` and secret variables. A configuration that is missing or does not load is reported there as unreadable.
 
 ## agent 0.150.0 · agent-core 0.150.0 · agent-runtime 0.136.0 — 28.11.2026 — PR #362
 
