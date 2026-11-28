@@ -170,6 +170,8 @@ impl Connection {
             self.request_plan(client, command).await
         } else if matches!(command, Command::Answer(_)) {
             self.request_split(client, command).await
+        } else if matches!(command, Command::Swap(_)) {
+            self.request_swap(client, command).await
         } else {
             self.converse(client, command, Some(REQUEST_TIMEOUT)).await
         }
@@ -224,6 +226,12 @@ impl Connection {
     pub(crate) async fn request_split(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
         let format = self.negotiate(&client).await?;
         self.converse_format(client, command, Some(REQUEST_TIMEOUT), format)
+            .await
+    }
+
+    /// Requests swap with protocol ten.
+    pub(crate) async fn request_swap(&mut self, client: Client, command: Command) -> Result<Reply, ClientError> {
+        self.converse_format(client, command, Some(REQUEST_TIMEOUT), ReplyFormat::Swap)
             .await
     }
 
