@@ -155,3 +155,40 @@ async fn swap_records_who_stopped_the_old_run_in_steps_and_control_history() {
         );
     }
 }
+
+#[tokio::test]
+async fn swap_tests_refuses_a_closed_team_with_a_queued_task() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let found = owner.parts.state.find_task(&task(1)).unwrap();
+    assert_eq!(found.member.status(), TaskStatus::Queued);
+    let team = found.team.id().clone();
+    owner.closed.insert(team);
+    let request = SwapRequest {
+        task: task(1),
+        agent: "claude-2".parse().unwrap(),
+    };
+    assert_eq!(
+        owner.check_swap_refusal(&request),
+        Err(SwapRefusal::Done { task: task(1) }.into())
+    );
+}
+
+#[tokio::test]
+async fn swap_tests_refuses_a_done_task_in_an_open_team() {
+    let daemon = Daemon::new(&solo_state(), None);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let team = owner.parts.state.find_task(&task(1)).unwrap().team.id().clone();
+    assert!(!owner.closed.contains(&team));
+    let (_, mut member) = owner.member_mut(&task(1)).unwrap();
+    member.transition(TaskStatus::Running).unwrap();
+    member.transition(TaskStatus::Done).unwrap();
+    let request = SwapRequest {
+        task: task(1),
+        agent: "claude-2".parse().unwrap(),
+    };
+    assert_eq!(
+        owner.check_swap_refusal(&request),
+        Err(SwapRefusal::Done { task: task(1) }.into())
+    );
+}
