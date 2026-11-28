@@ -4,6 +4,7 @@
 //! reading is checked once, when it is made, so that everything that holds one can rely on `used` being a share
 //! between 0 and 1.
 
+use serde::{Deserialize, Serialize};
 use time::UtcDateTime;
 
 use crate::state::{InvalidTimestamp, Timestamp};
@@ -11,8 +12,9 @@ use crate::state::{InvalidTimestamp, Timestamp};
 #[cfg(test)]
 mod tests;
 
-/// The rate-limit window a reading is of.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// The rate-limit window a reading is of; written in the state as `five_hour` and `seven_day`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum LimitWindow {
     /// The window of the last five hours.
     FiveHour,
@@ -51,7 +53,7 @@ pub enum ResetTimeError {
 }
 
 /// The state of one window at one moment.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct LimitReading {
     /// The window.
     window: LimitWindow,
@@ -60,6 +62,9 @@ pub struct LimitReading {
     /// When the window resets.
     resets_at: Timestamp,
 }
+
+// A share is never NaN — every constructor and the deserializer refuse it — so equality is reflexive.
+impl Eq for LimitReading {}
 
 impl LimitReading {
     /// A reading of `window`.
