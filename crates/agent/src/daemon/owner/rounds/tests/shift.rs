@@ -253,8 +253,8 @@ async fn shift_waits_for_the_gate() {
 async fn none_free_logs_once_then_trades() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "work,hold"),
-            normal("claude-2", "hold"),
+            normal("claude-1", "sleep,integrate,hold"),
+            normal("claude-2", "commit-clean,hold"),
             normal("claude-3", "hold"),
             investigator("inv-r1", CHANGES_ONCE),
             investigator("inv-r2", "verify:VERDICT: APPROVE\\nSUMMARY: fine"),
@@ -275,19 +275,27 @@ async fn none_free_logs_once_then_trades() {
     ))
     .await;
 
-    let (_, team_one_tasks) = rig.run(&["claude-1"], ONE, MergeMode::NoMerge, None).await;
-    let (_, team_two_tasks) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
-    let (_, team_three_tasks) = rig.run(&["claude-3"], ONE, MergeMode::NoMerge, None).await;
+    let (_, tasks) = rig
+        .run(
+            &["claude-1", "claude-2", "claude-3"],
+            ONE,
+            MergeMode::NoMerge,
+            Some("claude-1"),
+        )
+        .await;
 
     rig.item_where("1.1", "pull request open in fix pass", |phase| {
         matches!(phase, ItemPhase::Fixing { .. })
     })
     .await;
 
-    rig.prompt(&team_one_tasks[0], 2).await;
+    rig.prompt(&tasks[0], 3).await;
 
-    rig.status_is(&team_two_tasks[0], TaskStatus::Running).await;
-    rig.status_is(&team_three_tasks[0], TaskStatus::Running).await;
+    rig.status_is(&tasks[1], TaskStatus::Waiting).await;
+    rig.resume(&tasks[1]).await;
+    rig.prompt(&tasks[1], 2).await;
+    rig.status_is(&tasks[1], TaskStatus::Running).await;
+    rig.status_is(&tasks[2], TaskStatus::Running).await;
 
     rig.advance_history_days(1);
 
@@ -300,7 +308,14 @@ async fn none_free_logs_once_then_trades() {
     })
     .await;
 
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    rig.state_where("both candidates remain busy after the no-free tick", |state| {
+        [1, 2].into_iter().all(|index| {
+            state.find_task(&tasks[index]).is_some_and(|found| {
+                found.member.status() == TaskStatus::Running && found.member.current_run().is_some()
+            })
+        })
+    })
+    .await;
     let logs: Vec<LogEntry> = agent_runtime::history::Reader::open(&rig.home.history_file())
         .unwrap()
         .daemon_logs()
@@ -312,16 +327,16 @@ async fn none_free_logs_once_then_trades() {
     assert_eq!(no_free_count, 1, "shift_no_free_agent should be logged once per shift");
 
     let state = rig.state();
-    assert_eq!(holder(&state, &team_one_tasks[0]), "claude-1");
+    assert_eq!(holder(&state, &tasks[0]), "claude-1");
 
-    std::fs::write(rig.worktree(&team_two_tasks[0]).join(".fake-continue"), "ok").unwrap();
+    std::fs::write(rig.worktree(&tasks[1]).join(".fake-continue"), "ok").unwrap();
 
     let state = rig
-        .state_where("claude-2 takes solo task once free", |state| {
-            holder(state, &team_one_tasks[0]) == "claude-2"
+        .state_where("claude-2 takes coordinator task once free", |state| {
+            holder(state, &tasks[0]) == "claude-2"
         })
         .await;
-    assert_eq!(holder(&state, &team_one_tasks[0]), "claude-2");
+    assert_eq!(holder(&state, &tasks[0]), "claude-2");
 
     rig.stop().await.unwrap();
 }
