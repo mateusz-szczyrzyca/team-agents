@@ -545,7 +545,19 @@ pub struct Limits {
     /// is cut and another agent of `[replacement] agents` takes the task over; 0 turns the rule off.
     pub round_minutes: u32,
     /// Worked minutes per lead holder; zero disables shifts.
+    #[serde(deserialize_with = "deserialize_lead_shift_minutes")]
     pub lead_shift_minutes: u32,
+}
+
+/// Validate the configured shift duration while retaining zero as disabled.
+fn deserialize_lead_shift_minutes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let minutes = u32::deserialize(deserializer)?;
+    if minutes > 1440 {
+        return Err(serde::de::Error::custom(
+            "limits.lead_shift_minutes must be between 0 and 1440",
+        ));
+    }
+    Ok(minutes)
 }
 
 impl Default for Limits {
