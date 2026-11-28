@@ -67,10 +67,7 @@ async fn team_lead_shifts_in_a_circle() {
         true,
     )
     .await;
-    configure(
-        &rig,
-        "[limits]\nidle_team_minutes = 0\nlead_shift_minutes = 120\n",
-    );
+    configure(&rig, "[limits]\nidle_team_minutes = 0\nlead_shift_minutes = 120\n");
     rig.wake_sleeping_teams();
     rig.start().await;
 
@@ -232,7 +229,11 @@ async fn shift_waits_for_the_gate() {
     tokio::time::sleep(Duration::from_millis(200)).await;
 
     let state = rig.state();
-    assert_eq!(holder(&state, &tasks[0]), "claude-1", "shift should wait while gate is running");
+    assert_eq!(
+        holder(&state, &tasks[0]),
+        "claude-1",
+        "shift should wait while gate is running"
+    );
 
     std::fs::write(&gate_marker, "ok").unwrap();
     let gate_reply = gate_handle.await.unwrap().unwrap();
@@ -377,9 +378,7 @@ async fn solo_task_shifts_and_back() {
     rig.advance_history_days(1);
 
     let state = rig
-        .state_where("handed to gemini-1", |state| {
-            holder(state, &tasks[0]) == "gemini-1"
-        })
+        .state_where("handed to gemini-1", |state| holder(state, &tasks[0]) == "gemini-1")
         .await;
     assert_eq!(holder(&state, &tasks[0]), "gemini-1");
 

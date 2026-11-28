@@ -489,4 +489,3 @@ fn shift_no_free_agent_has_stable_info_event() {
     assert_eq!(LogEvent::ShiftNoFreeAgent.as_str(), "shift_no_free_agent");
     assert_eq!(LogEvent::ShiftNoFreeAgent.level(), LogLevel::Info);
 }
-

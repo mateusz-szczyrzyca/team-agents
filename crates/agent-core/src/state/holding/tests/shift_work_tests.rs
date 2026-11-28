@@ -70,7 +70,9 @@ fn team_tasks_trade_holders_and_record_human_handover() {
     let coord_before = state.find_task(&coord_task).unwrap().member.agent().clone();
     let member_before = state.find_task(&member_task).unwrap().member.agent().clone();
 
-    state.trade_team_tasks(&team_id, &coord_task, &member_task, at()).unwrap();
+    state
+        .trade_team_tasks(&team_id, &coord_task, &member_task, at())
+        .unwrap();
 
     let coord_after = state.find_task(&coord_task).unwrap().member;
     let member_after = state.find_task(&member_task).unwrap().member;
