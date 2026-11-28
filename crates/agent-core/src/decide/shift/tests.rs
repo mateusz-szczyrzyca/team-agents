@@ -266,3 +266,41 @@ fn circle_a_b_c_a() {
             .unwrap();
     }
 }
+
+#[test]
+fn solo_skips_agent_holding_another_open_solo_task() {
+    let mut state = setup(true, true);
+    let other = Team::new(
+        team_id(2),
+        repo(),
+        at(0),
+        MergeMode::Autopilot,
+        list(),
+        Crew::solo(member(10, normal("claude-1"))).unwrap(),
+    );
+    assert_eq!(other.find(&task(10)).unwrap().1.status(), TaskStatus::Queued);
+    state.insert_team(other).unwrap();
+    assert_eq!(check(&state, 1, 120, 7200), ShiftCheck::To(agent("gemini-1")));
+}
+
+#[test]
+fn ended_run_pr_does_not_authorize_a_new_assigned_round_without_pr() {
+    let mut state = setup(true, true);
+    state
+        .find_task_mut(&task(1))
+        .unwrap()
+        .1
+        .end_run(at(7200), RunEnd::Stopped)
+        .unwrap();
+    let mut team = state.team_mut(&team_id(1)).unwrap();
+    team.open_round(round_id(2), Some(item("2.1")), at(7200)).unwrap();
+    team.advance_item(
+        item("2.1"),
+        ItemPhase::InProgress {
+            assignee: agent("codex-1"),
+            branch: branch("agents/codex-1/item-2-1"),
+        },
+    )
+    .unwrap();
+    assert_eq!(check(&state, 1, 120, 7200), ShiftCheck::NotDue);
+}
