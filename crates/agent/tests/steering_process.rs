@@ -266,6 +266,25 @@ mod steering_process {
         )
         .unwrap();
 
+        let bus_binary = dir.path().join("agentbus-under-test");
+        let built = Command::new("go")
+            .args(["build", "-o"])
+            .arg(&bus_binary)
+            .arg(".")
+            .current_dir(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../agentbus"))
+            .output()
+            .unwrap();
+        assert!(built.status.success(), "{}", text(built.stderr));
+        let config = std::fs::read_to_string(home.config_file()).unwrap();
+        std::fs::write(
+            home.config_file(),
+            config.replace(
+                "[binaries]",
+                &format!("[binaries]\nagentbus = \"{}\"", bus_binary.display()),
+            ),
+        )
+        .unwrap();
+
         let coord_id = TaskId::from_str(COORD_TASK).unwrap();
         let member_id = TaskId::from_str(MEMBER_TASK).unwrap();
         let coord_member = Member::new(coord_id.clone(), Participant::Normal("claude-1".parse().unwrap()));
@@ -296,6 +315,40 @@ mod steering_process {
         std::fs::create_dir_all(&member_worktree).unwrap();
         std::fs::write(member_worktree.join(".fake-scenario"), "busy").unwrap();
 
+        let bus_team = serde_json::json!({
+            "id": TEAM_ID,
+            "repo": "team-agents",
+            "lead": "claude-1",
+            "members": {
+                "claude-1": {"agent": "claude-1", "task": COORD_TASK,
+                    "branch": "agents/claude-1", "worktree": coord_worktree,
+                    "state": "active", "tier": "normal"},
+                "claude-2": {"agent": "claude-2", "task": MEMBER_TASK,
+                    "branch": "agents/claude-2", "worktree": member_worktree,
+                    "state": "active", "tier": "normal"}
+            }
+        });
+        let mut create = Command::new(&bus_binary)
+            .arg("team-create")
+            .arg("--dir")
+            .arg(home.root().join("bus"))
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        {
+            use std::io::Write;
+            create
+                .stdin
+                .take()
+                .unwrap()
+                .write_all(bus_team.to_string().as_bytes())
+                .unwrap();
+        }
+        let created = create.wait_with_output().unwrap();
+        assert!(created.status.success(), "{}", text(created.stderr));
+
         let daemon = start_daemon(&home);
         eventually("coordinator task to run", || {
             task_status_line(&home, COORD_TASK).contains("  running")
@@ -312,11 +365,22 @@ mod steering_process {
             "{stdout}"
         );
 
-        eventually("opencode to run in the same worktree", || {
-            std::fs::read_to_string(coord_worktree.join(".fake-args")).is_ok_and(|args| args.contains("--format\njson"))
-        });
-
+        let deadline = Instant::now() + PATIENCE;
+        let opencode_started = loop {
+            if std::fs::read_to_string(coord_worktree.join(".fake-args"))
+                .is_ok_and(|args| args.contains("--format\njson"))
+            {
+                break true;
+            }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+        let last_status = text(run(&home, &["status"]).stdout);
+        let activity = std::fs::read_to_string(home.activity_log(&coord_id));
         stop_daemon(daemon);
+        assert!(opencode_started, "OpenCode did not start: {last_status}\n{activity:?}");
 
         let final_state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
         let found = final_state.find_task(&coord_id).unwrap();
