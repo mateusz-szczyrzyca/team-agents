@@ -196,7 +196,7 @@ async fn shift_waits_for_the_gate() {
     let script = format!("while [ ! -f {} ]; do sleep 0.05; done", gate_marker.display());
     let config = std::fs::read_to_string(rig.home.config_file()).unwrap();
     let old_gate = "gate = [\"sh\", \"-c\", \"test ! -e gate-fails\"]";
-    let new_gate = format!("gate = [\"sh\", \"-c\", {:?}]", script);
+    let new_gate = format!("gate = [\"sh\", \"-c\", {script:?}]");
     std::fs::write(rig.home.config_file(), config.replace(old_gate, &new_gate)).unwrap();
     configure(
         &rig,
