@@ -10,6 +10,7 @@ use crate::local_time::Zone;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+use crate::account_view::AccountView;
 use crate::config::RepoName;
 use crate::ids::{AgentName, BranchName, ItemId, RoundId, RunId, TaskId, TeamId};
 use crate::kinds::Role;
@@ -47,15 +48,17 @@ pub enum SummarySection {
     Bus,
     /// 11. The notifications.
     Notifications,
-    /// 12. The machine.
+    /// 12. The accounts of the configuration.
+    Accounts,
+    /// 13. The machine.
     Machine,
     /// Collection failures without a dedicated section, listed below machine facts.
     CollectionFailures,
 }
 
 impl SummarySection {
-    /// All 12 summary sections in strict specification order.
-    pub const ALL: [Self; 12] = [
+    /// All 13 summary sections in strict specification order.
+    pub const ALL: [Self; 13] = [
         Self::Anomalies,
         Self::DaemonAndVersions,
         Self::TeamItemsRounds,
@@ -67,6 +70,7 @@ impl SummarySection {
         Self::DaemonLog,
         Self::Bus,
         Self::Notifications,
+        Self::Accounts,
         Self::Machine,
     ];
 
@@ -85,6 +89,7 @@ impl SummarySection {
             Self::DaemonLog => "## Daemon Log",
             Self::Bus => "## Bus Messages",
             Self::Notifications => "## Notifications",
+            Self::Accounts => "## Accounts",
             Self::Machine => "## Machine and Resources",
             Self::CollectionFailures => "### Unreadable Parts",
         }
@@ -891,6 +896,30 @@ fn render_notifications(notifications: &[String], out: &mut SummaryWriter) {
     write_line(out, "");
 }
 
+/// The accounts with their owner, agents and the names of their variables; never a value.
+fn render_accounts(accounts: &[AccountView], out: &mut SummaryWriter) {
+    if accounts.is_empty() {
+        write_line(out, "No accounts are configured.");
+        return;
+    }
+    let names = |names: Vec<String>| {
+        if names.is_empty() {
+            "none".to_owned()
+        } else {
+            names.join(", ")
+        }
+    };
+    for account in accounts {
+        write_line(out, &format!("- `{}` (owner `{}`)", account.name, account.owner));
+        let agents = names(account.agents.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Agents: {agents}"));
+        let env = names(account.env.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Environment variables: {env}"));
+        let secrets = names(account.secrets.iter().map(ToString::to_string).collect());
+        write_line(out, &format!("  - Secret variables: {secrets}"));
+    }
+}
+
 fn render_machine(machine: &MachineSummary, unreadable: &[UnreadablePartSummary], out: &mut SummaryWriter) {
     if let Some(avg) = machine.load_avg {
         write_line(
@@ -992,7 +1021,7 @@ fn render_unreadable(unreadable: &[UnreadablePartSummary], out: &mut SummaryWrit
 /// Returns [`SummaryError::RequiredFactsTooLarge`] when mandatory facts and cut
 /// markers alone would reach the byte limit; no partial document is returned.
 pub fn render_summary(input: &SummaryInput, zone: Zone) -> Result<String, SummaryError> {
-    render_with_redaction(input, zone, str::to_owned, PathPresentation::Escaped, None)
+    render_with_redaction(input, &[], zone, str::to_owned, PathPresentation::Escaped, None)
 }
 
 /// Renders collected text after redaction, before measuring or truncating any fragment.
@@ -1006,11 +1035,12 @@ pub fn render_redacted_summary(
     zone: Zone,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, zone, redact, PathPresentation::Escaped, None)
+    render_with_redaction(input, &[], zone, redact, PathPresentation::Escaped, None)
 }
 
 fn render_with_redaction(
     input: &SummaryInput,
+    accounts: &[AccountView],
     zone: Zone,
     redact: impl Fn(&str) -> String,
     paths: PathPresentation,
@@ -1050,6 +1080,7 @@ fn render_with_redaction(
                     | SummarySection::DaemonLog
                     | SummarySection::Bus
                     | SummarySection::Notifications
+                    | SummarySection::Accounts
             ) {
                 continue;
             }
@@ -1074,6 +1105,7 @@ fn render_with_redaction(
             SummarySection::DaemonLog => render_daemon_log(input.daemon_log_lines.as_deref(), &mut out),
             SummarySection::Bus => render_bus(&input.bus_messages, &mut out),
             SummarySection::Notifications => render_notifications(&input.notifications, &mut out),
+            SummarySection::Accounts => render_accounts(accounts, &mut out),
             SummarySection::Machine => render_machine(&input.machine, &input.unreadable_parts, &mut out),
             SummarySection::CollectionFailures => render_unreadable(&input.unreadable_parts, &mut out),
         }
@@ -1105,7 +1137,7 @@ pub fn render_command_summary(
     zone: Zone,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, zone, redact, PathPresentation::Plain, None)
+    render_with_redaction(input, &[], zone, redact, PathPresentation::Plain, None)
 }
 
 /// Renders a command summary with a retained-worktree notice in the git section.
@@ -1118,5 +1150,19 @@ pub fn render_command_summary_with_git_notice(
     redact: impl Fn(&str) -> String,
     git_notice: Option<&str>,
 ) -> Result<String, SummaryError> {
-    render_with_redaction(input, zone, redact, PathPresentation::Plain, git_notice)
+    render_with_redaction(input, &[], zone, redact, PathPresentation::Plain, git_notice)
+}
+
+/// Renders a command summary with an `## Accounts` section that lists `accounts`.
+///
+/// # Errors
+/// Returns [`SummaryError::RequiredFactsTooLarge`] when required facts exceed the budget.
+pub fn render_command_summary_with_accounts(
+    input: &SummaryInput,
+    accounts: &[AccountView],
+    zone: Zone,
+    redact: impl Fn(&str) -> String,
+    git_notice: Option<&str>,
+) -> Result<String, SummaryError> {
+    render_with_redaction(input, accounts, zone, redact, PathPresentation::Plain, git_notice)
 }

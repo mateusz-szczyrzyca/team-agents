@@ -1,6 +1,8 @@
 //! Read-only diagnostic bundles: observe a team, assess once, redact, then persist.
 
 #[cfg(test)]
+mod account_tests;
+#[cfg(test)]
 mod activity_tests;
 mod bus;
 mod collect;
@@ -18,8 +20,9 @@ use std::io::Write;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use agent_core::account_view::AccountView;
 use agent_core::config::{MAX_SECRETS_BYTES, Secrets, SecretsError};
-use agent_core::debug_summary::{SummaryError, SummaryInput, SummarySection, render_command_summary_with_git_notice};
+use agent_core::debug_summary::{SummaryError, SummaryInput, SummarySection, render_command_summary_with_accounts};
 use agent_core::diagnostic_assessment::assess;
 use agent_core::ids::{RoundId, TaskId, TeamId};
 use agent_core::state::{InvalidTimestamp, State, StateError, Timestamp};
@@ -332,6 +335,7 @@ async fn execute_debug_internal(
     );
     let summary = compact_summary_with(
         &collection.summary,
+        &collection.accounts,
         location.zone,
         collection.git_notice.as_deref(),
         |text| {
@@ -365,6 +369,7 @@ fn short(text: &str, limit: usize) -> String {
 fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
     compact_summary_with(
         input,
+        &[],
         agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
         None,
         str::to_owned,
@@ -373,11 +378,12 @@ fn compact_summary(input: &SummaryInput) -> Result<String, SummaryError> {
 
 fn compact_summary_with(
     input: &SummaryInput,
+    accounts: &[AccountView],
     zone: agent_core::local_time::Zone,
     git_notice: Option<&str>,
     redact: impl Fn(&str) -> String,
 ) -> Result<String, SummaryError> {
-    match render_command_summary_with_git_notice(input, zone, &redact, git_notice) {
+    match render_command_summary_with_accounts(input, accounts, zone, &redact, git_notice) {
         Ok(text) => Ok(text),
         Err(SummaryError::RequiredFactsTooLarge { .. }) => {
             let mut compact = input.clone();
@@ -391,7 +397,7 @@ fn compact_summary_with(
                 git.commits_over_base.clear();
                 git.newest_untracked.clear();
             }
-            render_command_summary_with_git_notice(&compact, zone, &redact, git_notice)
+            render_command_summary_with_accounts(&compact, accounts, zone, &redact, git_notice)
         }
         Err(error) => Err(error),
     }
@@ -534,6 +540,7 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
             collection.add("agents.toml", text.clone().into_bytes());
             let redacted = collection.cut.redact_text(&text);
             collection.summary.configuration = Some(redacted);
+            observe_accounts(collection, &text, secrets);
         }
         Err(error) => {
             collection
@@ -544,7 +551,32 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
                     part: "configuration".to_owned(),
                     reason: crate::process::error_chain(&error),
                 });
+            // The accounts come from the same file: without it the section must not claim there are none.
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::Accounts,
+                    part: "accounts".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
         }
+    }
+}
+
+/// Records the accounts of the configuration in `text` with the names of their variables; a configuration that does not
+/// load is recorded as an unreadable part, since the accounts cannot be told from it.
+fn observe_accounts(collection: &mut collect::Collection, text: &str, secrets: &agent_core::config::Secrets) {
+    match agent_core::config::Config::from_toml_str(text) {
+        Ok(config) => collection.accounts = agent_core::account_view::account_views(&config, secrets),
+        Err(error) => collection
+            .assessment
+            .unreadable
+            .push(agent_core::diagnostic_assessment::ReadFailure {
+                section: SummarySection::Accounts,
+                part: "accounts".to_owned(),
+                reason: crate::process::error_chain(&error),
+            }),
     }
 }
 

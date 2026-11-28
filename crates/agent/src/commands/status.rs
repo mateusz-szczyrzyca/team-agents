@@ -188,7 +188,7 @@ impl Activity {
         not(test),
         expect(
             dead_code,
-            reason = "the status reads both lines with `provider_lines`; the tests of the line use this one"
+            reason = "the status reads both lines with `Activity::reads`; the tests of the line use this one"
         )
     )]
     pub(crate) async fn refused_line(&self) -> Result<Option<String>, StatusError> {
@@ -198,51 +198,61 @@ impl Activity {
             .and_then(|(state, now)| refusals::refused_line(&state.refusals_at(now), self.zone)))
     }
 
-    /// The lines of the accounts that are paused at the time of the status and the line of the agents their provider
-    /// refused, read from the state of the daemon once; `None` when nothing is paused or refused.
+    /// What one render of the status takes from the configuration and from the state of the daemon, each file read once:
+    /// the line counting the runs going per configured CLI across `teams` (when at least one run is going), the account
+    /// each agent and investigator runs with, the lines of the paused accounts and of the agents their provider refused
+    /// (`None` when nothing is paused or refused), and what each queued task of `teams` whose account has its `max_runs`
+    /// going says of it. A missing configuration or state file is the only reason one of them is omitted.
     ///
     /// # Errors
-    /// [`StatusError::Refusals`] when the state file exists but cannot be read.
-    pub(crate) async fn provider_lines(&self) -> Result<Option<String>, StatusError> {
-        let Some((state, now)) = self.state_now().await? else {
-            return Ok(None);
+    /// [`StatusError::ConfigRead`] when the configuration cannot be read, [`StatusError::ConfigParse`] when it is
+    /// invalid, [`StatusError::Refusals`] when the state file exists but cannot be read.
+    pub(crate) async fn reads(&self, teams: &[TeamSummary]) -> Result<Reads, StatusError> {
+        let config = self.config().await?;
+        let state = self.state_now().await?;
+        let provider_lines = state
+            .as_ref()
+            .and_then(|(state, now)| provider_lines(state, *now, self.zone));
+        let account_waits = match (&config, &state) {
+            (Some(config), Some((state, _))) => accounts::waits(config, state, teams),
+            (None, _) | (_, None) => BTreeMap::new(),
         };
-        let accounts = accounts::account_lines(state.account_pauses(), now, self.zone);
-        let agents = refusals::refused_line(&state.refusals_at(now), self.zone);
-        Ok(match (accounts, agents) {
-            (None, None) => None,
-            (accounts, agents) => Some(format!(
-                "{}{}",
-                accounts.unwrap_or_default(),
-                agents.unwrap_or_default()
-            )),
+        let (cli_runs, accounts) = config.map_or_else(
+            || (None, BTreeMap::new()),
+            |config| {
+                (
+                    cli_runs_line(&config, teams),
+                    agent_core::account_view::agent_accounts(&config),
+                )
+            },
+        );
+        Ok(Reads {
+            cli_runs,
+            accounts,
+            provider_lines,
+            account_waits,
         })
     }
 
-    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. The file is
-    /// read asynchronously so status rendering never blocks its runtime thread. A missing configuration has no
-    /// configured CLIs and is the only reason a configuration is omitted.
+    /// The line counting the runs going per configured CLI across `teams`, when at least one run is going. A missing
+    /// configuration has no configured CLIs and is the only reason a configuration is omitted. What the status prints
+    /// reads the file once, through [`Activity::reads`].
     ///
     /// # Errors
     /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    #[cfg(test)]
     pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
         Ok(self.config().await?.and_then(|config| cli_runs_line(&config, teams)))
     }
 
-    /// What each queued task of `teams` whose account has its `max_runs` going says of it, by task: the runs are counted
-    /// over every team of the state of the daemon, which is read with the configuration; nothing when either is missing.
+    /// The account each agent and investigator of the configuration runs with; none when there is no configuration.
     ///
     /// # Errors
-    /// [`StatusError::ConfigRead`] or [`StatusError::ConfigParse`] for the configuration, [`StatusError::Refusals`] when
-    /// the state file exists but cannot be read.
-    pub(crate) async fn account_waits(&self, teams: &[TeamSummary]) -> Result<BTreeMap<TaskId, String>, StatusError> {
-        let Some(config) = self.config().await? else {
-            return Ok(BTreeMap::new());
-        };
-        let Some((state, _)) = self.state_now().await? else {
-            return Ok(BTreeMap::new());
-        };
-        Ok(accounts::waits(&config, &state, teams))
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn accounts(&self) -> Result<members::Accounts, StatusError> {
+        Ok(self.config().await?.map_or_else(BTreeMap::new, |config| {
+            agent_core::account_view::agent_accounts(&config)
+        }))
     }
 
     /// The configuration, read asynchronously so status rendering never blocks its runtime thread; `None` when the file
@@ -471,21 +481,22 @@ async fn listing_text(
     let listing = teams(connection, target, query).await?;
     let told = rounds::told(connection, activity, &listing.teams).await?;
     let requests = requests_of(activity, &listing.teams, detail).await;
-    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.provider_lines().await?;
-    let account_waits = activity.account_waits(&listing.teams).await?;
-    let text = render_with_waits(
+    let reads = activity.reads(&listing.teams).await?;
+    let text = render_with_notes(
         &listing.teams,
         View::Full,
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
-        Waiting {
-            under: Under {
-                requests: &|task| requests.of(task).to_vec(),
-                workers: &|_| Vec::new(),
+        Notes {
+            extras: Extras {
+                under: Under {
+                    requests: &|task| requests.of(task).to_vec(),
+                    workers: &|_| Vec::new(),
+                },
+                accounts: &reads.accounts,
             },
-            accounts: &|task| account_waits.get(task).cloned(),
+            waits: &|task| reads.account_waits.get(task).cloned(),
         },
         activity.zone,
     );
@@ -496,8 +507,8 @@ async fn listing_text(
     };
     Ok(Shown {
         text: format!("{text}{}", told.unread()),
-        cli_runs,
-        refused,
+        cli_runs: reads.cli_runs,
+        refused: reads.provider_lines,
         pool,
         daemon: listing.daemon,
         history: listing.history,
@@ -512,8 +523,7 @@ async fn running_text(
     query: VersionsQuery,
 ) -> Result<Shown, StatusError> {
     let listing = teams(connection, None, query).await?;
-    let cli_runs = activity.cli_runs_line(&listing.teams).await?;
-    let refused = activity.provider_lines().await?;
+    let reads = activity.reads(&listing.teams).await?;
     // A team is listed when it has a round that goes on; the parts it prints come from the whole team, since a merged
     // part's round is one that is over.
     let listed: Vec<TeamSummary> = listing
@@ -545,25 +555,27 @@ async fn running_text(
     } else {
         let told = rounds::told(connection, activity, &listed).await?;
         let requests = requests_of(activity, &listed, detail).await;
-        let account_waits = activity.account_waits(&listed).await?;
-        let text = render_with_waits(
+        let text = render_with_notes(
             &listed,
             View::Running,
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
-            Waiting {
-                under: Under {
-                    requests: &|task| requests.of(task).to_vec(),
-                    workers: &|team| {
-                        served
-                            .iter()
-                            .find(|(id, _)| *id == team.id)
-                            .map(|(_, lines)| lines.clone())
-                            .unwrap_or_default()
+            Notes {
+                extras: Extras {
+                    under: Under {
+                        requests: &|task| requests.of(task).to_vec(),
+                        workers: &|team| {
+                            served
+                                .iter()
+                                .find(|(id, _)| *id == team.id)
+                                .map(|(_, lines)| lines.clone())
+                                .unwrap_or_default()
+                        },
                     },
+                    accounts: &reads.accounts,
                 },
-                accounts: &|task| account_waits.get(task).cloned(),
+                waits: &|task| reads.account_waits.get(task).cloned(),
             },
             activity.zone,
         );
@@ -571,8 +583,8 @@ async fn running_text(
     };
     Ok(Shown {
         text,
-        cli_runs,
-        refused,
+        cli_runs: reads.cli_runs,
+        refused: reads.provider_lines,
         pool,
         daemon: listing.daemon,
         history: listing.history,
@@ -924,7 +936,11 @@ async fn show_round(
 ) -> Result<(), StatusError> {
     let detail = round_detail(connection, round.clone()).await?;
     let zone = activity.map_or(Zone::Fixed(UtcOffset::UTC), |activity| activity.zone);
-    let mut text = render_round_in(&detail, zone);
+    let accounts = match activity {
+        Some(activity) => activity.accounts().await?,
+        None => BTreeMap::new(),
+    };
+    let mut text = render_round_with_accounts(&detail, zone, &accounts);
     if let Some(activity) = activity {
         text.push_str(&snapshots::snapshots_of(&activity.home, &round, activity.zone));
     }
@@ -1014,21 +1030,20 @@ fn render_in(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_with_requests(
-        teams,
-        view,
-        detail,
-        activity,
-        rounds,
-        Under {
-            requests: &|_| Vec::new(),
-            workers: &|_| Vec::new(),
+    let notes = Notes {
+        extras: Extras {
+            under: Under {
+                requests: &|_| Vec::new(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &BTreeMap::new(),
         },
-        zone,
-    )
+        waits: &|_| None,
+    };
+    render_with_notes(teams, view, detail, activity, rounds, notes, zone)
 }
 
-/// What [`render_with_requests`] writes under the lines of a team: the requests for workers under each task's plan,
+/// What [`render_with_notes`] writes under the lines of a team: the requests for workers under each task's plan,
 /// and the workers that served the team before its count of tasks.
 #[derive(Clone, Copy)]
 struct Under<'a> {
@@ -1038,7 +1053,19 @@ struct Under<'a> {
     workers: &'a dyn Fn(&TeamSummary) -> Vec<workers::Served>,
 }
 
-/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
+/// What [`render_with_notes`] writes besides the tasks themselves: what goes under them, and the account of each
+/// agent that has one, which the line of its task shows after its name.
+#[derive(Clone, Copy)]
+struct Extras<'a> {
+    /// What goes under the lines of a team.
+    under: Under<'a>,
+    /// The account of each agent and investigator that runs with one.
+    accounts: &'a members::Accounts,
+}
+
+/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them, and no
+/// account told: what the tests of those lines compare.
+#[cfg(test)]
 fn render_with_requests(
     teams: &[TeamSummary],
     view: View,
@@ -1057,6 +1084,7 @@ fn render_with_requests(
 
 /// What [`render_with_waits`] writes besides the lines of the tasks: what goes under them, and what a queued task whose
 /// account has its most runs going says of it.
+#[cfg(test)]
 #[derive(Clone, Copy)]
 struct Waiting<'a> {
     /// The lines under the lines of a team.
@@ -1065,7 +1093,8 @@ struct Waiting<'a> {
     accounts: &'a dyn Fn(&TaskId) -> Option<String>,
 }
 
-/// [`render_with_requests`] with what the tasks that wait for their account say.
+/// [`render_with_requests`] with what the tasks that wait for their account say, and no account told after an agent.
+#[cfg(test)]
 fn render_with_waits(
     teams: &[TeamSummary],
     view: View,
@@ -1075,7 +1104,59 @@ fn render_with_waits(
     waiting: Waiting<'_>,
     zone: Zone,
 ) -> String {
-    let under = waiting.under;
+    let notes = Notes {
+        extras: Extras {
+            under: waiting.under,
+            accounts: &BTreeMap::new(),
+        },
+        waits: waiting.accounts,
+    };
+    render_with_notes(teams, view, detail, activity, rounds, notes, zone)
+}
+
+/// `render_with_requests` with the account of each agent that has one told after its name, and no task told to wait for
+/// its account.
+#[cfg(test)]
+fn render_with_accounts(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    extras: Extras<'_>,
+    zone: Zone,
+) -> String {
+    let notes = Notes {
+        extras,
+        waits: &|_| None,
+    };
+    render_with_notes(teams, view, detail, activity, rounds, notes, zone)
+}
+
+/// What [`render_with_notes`] writes besides the tasks themselves: what [`Extras`] holds, and what a queued task whose
+/// account has its most runs going says of it.
+#[derive(Clone, Copy)]
+struct Notes<'a> {
+    /// What goes under the lines of a team and the account of each agent.
+    extras: Extras<'a>,
+    /// What a queued task says of the account it waits for, such as `waiting for account comp-claude (1/1 runs)`.
+    waits: &'a dyn Fn(&TaskId) -> Option<String>,
+}
+
+/// The teams as text, with every note of `notes`.
+fn render_with_notes(
+    teams: &[TeamSummary],
+    view: View,
+    detail: Detail,
+    activity: &dyn Fn(&TaskId) -> Option<String>,
+    rounds: &dyn Fn(&Round) -> String,
+    notes: Notes<'_>,
+    zone: Zone,
+) -> String {
+    let Notes {
+        extras: Extras { under, accounts },
+        waits,
+    } = notes;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -1084,7 +1165,7 @@ fn render_with_waits(
     let columns = served
         .iter()
         .flatten()
-        .fold(members::Columns::of(teams), |columns, worker| {
+        .fold(members::Columns::of(teams, accounts), |columns, worker| {
             columns.fit(agent_core::kinds::Role::Worker.to_string().len(), worker.agent_width())
         });
     let mut lines: Vec<String> = Vec::new();
@@ -1140,14 +1221,14 @@ fn render_with_waits(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, activity, waiting.accounts, zone)),
+                    .map(|member| members::line(member, team, columns, accounts, activity, waits, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, activity, waiting.accounts, zone));
+            lines.push(members::line(member, team, columns, accounts, activity, waits, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1164,6 +1245,34 @@ fn render_with_waits(
 /// The line `agent status` shows about the history when it is not whole: what it is doing and how many records it lost.
 pub(crate) fn render_history(history: Option<&HistoryHealth>) -> String {
     history.map_or_else(String::new, |health| format!("{health}\n"))
+}
+
+/// What one render of the status takes from the configuration and the state of the daemon, as [`Activity::reads`] reads
+/// them.
+pub(crate) struct Reads {
+    /// The line counting the runs going per configured CLI, when at least one run is going.
+    cli_runs: Option<String>,
+    /// The account each agent and investigator of the configuration runs with.
+    accounts: members::Accounts,
+    /// The lines of the paused accounts and of the agents their provider refused, when there are any.
+    provider_lines: Option<String>,
+    /// What each queued task whose account has its `max_runs` going says of it, by task.
+    account_waits: BTreeMap<TaskId, String>,
+}
+
+/// The lines of the accounts that are paused at `now` and the line of the agents their provider refused, in `zone`;
+/// `None` when nothing is paused or refused.
+fn provider_lines(state: &agent_core::state::State, now: Timestamp, zone: Zone) -> Option<String> {
+    let accounts = accounts::account_lines(state.account_pauses(), now, zone);
+    let agents = refusals::refused_line(&state.refusals_at(now), zone);
+    match (accounts, agents) {
+        (None, None) => None,
+        (accounts, agents) => Some(format!(
+            "{}{}",
+            accounts.unwrap_or_default(),
+            agents.unwrap_or_default()
+        )),
+    }
 }
 
 /// The line that counts the runs going on each CLI configured in `config` across `teams`, in the order of
@@ -1344,7 +1453,13 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs, its times in `zone`.
+#[cfg(test)]
 pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
+    render_round_with_accounts(detail, zone, &BTreeMap::new())
+}
+
+/// `render_round_in` with the account each agent runs with: an agent that has one is followed by it in brackets.
+pub(crate) fn render_round_with_accounts(detail: &RoundDetail, zone: Zone, accounts: &members::Accounts) -> String {
     let waiting = detail.waiting.as_deref().map_or_else(String::new, |waiting| {
         format!(", waits for {}", zone.stamp_waiting(waiting))
     });
@@ -1398,7 +1513,7 @@ pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
             "  {}  {}  {}  {}  {}",
             task.task,
             task.role,
-            task.agent.name(),
+            agent_core::account_view::labelled(task.agent.name(), accounts.get(&task.agent.agent_name())),
             task.worktree.as_path().display(),
             task.branch
         ));
@@ -1503,3 +1618,11 @@ mod account_waits_tests;
 #[cfg(test)]
 #[path = "status/tests/split_tier.rs"]
 mod split_tier_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_labels.rs"]
+mod account_label_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_status.rs"]
+mod account_status_tests;

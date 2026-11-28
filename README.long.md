@@ -270,6 +270,11 @@ account, the review, the hand-over or the request waits in the queue, not failed
 The same holds for `[replacement] mode = "lead"` (and `auto` with no agent listed): a member's work whose ladder is
 exhausted is not given to a lead of a paused account; the member's task is paused until the reset and goes on then, also after a restart of the daemon.
 
+An agent that runs with an account is written with it in brackets on its task line in `agent status`
+(`comp-claude-1 [comp-claude]`), also in the tasks of `agent status <round>`; the line of an agent without an account is
+as it always was. The account comes from
+`agents.toml` as it is when you ask, not from the name of the agent.
+
 `max_runs` in `[accounts.NAME]` limits the runs of an account: the runs of all its agents and investigators, over all teams,
 are counted together, and a queued task whose account has its `max_runs` going waits in the queue — it is not failed — and
 starts when one of those runs ends. `agent status` says it: `queued, waiting for account comp-claude (1/1 runs)`. The command
@@ -696,6 +701,11 @@ It works offline, reports unreadable parts, and changes no task or git ref. Befo
 exact values from `secrets.toml` and environment variables ending in `TOKEN`, `SECRET`, `PASSWORD` or `KEY` with
 `<cut>`, including JSON-escaped values in daemon logs. An unreadable secrets file stops collection before any
 bundle is written.
+
+The summary has a section `## Accounts` before the machine's: each account of `agents.toml` with its owner, the agents
+and investigators that run with it, the names of the variables of its `env` and the names of the variables of its
+`[account_env.NAME]` in `secrets.toml` — never a value. A configuration that does not load is reported as an unreadable
+part of that section.
 
 Task files and git output are bounded to 4 MiB each; task files together to 64 MiB, with at most
 4096 entries per task and 16 directory levels. Limits and skipped symlinks are reported as read failures.
