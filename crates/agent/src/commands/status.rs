@@ -1352,6 +1352,11 @@ pub(crate) fn render_round(detail: &RoundDetail) -> String {
 /// A round in full as text: its line, the item, the pull request, the review passes, and the tasks that worked for it
 /// with where they work and their runs, its times in `zone`.
 pub(crate) fn render_round_in(detail: &RoundDetail, zone: Zone) -> String {
+    render_round_with_accounts(detail, zone, &BTreeMap::new())
+}
+
+/// [`render_round_in`] with the account each agent runs with: an agent that has one is followed by it in brackets.
+pub(crate) fn render_round_with_accounts(detail: &RoundDetail, zone: Zone, _accounts: &members::Accounts) -> String {
     let waiting = detail.waiting.as_deref().map_or_else(String::new, |waiting| {
         format!(", waits for {}", zone.stamp_waiting(waiting))
     });
@@ -1510,3 +1515,7 @@ mod split_tier_tests;
 #[cfg(test)]
 #[path = "status/tests/account_labels.rs"]
 mod account_label_tests;
+
+#[cfg(test)]
+#[path = "status/tests/account_status.rs"]
+mod account_status_tests;
