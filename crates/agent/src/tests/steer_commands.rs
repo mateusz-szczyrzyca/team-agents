@@ -673,5 +673,21 @@ async fn swap_command_asks_daemon_and_prints_result() {
 
     result.unwrap();
     assert_eq!(out, format!("{}: claude-1 → glm-1\n", task(1)));
+    let swaps = seen
+        .lock()
+        .unwrap()
+        .iter()
+        .filter_map(|request| match &request.command {
+            Request::Swap(swap) => Some(swap.clone()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        swaps,
+        [agent_core::protocol::SwapRequest {
+            task: task(1),
+            agent: "glm-1".parse().unwrap(),
+        }]
+    );
     server.abort();
 }
