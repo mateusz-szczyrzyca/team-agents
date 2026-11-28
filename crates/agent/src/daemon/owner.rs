@@ -74,7 +74,7 @@ use agent_core::decide::limit::{Decision, Limit, Refusal, decide, next_refusals}
 use agent_core::decide::no_tool_call::{AfterFailedWithoutTool, after_failed_without_tool};
 use agent_core::decide::outcome::{AfterTurnLimit, after_turn_limit, consecutive_turn_limits};
 use agent_core::decide::replacement::ReplacementMode;
-use agent_core::decide::slot::{Going, Queued, Slot, busy_run, limit_for, plan_starts, runs_going};
+use agent_core::decide::slot::{Going, Queued, busy_run, limit_for, runs_going};
 use agent_core::history::{CheckpointCause, HistoryEvent, RunWhy};
 use agent_core::ids::{AgentName, GenerateIdError, InvalidName, RoundId, RunId, TaskId, TeamId};
 use agent_core::kinds::{CliKind, Role, Tier};
@@ -608,6 +608,9 @@ pub(super) struct Owner {
     in_flight: HashSet<TaskId>,
     /// The queued tasks that wait for their agent to finish a run in another task; the wait is logged once per task.
     agent_waits: HashSet<TaskId>,
+    /// The queued tasks that wait for their account to have room for another run; the wait is logged once per task, apart
+    /// from the wait for the agent.
+    account_waits: HashSet<TaskId>,
     /// What stops the run of each task that has one going, by task.
     cancels: HashMap<TaskId, CancellationToken>,
     /// The tasks whose run the human has stopped, and how: the end of the run decides their status.
@@ -793,6 +796,7 @@ impl Owner {
             request_runs: HashMap::new(),
             in_flight: HashSet::new(),
             agent_waits: HashSet::new(),
+            account_waits: HashSet::new(),
             cancels: HashMap::new(),
             halts: HashMap::new(),
             wakes: HashMap::new(),
@@ -1062,6 +1066,8 @@ impl Owner {
         // A task that is no longer queued is no longer waiting for its agent.
         self.agent_waits
             .retain(|task| waiting.iter().any(|item| item.task == *task));
+        self.account_waits
+            .retain(|task| waiting.iter().any(|item| item.task == *task));
         // Fresh assignments must wait even when a reused task has earlier runs. Incumbent retries
         // remain governed by their pause and explicit human resume.
         let now = Timestamp::now(&self.parts.clock)?;
@@ -1086,40 +1092,58 @@ impl Owner {
         if !self.space_allows_run().await {
             return Ok(());
         }
+        // The runs that go, and each run this pass starts: a task judged later sees the slots the earlier ones took, and
+        // a task that waits takes none.
         let mut going = self.all_runs_going();
-        let decisions = plan_starts(&queued, &going, self.parts.settings.config.limits());
-        for (task, slot) in decisions {
+        for item in queued {
             // Each launch is measured on its own: the space may have fallen since the last one started.
             if !self.launch_allowed().await {
                 break;
             }
-            // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
-            if let Slot::Wait(holder) = slot {
-                // Waited for long enough, the task goes to a free agent of `[replacement] agents` and starts with it.
-                if !self.hand_over_busy_wait(&task).await? {
-                    self.note_agent_wait(&task, &holder)?;
-                    continue;
-                }
-            }
-            if !self.try_pending_team_replace_for(&task).await? {
-                continue;
-            }
-            // An account has its limit of runs over all its agents: a task whose account holds it waits, queued.
-            if let Some(item) = queued.iter().find(|item| item.task == task) {
-                if let AccountSlot::Full(full) = slot_of(&self.parts.settings.config, &item.agent, &going) {
-                    self.note_account_wait(&task, &full);
-                    continue;
-                }
-                going.push(Going {
-                    agent: item.agent.clone(),
-                    team: item.team.clone(),
-                    task: task.clone(),
-                });
-            }
-            self.agent_waits.remove(&task);
-            Box::pin(self.start(task)).await?;
+            Box::pin(self.start_if_room(item, &mut going)).await?;
         }
         Ok(())
+    }
+
+    /// Starts the run of the queued `item` when its agent and its account have room for it, and counts it in `going`;
+    /// otherwise the task stays queued and the wait is noted. A task handed over to a free agent while it waited is
+    /// judged with the agent it has then.
+    async fn start_if_room(&mut self, item: Queued, going: &mut Vec<Going>) -> Result<(), OwnerError> {
+        let task = item.task;
+        // An agent has its limit of runs over all teams: a task whose agent holds it waits, queued, for that run.
+        let limit = limit_for(self.parts.settings.config.limits(), item.tier);
+        if let Some(holder) = busy_run(&item.agent, limit, going).cloned() {
+            // Waited for long enough, the task goes to a free agent of `[replacement] agents` and starts with it.
+            if !self.hand_over_busy_wait(&task).await? {
+                self.note_agent_wait(&task, &holder)?;
+                return Ok(());
+            }
+        }
+        if !self.try_pending_team_replace_for(&task).await? {
+            return Ok(());
+        }
+        // The agent the task has now: a hand-over has given it another one than the queue listed.
+        let agent = self
+            .parts
+            .state
+            .find_task(&task)
+            .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?
+            .member
+            .agent()
+            .agent_name();
+        // An account has its limit of runs over all its agents: a task whose account holds it waits, queued.
+        if let AccountSlot::Full(full) = slot_of(&self.parts.settings.config, &agent, going) {
+            self.note_account_wait(&task, &full);
+            return Ok(());
+        }
+        going.push(Going {
+            agent,
+            team: item.team,
+            task: task.clone(),
+        });
+        self.agent_waits.remove(&task);
+        self.account_waits.remove(&task);
+        Box::pin(self.start(task)).await
     }
 
     /// Keeps the run's team identity while its requester may be removed.
@@ -1272,7 +1296,7 @@ impl Owner {
     /// Notes that the queued `task` waits because its account has its most runs going; the log says so once, not at every
     /// look of the loop.
     fn note_account_wait(&mut self, task: &TaskId, full: &AccountFull) {
-        if self.agent_waits.insert(task.clone()) {
+        if self.account_waits.insert(task.clone()) {
             tracing::debug!(
                 event = LogEvent::DecisionTaken.as_str(),
                 decision = "account_slot",
