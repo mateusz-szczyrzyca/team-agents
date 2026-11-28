@@ -673,6 +673,9 @@ enum CommandError {
     /// `agent stop`, `pause`, `unpause` or `resume` failed.
     #[error(transparent)]
     Control(#[from] ControlError),
+    /// `agent swap` failed.
+    #[error(transparent)]
+    Swap(#[from] commands::swap::SwapError),
     /// The words of `agent say` are not something the daemon takes.
     #[error("the words to say are not valid")]
     Words(#[from] SayError),
@@ -810,6 +813,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Run(_)
                 | CommandError::Daemon(_)
                 | CommandError::Control(_)
+                | CommandError::Swap(_)
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
