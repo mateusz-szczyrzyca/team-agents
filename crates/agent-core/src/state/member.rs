@@ -18,6 +18,11 @@ use crate::ids::{AgentName, InvestigatorName, ItemId, RoundId, RunId, TaskId};
 use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
+/// Keeps the persisted member shape unchanged until a human hand-over occurs.
+fn no_human_handovers<T: Default + PartialEq>(count: &T) -> bool {
+    *count == T::default()
+}
+
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "tier", content = "name", rename_all = "snake_case", deny_unknown_fields)]
@@ -104,6 +109,9 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
+    /// Human-selected hand-overs; zero is omitted to preserve legacy serialized states.
+    #[serde(default, skip_serializing_if = "no_human_handovers")]
+    human_handovers: usize,
     /// When the task began to wait for its agent, which runs another task at its limit; `None` when it does not wait.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     waiting_since: Option<Timestamp>,
@@ -161,6 +169,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before hand-overs existed has none.
     #[serde(default)]
     past_holders: Vec<holding::Holding>,
+    /// Human-selected hand-overs, excluded from the harness replacement allowance.
+    #[serde(default)]
+    human_handovers: usize,
     /// See [`Member`]; legacy tasks have no holder boundary.
     #[serde(default)]
     holder_after_run: Option<RunId>,
@@ -272,6 +283,11 @@ impl CheckedMut<'_, Member> {
     /// See [`Member::held_task`].
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.value.held_task(holder, at);
+    }
+
+    /// Excludes a human-selected hand-over from the harness replacement allowance.
+    pub(crate) fn record_human_handover(&mut self) {
+        self.value.human_handovers = self.value.human_handovers.saturating_add(1);
     }
 
     /// See [`Member::start_waiting`].
@@ -420,6 +436,16 @@ pub enum QuestionError {
 /// Why a member's runs or questions are out of order, found when reading a state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemberError {
+    /// Human handovers cannot outnumber the recorded holders they replaced.
+    #[error("task {task}: {handovers} human handovers exceed its {holders} past holders")]
+    HumanHandovers {
+        /// The task whose history is inconsistent.
+        task: TaskId,
+        /// The persisted count of human handovers.
+        handovers: usize,
+        /// The number of recorded past holders.
+        holders: usize,
+    },
     /// A run that is not the last is still going.
     #[error("task {task}: run {run} is still going but is not the last")]
     RunningNotLast {
@@ -482,6 +508,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -511,6 +538,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -532,6 +560,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -600,6 +629,12 @@ impl Member {
         "The agents that held the task before the one that holds it now, oldest first.",
         pub fn past_holders(&self) -> &[holding::Holding] = &self.past_holders
     );
+
+    /// Hand-overs selected by the harness, excluding those selected by the human.
+    #[must_use]
+    pub fn harness_takeovers(&self) -> usize {
+        self.past_holders.len().saturating_sub(self.human_handovers)
+    }
 
     getter!(
         "How many times the task was started in a new session again; `None` until it was.",
@@ -1117,6 +1152,13 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
 
 /// Checks the run, question and renewal invariants of a complete member.
 fn check_member(member: &Member) -> Result<(), MemberError> {
+    if member.human_handovers > member.past_holders.len() {
+        return Err(MemberError::HumanHandovers {
+            task: member.task.clone(),
+            handovers: member.human_handovers,
+            holders: member.past_holders.len(),
+        });
+    }
     check_runs(&member.task, &member.runs)?;
     check_questions(&member.task, &member.questions)?;
     if let Some(renewals) = &member.renewals {
@@ -1148,6 +1190,9 @@ mod tests {
         agent: Participant,
         /// See [`Member`].
         status: TaskStatus,
+        /// Human-selected hand-overs in the persisted member shape.
+        #[serde(default)]
+        human_handovers: usize,
         /// See [`Member`].
         #[serde(default)]
         runs: Vec<Run>,
@@ -1184,6 +1229,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                human_handovers: wire.human_handovers,
                 waiting_since: None,
                 holder_after_run: None,
                 role: None,

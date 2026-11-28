@@ -1155,6 +1155,9 @@ impl State {
             return Err(HandOverError::InRun { task: task.clone() });
         }
         member.held_task(holder, at);
+        if choice == holding::Choice::Human {
+            member.record_human_handover();
+        }
         Ok(())
     }
 

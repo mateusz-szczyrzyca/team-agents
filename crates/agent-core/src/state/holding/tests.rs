@@ -607,3 +607,64 @@ fn human_swap_to_worker_is_refused_without_changing_state() {
         State::from_json(&before).expect("the unchanged state loads again");
     }
 }
+
+#[test]
+fn human_swaps_preserve_the_harness_budget_across_reload() {
+    let mut state = old_state();
+    state
+        .hand_over_task_as(&task(), normal("claude-9"), Choice::Human, at())
+        .unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.harness_takeovers(), 0);
+    state.hand_over_task(&task(), normal("claude-8"), at()).unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.past_holders().len(), 2);
+    assert_eq!(member.harness_takeovers(), 1);
+}
+
+#[test]
+fn member_without_human_handovers_reads_as_zero() {
+    let member: crate::state::Member = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/member-before-human-handovers.json"
+    ))
+    .unwrap();
+    let written = serde_json::to_value(&member).unwrap();
+    assert_eq!(written.get("human_handovers"), None);
+    assert_eq!(member.harness_takeovers(), member.past_holders().len());
+}
+
+#[test]
+fn members_without_human_handovers_keep_their_persisted_shape() {
+    let state = old_state();
+    let written = state.to_json().unwrap();
+    assert!(!written.contains("\"human_handovers\""));
+}
+
+#[test]
+fn human_handovers_cannot_exceed_the_persisted_holder_history() {
+    let mut wire: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/member-before-human-handovers.json"
+    ))
+    .unwrap();
+    wire["human_handovers"] = serde_json::json!(1);
+    let error = serde_json::from_value::<crate::state::Member>(wire).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+}
+
+#[test]
+fn human_handovers_accept_both_holder_history_boundaries() {
+    let mut state = old_state();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let mut wire = serde_json::to_value(state.find_task(&task()).unwrap().member).unwrap();
+    for count in [0, 1] {
+        wire["human_handovers"] = serde_json::json!(count);
+        let loaded: crate::state::Member = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(loaded.harness_takeovers(), 1 - count);
+    }
+    wire["human_handovers"] = serde_json::json!(2);
+    let error = serde_json::from_value::<crate::state::Member>(wire).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+}

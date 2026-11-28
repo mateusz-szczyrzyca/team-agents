@@ -17,4 +17,5 @@ pub(crate) mod run;
 pub(crate) mod say;
 pub(crate) mod status;
 pub(crate) mod stop;
+pub(crate) mod swap;
 pub(crate) mod unpause;
