@@ -119,7 +119,13 @@ impl HoldAt {
     /// # Errors
     /// [`HoldAtOutOfRange`] when `share` is not a number from 0 to 1.
     pub fn new(share: f64) -> Result<Self, HoldAtOutOfRange> {
-        Ok(Self(share))
+        if (0.0..=1.0).contains(&share) {
+            Ok(Self(share))
+        } else {
+            Err(HoldAtOutOfRange {
+                written: share.to_string(),
+            })
+        }
     }
 
     /// The share of a window from which the hold begins.
@@ -328,11 +334,19 @@ fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, Account
             Some(NonZeroU32::new(configured).ok_or_else(|| AccountError::MaxRunsZero { account: name.clone() })?)
         }
     };
+    let hold_at = raw
+        .hold_at
+        .map(HoldAt::new)
+        .transpose()
+        .map_err(|source| AccountError::HoldAtOutOfRange {
+            account: name.clone(),
+            source,
+        })?;
     Ok(Account {
         owner,
         env: raw.env,
         max_runs,
-        hold_at: None,
+        hold_at,
     })
 }
 

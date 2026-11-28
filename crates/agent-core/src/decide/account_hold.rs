@@ -34,6 +34,16 @@ pub enum Hold {
 /// `hold_at` is never held. With two windows at `hold_at`, the hold lasts until both have reset.
 #[must_use]
 pub fn hold(hold_at: Option<HoldAt>, readings: &[KeptReading], now: Timestamp) -> Hold {
-    let _ = (hold_at, readings, now);
-    Hold::Open
+    let Some(hold_at) = hold_at else {
+        return Hold::Open;
+    };
+    readings
+        .iter()
+        .filter(|kept| !kept.is_over(now) && kept.reading().used() >= hold_at.share())
+        .max_by_key(|kept| kept.reading().resets_at())
+        .map_or(Hold::Open, |kept| Hold::Held {
+            window: kept.reading().window(),
+            used: kept.reading().used(),
+            until: kept.reading().resets_at(),
+        })
 }
