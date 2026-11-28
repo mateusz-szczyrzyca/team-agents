@@ -8,6 +8,8 @@
 #[cfg(test)]
 mod account_pick_tests;
 #[cfg(test)]
+mod account_queue_tests;
+#[cfg(test)]
 mod account_run_tests;
 mod accounts;
 mod answers;
