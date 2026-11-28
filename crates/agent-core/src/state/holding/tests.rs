@@ -668,3 +668,4 @@ fn human_handovers_accept_both_holder_history_boundaries() {
     let error = serde_json::from_value::<crate::state::Member>(wire).unwrap_err();
     assert_eq!(error.classify(), serde_json::error::Category::Data);
 }
+mod shift_work_tests;

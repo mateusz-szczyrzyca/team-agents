@@ -544,6 +544,20 @@ pub struct Limits {
     /// How many minutes a round may go on without its pull request in review: then the run of the task that works on it
     /// is cut and another agent of `[replacement] agents` takes the task over; 0 turns the rule off.
     pub round_minutes: u32,
+    /// Worked minutes per lead holder; zero disables shifts.
+    #[serde(deserialize_with = "deserialize_lead_shift_minutes")]
+    pub lead_shift_minutes: u32,
+}
+
+/// Validate the configured shift duration while retaining zero as disabled.
+fn deserialize_lead_shift_minutes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u32, D::Error> {
+    let minutes = u32::deserialize(deserializer)?;
+    if minutes > 1440 {
+        return Err(serde::de::Error::custom(
+            "limits.lead_shift_minutes must be between 0 and 1440",
+        ));
+    }
+    Ok(minutes)
 }
 
 impl Default for Limits {
@@ -560,6 +574,7 @@ impl Default for Limits {
             runs_per_agent: DEFAULT_RUNS_PER_AGENT,
             runs_per_worker: DEFAULT_RUNS_PER_WORKER,
             round_minutes: DEFAULT_ROUND_MINUTES,
+            lead_shift_minutes: 0,
         }
     }
 }
@@ -2430,6 +2445,22 @@ workers = ["qwen", "qwen"]"#,
         assert_eq!(config("[limits]\ntail_lines = 5\n").limits().round_minutes, 0);
         assert_eq!(config("[limits]\nround_minutes = 45\n").limits().round_minutes, 45);
         assert_eq!(config("[limits]\nround_minutes = 0\n").limits().round_minutes, 0);
+    }
+
+    #[test]
+    fn lead_shift_minutes_bounds() {
+        assert_eq!(config("").limits().lead_shift_minutes, 0);
+        for minutes in [0, 1, 1440] {
+            assert_eq!(
+                config(&format!("[limits]\nlead_shift_minutes = {minutes}\n"))
+                    .limits()
+                    .lead_shift_minutes,
+                minutes
+            );
+        }
+        let error = format!("{:?}", failure("[limits]\nlead_shift_minutes = 1441\n"));
+        assert!(error.contains("lead_shift_minutes"), "{error}");
+        assert!(error.contains('0') && error.contains("1440"), "{error}");
     }
 
     #[test]
