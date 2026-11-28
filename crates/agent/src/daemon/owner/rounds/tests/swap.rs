@@ -5,7 +5,7 @@ use agent_core::protocol::{Client, Command, FailureKind, Reply, SwapRequest};
 use agent_core::state::{ItemPhase, MergeMode};
 use agent_core::status::TaskStatus;
 
-use super::rig::{ONE, Rig, investigator, normal};
+use super::rig::{ONE, PARALLEL, Rig, investigator, normal};
 use crate::client::{ClientError, Connection};
 
 /// A reviewer that approves.
@@ -42,7 +42,7 @@ fn refusal(result: Result<Reply, ClientError>) -> (FailureKind, String) {
 async fn running_member_swapped_to_lower_tier() {
     let mut rig = Rig::new(
         &[
-            investigator("claude-1", "work,busy"),
+            investigator("claude-1", "hold"),
             normal("glm-1", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
@@ -55,7 +55,7 @@ async fn running_member_swapped_to_lower_tier() {
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let member_task = tasks[0].clone();
 
-    rig.status_is(&member_task, TaskStatus::Running).await;
+    rig.prompt(&member_task, 1).await;
 
     let reply = ask(
         &rig,
@@ -74,16 +74,11 @@ async fn running_member_swapped_to_lower_tier() {
         }
     );
 
-    let state = rig
-        .item_where("1.1", "merged after swap to lower tier", |phase| {
-            matches!(phase, ItemPhase::Done { .. })
+    rig .state_where("glm-1 finished the task", |state| {
+            let member = state.find_task(&member_task).unwrap().member;
+            member.agent().name() == "glm-1" && member.status() == TaskStatus::Waiting
         })
         .await;
-
-    let member = state.find_task(&member_task).unwrap().member;
-    assert_eq!(member.agent().name(), "glm-1");
-    assert_eq!(member.past_holders().len(), 1);
-    assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
 
     let takeover = rig.prompt(&member_task, 2).await;
     assert!(
@@ -100,6 +95,17 @@ async fn running_member_swapped_to_lower_tier() {
         "every run on the task's original branch: {branches:?}"
     );
 
+    let state = rig
+        .item_where("1.1", "merged after swap to lower tier", |phase| {
+            matches!(phase, ItemPhase::Done { .. })
+        })
+        .await;
+
+    let member = state.find_task(&member_task).unwrap().member;
+    assert_eq!(member.agent().name(), "glm-1");
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.past_holders()[0].agent.name(), "claude-1");
+
     rig.stop().await.unwrap();
 }
 
@@ -108,7 +114,7 @@ async fn running_member_swapped_to_lower_tier() {
 async fn task_waiting_for_answers_keeps_its_status() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "question:1"),
+            normal("claude-1", "ask-here"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
@@ -231,14 +237,14 @@ async fn in_team_is_refused() {
     .await;
     rig.start().await;
     let (team, tasks) = rig
-        .run(&["claude-1", "claude-2"], ONE, MergeMode::Autopilot, None)
+        .run(&["claude-1", "claude-2"], PARALLEL, MergeMode::Autopilot, None)
         .await;
 
     let (kind, message) = refusal(
         ask(
             &rig,
             Command::Swap(SwapRequest {
-                task: tasks[0].clone(),
+                task: tasks[1].clone(),
                 agent: "claude-2".parse().unwrap(),
             }),
         )
@@ -246,7 +252,7 @@ async fn in_team_is_refused() {
     );
 
     assert_eq!(kind, FailureKind::Conflict);
-    assert_eq!(message, format!("claude-2 is already in {team} as {}", tasks[1]));
+    assert_eq!(message, format!("claude-2 is already in {team} as {}", tasks[0]));
 
     rig.stop().await.unwrap();
 }
@@ -297,7 +303,6 @@ async fn worker_is_refused() {
     let mut rig = Rig::new(
         &[
             normal("claude-1", "busy"),
-            normal("glm-1", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
         ],
@@ -306,7 +311,10 @@ async fn worker_is_refused() {
     )
     .await;
     let text = std::fs::read_to_string(rig.home.config_file()).unwrap();
-    let with_worker = text.replace("[tiers]\nnormal = [", "[tiers]\nworkers = [\"glm-1\"]\nnormal = [");
+    let with_worker = format!(
+        "{}[agents.glm-1]\ncli = \"claude\"\n",
+        text.replace("[tiers]\nnormal = [", "[tiers]\nworkers = [\"glm-1\"]\nnormal = [")
+    );
     std::fs::write(rig.home.config_file(), with_worker).unwrap();
 
     rig.start().await;
@@ -461,7 +469,7 @@ async fn swap_ignores_replacements_zero() {
 async fn swap_is_recorded() {
     let mut rig = Rig::new(
         &[
-            normal("claude-1", "busy"),
+            normal("claude-1", "hold"),
             normal("claude-2", "work"),
             investigator("inv-r1", APPROVE),
             investigator("inv-r2", APPROVE),
@@ -470,6 +478,9 @@ async fn swap_is_recorded() {
         false,
     )
     .await;
+    let mut config = std::fs::read_to_string(rig.home.config_file()).unwrap();
+    config.push_str("[log]\nlevel = \"debug\"\n");
+    std::fs::write(rig.home.config_file(), config).unwrap();
     rig.start_with_log_layer(agent_runtime::history::HistoryLayer::deferred(
         LogLevel::Debug,
         rig.history_test_clock(),
@@ -478,6 +489,7 @@ async fn swap_is_recorded() {
     .await;
     let (_, tasks) = rig.run(&["claude-1"], ONE, MergeMode::Autopilot, None).await;
     let member_task = tasks[0].clone();
+    rig.prompt(&member_task, 1).await;
 
     let reply = ask(
         &rig,
