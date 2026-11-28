@@ -2,6 +2,8 @@
 use super::{
     AccountError, AccountName, AccountSecretsError, Config, ConfigError, ContextKey, EnvValue, OwnerName, Secrets,
 };
+use std::num::NonZeroU32;
+
 use crate::config::ValueRule;
 
 /// A secret that must never show in an error.
@@ -369,4 +371,49 @@ fn an_env_value_of_the_longest_size_loads_from_the_file_and_a_longer_one_is_refu
         Config::from_toml_str(&with_account(&format!("env = {{ {too_long} }}"))).unwrap_err(),
         ConfigError::Parse(_)
     ));
+}
+
+// Rule: `max_runs` of an account is the most runs its agents have going at once; without the key there is no limit and
+// `0` is refused, never read as no limit.
+#[test]
+fn max_runs_absent() {
+    let config = Config::from_toml_str(&with_account("")).unwrap();
+
+    assert_eq!(config.accounts()[&account("comp-claude")].max_runs(), None);
+}
+
+#[test]
+fn max_runs_one() {
+    let config = Config::from_toml_str(&with_account("max_runs = 1")).unwrap();
+
+    assert_eq!(
+        config.accounts()[&account("comp-claude")].max_runs(),
+        NonZeroU32::new(1)
+    );
+}
+
+#[test]
+fn max_runs_two_loads_with_the_value_two() {
+    let config = Config::from_toml_str(&with_account("max_runs = 2")).unwrap();
+
+    assert_eq!(
+        config.accounts()[&account("comp-claude")].max_runs(),
+        NonZeroU32::new(2)
+    );
+}
+
+#[test]
+fn max_runs_zero_is_error() {
+    assert!(matches!(
+        load(&with_account("max_runs = 0")),
+        ConfigError::Account(AccountError::MaxRunsZero { account: a }) if a == account("comp-claude")
+    ));
+}
+
+#[test]
+fn max_runs_that_is_not_a_positive_number_is_a_parse_error() {
+    for value in ["-1", "\"2\"", "1.5"] {
+        let text = with_account(&format!("max_runs = {value}"));
+        assert!(matches!(load(&text), ConfigError::Parse(_)), "{value}");
+    }
 }
