@@ -83,8 +83,13 @@ pub fn shift_target(task: &TaskId, team: &Team, state: &State, limits: &ShiftLim
 /// Formats minutes into human-readable span text such as `1h40m`, `2h`, or `45m`.
 #[must_use]
 pub fn format_span(minutes: u64) -> String {
-    let _ = minutes;
-    String::new()
+    let hours = minutes / 60;
+    let mins = minutes % 60;
+    match (hours, mins) {
+        (0, _) => format!("{mins}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h{m}m"),
+    }
 }
 
 /// Includes only positive elapsed time when the caller's clock precedes a run start.
