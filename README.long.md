@@ -880,9 +880,9 @@ the history (the decision `swap`) and to the log (`task_handed_over` with `reaso
 task and the two agents, `task-20261125-075745-w8vj: claude-1 → glm-1`, with `(run stopped)` after it when it ended a
 run that was going on.
 
-An older daemon refuses the command: it does not speak protocol 10 and answers that the line has a protocol version it
-does not know (`the line has protocol version 10; this build speaks version 3`). Restart the daemon after you install a
-new binary, and replace the CLI together with it; see [Compatibility and upgrades](#compatibility-and-upgrades).
+Success exits with status `0`; a refusal exits with status `1` and prints its reason to standard error.
+An older daemon cannot read protocol 10; the CLI prints `the daemon does not know swap; restart it with this version`
+and exits with status `1`. Restart the daemon after you install a new binary, and replace the CLI together with it; see [Compatibility and upgrades](#compatibility-and-upgrades).
 
 ### `agent status`
 
