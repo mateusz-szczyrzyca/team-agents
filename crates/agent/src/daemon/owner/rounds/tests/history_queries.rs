@@ -45,7 +45,7 @@ async fn two_teams_three_rounds_prove_every_filter_pair_view_and_literal_search(
     );
     let (first, _) = rig.run(&["claude-1"], &marked, MergeMode::NoMerge, None).await;
     let (second, _) = rig.run(&["claude-2"], ONE, MergeMode::NoMerge, None).await;
-    rig.wait_for("three closed rounds", || {
+    rig.state_where("three closed rounds", |_| {
         let reader = Reader::open(&rig.home.history_file()).unwrap();
         [&first, &second].iter().map(|team| reader.team_records(team).unwrap().iter().filter(|record| {
             matches!(&record.record, Record::Event(event) if matches!(event.event, agent_core::history::HistoryEvent::RoundClosed { .. }))
