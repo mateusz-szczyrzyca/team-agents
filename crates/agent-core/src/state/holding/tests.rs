@@ -635,3 +635,10 @@ fn member_without_human_handovers_reads_as_zero() {
     assert_eq!(written["human_handovers"], 0);
     assert_eq!(member.harness_takeovers(), member.past_holders().len());
 }
+
+#[test]
+fn members_without_human_handovers_keep_their_persisted_shape() {
+    let state = old_state();
+    let written = state.to_json().unwrap();
+    assert!(!written.contains("\"human_handovers\""));
+}
