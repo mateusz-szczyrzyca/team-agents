@@ -551,6 +551,15 @@ async fn observe_config(collection: &mut collect::Collection, home: &Home, secre
                     part: "configuration".to_owned(),
                     reason: crate::process::error_chain(&error),
                 });
+            // The accounts come from the same file: without it the section must not claim there are none.
+            collection
+                .assessment
+                .unreadable
+                .push(agent_core::diagnostic_assessment::ReadFailure {
+                    section: SummarySection::Accounts,
+                    part: "accounts".to_owned(),
+                    reason: crate::process::error_chain(&error),
+                });
         }
     }
 }
