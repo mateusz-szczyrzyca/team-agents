@@ -87,6 +87,9 @@ pub struct Member {
     status: TaskStatus,
     /// Its runs, oldest first.
     runs: Vec<Run>,
+    /// Completed run seconds under the current holder; absent in legacy states.
+    #[serde(default, skip_serializing_if = "worked_is_zero")]
+    lead_worked_secs: u64,
     /// Its rounds of questions, oldest first.
     questions: Vec<Question>,
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
@@ -123,6 +126,15 @@ pub struct Member {
     role: Option<crate::kinds::Role>,
 }
 
+/// Preserve the old serialized shape when no work has accrued.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "Serde predicates must take a reference."
+)]
+fn worked_is_zero(seconds: &u64) -> bool {
+    *seconds == 0
+}
+
 /// Why a task begins a new session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionStart {
@@ -145,6 +157,9 @@ struct MemberWire {
     /// See [`Member`]; a member written without runs has none.
     #[serde(default)]
     runs: Vec<Run>,
+    /// Completed work defaults to zero for states written before shifts.
+    #[serde(default)]
+    lead_worked_secs: u64,
     /// See [`Member`]; a member written without questions has none.
     #[serde(default)]
     questions: Vec<Question>,
@@ -501,6 +516,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: Some(PlanKeeping::new()),
             plan_judging: true,
@@ -531,6 +547,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
             plan_judging: false,
@@ -553,6 +570,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: None,
             plan_judging: false,
@@ -622,6 +640,12 @@ impl Member {
     }
 
     getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
+
+    /// Completed run seconds worked since the current holder took the task.
+    #[must_use]
+    pub const fn lead_worked_secs(&self) -> u64 {
+        self.lead_worked_secs
+    }
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
 
@@ -900,6 +924,7 @@ impl Member {
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.waiting_since = None;
+        self.lead_worked_secs = 0;
         self.holder_after_run = self.runs.last().map(|run| run.id().clone());
         self.lead_told();
         let before = std::mem::replace(&mut self.agent, holder);
@@ -971,7 +996,12 @@ impl Member {
     /// [`RunError::NotRunning`] when no run is going; [`RunError::EndsBeforeStart`] when `at` is before the run
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
-        self.current_run_mut()?.end(at, end)
+        let run = self.current_run_mut()?;
+        let started_at = run.started_at();
+        run.end(at, end)?;
+        let seconds = (at.as_utc() - started_at.as_utc()).whole_seconds().unsigned_abs();
+        self.lead_worked_secs = self.lead_worked_secs.saturating_add(seconds);
+        Ok(())
     }
 
     /// The runs of the session the task is in: those since it was last started anew, or all of them.
@@ -1190,6 +1220,9 @@ mod tests {
         agent: Participant,
         /// See [`Member`].
         status: TaskStatus,
+        /// Completed run seconds in the persisted member shape.
+        #[serde(default)]
+        lead_worked_secs: u64,
         /// Human-selected hand-overs in the persisted member shape.
         #[serde(default)]
         human_handovers: usize,
@@ -1222,6 +1255,7 @@ mod tests {
                 agent: wire.agent,
                 status: wire.status,
                 runs: wire.runs,
+                lead_worked_secs: wire.lead_worked_secs,
                 questions: wire.questions,
                 plan: wire.plan,
                 plan_judging: wire.plan_judging,
@@ -1887,3 +1921,11 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "member/shift_tests.rs"]
+mod shift_tests;
+
+#[cfg(test)]
+#[path = "member/shift_compatibility_tests.rs"]
+mod shift_compatibility_tests;
