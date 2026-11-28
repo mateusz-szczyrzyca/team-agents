@@ -8,7 +8,7 @@ use agent_core::decide::replacement::{Activity, Candidate, Handover, Replacement
 use agent_core::history::CheckpointCause;
 use agent_core::ids::{AgentName, ItemId, TaskId};
 use agent_core::kinds::{CliKind, Role, Tier};
-use agent_core::state::{ItemPhase, Participant, Team, Timestamp};
+use agent_core::state::{Choice, ItemPhase, Participant, Team, Timestamp};
 use agent_core::status::TaskStatus;
 use agent_runtime::history::log_decision;
 
@@ -115,7 +115,7 @@ impl Owner {
         };
         let takeover = match chosen {
             Chosen::Agent(name) => {
-                self.hand_task_over(task, &name, &held, trouble, at)?;
+                self.hand_task_over(task, &name, &held, Choice::Harness, trouble, at)?;
                 log_decision(
                     "takeover",
                     &format!("task={task}, from={}", held.name()),
@@ -203,6 +203,7 @@ impl Owner {
         task: &TaskId,
         name: &AgentName,
         held: &Participant,
+        choice: Choice,
         trouble: Trouble,
         at: Timestamp,
     ) -> Result<(), OwnerError> {
@@ -238,7 +239,7 @@ impl Owner {
             .unwrap_or_default();
         self.parts
             .state
-            .hand_over_task(task, holder, at)
+            .hand_over_task_as(task, holder, choice, at)
             .map_err(|source| OwnerError::HandOver {
                 task: task.clone(),
                 source,
@@ -334,7 +335,7 @@ impl Owner {
             .team
             .id()
             .clone();
-        self.hand_task_over(task, &name, &held, Trouble::Busy, now)?;
+        self.hand_task_over(task, &name, &held, Choice::Harness, Trouble::Busy, now)?;
         tracing::info!(
             event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
             team = %team,
@@ -618,7 +619,7 @@ const LEAD: &str = "lead";
 
 /// Logs that `task` of `team` was handed over from the agent `from` to `to` (an agent's name, or [`LEAD`]) for
 /// `trouble`, whose word is the record's `reason`.
-fn handed_over(team: &agent_core::ids::TeamId, task: &TaskId, from: &str, to: &str, trouble: Trouble) {
+pub(super) fn handed_over(team: &agent_core::ids::TeamId, task: &TaskId, from: &str, to: &str, trouble: Trouble) {
     tracing::info!(
         event = agent_core::log::LogEvent::TaskHandedOver.as_str(),
         team = %team,
