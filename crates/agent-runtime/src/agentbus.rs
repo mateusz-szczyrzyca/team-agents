@@ -165,6 +165,8 @@ pub enum BusCommand {
     InvList,
     /// `team-replace`.
     TeamReplace,
+    /// `claim-lead`.
+    ClaimLead,
 }
 
 /// Why `agentbus` failed, by its exit status.
@@ -1336,6 +1338,22 @@ impl AgentBus {
             )
             .await?;
         parse_replaced(command, &output, from, to)
+    }
+
+    /// Claims the coordinator role for `member` on the team's bus.
+    ///
+    /// # Errors
+    /// [`AgentBusError`].
+    pub async fn claim_lead(&self, team: &TeamId, member: &AgentName) -> Result<String, AgentBusError> {
+        let command = BusCommand::ClaimLead;
+        self.run(
+            command,
+            Args::new()
+                .flag("--team", team.as_str())
+                .flag("--as", member.as_str()),
+            None,
+        )
+        .await
     }
 
     /// Adds an item to a team's board as one of its members.
