@@ -289,9 +289,15 @@ impl Owner {
                 self.parts.state.release_task_from_account(&task);
                 continue;
             }
-            let until = self
-                .account_named(found.member.agent().name())
-                .and_then(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
+            // The task waits for the pause of its own agent's account or, when a take-over left it with its holder
+            // (`Takeover::Wait`), for that of its lead's account; the later reset is the one to wake at.
+            let lead = found.team.crew().coordinator().map(|lead| lead.agent().name());
+            let until = [Some(found.member.agent().name()), lead]
+                .into_iter()
+                .flatten()
+                .filter_map(|agent| self.account_named(agent))
+                .filter_map(|account| self.parts.state.account_pause(&account).map(|pause| pause.until))
+                .max()
                 .unwrap_or(now);
             self.wakes.insert(task, until);
         }
