@@ -102,6 +102,45 @@ pub struct Account {
     env: BTreeMap<EnvName, EnvValue>,
     /// The most runs the agents of the account may have going at once; `None` for no limit.
     max_runs: Option<NonZeroU32>,
+    /// The share of a limit window from which no new run of the account starts; `None` for no hold.
+    hold_at: Option<HoldAt>,
+}
+
+/// The share of a rate-limit window, from 0 to 1, from which an account starts no new run until the window resets.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct HoldAt(f64);
+
+// A hold is never NaN — `HoldAt::new` refuses it — so equality is reflexive.
+impl Eq for HoldAt {}
+
+impl HoldAt {
+    /// The hold at `share` of a window.
+    ///
+    /// # Errors
+    /// [`HoldAtOutOfRange`] when `share` is not a number from 0 to 1.
+    pub fn new(share: f64) -> Result<Self, HoldAtOutOfRange> {
+        if (0.0..=1.0).contains(&share) {
+            Ok(Self(share))
+        } else {
+            Err(HoldAtOutOfRange {
+                written: share.to_string(),
+            })
+        }
+    }
+
+    /// The share of a window from which the hold begins.
+    #[must_use]
+    pub const fn share(self) -> f64 {
+        self.0
+    }
+}
+
+/// A `hold_at` that is not a number from 0 to 1.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("{written} is not a number from 0 to 1")]
+pub struct HoldAtOutOfRange {
+    /// The value as it was written.
+    written: String,
 }
 
 impl Account {
@@ -122,6 +161,13 @@ impl Account {
     pub const fn max_runs(&self) -> Option<NonZeroU32> {
         self.max_runs
     }
+
+    /// The share of a limit window from which no new run of the account starts until the window resets; `None` when
+    /// the account is never held.
+    #[must_use]
+    pub const fn hold_at(&self) -> Option<HoldAt> {
+        self.hold_at
+    }
 }
 
 /// What `[accounts.NAME]` says in the file, before the owner is checked: a missing owner and a bad one are told apart
@@ -138,6 +184,9 @@ pub(super) struct RawAccount {
     /// The `max_runs` key, as written: `0` is refused when the account is checked, not read as no limit.
     #[serde(default)]
     max_runs: Option<u32>,
+    /// The `hold_at` key, as written: checked to be from 0 to 1 when the account is checked.
+    #[serde(default)]
+    hold_at: Option<f64>,
 }
 
 /// Why the accounts of an `agents.toml` are refused.
@@ -163,6 +212,15 @@ pub enum AccountError {
     MaxRunsZero {
         /// The account.
         account: AccountName,
+    },
+    /// An account's `hold_at` is not a number from 0 to 1.
+    #[error("account {account} has `hold_at` out of range: {source}; use a number from 0 to 1, or leave the key out")]
+    HoldAtOutOfRange {
+        /// The account.
+        account: AccountName,
+        /// The value that was written.
+        #[source]
+        source: HoldAtOutOfRange,
     },
     /// An agent or an investigator names an account that has no `[accounts.NAME]` table.
     #[error("{} of {name}: account {account} is not defined in [accounts]", key.section())]
@@ -276,10 +334,19 @@ fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, Account
             Some(NonZeroU32::new(configured).ok_or_else(|| AccountError::MaxRunsZero { account: name.clone() })?)
         }
     };
+    let hold_at = raw
+        .hold_at
+        .map(HoldAt::new)
+        .transpose()
+        .map_err(|source| AccountError::HoldAtOutOfRange {
+            account: name.clone(),
+            source,
+        })?;
     Ok(Account {
         owner,
         env: raw.env,
         max_runs,
+        hold_at,
     })
 }
 

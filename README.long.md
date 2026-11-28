@@ -292,6 +292,14 @@ counts the runs the state file shows; the runs of pool workers that only the dae
 may be missing while the daemon already holds the task back. `max_runs = 0` is refused; without the key there is no limit. The
 wait is a `decision_taken` record with `decision` `account_slot` and `result` `wait` ([`docs/log.md`](docs/log.md)).
 
+`hold_at` in `[accounts.NAME]` (a number from 0 to 1, optional) stops the account before its limit is reached: when the newest
+reading of a window of the account (`agent status` shows them) is at or above it, no new run of any agent of the account
+starts until that window resets. The runs going finish, queued tasks wait and start by themselves at the reset, nothing fails,
+and no agent of the account is picked as a replacement, an investigator or a worker meanwhile. You get one notification when
+the hold begins (`Account comp-claude is held until 15:30`). The daemon records the hold in `state.json` when it begins, so a later reading
+below the threshold does not end it before the reset, and it survives a restart of the daemon without a second notification. A value outside 0 to 1 is refused when the configuration is loaded. The log has a
+`decision_taken` record with `decision` `account_held` when a hold begins and `account_released` when it ends.
+
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
 ## Usage

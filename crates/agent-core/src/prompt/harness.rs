@@ -158,6 +158,9 @@ pub enum HarnessPrompt {
     NoticeNoFreeAgent,
     /// The notification that every task of an account is paused because its provider refused a run of one of its agents.
     NoticeAccountPaused,
+    /// The notification that an account is held: a limit window of it is used up to its `hold_at`, so none of its agents
+    /// starts a new run until the window resets.
+    NoticeAccountHeld,
     /// The notification that free disk space is below `low_free_gb`.
     NoticeLowDisk,
     /// The removal of a team, its backup and released bytes.
@@ -273,6 +276,7 @@ impl HarnessPrompt {
         Self::NoticeAgentChanged,
         Self::NoticeNoFreeAgent,
         Self::NoticeAccountPaused,
+        Self::NoticeAccountHeld,
         Self::NoticeLowDisk,
         Self::NoticeTeamRemoved,
         Self::NoticeIdleRefused,
@@ -536,6 +540,11 @@ impl HarnessPrompt {
                 "harness/run/notice-account-paused.md",
                 Audience::Human,
                 &["agent", "task", "account", "agents", "until", "reason", "tasks"],
+            ),
+            Self::NoticeAccountHeld => PromptSpec::new(
+                "harness/run/notice-account-held.md",
+                Audience::Human,
+                &["account", "agents", "until", "window", "used", "hold_at"],
             ),
             Self::NoticeIdleRefused => PromptSpec::new(
                 "harness/run/notice-idle-refused.md",

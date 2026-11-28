@@ -1,6 +1,7 @@
 //! `[accounts.NAME]`, `[account_env.NAME]` and an agent's `account`: what loads and every way they are refused.
 use super::{
-    AccountError, AccountName, AccountSecretsError, Config, ConfigError, ContextKey, EnvValue, OwnerName, Secrets,
+    AccountError, AccountName, AccountSecretsError, Config, ConfigError, ContextKey, EnvValue, HoldAt,
+    HoldAtOutOfRange, OwnerName, Secrets,
 };
 use std::num::NonZeroU32;
 
@@ -167,12 +168,6 @@ fn account_no_agent_names() {
         load(text),
         ConfigError::Account(AccountError::Unused { account: a }) if a == account("comp-claude")
     ));
-}
-
-#[test]
-fn max_runs_and_hold_at_are_unknown_keys_until_their_items() {
-    let text = "[accounts.comp-claude]\nowner = \"comp\"\nhold_at = 0.9\n";
-    assert!(matches!(load(text), ConfigError::Parse(_)), "hold_at = 0.9");
 }
 
 #[test]
@@ -413,5 +408,72 @@ fn max_runs_that_is_not_a_positive_number_is_a_parse_error() {
     for value in ["-1", "\"2\"", "1.5"] {
         let text = with_account(&format!("max_runs = {value}"));
         assert!(matches!(load(&text), ConfigError::Parse(_)), "{value}");
+    }
+}
+
+// Rule: `hold_at` of an account is a share of a limit window from 0 to 1; without the key the account is never held.
+#[test]
+fn hold_at_absent() {
+    let config = Config::from_toml_str(&with_account("")).unwrap();
+
+    assert_eq!(config.accounts()[&account("comp-claude")].hold_at(), None);
+}
+
+#[test]
+fn hold_at_half() {
+    let config = Config::from_toml_str(&with_account("hold_at = 0.5")).unwrap();
+
+    assert_eq!(
+        config.accounts()[&account("comp-claude")].hold_at(),
+        Some(HoldAt::new(0.5).unwrap())
+    );
+}
+
+#[test]
+fn hold_at_the_ends_of_the_range_load() {
+    for (value, share) in [("0", 0.0), ("1", 1.0), ("0.0", 0.0), ("1.0", 1.0)] {
+        let config = Config::from_toml_str(&with_account(&format!("hold_at = {value}"))).unwrap();
+
+        assert_eq!(
+            config.accounts()[&account("comp-claude")].hold_at(),
+            Some(HoldAt::new(share).unwrap()),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn hold_at_above_one_is_error() {
+    assert!(matches!(
+        load(&with_account("hold_at = 1.5")),
+        ConfigError::Account(AccountError::HoldAtOutOfRange { account: a, .. }) if a == account("comp-claude")
+    ));
+}
+
+#[test]
+fn hold_at_below_zero_or_not_a_number_is_error() {
+    for value in ["-0.1", "nan", "inf", "2"] {
+        assert!(
+            matches!(
+                load(&with_account(&format!("hold_at = {value}"))),
+                ConfigError::Account(AccountError::HoldAtOutOfRange { .. })
+            ),
+            "{value}"
+        );
+    }
+}
+
+#[test]
+fn hold_at_that_is_not_a_number_is_a_parse_error() {
+    assert!(matches!(
+        load(&with_account("hold_at = \"0.9\"")),
+        ConfigError::Parse(_)
+    ));
+}
+
+#[test]
+fn hold_at_new_refuses_what_is_not_a_share() {
+    for share in [-0.1, 1.1, f64::NAN, f64::INFINITY] {
+        assert!(matches!(HoldAt::new(share), Err(HoldAtOutOfRange { .. })), "{share}");
     }
 }

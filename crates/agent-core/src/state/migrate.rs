@@ -59,6 +59,7 @@ pub(super) fn from_v1(text: &str) -> Result<State, StateError> {
         account_held_tasks: std::collections::BTreeSet::new(),
         account_waits: std::collections::BTreeMap::new(),
         limit_readings: crate::state::LimitReadings::default(),
+        account_holds: std::collections::BTreeMap::new(),
         commit_cuts: std::collections::BTreeMap::new(),
         pending_team_replaces: std::collections::BTreeSet::new(),
     })?)

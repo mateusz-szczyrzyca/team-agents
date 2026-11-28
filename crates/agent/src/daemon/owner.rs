@@ -25,6 +25,9 @@ mod findings;
 mod fixture;
 mod gate;
 mod history;
+#[cfg(test)]
+mod hold_tests;
+mod holds;
 mod idle;
 #[cfg(test)]
 mod investigation_failure_tests;
@@ -976,6 +979,9 @@ impl Owner {
             self.wakes.insert(task, at);
         }
         self.wake_held_tasks(now);
+        if self.update_holds(now).await {
+            self.save().await?;
+        }
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
@@ -1041,6 +1047,28 @@ impl Owner {
         Ok(())
     }
 
+    /// The queued `waiting` that may start at `now`: those whose account is not paused or held and that are not a fresh
+    /// assignment to an agent its provider refused. The others wait in the queue, not failed.
+    fn startable(&self, waiting: Vec<Queued>, now: Timestamp) -> Vec<Queued> {
+        let refused = self.parts.state.refused_agents_at(now);
+        let held = self.held_account_names(now);
+        waiting
+            .into_iter()
+            // No run of an account starts while its pause or its hold lasts; the tasks wait in the queue, not failed.
+            .filter(|item| !self.account_is_paused(item.agent.as_str(), now))
+            .filter(|item| !self.agent_is_held(item.agent.as_str(), &held))
+            .filter(|item| {
+                !(refused.contains(&item.agent)
+                    && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
+                        || self
+                            .parts
+                            .state
+                            .find_task(&item.task)
+                            .is_some_and(|task| task.member.runs().is_empty())))
+            })
+            .collect()
+    }
+
     /// Starts a run for every queued task that has none, as far as the limit allows.
     async fn start_queued(&mut self) -> Result<(), OwnerError> {
         // A stopping daemon starts nothing: its stop ends every run at once, and the loop may settle one of them before
@@ -1075,21 +1103,7 @@ impl Owner {
         // Fresh assignments must wait even when a reused task has earlier runs. Incumbent retries
         // remain governed by their pause and explicit human resume.
         let now = Timestamp::now(&self.parts.clock)?;
-        let refused = self.parts.state.refused_agents_at(now);
-        let queued: Vec<Queued> = waiting
-            .into_iter()
-            // No run of an account starts while its pause lasts; the tasks wait in the queue, not failed.
-            .filter(|item| !self.account_is_paused(item.agent.as_str(), now))
-            .filter(|item| {
-                !(refused.contains(&item.agent)
-                    && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
-                        || self
-                            .parts
-                            .state
-                            .find_task(&item.task)
-                            .is_some_and(|task| task.member.runs().is_empty())))
-            })
-            .collect();
+        let queued = self.startable(waiting, now);
         if queued.is_empty() {
             return Ok(());
         }
@@ -3196,6 +3210,9 @@ impl Owner {
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         self.resume_accounts(now);
+        if self.update_holds(now).await {
+            self.save().await?;
+        }
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {
             let Some(found) = self.parts.state.find_task(&task) else {

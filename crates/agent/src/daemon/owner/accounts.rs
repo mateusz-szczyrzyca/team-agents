@@ -71,6 +71,7 @@ impl Owner {
                 .iter()
                 .map(AgentName::from),
         );
+        agents.extend(self.agents_of_held_accounts(now));
         agents
     }
 
@@ -78,7 +79,9 @@ impl Owner {
     /// without an account is always one of them. This is [`candidates_with_accounts`] on the accounts of the
     /// configuration.
     pub(super) fn not_of_paused_accounts(&self, names: &[AgentName], now: Timestamp) -> Vec<AgentName> {
-        let paused = paused_accounts(&self.parts.state, now);
+        let mut paused = paused_accounts(&self.parts.state, now);
+        // A held account takes no new run either: its agents are picked for nothing while the hold lasts.
+        paused.extend(self.held_account_names(now));
         let accounts: Vec<Option<AccountName>> = names.iter().map(|name| self.account_of(name)).collect();
         let candidates: Vec<Candidate<'_, AgentName>> = names
             .iter()
@@ -95,7 +98,7 @@ impl Owner {
     }
 
     /// The agents and investigators that have `account`, in name order.
-    fn agents_of(&self, account: &AccountName) -> Vec<String> {
+    pub(super) fn agents_of(&self, account: &AccountName) -> Vec<String> {
         let config = &self.parts.settings.config;
         let agents = config
             .agents()
