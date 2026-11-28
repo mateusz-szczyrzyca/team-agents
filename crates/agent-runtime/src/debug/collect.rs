@@ -187,6 +187,9 @@ pub(super) struct Collection {
     pub(super) checkout: Option<PathBuf>,
     /// Notice for merged worktrees whose retained branches were read in the clone.
     pub(super) git_notice: Option<String>,
+    /// The accounts of the configuration with their agents and the names of their variables, for the summary's
+    /// `## Accounts`; empty when the configuration cannot be read or has none.
+    pub(super) accounts: Vec<agent_core::account_view::AccountView>,
     /// Zone for human-facing timestamps; defaults to UTC.
     pub(super) zone: agent_core::local_time::Zone,
     /// Relative artifact paths and their unredacted bytes; never logged.
@@ -309,6 +312,7 @@ impl Collection {
             },
             checkout: None,
             git_notice: None,
+            accounts: Vec::new(),
             zone: agent_core::local_time::Zone::Fixed(time::UtcOffset::UTC),
             artifacts: vec![],
             copied_bytes: 0,
