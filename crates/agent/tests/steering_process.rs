@@ -313,7 +313,7 @@ mod steering_process {
         );
 
         eventually("opencode to run in the same worktree", || {
-            coord_worktree.join(".fake-args").exists()
+            std::fs::read_to_string(coord_worktree.join(".fake-args")).is_ok_and(|args| args.contains("--format\njson"))
         });
 
         stop_daemon(daemon);
