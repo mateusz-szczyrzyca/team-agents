@@ -84,3 +84,74 @@ async fn swap_preserves_questions_from_a_run_finishing_during_halt() {
     assert_eq!(member.questions().len(), 1);
     assert!(member.current_run().is_none());
 }
+
+#[tokio::test]
+async fn swap_records_who_stopped_the_old_run_in_steps_and_control_history() {
+    use agent_core::cli::ActivityEvent;
+    use agent_core::history::{HistoryEvent, Record};
+    use agent_core::protocol::{ControlAction, Target};
+    use agent_runtime::history::Reader;
+
+    for client in [
+        Client::Cli,
+        Client::Dashboard {
+            login: "operator@example.com".parse().unwrap(),
+        },
+    ] {
+        let daemon = Daemon::new(&solo_state(), None);
+        daemon.scenario(1, "busy");
+        let (owner, _sinks) = daemon.bare_owner().await;
+        let settings = agent_runtime::settings::Settings::load(&daemon.home).await.unwrap();
+        let opened = crate::daemon::history::open(&settings, &daemon.home).await;
+        let mut owner = owner.with_history(opened.history);
+        owner.start_queued().await.unwrap();
+        let found = owner.parts.state.find_task(&task(1)).unwrap();
+        let run = found.member.current_run().unwrap().id().clone();
+        let team = found.team.id().clone();
+        let reply = owner
+            .swap_request(
+                &client,
+                SwapRequest {
+                    task: task(1),
+                    agent: "claude-2".parse().unwrap(),
+                },
+            )
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(reply, Reply::Applied { tasks: vec![task(1)] });
+        opened.writer.unwrap().close().unwrap();
+        let reader = Reader::open(&daemon.home.history_file()).unwrap();
+        let controls: Vec<_> = reader
+            .steps(&run)
+            .unwrap()
+            .into_iter()
+            .filter_map(|step| matches!(step.value.event, ActivityEvent::Control { .. }).then_some(step.value.event))
+            .collect();
+        assert_eq!(
+            controls,
+            [ActivityEvent::Control {
+                action: ControlAction::Stop,
+                by: client.clone()
+            }]
+        );
+        let controls: Vec<_> = reader
+            .team_records(&team)
+            .unwrap()
+            .into_iter()
+            .filter_map(|row| match row.record {
+                Record::Event(event) if matches!(event.event, HistoryEvent::Controlled { .. }) => Some(event.event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            controls,
+            [HistoryEvent::Controlled {
+                action: ControlAction::Stop,
+                target: Target::Task(task(1)),
+                by: client,
+                tasks: vec![task(1)],
+            }]
+        );
+    }
+}
