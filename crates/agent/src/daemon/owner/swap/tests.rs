@@ -71,7 +71,7 @@ async fn swap_refuses_a_run_that_finishes_done_during_halt() {
     let member = owner.parts.state.find_task(&task(1)).unwrap().member;
     assert_eq!(member.status(), TaskStatus::Done);
     assert_eq!(member.agent().name(), "claude-1");
-    assert!(member.past_holders().is_empty());
+    assert_eq!(member.past_holders(), []);
 }
 
 #[tokio::test]
