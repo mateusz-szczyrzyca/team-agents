@@ -296,8 +296,8 @@ wait is a `decision_taken` record with `decision` `account_slot` and `result` `w
 reading of a window of the account (`agent status` shows them) is at or above it, no new run of any agent of the account
 starts until that window resets. The runs going finish, queued tasks wait and start by themselves at the reset, nothing fails,
 and no agent of the account is picked as a replacement, an investigator or a worker meanwhile. You get one notification when
-the hold begins (`Account comp-claude is held until 15:30`). A hold follows from the kept readings, so it survives a restart of
-the daemon without a second notification. A value outside 0 to 1 is refused when the configuration is loaded. The log has a
+the hold begins (`Account comp-claude is held until 15:30`). The daemon records the hold in `state.json` when it begins, so a later reading
+below the threshold does not end it before the reset, and it survives a restart of the daemon without a second notification. A value outside 0 to 1 is refused when the configuration is loaded. The log has a
 `decision_taken` record with `decision` `account_held` when a hold begins and `account_released` when it ends.
 
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.

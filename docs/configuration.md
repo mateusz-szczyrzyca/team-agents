@@ -135,8 +135,10 @@ The account's name is 1 to 64 bytes of `a-z`, `0-9` and `-`, starting with a let
   above `hold_at`, no new run of its agents and investigators starts until that window resets: the runs going finish, the
   queued tasks wait in the queue and start by themselves at the reset, nothing fails, and the harness picks no agent of
   the account for a replacement, a review or a request. If both windows are at or above `hold_at`, the hold lasts until
-  both have reset. The human gets one notification when a hold begins. The hold follows from the readings the state keeps,
-  so a restart of the daemon keeps it and does not tell it again. Other accounts, also of the same owner, are not held.
+  both have reset. The human gets one notification when a hold begins. The daemon records the hold in the state when it
+  begins, so a later reading below `hold_at` does not end it before the reset, a restart of the daemon keeps it and does
+  not tell it again, and a hold that a reading already above a newly added `hold_at` begins when the daemon starts is told
+  once. Removing `hold_at` lets the account go. Other accounts, also of the same owner, are not held.
 - An agent without an account gets the environment it always got.
 - `agent status` writes the account in brackets after an agent that has one, and `agent debug` lists each account with
   its owner, its agents and the names — never the values — of its `env` and secret variables.

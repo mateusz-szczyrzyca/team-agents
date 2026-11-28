@@ -322,6 +322,12 @@ a window the one read later is kept (`read_at` is when the run ended); a reading
 latest when the next reading is kept. Written only when not empty. A state without it loads with none; a version that does not
 know it refuses a state that has it.
 
+**Holds of accounts (optional, absent in a state written before agent-core 0.156.0).** `account_holds` maps an account name
+(`[accounts.NAME]` of `agents.toml`) to the RFC 3339 time until which it takes no new run, written when a reading reaches the
+account's `hold_at` and forgotten when that time has passed or the account has no `hold_at` any more. It keeps the hold when a
+reading read afterwards is below `hold_at`, and tells a restarted daemon that the hold was told. Written only when not empty.
+A state without it loads with none; a version that does not know it refuses a state that has it.
+
 **Commit cuts (optional, absent in a state written before agent 0.122.0).** `commit_cuts` maps a task to the IDs of its
 runs that the daemon cut for an order to commit (`[commit_reminder] cut_after`) and resumed in their session; the clock
 of `[limits] round_minutes` does not start again after such a run. Written only when not empty; removing a team removes
