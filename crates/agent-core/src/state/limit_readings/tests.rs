@@ -233,3 +233,17 @@ fn two_stored_readings_of_one_window_leave_the_newer() {
     assert_eq!(live[0].1.len(), 1);
     assert_eq!(live[0].1[0].reading().used(), 0.9);
 }
+
+// Rule: a stored entry with a key beside `reading` and `read_at` is refused, like every other unknown key of the list.
+#[test]
+fn a_stored_reading_with_an_unknown_key_is_refused() {
+    let stored = json!({"accounts": {"comp-claude": [{
+        "reading": {"window": "five_hour", "used": 0.5, "resets_at": "2026-11-27T15:30:00Z"},
+        "read_at": "2026-11-27T14:00:00Z",
+        "extra": 1,
+    }]}});
+
+    let error = serde_json::from_value::<LimitReadings>(stored).expect_err("an unknown key is refused");
+
+    assert!(error.is_data(), "{error}");
+}
