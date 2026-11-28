@@ -885,6 +885,7 @@ impl Member {
     /// [`State::hand_over_task`](super::State::hand_over_task) calls it, after it checked the hand-over against the team.
     pub(crate) fn held_task(&mut self, holder: Participant, at: Timestamp) {
         self.waiting_since = None;
+        self.lead_worked_secs = 0;
         self.holder_after_run = self.runs.last().map(|run| run.id().clone());
         self.lead_told();
         let before = std::mem::replace(&mut self.agent, holder);
@@ -956,7 +957,12 @@ impl Member {
     /// [`RunError::NotRunning`] when no run is going; [`RunError::EndsBeforeStart`] when `at` is before the run
     /// started.
     pub fn end_run(&mut self, at: Timestamp, end: RunEnd) -> Result<(), RunError> {
-        self.current_run_mut()?.end(at, end)
+        let run = self.current_run_mut()?;
+        let started_at = run.started_at();
+        run.end(at, end)?;
+        let seconds = (at.as_utc() - started_at.as_utc()).whole_seconds().unsigned_abs();
+        self.lead_worked_secs = self.lead_worked_secs.saturating_add(seconds);
+        Ok(())
     }
 
     /// The runs of the session the task is in: those since it was last started anew, or all of them.

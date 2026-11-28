@@ -1229,7 +1229,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::RoundOverdue => "round_overdue",
         Trouble::Human => "human",
         Trouble::Swap => "swap",
-        Trouble::Shift => "shift_pending",
+        Trouble::Shift => "shift",
         Trouble::AccountChanged => "account_changed",
     }
 }

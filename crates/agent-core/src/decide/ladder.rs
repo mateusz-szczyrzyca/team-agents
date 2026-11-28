@@ -49,7 +49,6 @@ pub enum Trouble {
     /// A human swapped the task's agent with `agent swap`; no run went bad.
     Swap,
     /// A lead has worked its configured shift; no run went bad.
-    #[serde(rename = "shift_pending")]
     Shift,
     /// The account of the task's agent changed: a session belongs to its account, so the task starts in a new session. No
     /// run went bad.
