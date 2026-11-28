@@ -1,7 +1,9 @@
 //! Pure selection of the next holder of a lead task.
 
 use crate::ids::{AgentName, TaskId};
-use crate::state::{State, Team, Timestamp};
+use crate::kinds::Role;
+use crate::state::{Completion, ItemPhase, Member, State, Team, Timestamp};
+use crate::status::TaskStatus;
 
 /// Clock and configured candidates supplied by the caller, without reading configuration or time here.
 #[derive(Debug)]
@@ -27,8 +29,116 @@ pub enum ShiftCheck {
 
 /// Chooses a lead's next holder without mutating state or consulting a clock.
 #[must_use]
-pub fn shift_target(_task: &TaskId, _team: &Team, _state: &State, _limits: &ShiftLimits<'_>) -> ShiftCheck {
-    ShiftCheck::NotDue
+pub fn shift_target(task: &TaskId, team: &Team, state: &State, limits: &ShiftLimits<'_>) -> ShiftCheck {
+    let Some((role, lead)) = team.find(task) else {
+        return ShiftCheck::NotDue;
+    };
+    if limits.lead_shift_minutes == 0
+        || !matches!(role, Role::Solo | Role::Coordinator)
+        || matches!(lead.status(), TaskStatus::Done | TaskStatus::Paused)
+        || worked_secs(lead, limits.now) < u64::from(limits.lead_shift_minutes) * 60
+        || !has_pull_request(lead, team)
+    {
+        return ShiftCheck::NotDue;
+    }
+    let solo = role == Role::Solo;
+    let order = if solo {
+        limits.replacement_agents.to_vec()
+    } else {
+        team_order(team)
+    };
+    let holder = lead.agent().agent_name();
+    let start = order.iter().position(|name| *name == holder).map_or(0, |i| i + 1);
+    for candidate in order.iter().cycle().skip(start).take(order.len()) {
+        if *candidate == holder || state.refused_at(candidate, limits.now) {
+            continue;
+        }
+        let unavailable = std::iter::once(team)
+            .chain(state.teams().iter().filter(|other| other.id() != team.id()))
+            .any(|other| {
+                let roster = other.crew().roster();
+                let holds = |member: &&Member| member.agent().agent_name() == *candidate;
+                let busy = roster
+                    .iter()
+                    .map(|(_, member)| *member)
+                    .chain(other.reviewers())
+                    .any(|member| holds(&member) && member.current_run().is_some());
+                let questions = other.id() == team.id()
+                    && roster
+                        .iter()
+                        .any(|(_, member)| holds(member) && member.status() == TaskStatus::Questions);
+                let open_team = solo
+                    && other.id() != team.id()
+                    && other.crew().coordinator().is_some()
+                    && roster.iter().any(|(_, member)| member.status() != TaskStatus::Done)
+                    && roster.iter().any(|(_, member)| holds(member));
+                busy || questions || open_team
+            });
+        if !unavailable {
+            return ShiftCheck::To(candidate.clone());
+        }
+    }
+    ShiftCheck::NoneFree
+}
+
+/// Includes only positive elapsed time when the caller's clock precedes a run start.
+fn worked_secs(lead: &Member, now: Timestamp) -> u64 {
+    let running = lead.current_run().map_or(0, |run| {
+        let seconds = (now.as_utc() - run.started_at().as_utc()).whole_seconds();
+        u64::try_from(seconds).unwrap_or(0)
+    });
+    lead.lead_worked_secs().saturating_add(running)
+}
+
+/// A previous round's PR cannot authorize a shift during a newer round without one.
+fn has_pull_request(lead: &Member, team: &Team) -> bool {
+    let Some(round) = lead
+        .runs()
+        .last()
+        .and_then(|run| run.rounds().last())
+        .and_then(|id| team.round(id))
+    else {
+        return false;
+    };
+    round.delivered_by().is_some()
+        || round.part_pull_request().is_some()
+        || round.item().and_then(|id| team.item(id)).is_some_and(|item| {
+            matches!(
+                item.phase(),
+                ItemPhase::InReview { .. }
+                    | ItemPhase::Fixing { .. }
+                    | ItemPhase::Approved { .. }
+                    | ItemPhase::Done {
+                        completion: Completion::Merged { .. }
+                    }
+            )
+        })
+}
+
+/// Task trades move holders, so recover each original slot from its earliest holding.
+fn team_order(team: &Team) -> Vec<AgentName> {
+    let roster = team.crew().roster();
+    let current: Vec<_> = roster
+        .iter()
+        .filter(|(role, _)| *role != Role::Worker)
+        .map(|(_, member)| member.agent().agent_name())
+        .collect();
+    let mut order = Vec::new();
+    for (_, member) in roster.iter().filter(|(role, _)| *role != Role::Worker) {
+        let original = member
+            .past_holders()
+            .first()
+            .map_or_else(|| member.agent().agent_name(), |holding| holding.agent.agent_name());
+        if current.contains(&original) && !order.contains(&original) {
+            order.push(original);
+        }
+    }
+    for name in current {
+        if !order.contains(&name) {
+            order.push(name);
+        }
+    }
+    order
 }
 
 #[cfg(test)]
