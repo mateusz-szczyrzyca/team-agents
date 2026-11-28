@@ -1552,6 +1552,19 @@ impl Config {
         self.investigators.get(name)
     }
 
+    /// The account the agent or investigator named `name` runs with; `None` for one without an account and for a name the
+    /// configuration does not have. An agent and an investigator never share a name, so the name tells which it is.
+    #[must_use]
+    pub fn account_of(&self, name: &AgentName) -> Option<&AccountName> {
+        if let Some(agent) = self.agent(name) {
+            return agent.account.as_ref();
+        }
+        self.investigators()
+            .iter()
+            .find(|(investigator, _)| AgentName::from(*investigator) == *name)
+            .and_then(|(_, investigator)| investigator.account.as_ref())
+    }
+
     /// The programs and the agents' `PATH`.
     #[must_use]
     pub fn binaries(&self) -> &Binaries {

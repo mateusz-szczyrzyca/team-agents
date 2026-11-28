@@ -275,6 +275,14 @@ An agent that runs with an account is written with it in brackets on its task li
 as it always was. The account comes from
 `agents.toml` as it is when you ask, not from the name of the agent.
 
+`max_runs` in `[accounts.NAME]` limits the runs of an account: the runs of all its agents and investigators, over all teams,
+are counted together, and a queued task whose account has its `max_runs` going waits in the queue — it is not failed — and
+starts when one of those runs ends; a request for a worker waits in the same way when every pool worker that could take it
+has an account with its `max_runs` going. `agent status` says it: `queued, waiting for account comp-claude (1/1 runs)`. The command
+counts the runs the state file shows; the runs of pool workers that only the daemon holds are not in that count, so the line
+may be missing while the daemon already holds the task back. `max_runs = 0` is refused; without the key there is no limit. The
+wait is a `decision_taken` record with `decision` `account_slot` and `result` `wait` ([`docs/log.md`](docs/log.md)).
+
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
 
 ## Usage

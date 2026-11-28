@@ -9,6 +9,16 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.153.0 · agent-core 0.153.0 — 28.11.2026 — PR #372
+
+### New features
+- [agent] [agent-core] An account can have a limit of runs: with `max_runs = 1` in `[accounts.comp-claude]`, the agents of that account never have more than one run going at once. A task beyond the limit stays queued, is not failed, and starts when one of the runs ends.
+- [agent] `agent status` says why such a task waits: `queued, waiting for account comp-claude (1/1 runs)`.
+- [agent] A request for a worker waits in the queue, not failed, while every pool worker that could take it has an account with its `max_runs` going; before, such a worker started a run beside the others.
+
+### Configuration
+- [agent-core] new: `[accounts.NAME] max_runs` (no default: without the key the account has no limit; `0` is refused) — the most runs the agents of the account have going at once, over all teams.
+
 ## agent 0.152.0 · agent-core 0.152.0 · agent-runtime 0.137.0 — 28.11.2026 — PR #368
 
 ### New features

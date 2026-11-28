@@ -58,6 +58,7 @@ args = ["-c", "model_reasoning_effort=\"high\""]
 # `[account_env.NAME]` in secrets.toml; a variable is set in `env` or there, never in both.
 # [accounts.comp-claude]
 # owner = "comp"                                  # a lowercase word of letters and digits
+# max_runs = 1                                    # optional: at most this many runs of the account at once; no key, no limit
 # [accounts.comp-claude.env]
 # CLAUDE_CONFIG_DIR = "/home/you/.claude-comp"    # not a secret; Codex: CODEX_HOME
 #

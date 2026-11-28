@@ -1,9 +1,17 @@
 //! The accounts whose provider refused a run, as `agent status` shows them until each resumes.
 
-use agent_core::config::AccountName;
+use std::collections::BTreeMap;
+
+use agent_core::config::{AccountName, Config};
+use agent_core::decide::account_slot::{AccountSlot, slot_of};
 use agent_core::decide::limit::Limit;
+use agent_core::decide::slot::runs_going;
+use agent_core::ids::TaskId;
 use agent_core::local_time::Zone;
+use agent_core::protocol::TeamSummary;
+use agent_core::state::State;
 use agent_core::state::{AccountPause, Timestamp};
+use agent_core::status::TaskStatus;
 
 #[cfg(test)]
 mod tests;
@@ -35,4 +43,20 @@ pub(crate) fn account_lines<'a>(
         })
         .collect();
     (!lines.is_empty()).then(|| lines.concat())
+}
+
+/// What each queued task of `teams` whose account has its `max_runs` going says of it, by task, as the runs of `state`
+/// are counted over every team of the daemon, also those that `teams` does not list.
+#[must_use]
+pub(crate) fn waits(config: &Config, state: &State, teams: &[TeamSummary]) -> BTreeMap<TaskId, String> {
+    let going = runs_going(state.teams());
+    teams
+        .iter()
+        .flat_map(|team| &team.members)
+        .filter(|member| member.status == TaskStatus::Queued)
+        .filter_map(|member| match slot_of(config, &member.agent.agent_name(), &going) {
+            AccountSlot::Open => None,
+            AccountSlot::Full(full) => Some((member.task.clone(), full.to_string())),
+        })
+        .collect()
 }

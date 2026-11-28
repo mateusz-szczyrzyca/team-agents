@@ -75,6 +75,7 @@ pub(super) fn line(
     columns: Columns,
     accounts: &Accounts,
     activity: &dyn Fn(&TaskId) -> Option<String>,
+    waits: &dyn Fn(&TaskId) -> Option<String>,
     zone: Zone,
 ) -> String {
     let waiting = member.open_question.map_or_else(String::new, |number| {
@@ -97,6 +98,11 @@ pub(super) fn line(
         .then(|| activity(&member.task))
         .flatten()
         .map_or_else(String::new, |said| format!(", {said}"));
+    // A queued task whose account has its most runs going says so; a task that runs or ended waits for nothing.
+    let account_wait = (member.status == TaskStatus::Queued)
+        .then(|| waits(&member.task))
+        .flatten()
+        .map_or_else(String::new, |said| format!(", {said}"));
     let status = match member.role {
         Role::Reviewer => reviewer::status(member, &team.activities, zone).unwrap_or_else(|| member.status.to_string()),
         Role::Solo | Role::Coordinator | Role::Member | Role::Worker | Role::Investigator => member.status.to_string(),
@@ -107,7 +113,7 @@ pub(super) fn line(
     });
     let (role_width, agent_width) = (columns.role, columns.agent);
     format!(
-        "  {}  {:<role_width$}  {:<agent_width$}  {status}{failed}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
+        "  {}  {:<role_width$}  {:<agent_width$}  {status}{account_wait}{failed}{blocked}{renewed}{taken_over}{returned}{active}{waiting}",
         member.task,
         member.role.to_string(),
         label(member, accounts),
