@@ -9,7 +9,6 @@ use std::time::SystemTime;
 use std::num::NonZeroUsize;
 
 use agent_core::cli::RunUsage;
-use agent_core::config::AccountName;
 use agent_core::history::HistoryHealth;
 use agent_core::ids::{AgentName, RoundId, TaskId, TeamId};
 use agent_core::local_time::Zone;
@@ -227,10 +226,29 @@ impl Activity {
     /// # Errors
     /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
     pub(crate) async fn cli_runs_line(&self, teams: &[TeamSummary]) -> Result<Option<String>, StatusError> {
+        Ok(self.config().await?.and_then(|config| cli_runs_line(&config, teams)))
+    }
+
+    /// The account each agent and investigator of the configuration runs with; none when there is no configuration.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn accounts(&self) -> Result<members::Accounts, StatusError> {
+        Ok(self.config().await?.map_or_else(BTreeMap::new, |config| {
+            agent_core::account_view::agent_accounts(&config)
+        }))
+    }
+
+    /// The configuration, read asynchronously so status rendering never blocks its runtime thread; `None` when the file
+    /// does not exist, the only reason a configuration is omitted.
+    ///
+    /// # Errors
+    /// [`StatusError::ConfigRead`] when the file cannot be read, or [`StatusError::ConfigParse`] when it is invalid.
+    async fn config(&self) -> Result<Option<agent_core::config::Config>, StatusError> {
         let path = self.home.config_file();
         match tokio::fs::read_to_string(&path).await {
             Ok(text) => agent_core::config::Config::from_toml_str(&text)
-                .map(|config| cli_runs_line(&config, teams))
+                .map(Some)
                 .map_err(|source| StatusError::ConfigParse { path, source }),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(source) => Err(StatusError::ConfigRead { path, source }),
@@ -449,15 +467,19 @@ async fn listing_text(
     let requests = requests_of(activity, &listing.teams, detail).await;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     let refused = activity.provider_lines().await?;
-    let text = render_with_requests(
+    let accounts = activity.accounts().await?;
+    let text = render_with_accounts(
         &listing.teams,
         View::Full,
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
-        Under {
-            requests: &|task| requests.of(task).to_vec(),
-            workers: &|_| Vec::new(),
+        Extras {
+            under: Under {
+                requests: &|task| requests.of(task).to_vec(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &accounts,
         },
         activity.zone,
     );
@@ -517,21 +539,25 @@ async fn running_text(
     } else {
         let told = rounds::told(connection, activity, &listed).await?;
         let requests = requests_of(activity, &listed, detail).await;
-        let text = render_with_requests(
+        let accounts = activity.accounts().await?;
+        let text = render_with_accounts(
             &listed,
             View::Running,
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
-            Under {
-                requests: &|task| requests.of(task).to_vec(),
-                workers: &|team| {
-                    served
-                        .iter()
-                        .find(|(id, _)| *id == team.id)
-                        .map(|(_, lines)| lines.clone())
-                        .unwrap_or_default()
+            Extras {
+                under: Under {
+                    requests: &|task| requests.of(task).to_vec(),
+                    workers: &|team| {
+                        served
+                            .iter()
+                            .find(|(id, _)| *id == team.id)
+                            .map(|(_, lines)| lines.clone())
+                            .unwrap_or_default()
+                    },
                 },
+                accounts: &accounts,
             },
             activity.zone,
         );
@@ -982,15 +1008,18 @@ fn render_in(
     rounds: &dyn Fn(&Round) -> String,
     zone: Zone,
 ) -> String {
-    render_with_requests(
+    render_with_accounts(
         teams,
         view,
         detail,
         activity,
         rounds,
-        Under {
-            requests: &|_| Vec::new(),
-            workers: &|_| Vec::new(),
+        Extras {
+            under: Under {
+                requests: &|_| Vec::new(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &BTreeMap::new(),
         },
         zone,
     )
@@ -1013,10 +1042,12 @@ struct Extras<'a> {
     /// What goes under the lines of a team.
     under: Under<'a>,
     /// The account of each agent and investigator that runs with one.
-    accounts: &'a BTreeMap<AgentName, AccountName>,
+    accounts: &'a members::Accounts,
 }
 
-/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them.
+/// [`render_in`] with the lines of the requests for workers of each task under its plan, as `requests` gives them, and no
+/// account told: what the tests of those lines compare.
+#[cfg(test)]
 fn render_with_requests(
     teams: &[TeamSummary],
     view: View,
@@ -1052,7 +1083,6 @@ fn render_with_accounts(
     zone: Zone,
 ) -> String {
     let Extras { under, accounts } = extras;
-    let _ = accounts;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
     }
@@ -1061,7 +1091,7 @@ fn render_with_accounts(
     let columns = served
         .iter()
         .flatten()
-        .fold(members::Columns::of(teams), |columns, worker| {
+        .fold(members::Columns::of(teams, accounts), |columns, worker| {
             columns.fit(agent_core::kinds::Role::Worker.to_string().len(), worker.agent_width())
         });
     let mut lines: Vec<String> = Vec::new();
@@ -1117,14 +1147,14 @@ fn render_with_accounts(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, activity, zone)),
+                    .map(|member| members::line(member, team, columns, accounts, activity, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(member, team, columns, activity, zone));
+            lines.push(members::line(member, team, columns, accounts, activity, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
