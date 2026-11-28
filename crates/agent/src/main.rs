@@ -81,6 +81,7 @@ use crate::commands::status::{
     Activity, Detail, StatusError, status_investigators, status_json, status_running_shown, status_shown,
 };
 use crate::commands::stop::stop;
+use crate::commands::swap::swap;
 use crate::commands::unpause::unpause;
 use crate::environment::{EditorError, Environment, EnvironmentError};
 use agent_runtime::agentbus::AgentBus;
@@ -430,8 +431,20 @@ enum Steer {
     Say(SayArgs),
     /// Starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages.
     Renew(RenewArgs),
+    /// Changes the agent holding a task.
+    Swap(SwapArgs),
     /// Takes a team out of the daemon: its unmerged branches are bundled, its open pull requests closed, and its worktrees and branches deleted. `--force` ends its runs first.
     Remove(RemoveArgs),
+}
+
+/// The arguments of `agent swap`.
+#[derive(Debug, Args)]
+struct SwapArgs {
+    /// The task to swap (`task-…`).
+    #[arg(value_parser = parse_task)]
+    task: TaskId,
+    /// The agent to give the task to.
+    agent: AgentName,
 }
 
 /// The arguments of `agent remove`.
@@ -660,6 +673,9 @@ enum CommandError {
     /// `agent stop`, `pause`, `unpause` or `resume` failed.
     #[error(transparent)]
     Control(#[from] ControlError),
+    /// `agent swap` failed.
+    #[error(transparent)]
+    Swap(#[from] commands::swap::SwapError),
     /// The words of `agent say` are not something the daemon takes.
     #[error("the words to say are not valid")]
     Words(#[from] SayError),
@@ -797,6 +813,7 @@ fn finish(result: Result<(), CommandError>, err: &mut impl Write) -> Result<Exit
                 | CommandError::Run(_)
                 | CommandError::Daemon(_)
                 | CommandError::Control(_)
+                | CommandError::Swap(_)
                 | CommandError::Words(_)
                 | CommandError::Answer(_)
                 | CommandError::Gate(_)
@@ -967,6 +984,9 @@ async fn execute_steer(environment: &Environment, steer: Steer, out: &mut impl W
         Steer::Resume(args) => resume(&mut Connection::connect(&socket).await?, args.target, out).await?,
         Steer::Renew(RenewArgs { task }) => {
             renew(&mut Connection::connect(&socket).await?, Target::Task(task), out).await?;
+        }
+        Steer::Swap(SwapArgs { task, agent }) => {
+            swap(&mut Connection::connect(&socket).await?, task, agent, out).await?;
         }
         Steer::Remove(args) => {
             remove(&mut Connection::connect(&socket).await?, args.team, args.force, out).await?;

@@ -824,6 +824,7 @@ How the human answers the agents and steers a task or a team, through the daemon
 | `agent answer <task>` | opens the questions file of the task in your editor (`[questions] editor`, else `$VISUAL`, `$EDITOR`); when you close it, the answers are sent and the task goes on with them |
 | `agent answer <task> --file answers.md` | sends the answers written after `**Verdict:**` in a questions file instead of opening the editor |
 | `agent stop <task\|team>` | ends the run; nothing of it starts until it is resumed |
+| `agent swap <task> <agent>` | gives the task to another agent of your configuration, on your word: the task, its worktree, its branch, its open questions and its paused or stopped state stay as they are; a run that is going on is ended first and the task is queued again, in a new session of the new agent; any configured agent that is not a worker fits, whatever its tier; the swap counts no new session against `[replacement] new_sessions` and `[replacement] replacements` does not refuse it; an older daemon refuses the command — restart it after you install a new binary; see [Swapping the agent of a task](#swapping-the-agent-of-a-task) |
 | `agent pause <task\|team>` / `agent unpause <task\|team>` | holds the task or team, and lets it go on in the same session |
 | `agent resume <task\|team>` | starts a stopped, failed or waiting task again; when steps of the team wait for GitHub or git, it tries those at once and starts no task |
 | `agent renew <task>` | starts the next run of a task as a new session, briefed from its checkpoint, its commits and its unread messages; not counted against `[replacement] new_sessions`; see [When a run goes wrong](#when-a-run-goes-wrong) |
@@ -885,6 +886,43 @@ rounds and branches. If history or removal fails, the team stays and one notific
 branches. While the team remains idle, the daemon retries once a minute without repeating that notice. Each
 retry requires the history acknowledgement and removal safeguards again. Disabling history is an explicit
 opt-out from the history requirement; bundles and removal safeguards still apply.
+
+### Swapping the agent of a task
+
+`agent swap <task> <agent>` gives a task to another agent of your configuration, on your word. It is the way out when
+the agent that holds a task is the wrong one for the work that is left: only the holder changes. The task keeps its
+worktree, its branch (the branch keeps the name of the agent that held the task), its open question and its paused or
+stopped state, and the items the task works on follow it to the new holder, on the branches they were on. The agent
+that held the task before is kept in the task's `past_holders` in `state.json`.
+
+A run that is going on is ended first, as `agent stop` ends it, and the task is queued again: the new agent's next run
+starts in a new session, briefed from the task's checkpoint, its commits and its unread messages, with the reason
+`swap`. A task that waits for your answers, that is paused or that is stopped keeps that state and starts no run; the
+open question stays open and is the new holder's to answer.
+
+Any agent of your configuration that is not a worker fits, whatever its tier: an investigator may take a task that a
+normal agent held, and a normal agent may take one that an investigator held. The swap is refused, with the reason,
+when the agent is not configured, is a worker, already holds the task, is in the same team, or has a run going in
+another task; and when the task is done, or is the task of a worker, a reviewer or an investigator.
+
+The swap counts no new session against `[replacement] new_sessions`, and `[replacement] replacements` does not refuse
+it: it is applied with `replacements = 0`. Human swaps keep the full holder history and do not consume the
+daemon’s automatic takeover allowance. `state.json` records their count separately; older states load with zero. A count greater than the recorded
+number of past holders is rejected as an inconsistent state.
+
+The success line’s previous holder and `(run stopped)` marker come from a status snapshot taken before the swap.
+A run that starts or ends between the status request and the swap can make that marker stale; a run still starting
+may be ended without the marker appearing.
+
+The hand-over is written to the state (the new holder, the one before it, and the reason `swap` of the new session), to
+the history (the decision `swap`) and to the log (`task_handed_over` with `reason = "swap"`). When a run is ended,
+its last control step and the history name the CLI or dashboard client that stopped it. The command prints the
+task and the two agents, `task-20261125-075745-w8vj: claude-1 → glm-1`, with `(run stopped)` after it when it ended a
+run that was going on.
+
+Success exits with status `0`; a refusal exits with status `1` and prints its reason to standard error.
+An older daemon cannot read protocol 10; the CLI prints `the daemon does not know swap; restart it with this version`
+and exits with status `1`. Restart the daemon after you install a new binary, and replace the CLI together with it; see [Compatibility and upgrades](#compatibility-and-upgrades).
 
 ### `agent status`
 
@@ -1347,7 +1385,8 @@ back is closed: **an older daemon refuses a state or a history of a newer schema
 negotiation (versions 3 to 10 now): a newer CLI falls back to what an older daemon speaks, and loses only the fields the
 older protocol lacks; an older daemon refuses a command declared with a newer protocol version with `UnsupportedVersion`,
 such as `swap` (protocol 10). The socket API introduces `Command::Swap(SwapRequest { task, agent })` and replies with
-`Reply::Applied` or structured `SwapRefusal` failure causes; the full `agent swap` CLI command is delivered in a later item.
+`Reply::Applied` or structured `SwapRefusal` failure causes; the `agent swap <task> <agent>` command asks the daemon
+for it.
 A human-selected holder may be of any tier except a worker; workers serve requests and cannot hold solo, coordinator or member tasks.
 Existing state files and historical states without reason `swap` read as before; an older daemon cannot read a state
 holding reason `swap`. Restart the daemon after installing a new binary, and replace the CLI together with it. [`WhatsNew.md`](WhatsNew.md) says what each version

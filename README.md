@@ -55,6 +55,7 @@ and the [issues](https://github.com/mateusz-szczyrzyca/team-agents/issues) show 
 - Agents come in three ranks: **workers** (cheap models for mechanical steps), **normal agents** (plan, code,
   coordinate) and **investigators** (the strongest models: reviews, second opinions, splitting a task that has
   grown past its size).
+- `agent swap` lets you choose another configured agent for an unfinished task while keeping its worktree and branch.
 - The orchestrator uses Rust. Its strict compiler and type system act as a harness for the code the models write.
 
 Supported agent CLIs:

@@ -249,7 +249,7 @@ impl Owner {
     /// Waits until the runs of `halted` have ended and their tasks are recorded.
     ///
     /// The runs of other tasks that end meanwhile are recorded as they come.
-    async fn settle_halted(&mut self, halted: &[TaskId]) -> Result<(), OwnerError> {
+    pub(super) async fn settle_halted(&mut self, halted: &[TaskId]) -> Result<(), OwnerError> {
         while halted.iter().any(|task| self.in_flight.contains(task)) {
             let Some(joined) = self.runs.join_next_with_id().await else {
                 break;
