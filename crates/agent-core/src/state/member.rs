@@ -18,6 +18,11 @@ use crate::ids::{AgentName, InvestigatorName, ItemId, RoundId, RunId, TaskId};
 use crate::kinds::Tier;
 use crate::status::{InvalidTransition, StatusMachine, TaskStatus};
 
+/// Keeps the persisted member shape unchanged until a human hand-over occurs.
+fn no_human_handovers(count: &usize) -> bool {
+    *count == 0
+}
+
 /// Who works in a task: a normal agent, a worker or an investigator, by the tier of the configuration they are in.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(tag = "tier", content = "name", rename_all = "snake_case", deny_unknown_fields)]
@@ -104,8 +109,8 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
-    /// Human-selected hand-overs, excluded from the harness replacement allowance.
-    #[serde(default)]
+    /// Human-selected hand-overs; zero is omitted to preserve legacy serialized states.
+    #[serde(default, skip_serializing_if = "no_human_handovers")]
     human_handovers: usize,
     /// When the task began to wait for its agent, which runs another task at its limit; `None` when it does not wait.
     #[serde(default, skip_serializing_if = "Option::is_none")]
