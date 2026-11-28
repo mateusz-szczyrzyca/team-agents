@@ -2,12 +2,14 @@
 //! window resets, the runs going finish, the queued ones wait, the human is told once, and nothing fails. Agents of
 //! other accounts are not held, and a restart of the daemon keeps the hold.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use agent_core::config::AccountName;
 use agent_core::ids::AgentName;
 use agent_core::limit_reading::{LimitReading, LimitWindow};
+use agent_core::protocol::{Client, Command, StatusRequest};
 use agent_core::state::{Crew, MergeMode, ReadingOwner, State, TaskListText, Team};
 use agent_core::status::TaskStatus;
 use tracing_subscriber::layer::SubscriberExt;
@@ -289,4 +291,75 @@ async fn a_hold_that_began_before_a_restart_is_not_told_again() {
     owner.update_holds(at(1)).await;
 
     assert_eq!(daemon.notifications(), Vec::<String>::new());
+}
+
+/// The account of these tests.
+fn claude_main() -> AccountName {
+    "claude-main".parse().unwrap()
+}
+
+/// Lets the daemon go through its queue once more after the state a test has seen: a request is answered between two
+/// passes over the queue, so after two answers a pass that began after that state has been made.
+async fn after_an_admission_pass(daemon: &Daemon) {
+    for _ in 0..2 {
+        daemon
+            .ask(Command::Status(StatusRequest { target: None }))
+            .await
+            .unwrap();
+    }
+}
+
+// Rule: a hold begins when a reading reaches `hold_at` and lasts until the window resets, whatever the readings read
+// after it say; the state records it.
+#[tokio::test]
+async fn a_lower_reading_does_not_end_a_hold_before_its_reset() {
+    let daemon = Daemon::new(&state_with_reading(0.6), None);
+    configure(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let events = Events::default();
+    let _logged = tracing::subscriber::set_default(tracing_subscriber::registry().with(events.clone()));
+
+    owner.update_holds(at(0)).await;
+    assert_eq!(owner.parts.state.account_hold_until(&claude_main()), Some(at(3600)));
+    owner.parts.state.keep_limit_readings(
+        &ReadingOwner::Account(claude_main()),
+        &[LimitReading::new(LimitWindow::FiveHour, 0.4, at(3600)).unwrap()],
+        at(1),
+        at(1),
+    );
+    owner.update_holds(at(1)).await;
+
+    assert_eq!(owner.held_account_names(at(1)), BTreeSet::from([claude_main()]));
+    assert_eq!(events.decisions("account_released").len(), 0);
+    owner.update_holds(at(3600)).await;
+    assert_eq!(owner.held_account_names(at(3600)), BTreeSet::new());
+    assert_eq!(owner.parts.state.account_hold_until(&claude_main()), None);
+    assert_eq!(events.decisions("account_released").len(), 1);
+}
+
+// Rule: a hold the daemon meets for the first time when it starts — `hold_at` was added to a configuration that has a
+// reading above it — is told once, and not again when the daemon starts once more.
+#[tokio::test]
+async fn a_hold_first_met_at_startup_is_told_once_and_not_again_after_a_restart() {
+    let mut daemon = Daemon::new(&state_with_reading(0.6), None);
+    configure(&daemon);
+    daemon.start().await;
+    daemon.notification_with("claude-main is held").await;
+    daemon.stop().await.unwrap();
+
+    daemon.start().await;
+    after_an_admission_pass(&daemon).await;
+
+    let told = daemon
+        .notifications()
+        .iter()
+        .filter(|text| text.contains("claude-main is held"))
+        .count();
+    assert_eq!(told, 1, "{:?}", daemon.notifications());
+    assert_eq!(
+        daemon.state().find_task(&task(1)).unwrap().member.status(),
+        TaskStatus::Queued
+    );
+    assert_eq!(daemon.state().account_hold_until(&claude_main()), Some(at(3600)));
+    daemon.stop().await.unwrap();
 }
