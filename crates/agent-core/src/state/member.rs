@@ -1220,6 +1220,9 @@ mod tests {
         agent: Participant,
         /// See [`Member`].
         status: TaskStatus,
+        /// Completed run seconds in the persisted member shape.
+        #[serde(default)]
+        lead_worked_secs: u64,
         /// Human-selected hand-overs in the persisted member shape.
         #[serde(default)]
         human_handovers: usize,
@@ -1252,7 +1255,7 @@ mod tests {
                 agent: wire.agent,
                 status: wire.status,
                 runs: wire.runs,
-                lead_worked_secs: 0,
+                lead_worked_secs: wire.lead_worked_secs,
                 questions: wire.questions,
                 plan: wire.plan,
                 plan_judging: wire.plan_judging,
