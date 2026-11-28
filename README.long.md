@@ -264,7 +264,8 @@ the daemon keeps it and its reset. The pause and its end are `decision_taken` re
 ([`docs/log.md`](docs/log.md)).
 
 An agent that runs with an account is written with it in brackets on its task line in `agent status`
-(`comp-claude-1 [comp-claude]`); the line of an agent without an account is as it always was. The account comes from
+(`comp-claude-1 [comp-claude]`), also in the tasks of `agent status <round>`; the line of an agent without an account is
+as it always was. The account comes from
 `agents.toml` as it is when you ask, not from the name of the agent.
 
 [`examples/notify/`](examples/notify/) has scripts for `notifications.command`.
