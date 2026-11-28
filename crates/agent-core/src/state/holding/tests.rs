@@ -642,3 +642,29 @@ fn members_without_human_handovers_keep_their_persisted_shape() {
     let written = state.to_json().unwrap();
     assert!(!written.contains("\"human_handovers\""));
 }
+
+#[test]
+fn human_handovers_cannot_exceed_the_persisted_holder_history() {
+    let mut wire: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/member-before-human-handovers.json"
+    ))
+    .unwrap();
+    wire["human_handovers"] = serde_json::json!(1);
+    let error = serde_json::from_value::<crate::state::Member>(wire).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+}
+
+#[test]
+fn human_handovers_accept_both_holder_history_boundaries() {
+    let mut state = old_state();
+    state.hand_over_task(&task(), normal("claude-9"), at()).unwrap();
+    let mut wire = serde_json::to_value(state.find_task(&task()).unwrap().member).unwrap();
+    for count in [0, 1] {
+        wire["human_handovers"] = serde_json::json!(count);
+        let loaded: crate::state::Member = serde_json::from_value(wire.clone()).unwrap();
+        assert_eq!(loaded.harness_takeovers(), 1 - count);
+    }
+    wire["human_handovers"] = serde_json::json!(2);
+    let error = serde_json::from_value::<crate::state::Member>(wire).unwrap_err();
+    assert_eq!(error.classify(), serde_json::error::Category::Data);
+}
