@@ -313,6 +313,15 @@ starts a new session briefed as `agent renew` does, with the reason `account_cha
 counted), and the entry is replaced or removed. Every role is started anew for it: a worker, a reviewer and an investigator too (an investigator works for no round: its prompt ends with a note that the account changed and the plan the session before saved in its worktree, not with the briefing). Written only when not empty and dropped with the team of the task. A state
 without it loads with none; a version that does not know it refuses a state that has it.
 
+**Readings of the rate-limit windows (optional, absent in a state written before agent-core 0.154.0).** `limit_readings` keeps the
+newest reading of each window that a run of the CLI showed (Claude Code 2.1 writes `rate_limit_event` records), under
+`accounts` (by account name) and `agents` (by agent name, for an agent without an account), each a list of at most one entry
+per window: `{"reading": {"window": "five_hour" | "seven_day", "used": 0.62, "resets_at": "<RFC 3339>"}, "read_at": "<RFC 3339>"}`.
+`used` is a number from 0 to 1; a state with another value, an unknown window or an unknown key is refused. Of two readings of
+a window the one read later is kept (`read_at` is when the run ended); a reading is forgotten when its window has reset, at the
+latest when the next reading is kept. Written only when not empty. A state without it loads with none; a version that does not
+know it refuses a state that has it.
+
 **Commit cuts (optional, absent in a state written before agent 0.122.0).** `commit_cuts` maps a task to the IDs of its
 runs that the daemon cut for an order to commit (`[commit_reminder] cut_after`) and resumed in their session; the clock
 of `[limits] round_minutes` does not start again after such a run. Written only when not empty; removing a team removes

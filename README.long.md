@@ -263,6 +263,15 @@ date too when the reset is more than a day away). The pause is in `state.json` (
 the daemon keeps it and its reset. The pause and its end are `decision_taken` records with `decision` `account`
 ([`docs/log.md`](docs/log.md)).
 
+**The readings of the limits.** Claude Code 2.1 writes `rate_limit_event` records that tell how much of the five-hour and of the
+seven-day window of the login is used and when each resets. At the end of each run the daemon keeps the newest reading of each
+window with the account of the agent that ran, or with the agent itself when it has no account, and `agent status` shows it, one
+line per account (and per agent without one), after the lines of the pauses:
+`comp-claude: 5h 62% (resets 15:30, read 3 min ago), 7d 41% (resets 2026-12-01 09:05, read 3 min ago)`. The age is the time since the
+run ended; the reset shows its date when it is a day or more away. A reading is dropped when its window has reset, and
+a restart of the daemon keeps the others (`limit_readings` of `state.json`, [`docs/state.md`](docs/state.md)). A CLI that writes
+no such record, or a record of another shape, gives no reading and no error. A reading only informs: it pauses nothing and holds no run.
+
 While an account is paused, **no agent of it is picked**: not an investigator for a review or for an investigation, not a
 replacement for a task that waits or whose agent is changed, not a worker for a request. They are chosen among the agents
 of accounts that are not paused and agents without an account; when every agent that could be picked is of a paused

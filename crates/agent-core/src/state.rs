@@ -23,6 +23,7 @@ mod item;
 mod item_parts_tests;
 #[cfg(test)]
 mod item_tests;
+mod limit_readings;
 mod member;
 mod migrate;
 mod plan;
@@ -77,6 +78,7 @@ pub use item::{
     InvalidReviews, ItemMut, ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection,
     RejectionError, ReplaceReviewError, Review, ReviewOutcome, SubmitReviewError,
 };
+pub use limit_readings::{KeptReading, LimitReadings, ReadingOwner, keep_reading};
 pub use member::{Member, MemberError, MemberMut, Participant, QuestionError};
 pub use plan::{PlanFault, PlanKeeping, PlanReason, PlanStage, RunningPlanCheck, StepMismatch};
 pub use question::{AnswerBeforeQuestion, AnsweredVia, Question, QuestionState};
@@ -185,6 +187,9 @@ pub struct State {
     /// When each task of `account_held` that waits for the pause of another account than its own agent's — its lead's —
     /// is woken: that pause's end. A held task without an entry is held by its own agent's account.
     account_waits: Box<AccountWaits>,
+    /// The newest reading of each rate-limit window of each account, and of each agent without an account; kept behind a
+    /// box for the reason of [`SessionAccounts`].
+    limit_readings: Box<LimitReadings>,
     /// The runs of each task that the daemon cut for an order to commit and resumed in their session: the clock of a
     /// round does not start again after them, as it does after a stop of the human. A task without an entry had none.
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -227,6 +232,9 @@ struct StateOut<'a> {
     /// See [`State`]; omitted when no held task waits for the pause of another account.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     account_waits: &'a BTreeMap<TaskId, Timestamp>,
+    /// See [`State`]; omitted when no reading is kept.
+    #[serde(skip_serializing_if = "LimitReadings::is_empty")]
+    limit_readings: &'a LimitReadings,
     /// See [`State`]; omitted when no run was cut for an order to commit.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     commit_cuts: &'a BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -255,6 +263,7 @@ impl Serialize for State {
             session_accounts: &self.session_accounts.by_task,
             account_held_tasks: &self.account_held,
             account_waits: &self.account_waits.by_task,
+            limit_readings: &self.limit_readings,
             commit_cuts: &self.commit_cuts,
             pending_team_replaces: &self.pending_team_replaces,
         }
@@ -274,6 +283,7 @@ impl PartialEq for State {
             && self.session_accounts == other.session_accounts
             && self.account_held == other.account_held
             && self.account_waits == other.account_waits
+            && self.limit_readings == other.limit_readings
             && self.commit_cuts == other.commit_cuts
             && self.pending_team_replaces == other.pending_team_replaces
             && self.effective_queued() == other.effective_queued()
@@ -315,6 +325,9 @@ struct StateWire {
     /// Optional in state written before the waits of held tasks were persisted.
     #[serde(default)]
     account_waits: BTreeMap<TaskId, Timestamp>,
+    /// Optional in state written before the readings of rate-limit windows were persisted.
+    #[serde(default)]
+    limit_readings: LimitReadings,
     /// Optional in state written before commit cuts were persisted.
     #[serde(default)]
     commit_cuts: BTreeMap<TaskId, BTreeSet<crate::ids::RunId>>,
@@ -511,6 +524,24 @@ impl State {
         self.accounts.iter()
     }
 
+    /// The newest readings of the rate-limit windows, per account and per agent without one.
+    #[must_use]
+    pub fn limit_readings(&self) -> &LimitReadings {
+        &self.limit_readings
+    }
+
+    /// Keeps `readings` that the run of an agent of `owner` showed at `read_at`, and forgets those that have reset by
+    /// `now`.
+    pub fn keep_limit_readings(
+        &mut self,
+        owner: &ReadingOwner,
+        readings: &[crate::limit_reading::LimitReading],
+        read_at: Timestamp,
+        now: Timestamp,
+    ) {
+        self.limit_readings.keep(owner, readings, read_at, now);
+    }
+
     /// Records that the pause of an account holds `task`: the daemon paused it for that pause.
     pub fn hold_task_for_account(&mut self, task: TaskId) {
         self.account_held.insert(task);
@@ -630,6 +661,7 @@ impl State {
             }),
             account_held: BTreeSet::new(),
             account_waits: Box::default(),
+            limit_readings: Box::default(),
             commit_cuts: BTreeMap::new(),
             pending_team_replaces: BTreeSet::new(),
         }
@@ -1406,6 +1438,7 @@ impl TryFrom<StateWire> for State {
             account_waits: Box::new(AccountWaits {
                 by_task: wire.account_waits,
             }),
+            limit_readings: Box::new(wire.limit_readings),
             commit_cuts: wire.commit_cuts,
             pending_team_replaces: wire.pending_team_replaces,
         };

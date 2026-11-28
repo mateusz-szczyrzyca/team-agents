@@ -38,6 +38,9 @@ mod owned_request;
 mod plan;
 mod pool_wait;
 #[cfg(test)]
+mod reading_tests;
+mod readings;
+#[cfg(test)]
 mod refusal_fix_tests;
 mod reminder;
 mod removal;
@@ -1622,6 +1625,7 @@ impl Owner {
             }
         };
         let task = self.running.remove(&id).ok_or(OwnerError::UnknownRun { id })?;
+        self.keep_run_readings().await?;
         let mut owned = false;
         if let Some(run_id) = self.request_runs.remove(&task) {
             if self.parts.state.find_task(&task).is_none() {
