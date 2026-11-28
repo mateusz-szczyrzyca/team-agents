@@ -120,7 +120,7 @@ impl Account {
     /// The most runs the agents of the account may have going at once, over all teams; `None` when it has no limit.
     #[must_use]
     pub const fn max_runs(&self) -> Option<NonZeroU32> {
-        None
+        self.max_runs
     }
 }
 
@@ -270,10 +270,16 @@ fn check_account(name: &AccountName, raw: RawAccount) -> Result<Account, Account
             account: name.clone(),
             source: Box::new(source),
         })?;
+    let max_runs = match raw.max_runs {
+        None => None,
+        Some(configured) => {
+            Some(NonZeroU32::new(configured).ok_or_else(|| AccountError::MaxRunsZero { account: name.clone() })?)
+        }
+    };
     Ok(Account {
         owner,
         env: raw.env,
-        max_runs: None,
+        max_runs,
     })
 }
 
