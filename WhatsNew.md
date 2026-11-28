@@ -9,6 +9,11 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.150.0 — 28.11.2026 — PR pending
+
+### New features
+- [agent] `agent swap <task> <agent>` gives a task to another configured agent: an ongoing run is ended first, the task is handed over with reason `swap`, and its next run starts in a new session in the same worktree and branch.
+
 ## agent 0.149.0 · agent-core 0.149.0 — 28.11.2026 — PR #363
 
 ### New features
