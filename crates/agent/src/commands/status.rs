@@ -473,15 +473,19 @@ async fn listing_text(
     let requests = requests_of(activity, &listing.teams, detail).await;
     let cli_runs = activity.cli_runs_line(&listing.teams).await?;
     let refused = activity.provider_lines().await?;
-    let text = render_with_requests(
+    let account_waits = activity.account_waits(&listing.teams).await?;
+    let text = render_with_waits(
         &listing.teams,
         View::Full,
         detail,
         &|task| activity.of(task),
         &|round| told.of(round),
-        Under {
-            requests: &|task| requests.of(task).to_vec(),
-            workers: &|_| Vec::new(),
+        Waiting {
+            under: Under {
+                requests: &|task| requests.of(task).to_vec(),
+                workers: &|_| Vec::new(),
+            },
+            accounts: &|task| account_waits.get(task).cloned(),
         },
         activity.zone,
     );
@@ -541,21 +545,25 @@ async fn running_text(
     } else {
         let told = rounds::told(connection, activity, &listed).await?;
         let requests = requests_of(activity, &listed, detail).await;
-        let text = render_with_requests(
+        let account_waits = activity.account_waits(&listed).await?;
+        let text = render_with_waits(
             &listed,
             View::Running,
             detail,
             &|task| activity.of(task),
             &|round| told.of(round),
-            Under {
-                requests: &|task| requests.of(task).to_vec(),
-                workers: &|team| {
-                    served
-                        .iter()
-                        .find(|(id, _)| *id == team.id)
-                        .map(|(_, lines)| lines.clone())
-                        .unwrap_or_default()
+            Waiting {
+                under: Under {
+                    requests: &|task| requests.of(task).to_vec(),
+                    workers: &|team| {
+                        served
+                            .iter()
+                            .find(|(id, _)| *id == team.id)
+                            .map(|(_, lines)| lines.clone())
+                            .unwrap_or_default()
+                    },
                 },
+                accounts: &|task| account_waits.get(task).cloned(),
             },
             activity.zone,
         );
