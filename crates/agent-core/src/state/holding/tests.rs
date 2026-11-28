@@ -3,7 +3,7 @@
 
 use crate::ids::{AgentName, InvestigatorName, TaskId};
 use crate::kinds::Role;
-use crate::state::{HandOverError, Holding, Participant, State, Timestamp};
+use crate::state::{Choice, HandOverError, Holding, Participant, State, Timestamp};
 use crate::status::TaskStatus;
 
 /// The failed member's task of the 1.1 fixture: `codex-1`, a member of a team led by `inv-opus`.
@@ -462,4 +462,148 @@ fn handing_owed_work_to_an_outside_replacement_clears_the_prior_holders_lead_deb
         "a replacement owns the work instead of leaving it owed to the lead"
     );
     assert_eq!(member.renewals().map(crate::state::Renewals::used), Some(0));
+}
+
+#[test]
+fn human_swap_to_lower_tier_is_applied() {
+    let mut state = old_state();
+    let coordinator: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+
+    assert_eq!(
+        state.hand_over_task_as(&coordinator, normal("claude-9"), Choice::Human, at()),
+        Ok(())
+    );
+
+    let loaded = State::from_json(&state.to_json().unwrap()).expect("the state loads again");
+    let member = loaded.find_task(&coordinator).unwrap().member;
+    assert_eq!(member.agent(), &normal("claude-9"));
+}
+
+#[test]
+fn harness_handover_to_lower_tier_is_still_refused() {
+    let mut state = old_state();
+    let coordinator: TaskId = "task-20261111-193001-k3x9".parse().unwrap();
+
+    let refused = state.hand_over_task_as(&coordinator, normal("claude-9"), Choice::Harness, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::LowerTier {
+            task: coordinator,
+            holder: crate::kinds::Tier::Normal,
+            held: crate::kinds::Tier::Investigator,
+        })
+    );
+}
+
+#[test]
+fn human_swap_same_holder_refused() {
+    let mut state = old_state();
+
+    let refused = state.hand_over_task_as(&task(), normal("codex-1"), Choice::Human, at());
+
+    assert_eq!(refused, Err(HandOverError::SameHolder { task: task() }));
+}
+
+#[test]
+fn human_swap_in_team_refused() {
+    let mut state = old_state();
+
+    let refused = state.hand_over_task_as(&task(), investigator("inv-opus"), Choice::Human, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::InTeam {
+            task: task(),
+            agent: "inv-opus".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn human_swap_in_run_refused() {
+    let mut state = old_state();
+    {
+        let (_, mut member) = state.find_task_mut(&task()).unwrap();
+        member.transition(TaskStatus::Queued).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member
+            .begin_run("run-20261121-000000-a1a1".parse().unwrap(), at(), None)
+            .unwrap();
+    }
+
+    let refused = state.hand_over_task_as(&task(), normal("claude-9"), Choice::Human, at());
+
+    assert_eq!(refused, Err(HandOverError::InRun { task: task() }));
+}
+
+#[test]
+fn human_swap_of_reviewer_task_refused() {
+    let mut state = old_state();
+    let reviewer: TaskId = "task-20261111-193007-k3x9".parse().unwrap();
+
+    let refused = state.hand_over_task_as(&reviewer, investigator("inv-kimi"), Choice::Human, at());
+
+    assert_eq!(
+        refused,
+        Err(HandOverError::Role {
+            task: reviewer,
+            role: Role::Reviewer,
+        })
+    );
+}
+
+#[test]
+fn state_with_reason_swap_reads() {
+    let mut state = old_state();
+    state
+        .begin_holder_session(&task(), crate::decide::ladder::Trouble::Swap, at())
+        .expect("holder session begins with reason swap");
+
+    let member = state.find_task(&task()).expect("the task").member;
+    assert_eq!(
+        member.renewals().map(crate::state::Renewals::reason),
+        Some(crate::decide::ladder::Trouble::Swap)
+    );
+
+    let saved = state.to_json().expect("state serializes to json");
+    assert!(saved.contains("\"reason\": \"swap\""));
+
+    let loaded = State::from_json(&saved).expect("state with reason swap reads back");
+    assert_eq!(
+        loaded
+            .find_task(&task())
+            .expect("the task")
+            .member
+            .renewals()
+            .map(crate::state::Renewals::reason),
+        Some(crate::decide::ladder::Trouble::Swap)
+    );
+    assert_eq!(loaded, state);
+}
+
+#[test]
+fn state_of_today_reads_as_before() {
+    let before = State::from_json(include_str!("../../../tests/fixtures/state-before-swap.json"))
+        .expect("state before swap reads");
+    assert!(before.find_task(&task()).is_some());
+}
+
+#[test]
+fn human_swap_to_worker_is_refused_without_changing_state() {
+    for task in [
+        task(),
+        "task-20261111-193001-k3x9".parse().unwrap(),
+        "task-20261111-193011-k3x9".parse().unwrap(),
+    ] {
+        let mut state = old_state();
+        let before = state.to_json().unwrap();
+        let worker: AgentName = "worker-9".parse().unwrap();
+
+        let refused = state.hand_over_task_as(&task, Participant::Worker(worker.clone()), Choice::Human, at());
+
+        assert_eq!(refused, Err(HandOverError::Worker { task, agent: worker }));
+        assert_eq!(state.to_json().unwrap(), before);
+        State::from_json(&before).expect("the unchanged state loads again");
+    }
 }

@@ -380,7 +380,8 @@ impl Connection {
                 | ReplyFormat::Plan
                 | ReplyFormat::Executor
                 | ReplyFormat::Versions
-                | ReplyFormat::FailedReason => Frame::from_line_negotiated(&line)?,
+                | ReplyFormat::FailedReason
+                | ReplyFormat::Swap => Frame::from_line_negotiated(&line)?,
             };
             match frame {
                 Frame::Response(response) if response.id == id => return Ok(response),
