@@ -5,7 +5,7 @@
 //! restart of the daemon keeps a hold. This module asks it, keeps the agents of a held account from being picked, and
 //! tells the human once when a hold begins and the log when it begins and ends.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use agent_core::config::AccountName;
 use agent_core::decide::account_hold::{Hold, held_accounts};
@@ -16,6 +16,11 @@ use agent_core::prompt::{HarnessPrompt, Variables};
 use agent_core::state::Timestamp;
 
 use super::{Owner, error_chain};
+
+/// The holds the daemon has told, by account, with the end of each. Boxed in the owner: a plain map there would make the
+/// futures of the code that holds an owner across an await larger than clippy's limit.
+#[derive(Debug, Default)]
+pub(super) struct KnownHolds(BTreeMap<AccountName, Timestamp>);
 
 impl Owner {
     /// The accounts that are held at `now`.
@@ -54,7 +59,7 @@ impl Owner {
     /// Takes the holds of the state as the daemon knows them, without telling anyone: a hold that began before a
     /// restart was told then.
     pub(super) fn remember_holds(&mut self, now: Timestamp) {
-        self.account_holds = held_accounts(&self.parts.state, &self.parts.settings.config, now)
+        self.account_holds.0 = held_accounts(&self.parts.state, &self.parts.settings.config, now)
             .into_iter()
             .filter_map(|(account, hold)| match hold {
                 Hold::Open => None,
@@ -69,12 +74,13 @@ impl Owner {
         let current = held_accounts(&self.parts.state, &self.parts.settings.config, now);
         let ended: Vec<AccountName> = self
             .account_holds
+            .0
             .keys()
             .filter(|account| !current.contains_key(*account))
             .cloned()
             .collect();
         for account in ended {
-            self.account_holds.remove(&account);
+            self.account_holds.0.remove(&account);
             tracing::debug!(
                 event = LogEvent::DecisionTaken.as_str(),
                 decision = "account_released",
@@ -87,8 +93,8 @@ impl Owner {
             match hold {
                 Hold::Open => {}
                 Hold::Held { window, used, until } => {
-                    if self.account_holds.insert(account.clone(), until).is_none() {
-                        self.begin_hold(&account, window, used, until).await;
+                    if self.account_holds.0.insert(account.clone(), until).is_none() {
+                        Box::pin(self.begin_hold(&account, window, used, until)).await;
                     }
                 }
             }
@@ -104,7 +110,7 @@ impl Owner {
             .config
             .accounts()
             .get(account)
-            .and_then(|found| found.hold_at())
+            .and_then(agent_core::config::Account::hold_at)
             .map_or(0.0, agent_core::config::HoldAt::share);
         tracing::debug!(
             event = LogEvent::DecisionTaken.as_str(),
