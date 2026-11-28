@@ -69,7 +69,6 @@ pub fn shift_target(task: &TaskId, team: &Team, state: &State, limits: &ShiftLim
                         .any(|(_, member)| holds(member) && member.status() == TaskStatus::Questions);
                 let open_team = solo
                     && other.id() != team.id()
-                    && other.crew().coordinator().is_some()
                     && roster.iter().any(|(_, member)| member.status() != TaskStatus::Done)
                     && roster.iter().any(|(_, member)| holds(member));
                 busy || questions || open_team
@@ -92,11 +91,36 @@ fn worked_secs(lead: &Member, now: Timestamp) -> u64 {
 
 /// A previous round's PR cannot authorize a shift during a newer round without one.
 fn has_pull_request(lead: &Member, team: &Team) -> bool {
+    let from_run = |run: &crate::state::Run| {
+        run.rounds()
+            .iter()
+            .rev()
+            .filter_map(|id| team.round(id))
+            .find(|round| round.is_open())
+    };
+    let assigned = || {
+        team.rounds()
+            .iter()
+            .rev()
+            .filter(|round| round.is_open())
+            .find(|round| {
+                round.item().and_then(|id| team.item(id)).is_some_and(|item| {
+                    matches!(item.phase(),
+                    ItemPhase::InProgress { assignee, .. } | ItemPhase::Fixing { assignee, .. }
+                        if *assignee == lead.agent().agent_name())
+                })
+            })
+    };
     let Some(round) = lead
-        .runs()
-        .last()
-        .and_then(|run| run.rounds().last())
-        .and_then(|id| team.round(id))
+        .current_run()
+        .and_then(from_run)
+        .or_else(assigned)
+        .or_else(|| lead.runs().last().and_then(from_run))
+        .or_else(|| {
+            let mut open = team.open_rounds();
+            let only = open.next()?;
+            open.next().is_none().then_some(only)
+        })
     else {
         return false;
     };
