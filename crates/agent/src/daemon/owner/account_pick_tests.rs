@@ -139,7 +139,7 @@ async fn an_investigator_of_a_paused_account_takes_no_waiting_task_over() {
 }
 
 // Rule: with `mode = "lead"` the work of a member goes to its lead — unless the lead's account is paused: nobody is
-// picked, and the member's task keeps its holder.
+// picked, the member's task keeps its holder and waits until the reset, not failed.
 #[tokio::test]
 async fn a_lead_of_a_paused_account_is_not_given_the_work_of_a_member() {
     let mut state = pair_state();
@@ -159,7 +159,8 @@ async fn a_lead_of_a_paused_account_is_not_given_the_work_of_a_member() {
 
     let takeover = owner.take_over(&task(2), Role::Member, Trouble::NoStatus).unwrap();
 
-    assert_eq!(takeover, Takeover::Nobody);
+    assert_eq!(takeover, Takeover::Wait);
+    assert_eq!(owner.wakes.get(&task(2)), Some(&FAR.parse().unwrap()));
     assert_eq!(
         owner.parts.state.find_task(&task(2)).unwrap().member.agent().name(),
         "claude-2"
