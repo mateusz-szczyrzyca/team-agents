@@ -39,6 +39,8 @@ mod account_hold_tests;
 #[cfg(test)]
 mod account_pause_tests;
 #[cfg(test)]
+mod account_wait_tests;
+#[cfg(test)]
 mod commit_cut_tests;
 #[cfg(test)]
 mod human_session_tests;
@@ -498,6 +500,19 @@ impl State {
     /// Records that no pause of an account holds `task` any more.
     pub fn release_task_from_account(&mut self, task: &TaskId) {
         self.account_held.remove(task);
+    }
+
+    /// Records that `task` waits for the pause of an account that is not its own agent's — its lead's — and is woken at
+    /// `until`, and that the pause of an account holds it.
+    pub fn hold_task_waiting(&mut self, task: TaskId, _until: Timestamp) {
+        self.account_held.insert(task);
+    }
+
+    /// When `task` is woken because it waits for the pause of another account than its own agent's; `None` for a task
+    /// the pause of its own agent's account holds, and for one that is not held.
+    #[must_use]
+    pub fn wait_of_task(&self, _task: &TaskId) -> Option<Timestamp> {
+        None
     }
 
     /// The tasks the pause of an account holds, in the order of their IDs.
