@@ -879,8 +879,12 @@ when the agent is not configured, is a worker, already holds the task, is in the
 another task; and when the task is done, or is the task of a worker, a reviewer or an investigator.
 
 The swap counts no new session against `[replacement] new_sessions`, and `[replacement] replacements` does not refuse
-it: it is applied with `replacements = 0`. The agent it replaces is a take-over in the state, so a replacement the
-daemon makes by itself comes one step nearer to the limit of `[replacement] replacements`.
+it: it is applied with `replacements = 0`. Human swaps keep the full holder history and do not consume the
+daemon’s automatic takeover allowance. `state.json` records their count separately; older states load with zero.
+
+The success line’s previous holder and `(run stopped)` marker come from a status snapshot taken before the swap.
+A run that starts or ends between the status request and the swap can make that marker stale; a run still starting
+may be ended without the marker appearing.
 
 The hand-over is written to the state (the new holder, the one before it, and the reason `swap` of the new session), to
 the history (the decision `swap`) and to the log (`task_handed_over` with `reason = "swap"`). The command prints the

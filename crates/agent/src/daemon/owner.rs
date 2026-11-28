@@ -2610,7 +2610,7 @@ impl Owner {
             .collect();
         let refused_provider = self.refusal_provider(agent).unwrap_or(agent.as_str()).to_owned();
         // A holder count larger than u32 already exhausts every permitted budget.
-        let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
+        let taken_over = u32::try_from(found.member.harness_takeovers()).unwrap_or(u32::MAX);
         let replacements_exhausted = taken_over >= replacement.replacements().get();
         let holder_tier = found.member.agent().tier();
         let return_at = self.parts.state.refused_until(agent).unwrap_or(until);

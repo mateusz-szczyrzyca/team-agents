@@ -280,6 +280,11 @@ impl CheckedMut<'_, Member> {
         self.value.held_task(holder, at);
     }
 
+    /// Excludes a human-selected hand-over from the harness replacement allowance.
+    pub(crate) fn record_human_handover(&mut self) {
+        self.value.human_handovers = self.value.human_handovers.saturating_add(1);
+    }
+
     /// See [`Member::start_waiting`].
     pub(crate) fn start_waiting(&mut self, at: Timestamp) -> Timestamp {
         self.value.start_waiting(at)
@@ -613,7 +618,7 @@ impl Member {
     /// Hand-overs selected by the harness, excluding those selected by the human.
     #[must_use]
     pub fn harness_takeovers(&self) -> usize {
-        self.past_holders.len()
+        self.past_holders.len().saturating_sub(self.human_handovers)
     }
 
     getter!(

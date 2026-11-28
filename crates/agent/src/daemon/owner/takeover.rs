@@ -160,7 +160,7 @@ impl Owner {
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         let member = found.member;
-        let taken_over = u32::try_from(member.past_holders().len()).unwrap_or(u32::MAX);
+        let taken_over = u32::try_from(member.harness_takeovers()).unwrap_or(u32::MAX);
         if replacement.mode() == ReplacementMode::Off || taken_over >= replacement.replacements().get() {
             return Ok(None);
         }
@@ -505,7 +505,7 @@ impl Owner {
             .find_task(task)
             .ok_or_else(|| OwnerError::LostTask { task: task.clone() })?;
         let held = found.member.agent().clone();
-        let taken_over = u32::try_from(found.member.past_holders().len()).unwrap_or(u32::MAX);
+        let taken_over = u32::try_from(found.member.harness_takeovers()).unwrap_or(u32::MAX);
         let names: Vec<AgentName> = replacement.agents().to_vec();
         let teams = self.parts.state.teams();
         let going = self.all_runs_going();
