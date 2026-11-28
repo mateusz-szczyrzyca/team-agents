@@ -11,7 +11,7 @@ mod steering_process {
 
     use agent_core::config::{AbsolutePath, RepoName};
     use agent_core::ids::{TaskId, TeamId};
-    use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, Timestamp};
+    use agent_core::state::{Crew, Member, MergeMode, Participant, State, TaskListText, Team, TeamMembers, Timestamp};
     use agent_runtime::store::Home;
     use rustix::process::{Pid, Signal};
 
@@ -111,6 +111,14 @@ mod steering_process {
     /// What `agent status` says of the task.
     fn status(home: &Home) -> String {
         text(run(home, &["status", TASK]).stdout)
+    }
+
+    fn task_status_line(home: &Home, task: &str) -> String {
+        text(run(home, &["status", task]).stdout)
+            .lines()
+            .find(|line| line.contains(task))
+            .unwrap_or_default()
+            .to_owned()
     }
 
     /// The status of the task, as the line of `agent status` that names it ends with it, and what follows it.
@@ -224,5 +232,95 @@ mod steering_process {
                 .all(|line| line["by"] == serde_json::json!({"kind": "cli"})),
             "{controls:?}"
         );
+    }
+
+    #[test]
+    fn team_coordinator_swapped_to_opencode_agent_runs_opencode_in_the_same_worktree() {
+        const COORD_TASK: &str = "task-20261111-153001-c001";
+        const MEMBER_TASK: &str = "task-20261111-153001-m001";
+        const TEAM_ID: &str = "team-20261111-153000-t001";
+
+        let dir = tempfile::tempdir().unwrap();
+        let home = Home::new(&abs(dir.path()));
+        let fake_claude = format!(
+            "{}/../agent-runtime/tests/fixtures/run/fake-claude.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let fake_opencode = format!(
+            "{}/../agent-runtime/tests/fixtures/run/fake-opencode.sh",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        std::fs::write(
+            home.config_file(),
+            format!(
+                "[agents.claude-1]\ncli = \"claude\"\n\
+                 [agents.claude-2]\ncli = \"claude\"\n\
+                 [agents.opencode-1]\ncli = \"opencode\"\n\
+                 [plan]\nbounces = 0\n\
+                 [tiers]\nnormal = [\"claude-1\", \"claude-2\", \"opencode-1\"]\n\
+                 [binaries]\nclaude = \"{fake_claude}\"\nopencode = \"{fake_opencode}\"\n\
+                 [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n\
+                 [disk]\nlow_free_gb = 0\nmin_free_gb = 0\n"
+            ),
+        )
+        .unwrap();
+
+        let coord_id = TaskId::from_str(COORD_TASK).unwrap();
+        let member_id = TaskId::from_str(MEMBER_TASK).unwrap();
+        let coord_member = Member::new(coord_id.clone(), Participant::Normal("claude-1".parse().unwrap()));
+        let team_member = Member::new(member_id.clone(), Participant::Normal("claude-2".parse().unwrap()));
+        let crew = Crew::team(TeamMembers {
+            coordinator: coord_member,
+            members: vec![team_member],
+            workers: vec![],
+        })
+        .unwrap();
+        let team = Team::new(
+            TeamId::from_str(TEAM_ID).unwrap(),
+            repo(),
+            Timestamp::from_str("2026-11-11T19:15:00Z").unwrap(),
+            MergeMode::Autopilot,
+            TaskListText::new(LIST.to_owned()).unwrap(),
+            crew,
+        );
+        let mut state = State::new();
+        state.insert_team(team).unwrap();
+        std::fs::write(home.state_file(), state.to_json().unwrap()).unwrap();
+
+        let coord_worktree = home.worktree_dir(&repo(), &coord_id);
+        std::fs::create_dir_all(&coord_worktree).unwrap();
+        std::fs::write(coord_worktree.join(".fake-scenario"), "busy").unwrap();
+
+        let member_worktree = home.worktree_dir(&repo(), &member_id);
+        std::fs::create_dir_all(&member_worktree).unwrap();
+        std::fs::write(member_worktree.join(".fake-scenario"), "busy").unwrap();
+
+        let daemon = start_daemon(&home);
+        eventually("coordinator task to run", || {
+            task_status_line(&home, COORD_TASK).contains("  running")
+        });
+
+        // Set scenario to serena-reads for opencode's run in the same worktree.
+        std::fs::write(coord_worktree.join(".fake-scenario"), "serena-reads").unwrap();
+
+        let swapped = run(&home, &["swap", COORD_TASK, "opencode-1"]);
+        assert!(swapped.status.success(), "{}", text(swapped.stderr));
+        let stdout = text(swapped.stdout);
+        assert!(
+            stdout.contains(&format!("{COORD_TASK}: claude-1 → opencode-1 (run stopped)")),
+            "{stdout}"
+        );
+
+        eventually("opencode to run in the same worktree", || {
+            coord_worktree.join(".fake-args").exists()
+        });
+
+        stop_daemon(daemon);
+
+        let final_state = State::from_json(&std::fs::read_to_string(home.state_file()).unwrap()).unwrap();
+        let found = final_state.find_task(&coord_id).unwrap();
+        assert_eq!(found.member.agent().name(), "opencode-1");
+        assert_eq!(found.member.past_holders().len(), 1);
+        assert_eq!(found.member.past_holders()[0].agent.name(), "claude-1");
     }
 }
