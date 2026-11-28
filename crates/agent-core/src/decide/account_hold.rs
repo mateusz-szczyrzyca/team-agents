@@ -2,8 +2,8 @@
 //! `hold_at`, until that window resets.
 //!
 //! [`hold`] is the whole rule and touches nothing: the daemon feeds it the account's `hold_at`, the readings the state
-//! keeps for it and the clock. Nothing is stored for the hold itself: it follows from the readings, so a restart
-//! of the daemon keeps it.
+//! keeps for it and the clock. [`held_until`] adds the holds the daemon recorded in the state when a hold began: a later
+//! reading below `hold_at` does not end such a hold before its window resets, and a restart of the daemon keeps it.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -74,14 +74,44 @@ pub fn held_accounts(state: &State, config: &Config, now: Timestamp) -> BTreeMap
 }
 
 /// The accounts of `config` that are held at `now` and until when: those a recorded hold of the state keeps until its
-/// end, and those a kept reading holds.
+/// end, and those a kept reading holds; an account in both is held until the later of the two ends.
+///
+/// A recorded hold counts only while its account has a `hold_at` in `config`, so removing the key lets go of the account.
 #[must_use]
-pub fn held_until(_state: &State, _config: &Config, _now: Timestamp) -> BTreeMap<AccountName, Timestamp> {
-    BTreeMap::new()
+pub fn held_until(state: &State, config: &Config, now: Timestamp) -> BTreeMap<AccountName, Timestamp> {
+    let mut held: BTreeMap<AccountName, Timestamp> = state
+        .account_holds()
+        .filter(|(account, until)| {
+            now < *until
+                && config
+                    .accounts()
+                    .get(*account)
+                    .is_some_and(|account| account.hold_at().is_some())
+        })
+        .map(|(account, until)| (account.clone(), until))
+        .collect();
+    for (account, hold) in held_accounts(state, config, now) {
+        if let Hold::Held { until, .. } = hold {
+            let end = held.entry(account).or_insert(until);
+            *end = (*end).max(until);
+        }
+    }
+    held
 }
 
 /// The investigators of `config` whose account is held at `now`.
 #[must_use]
-pub fn investigators_of_held_accounts(_state: &State, _config: &Config, _now: Timestamp) -> BTreeSet<InvestigatorName> {
-    BTreeSet::new()
+pub fn investigators_of_held_accounts(state: &State, config: &Config, now: Timestamp) -> BTreeSet<InvestigatorName> {
+    let held = held_until(state, config, now);
+    config
+        .investigators()
+        .iter()
+        .filter(|(_, investigator)| {
+            investigator
+                .account
+                .as_ref()
+                .is_some_and(|account| held.contains_key(account))
+        })
+        .map(|(name, _)| name.clone())
+        .collect()
 }
