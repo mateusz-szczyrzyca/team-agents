@@ -74,11 +74,11 @@ async fn running_member_swapped_to_lower_tier() {
         }
     );
 
-    rig .state_where("glm-1 finished the task", |state| {
-            let member = state.find_task(&member_task).unwrap().member;
-            member.agent().name() == "glm-1" && member.status() == TaskStatus::Waiting
-        })
-        .await;
+    rig.state_where("glm-1 finished the task", |state| {
+        let member = state.find_task(&member_task).unwrap().member;
+        member.agent().name() == "glm-1" && member.status() == TaskStatus::Waiting
+    })
+    .await;
 
     let takeover = rig.prompt(&member_task, 2).await;
     assert!(
@@ -237,14 +237,19 @@ async fn in_team_is_refused() {
     .await;
     rig.start().await;
     let (team, tasks) = rig
-        .run(&["claude-1", "claude-2"], PARALLEL, MergeMode::Autopilot, None)
+        .run(
+            &["claude-1", "claude-2"],
+            PARALLEL,
+            MergeMode::Autopilot,
+            Some("claude-1"),
+        )
         .await;
 
     let (kind, message) = refusal(
         ask(
             &rig,
             Command::Swap(SwapRequest {
-                task: tasks[1].clone(),
+                task: tasks[0].clone(),
                 agent: "claude-2".parse().unwrap(),
             }),
         )
@@ -252,7 +257,7 @@ async fn in_team_is_refused() {
     );
 
     assert_eq!(kind, FailureKind::Conflict);
-    assert_eq!(message, format!("claude-2 is already in {team} as {}", tasks[0]));
+    assert_eq!(message, format!("claude-2 is already in {team} as {}", tasks[1]));
 
     rig.stop().await.unwrap();
 }
