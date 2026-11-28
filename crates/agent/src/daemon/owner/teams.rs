@@ -689,6 +689,7 @@ impl Owner {
 
     /// Makes the members' states on the bus those their tasks have, and starts the tasks of the members the bus woke.
     async fn reconcile_bus(&mut self, team_id: &TeamId, look: &mut Look) -> Result<(), OwnerError> {
+        Box::pin(self.sync_shift_bus(team_id)).await?;
         let Some(team) = self.parts.state.team(team_id) else {
             return Ok(());
         };

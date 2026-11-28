@@ -25,7 +25,7 @@ fn a_history_of_version_27_is_upgraded_and_keeps_its_logs() {
         .unwrap()
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 37);
+    assert_eq!(version, 38);
     assert_eq!(Reader::open(&path).unwrap().daemon_logs().unwrap().len(), 1);
 }
 

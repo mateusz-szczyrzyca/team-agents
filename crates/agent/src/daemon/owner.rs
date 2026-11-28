@@ -53,6 +53,7 @@ mod round_limit;
 mod round_state;
 mod rounds;
 mod session_account;
+mod shift;
 #[cfg(test)]
 mod shutdown_tests;
 mod snapshots;
@@ -702,8 +703,8 @@ pub(super) struct Owner {
     gate_stops: HashMap<TaskId, CancellationToken>,
     /// Replies whose arrival proves the gate service has finished using task files.
     gate_answers: JoinSet<()>,
-    /// The task that owns each outstanding gate answer.
-    gate_answer_tasks: HashMap<JoinId, TaskId>,
+    /// Gate and shift bookkeeping is boxed to keep lifecycle futures compact.
+    shift_tracking: Box<shift::Tracking>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
     /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
@@ -838,7 +839,7 @@ impl Owner {
             holds: HashMap::new(),
             gate_stops: HashMap::new(),
             gate_answers: JoinSet::new(),
-            gate_answer_tasks: HashMap::new(),
+            shift_tracking: Box::default(),
             gate: None,
             pulls: None,
             github: HashMap::new(),
@@ -931,6 +932,7 @@ impl Owner {
                 _ = tick.tick() => {
                     self.wake_due().await?;
                     self.look_at_every_team();
+                    self.check_lead_shifts().await?;
                 }
             }
         }

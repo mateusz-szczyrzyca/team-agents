@@ -930,6 +930,10 @@ mod takeover_tests;
 mod swap_tests;
 
 #[cfg(test)]
+#[path = "rounds/tests/shift.rs"]
+mod shift_tests;
+
+#[cfg(test)]
 #[path = "rounds/tests/last_step.rs"]
 mod last_step_tests;
 

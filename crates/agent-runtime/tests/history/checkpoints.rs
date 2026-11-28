@@ -39,7 +39,7 @@ fn a_version_32_history_keeps_its_rows_and_accepts_a_checkpoint_and_its_failure(
 
     let raw = Connection::open(&path).unwrap();
     let version: u32 = raw.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert_eq!(version, 37);
+    assert_eq!(version, 38);
     assert_eq!(rows(&raw).unwrap(), before);
     raw.execute(
         "INSERT INTO history_records (kind, key, at, team, payload, cut) VALUES ('checkpoint', NULL, '2026-11-26T09:01:00Z', 'team-20261126-100000-t0t0', '{\"event\":\"checkpoint\"}', '')",

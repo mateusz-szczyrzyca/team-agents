@@ -71,6 +71,10 @@ builds the prompt from `prompts/`, starts the agent's CLI with an MCP configurat
 records what the CLI does and acts on the `STATUS:` line of the agent's final message: done, questions for the
 human, failed, sleeping.
 
+With `[limits] lead_shift_minutes` enabled, a team's coordinator task passes between its agents in turns.
+The outgoing coordinator takes the incoming agent's member task; each task keeps its worktree, branch and
+checkpoint, and both agents continue in new sessions. See lead rotation below for eligibility and timing.
+
 The documents: [`docs/architecture.md`](docs/architecture.md) (the layout and the process model),
 [`docs/configuration.md`](docs/configuration.md), [`docs/state.md`](docs/state.md) (what is kept and how old states
 are read), [`docs/history.md`](docs/history.md), [`docs/log.md`](docs/log.md), [`docs/task-list.md`](docs/task-list.md),
@@ -600,13 +604,24 @@ debug decision `round_overdue` in the history, and its hand-over the log event `
 `reason = "round_overdue"`. `round_minutes = 0`, the default, turns it off.
 
 Lead rotation has a separate worked-time limit, `[limits] lead_shift_minutes` (`0` by default,
-`1`–`1440` minutes; the example gives `120`). The state counts each holder's completed run seconds; the
-selection rule includes the current run and resets the total when the task changes hands. It applies to a
+`1`–`1440` minutes; the example gives `120`). On its minute tick, the daemon counts each holder's completed run
+seconds and the current run, resetting the total when the task changes hands. It applies to a
 coordinator or a solo task once its round has a pull request. A round without one stays under `round_minutes`.
 Team candidates follow the original `agent run` order in a circle, skipping workers, running agents and agents
 whose own team task waits for answers. Solo candidates follow `[replacement] agents`, skipping refused
-providers and agents holding tasks of another open team. If none is free, the holder keeps working.
-This release supplies the state and selection rule; automatic daemon rotation is not enabled yet.
+providers and agents holding tasks of another open team. If none is free, the holder keeps working; the daemon
+logs `shift_no_free_agent` once for that shift and tries again on later ticks.
+
+A shift ends a running agent's run. An `agent gate` of that task may finish first, for at most 15 minutes.
+In a team, the incoming agent takes the coordinator task and the outgoing coordinator takes its member task;
+worktrees, branches, pull requests and checkpoints stay with their tasks. The bus announces the new holders
+and coordinator. For a solo task, the incoming agent takes the same worktree and branch as in a takeover.
+Each affected task continues in a new session briefed with reason `shift`. Shifts do not use the
+`[replacement] replacements` allowance. They record history decision `shift` and log `task_handed_over` with
+`reason = "shift"` for each task. `agent status` shows a lead's progress, for example `shift: 1h40m of 2h worked`.
+
+The history upgrades to schema 38 for `shift_no_free_agent`, preserving existing log IDs, links, search entries
+and cursors. Older daemons refuse this upgraded history; keep a backup before upgrading if you need to go back.
 
 The optional `lead_worked_secs` task field defaults to zero when loading older states and is omitted when zero.
 A holder session may record reason `shift`, also used for the briefing and history decision. Older daemons

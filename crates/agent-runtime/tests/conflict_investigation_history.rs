@@ -56,7 +56,7 @@ fn a_schema_35_database_keeps_daemon_logs_links_and_search_when_migrated_to_36()
 
     let raw = Connection::open(&path).unwrap();
     let after: u32 = raw.pragma_query_value(None, "user_version", |row| row.get(0)).unwrap();
-    assert_eq!(after, 37);
+    assert_eq!(after, 38);
     let stored: (i64, String, String, i64, String) = raw
         .query_row("SELECT id,message,fields,count,cut FROM daemon_logs", [], |row| {
             Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))

@@ -80,8 +80,21 @@ pub fn shift_target(task: &TaskId, team: &Team, state: &State, limits: &ShiftLim
     ShiftCheck::NoneFree
 }
 
+/// Formats minutes into human-readable span text such as `1h40m`, `2h`, or `45m`.
+#[must_use]
+pub fn format_span(minutes: u64) -> String {
+    let hours = minutes / 60;
+    let mins = minutes % 60;
+    match (hours, mins) {
+        (0, _) => format!("{mins}m"),
+        (h, 0) => format!("{h}h"),
+        (h, m) => format!("{h}h{m}m"),
+    }
+}
+
 /// Includes only positive elapsed time when the caller's clock precedes a run start.
-fn worked_secs(lead: &Member, now: Timestamp) -> u64 {
+#[must_use]
+pub fn worked_secs(lead: &Member, now: Timestamp) -> u64 {
     let running = lead.current_run().map_or(0, |run| {
         let seconds = (now.as_utc() - run.started_at().as_utc()).whole_seconds();
         u64::try_from(seconds).unwrap_or(0)

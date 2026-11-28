@@ -22,7 +22,7 @@ fn a_version_19_history_keeps_its_log_and_accepts_team_removal_after_upgrade() {
     let version: u32 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 37);
+    assert_eq!(version, 38);
     let logs = Reader::open(&path).unwrap().daemon_logs().unwrap();
     assert_eq!(
         logs.iter().map(|entry| entry.event().as_str()).collect::<Vec<_>>(),

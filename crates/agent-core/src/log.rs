@@ -272,6 +272,8 @@ pub enum LogEvent {
     FindingsShown,
     /// Optional findings could not be loaded or prepared; the run starts without them.
     FindingsUnavailable,
+    /// A lead task reached its shift boundary but no eligible replacement agent was free; logged once per shift.
+    ShiftNoFreeAgent,
 }
 
 impl Keyword for LogEvent {
@@ -364,7 +366,8 @@ impl LogEvent {
             | Self::InvestigationAnswered
             | Self::InvestigationRequeued
             | Self::InvestigationFailed
-            | Self::TaskWaitForFreeAgent => LogLevel::Info,
+            | Self::TaskWaitForFreeAgent
+            | Self::ShiftNoFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
