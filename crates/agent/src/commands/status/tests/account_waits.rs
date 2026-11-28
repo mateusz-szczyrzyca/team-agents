@@ -156,7 +156,7 @@ async fn the_status_reads_the_accounts_that_hold_a_task() {
 
     let text = String::from_utf8(out).unwrap();
     assert!(
-        text.contains("reviewer     inv-codex  queued, waiting for account inv-shared (1/1 runs)\n"),
+        text.contains("reviewer     inv-codex [inv-shared]  queued, waiting for account inv-shared (1/1 runs)\n"),
         "{text}"
     );
 }
