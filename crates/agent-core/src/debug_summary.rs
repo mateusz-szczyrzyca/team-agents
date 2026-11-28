@@ -1080,6 +1080,7 @@ fn render_with_redaction(
                     | SummarySection::DaemonLog
                     | SummarySection::Bus
                     | SummarySection::Notifications
+                    | SummarySection::Accounts
             ) {
                 continue;
             }
