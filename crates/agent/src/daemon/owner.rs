@@ -38,6 +38,8 @@ mod owned_request;
 mod plan;
 mod pool_wait;
 #[cfg(test)]
+mod reading_tests;
+#[cfg(test)]
 mod refusal_fix_tests;
 mod reminder;
 mod removal;
