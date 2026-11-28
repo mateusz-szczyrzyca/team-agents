@@ -54,6 +54,20 @@ pub fn hold(hold_at: Option<HoldAt>, readings: &[KeptReading], now: Timestamp) -
 /// state keeps for them. An account that is not held is not listed.
 #[must_use]
 pub fn held_accounts(state: &State, config: &Config, now: Timestamp) -> BTreeMap<AccountName, Hold> {
-    let _ = (state, config, now);
-    BTreeMap::new()
+    state
+        .limit_readings()
+        .live(now)
+        .into_iter()
+        .filter_map(|(owner, readings)| match owner {
+            ReadingOwner::Account(account) => {
+                let hold_at = config.accounts().get(account)?.hold_at();
+                match hold(hold_at, &readings, now) {
+                    Hold::Open => None,
+                    held @ Hold::Held { .. } => Some((account.clone(), held)),
+                }
+            }
+            // An agent without an account has no `hold_at`: only accounts are held.
+            ReadingOwner::Agent(_) => None,
+        })
+        .collect()
 }

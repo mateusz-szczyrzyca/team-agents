@@ -27,6 +27,7 @@ mod gate;
 mod history;
 #[cfg(test)]
 mod hold_tests;
+mod holds;
 mod idle;
 #[cfg(test)]
 mod investigation_failure_tests;
@@ -617,6 +618,9 @@ pub(super) struct Owner {
     /// The queued tasks that wait for their account to have room for another run; the wait is logged once per task, apart
     /// from the wait for the agent.
     account_waits: HashSet<TaskId>,
+    /// The accounts that are held at their `hold_at`, with the end of each hold, as the daemon has told: a hold that is
+    /// not here yet is told once when it begins, one that is gone is logged as ended.
+    account_holds: BTreeMap<AccountName, Timestamp>,
     /// What stops the run of each task that has one going, by task.
     cancels: HashMap<TaskId, CancellationToken>,
     /// The tasks whose run the human has stopped, and how: the end of the run decides their status.
@@ -803,6 +807,7 @@ impl Owner {
             in_flight: HashSet::new(),
             agent_waits: HashSet::new(),
             account_waits: HashSet::new(),
+            account_holds: BTreeMap::new(),
             cancels: HashMap::new(),
             halts: HashMap::new(),
             wakes: HashMap::new(),
@@ -978,6 +983,7 @@ impl Owner {
             self.wakes.insert(task, at);
         }
         self.wake_held_tasks(now);
+        self.remember_holds(now);
         self.hangs.extend(recovery.hangs);
         self.record_recovered_ends(&recovery.interrupted);
         self.snapshot_interrupted(&recovery.interrupted, now).await;
@@ -1078,10 +1084,12 @@ impl Owner {
         // remain governed by their pause and explicit human resume.
         let now = Timestamp::now(&self.parts.clock)?;
         let refused = self.parts.state.refused_agents_at(now);
+        let held = self.held_account_names(now);
         let queued: Vec<Queued> = waiting
             .into_iter()
-            // No run of an account starts while its pause lasts; the tasks wait in the queue, not failed.
+            // No run of an account starts while its pause or its hold lasts; the tasks wait in the queue, not failed.
             .filter(|item| !self.account_is_paused(item.agent.as_str(), now))
+            .filter(|item| !self.agent_is_held(item.agent.as_str(), &held))
             .filter(|item| {
                 !(refused.contains(&item.agent)
                     && (matches!(self.reasons.get(&item.task), Some(Why::Assigned(_)))
@@ -3198,6 +3206,7 @@ impl Owner {
     async fn wake_due(&mut self) -> Result<(), OwnerError> {
         let now = Timestamp::now(&self.parts.clock)?;
         self.resume_accounts(now);
+        self.update_holds(now).await;
         let waiting: Vec<TaskId> = self.wakes.keys().cloned().collect();
         for task in waiting {
             let Some(found) = self.parts.state.find_task(&task) else {

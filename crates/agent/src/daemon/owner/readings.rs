@@ -33,6 +33,7 @@ impl Owner {
                 .state
                 .keep_limit_readings(&owner, &run.readings, run.read_at, now);
         }
+        self.update_holds(now).await;
         self.save().await
     }
 
