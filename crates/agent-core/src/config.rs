@@ -9,7 +9,9 @@ mod accounts;
 #[cfg(test)]
 #[path = "config/accounts/tests.rs"]
 mod accounts_tests;
-pub use accounts::{Account, AccountError, AccountName, AccountSecretsError, EnvValue, OwnerName};
+pub use accounts::{
+    Account, AccountError, AccountName, AccountSecretsError, EnvValue, HoldAt, HoldAtOutOfRange, OwnerName,
+};
 mod investigations;
 pub use investigations::Investigations;
 mod idle;

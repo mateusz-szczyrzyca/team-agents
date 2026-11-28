@@ -8,6 +8,7 @@
 //! what the daemon is to do, never doing it: no file, process or network is touched here (`docs/architecture.md`).
 
 pub mod account_candidates;
+pub mod account_hold;
 pub mod account_pause;
 pub mod account_slot;
 pub mod asleep;
