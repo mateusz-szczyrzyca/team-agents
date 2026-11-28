@@ -15,6 +15,7 @@ use std::str::FromStr;
 
 use agent_core::cli::{McpServerKind, RunMode};
 use agent_core::config::{AbsolutePath, CommandLine, Config};
+use agent_core::decide::account_slot::{AccountSlot, slot_of};
 use agent_core::decide::assign::first_free_worker;
 use agent_core::decide::pool::{
     LastServed, PoolWorker, Requires, next_pool_worker_in_turn, provider_of, second_try_pool_worker_in_turn,
@@ -1348,6 +1349,10 @@ impl Owner {
                 capabilities: &req.requires,
             };
 
+            // An account has its limit of runs over all its agents: a worker whose account has them going is not free, and
+            // the request stays queued until one of those runs ends. The runs are counted anew for each request: the
+            // one given to a worker a moment ago is among them.
+            let going = self.all_runs_going();
             let chosen = {
                 let pool_workers: Vec<PoolWorker<'_>> = pool_workers_data
                     .iter()
@@ -1355,7 +1360,11 @@ impl Owner {
                         name: &w.name,
                         provider: &w.provider,
                         capabilities: w.capabilities.as_slice(),
-                        busy: w.busy,
+                        busy: w.busy
+                            || matches!(
+                                slot_of(&self.parts.settings.config, &w.name, &going),
+                                AccountSlot::Full(_)
+                            ),
                         runs: w.runs,
                         unsettled: w.unsettled,
                     })
