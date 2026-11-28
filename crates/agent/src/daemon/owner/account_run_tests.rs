@@ -10,10 +10,11 @@ use crate::fixtures::{at, run, task};
 /// The pair of tasks of the fixture with the run of task 1 going.
 fn one_running() -> State {
     let mut state = pair_state();
-    let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
-    member.transition(TaskStatus::Running).unwrap();
-    member.begin_run(run(1), at(0), None).unwrap();
-    drop(member);
+    {
+        let (_, mut member) = state.find_task_mut(&task(1)).unwrap();
+        member.transition(TaskStatus::Running).unwrap();
+        member.begin_run(run(1), at(0), None).unwrap();
+    }
     state
 }
 
