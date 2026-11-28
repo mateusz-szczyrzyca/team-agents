@@ -535,3 +535,12 @@ fn a_last_run_that_ended_in_another_way_keeps_its_word_when_the_daemon_went_down
     assert_eq!(told_ends(&runs, Trouble::DaemonDown), ["DONE"]);
     assert_eq!(told_ends(&[], Trouble::DaemonDown), Vec::<&str>::new());
 }
+
+#[tokio::test]
+async fn a_briefing_after_shift_says_so() {
+    assert_eq!(reason_word(Trouble::Shift), "shift");
+    let mut cut = facts(Completeness::All);
+    cut.reason = Trouble::Shift;
+    let text = render(&cut).await;
+    assert!(text.contains("`shift`"), "{text}");
+}

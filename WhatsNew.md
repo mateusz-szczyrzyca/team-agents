@@ -9,6 +9,14 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.156.0 · agent-core 0.156.0 — 28.11.2026 — PR #376
+
+### Enhancements
+- [agent] [agent-core] Tasks keep the current holder's worked seconds across restarts and recognize the `shift` briefing reason. Lead rotation can select the next free agent after a worked-time limit; automatic daemon shifts follow in a later release.
+
+### Configuration
+- [agent-core] new: `[limits] lead_shift_minutes` (default `0`, disabled; `1`–`1440`) — worked minutes per coordinator or solo holder before selecting the next free agent, once the round has a pull request. The example uses `120`; this release provides selection and accounting, with automatic shifts to follow.
+
 ## agent 0.155.0 · agent-core 0.155.0 · agent-runtime 0.138.0 — 28.11.2026 — PR #375
 
 ### New features

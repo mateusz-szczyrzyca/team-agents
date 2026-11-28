@@ -591,6 +591,20 @@ is never stopped by this limit, nor a worker or a reviewer. The cut counts as no
 debug decision `round_overdue` in the history, and its hand-over the log event `task_handed_over` with
 `reason = "round_overdue"`. `round_minutes = 0`, the default, turns it off.
 
+Lead rotation has a separate worked-time limit, `[limits] lead_shift_minutes` (`0` by default,
+`1`–`1440` minutes; the example gives `120`). The state counts each holder's completed run seconds; the
+selection rule includes the current run and resets the total when the task changes hands. It applies to a
+coordinator or a solo task once its round has a pull request. A round without one stays under `round_minutes`.
+Team candidates follow the original `agent run` order in a circle, skipping workers, running agents and agents
+whose own team task waits for answers. Solo candidates follow `[replacement] agents`, skipping refused
+providers and agents holding tasks of another open team. If none is free, the holder keeps working.
+This release supplies the state and selection rule; automatic daemon rotation is not enabled yet.
+
+The optional `lead_worked_secs` task field defaults to zero when loading older states and is omitted when zero.
+A holder session may record reason `shift`, also used for the briefing and history decision. Older daemons
+reject a state with a nonzero `lead_worked_secs` or the new reason; restore the pre-upgrade state before
+downgrading. Existing states and history rows remain readable.
+
 **Returns of a lead.** When the lead of a team sends the work of a member back instead of taking it, it ends its final
 message with a line `RETURNED: <item>` beside `STATUS:` (its role text says so). The daemon counts the line only where
 its own facts agree: the member's last run on the item ended `DONE` and the member is started again for it. The count is
