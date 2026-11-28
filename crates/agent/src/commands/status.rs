@@ -200,8 +200,8 @@ impl Activity {
 
     /// What one render of the status takes from the configuration and from the state of the daemon, each file read once:
     /// the line counting the runs going per configured CLI across `teams` (when at least one run is going), the account
-    /// each agent and investigator runs with, the lines of the paused accounts and of the agents their provider refused
-    /// (`None` when nothing is paused or refused), and what each queued task of `teams` whose account has its `max_runs`
+    /// each agent and investigator runs with, the lines of the paused accounts, of the agents their provider refused
+    /// and of the limit readings the state keeps (`None` when there is none of them), and what each queued task of `teams` whose account has its `max_runs`
     /// going says of it. A missing configuration or state file is the only reason one of them is omitted.
     ///
     /// # Errors
@@ -1254,14 +1254,14 @@ pub(crate) struct Reads {
     cli_runs: Option<String>,
     /// The account each agent and investigator of the configuration runs with.
     accounts: members::Accounts,
-    /// The lines of the paused accounts and of the agents their provider refused, when there are any.
+    /// The lines of the paused accounts, of the agents their provider refused and of the kept limit readings, when there are any.
     provider_lines: Option<String>,
     /// What each queued task whose account has its `max_runs` going says of it, by task.
     account_waits: BTreeMap<TaskId, String>,
 }
 
-/// The lines of the accounts that are paused at `now` and the line of the agents their provider refused, in `zone`;
-/// `None` when nothing is paused or refused.
+/// The lines of the accounts that are paused at `now`, the line of the agents their provider refused and the lines of
+/// the limit readings that have not reset, in `zone`; `None` when there is none of them.
 fn provider_lines(state: &agent_core::state::State, now: Timestamp, zone: Zone) -> Option<String> {
     let accounts = accounts::account_lines(state.account_pauses(), now, zone);
     let agents = refusals::refused_line(&state.refusals_at(now), zone);
