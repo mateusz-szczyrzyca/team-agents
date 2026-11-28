@@ -60,3 +60,25 @@ fn state_without_worked_secs_reads_as_zero() {
     let state = old_state();
     assert_eq!(state.find_task(&task()).unwrap().member.lead_worked_secs(), 0);
 }
+
+#[test]
+fn team_tasks_trade_holders_and_record_human_handover() {
+    let mut state = worked_state();
+    let team_id = state.teams()[0].id().clone();
+    let coord_task = state.teams()[0].crew().coordinator().unwrap().task().clone();
+    let member_task = task();
+    let coord_before = state.find_task(&coord_task).unwrap().member.agent().clone();
+    let member_before = state.find_task(&member_task).unwrap().member.agent().clone();
+
+    state.trade_team_tasks(&team_id, &coord_task, &member_task, at()).unwrap();
+
+    let coord_after = state.find_task(&coord_task).unwrap().member;
+    let member_after = state.find_task(&member_task).unwrap().member;
+
+    assert_eq!(coord_after.agent(), &member_before);
+    assert_eq!(member_after.agent(), &coord_before);
+    assert_eq!(coord_after.lead_worked_secs(), 0);
+    assert_eq!(member_after.lead_worked_secs(), 0);
+    assert_eq!(coord_after.past_holders().last().unwrap().agent, coord_before);
+    assert_eq!(member_after.past_holders().last().unwrap().agent, member_before);
+}

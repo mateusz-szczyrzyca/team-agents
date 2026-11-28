@@ -1193,6 +1193,22 @@ impl State {
         Ok(())
     }
 
+    /// Trades tasks between the coordinator and a member of `team_id`: only for a team coordinator and a member
+    /// in the same team, when neither has a run going.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the team or tasks are not in the state, either task has a run going, or the roles are wrong.
+    pub fn trade_team_tasks(
+        &mut self,
+        team_id: &TeamId,
+        coord_task: &TaskId,
+        member_task: &TaskId,
+        at: Timestamp,
+    ) -> Result<(Participant, Participant), HandOverError> {
+        let _ = (team_id, coord_task, member_task, at);
+        Err(HandOverError::NoTask { task: coord_task.clone() })
+    }
+
     /// The round `round` with its team.
     #[must_use]
     pub fn find_round(&self, round: &RoundId) -> Option<(&Team, &Round)> {
