@@ -25,6 +25,8 @@ mod findings;
 mod fixture;
 mod gate;
 mod history;
+#[cfg(test)]
+mod hold_tests;
 mod idle;
 #[cfg(test)]
 mod investigation_failure_tests;

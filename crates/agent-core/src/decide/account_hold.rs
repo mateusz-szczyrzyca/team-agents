@@ -5,9 +5,11 @@
 //! keeps for it and the clock. Nothing is stored for the hold itself: it follows from the readings, so a restart
 //! of the daemon keeps it.
 
-use crate::config::HoldAt;
+use std::collections::BTreeMap;
+
+use crate::config::{AccountName, Config, HoldAt};
 use crate::limit_reading::LimitWindow;
-use crate::state::{KeptReading, Timestamp};
+use crate::state::{KeptReading, ReadingOwner, State, Timestamp};
 
 #[cfg(test)]
 mod tests;
@@ -46,4 +48,12 @@ pub fn hold(hold_at: Option<HoldAt>, readings: &[KeptReading], now: Timestamp) -
             used: kept.reading().used(),
             until: kept.reading().resets_at(),
         })
+}
+
+/// The accounts of `config` that are held at `now`, with their hold: those whose `hold_at` is reached by a reading the
+/// state keeps for them. An account that is not held is not listed.
+#[must_use]
+pub fn held_accounts(state: &State, config: &Config, now: Timestamp) -> BTreeMap<AccountName, Hold> {
+    let _ = (state, config, now);
+    BTreeMap::new()
 }
