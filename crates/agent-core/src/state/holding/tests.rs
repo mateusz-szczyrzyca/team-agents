@@ -607,3 +607,5 @@ fn human_swap_to_worker_is_refused_without_changing_state() {
         State::from_json(&before).expect("the unchanged state loads again");
     }
 }
+
+mod shift_work_tests;

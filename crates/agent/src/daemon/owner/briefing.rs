@@ -1064,6 +1064,7 @@ fn reason_note(texts: &HarnessPrompts, reason: Trouble) -> Result<Option<String>
         | Trouble::Failed
         | Trouble::RoundOverdue
         | Trouble::Human
+        | Trouble::Shift
         | Trouble::Swap => Ok(None),
     }
 }
@@ -1228,6 +1229,7 @@ pub(super) const fn reason_word(reason: Trouble) -> &'static str {
         Trouble::RoundOverdue => "round_overdue",
         Trouble::Human => "human",
         Trouble::Swap => "swap",
+        Trouble::Shift => "shift_pending",
         Trouble::AccountChanged => "account_changed",
     }
 }

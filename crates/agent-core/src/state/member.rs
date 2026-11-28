@@ -82,6 +82,9 @@ pub struct Member {
     status: TaskStatus,
     /// Its runs, oldest first.
     runs: Vec<Run>,
+    /// Completed run seconds under the current holder; absent in legacy states.
+    #[serde(default, skip_serializing_if = "worked_is_zero")]
+    lead_worked_secs: u64,
     /// Its rounds of questions, oldest first.
     questions: Vec<Question>,
     /// What the daemon keeps of the task's plan; `None` for a task created before plans.
@@ -115,6 +118,11 @@ pub struct Member {
     role: Option<crate::kinds::Role>,
 }
 
+/// Preserve the old serialized shape when no work has accrued.
+fn worked_is_zero(seconds: &u64) -> bool {
+    *seconds == 0
+}
+
 /// Why a task begins a new session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionStart {
@@ -137,6 +145,9 @@ struct MemberWire {
     /// See [`Member`]; a member written without runs has none.
     #[serde(default)]
     runs: Vec<Run>,
+    /// Completed work defaults to zero for states written before shifts.
+    #[serde(default)]
+    lead_worked_secs: u64,
     /// See [`Member`]; a member written without questions has none.
     #[serde(default)]
     questions: Vec<Question>,
@@ -475,6 +486,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: Some(PlanKeeping::new()),
             plan_judging: true,
@@ -504,6 +516,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: Some(PlanKeeping::default()),
             plan_judging: false,
@@ -525,6 +538,7 @@ impl Member {
             agent,
             status: TaskStatus::Queued,
             runs: Vec::new(),
+            lead_worked_secs: 0,
             questions: Vec::new(),
             plan: None,
             plan_judging: false,
@@ -593,6 +607,12 @@ impl Member {
     }
 
     getter!("Where the task is in its life.", pub const fn status(&self) -> TaskStatus = self.status);
+
+    /// Completed run seconds worked since the current holder took the task.
+    #[must_use]
+    pub const fn lead_worked_secs(&self) -> u64 {
+        self.lead_worked_secs
+    }
 
     getter!("The runs, oldest first.", pub fn runs(&self) -> &[Run] = &self.runs);
 
@@ -1177,6 +1197,7 @@ mod tests {
                 agent: wire.agent,
                 status: wire.status,
                 runs: wire.runs,
+                lead_worked_secs: 0,
                 questions: wire.questions,
                 plan: wire.plan,
                 plan_judging: wire.plan_judging,
@@ -1841,3 +1862,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "member/shift_tests.rs"]
+mod shift_tests;
