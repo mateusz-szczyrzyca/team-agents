@@ -95,7 +95,11 @@ impl Owner {
             if self.in_flight.contains(task)
                 || self.parked.contains_key(task)
                 || self.request_checking.values().any(|checking| checking.task() == task)
-                || self.gate_answer_tasks.values().any(|owner| owner == task)
+                || self
+                    .shift_tracking
+                    .gate_answer_tasks
+                    .values()
+                    .any(|owner| owner == task)
             {
                 return Ok(Hold::Running);
             }

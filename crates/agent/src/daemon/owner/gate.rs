@@ -148,7 +148,7 @@ impl Owner {
                 );
             }
         });
-        self.gate_answer_tasks.insert(handle.id(), task);
+        self.shift_tracking.gate_answer_tasks.insert(handle.id(), task);
     }
 
     /// Records that the gate service has released a task's files.
@@ -157,7 +157,7 @@ impl Owner {
         joined: Result<(tokio::task::Id, ()), tokio::task::JoinError>,
     ) -> Result<(), OwnerError> {
         let (id, ()) = joined.map_err(OwnerError::GateAnswer)?;
-        self.gate_answer_tasks.remove(&id);
+        self.shift_tracking.gate_answer_tasks.remove(&id);
         Ok(())
     }
 

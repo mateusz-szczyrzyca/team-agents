@@ -73,10 +73,8 @@ pub(super) fn line(
     member: &MemberSummary,
     team: &TeamSummary,
     columns: Columns,
-    accounts: &Accounts,
+    notes: &super::Notes<'_>,
     activity: &dyn Fn(&TaskId) -> Option<String>,
-    waits: &dyn Fn(&TaskId) -> Option<String>,
-    shifts: &dyn Fn(&TaskId) -> Option<String>,
     zone: Zone,
 ) -> String {
     let waiting = member.open_question.map_or_else(String::new, |number| {
@@ -94,7 +92,7 @@ pub(super) fn line(
         .held_by
         .as_ref()
         .map_or_else(String::new, |held| format!(", for {held}"));
-    let shift = shifts(&member.task).map_or_else(String::new, |said| format!(", {said}"));
+    let shift = (notes.shifts)(&member.task).map_or_else(String::new, |said| format!(", {said}"));
     // Only a task that runs is active now: what a task that waits last did is in its log.
     let active = (member.status == TaskStatus::Running)
         .then(|| activity(&member.task))
@@ -102,7 +100,7 @@ pub(super) fn line(
         .map_or_else(String::new, |said| format!(", {said}"));
     // A queued task whose account has its most runs going says so; a task that runs or ended waits for nothing.
     let account_wait = (member.status == TaskStatus::Queued)
-        .then(|| waits(&member.task))
+        .then(|| (notes.waits)(&member.task))
         .flatten()
         .map_or_else(String::new, |said| format!(", {said}"));
     let status = match member.role {
@@ -118,7 +116,7 @@ pub(super) fn line(
         "  {}  {:<role_width$}  {:<agent_width$}  {status}{account_wait}{failed}{blocked}{renewed}{taken_over}{returned}{shift}{active}{waiting}",
         member.task,
         member.role.to_string(),
-        label(member, accounts),
+        label(member, notes.extras.accounts),
     )
 }
 

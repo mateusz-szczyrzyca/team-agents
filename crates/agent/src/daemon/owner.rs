@@ -703,12 +703,8 @@ pub(super) struct Owner {
     gate_stops: HashMap<TaskId, CancellationToken>,
     /// Replies whose arrival proves the gate service has finished using task files.
     gate_answers: JoinSet<()>,
-    /// The task that owns each outstanding gate answer.
-    gate_answer_tasks: HashMap<JoinId, TaskId>,
-    /// When the daemon started waiting for a running gate of a task to finish before shifting.
-    gate_wait_since: HashMap<TaskId, Timestamp>,
-    /// Lead tasks for which shift_no_free_agent was logged during the current shift waiting period.
-    shift_no_free_logged: HashSet<TaskId>,
+    /// Gate and shift bookkeeping is boxed to keep lifecycle futures compact.
+    shift_tracking: Box<shift::Tracking>,
     /// The queue of the gate service; `None` for an owner that runs without one, which refuses every gate.
     gate: Option<GateQueue>,
     /// The autopilot; `None` for an owner that runs without one: no pull request is opened.
@@ -843,9 +839,7 @@ impl Owner {
             holds: HashMap::new(),
             gate_stops: HashMap::new(),
             gate_answers: JoinSet::new(),
-            gate_answer_tasks: HashMap::new(),
-            gate_wait_since: HashMap::new(),
-            shift_no_free_logged: HashSet::new(),
+            shift_tracking: Box::default(),
             gate: None,
             pulls: None,
             github: HashMap::new(),

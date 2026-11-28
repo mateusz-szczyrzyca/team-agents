@@ -258,7 +258,11 @@ impl Owner {
                 self.in_flight.contains(*task)
                     || self.parked.contains_key(*task)
                     || self.request_checking.values().any(|checking| checking.task() == *task)
-                    || self.gate_answer_tasks.values().any(|owner| owner == *task)
+                    || self
+                        .shift_tracking
+                        .gate_answer_tasks
+                        .values()
+                        .any(|owner| owner == *task)
             })
             .cloned()
             .collect();
@@ -365,7 +369,12 @@ impl Owner {
             {
                 return Ok(Err(failure));
             }
-            while self.gate_answer_tasks.values().any(|task| tasks.contains(task)) {
+            while self
+                .shift_tracking
+                .gate_answer_tasks
+                .values()
+                .any(|task| tasks.contains(task))
+            {
                 if let Some(joined) = self.gate_answers.join_next_with_id().await {
                     self.gate_answer_done(joined)?;
                 }

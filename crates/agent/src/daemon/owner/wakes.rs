@@ -54,6 +54,27 @@ pub(super) enum Wake {
 }
 
 impl Owner {
+    /// Leaves a shift announcement unread for the next useful run without waking an idle teammate for it.
+    pub(super) fn hold_shift_notice(&mut self, task: &TaskId, message: NonZeroU64) {
+        let count = self.parts.settings.config.limits().wake_ups_per_message;
+        self.wake_counts.insert(
+            task.clone(),
+            WakeCount {
+                message: Some(message),
+                count,
+                stopped: true,
+                unreadable_told: false,
+            },
+        );
+        self.parts.state.record_wake_delivery(
+            task.clone(),
+            Some(WakeDelivery::Delivered {
+                message: Some(message),
+                count,
+            }),
+        );
+    }
+
     /// Wakes `task`, a member of `team_id` that the bus woke, unless it leads a team whose fix response waits to be published or it was woken
     /// for this message as often as the configuration allows.
     ///

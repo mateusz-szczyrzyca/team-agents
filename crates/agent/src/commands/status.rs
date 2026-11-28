@@ -1167,8 +1167,7 @@ fn render_with_notes(
 ) -> String {
     let Notes {
         extras: Extras { under, accounts },
-        waits,
-        shifts,
+        ..
     } = notes;
     if teams.is_empty() {
         return NO_TEAMS.to_owned();
@@ -1234,16 +1233,14 @@ fn render_with_notes(
                 team.members
                     .iter()
                     .filter(|member| members::listed(member))
-                    .map(|member| members::line(member, team, columns, accounts, activity, waits, shifts, zone)),
+                    .map(|member| members::line(member, team, columns, &notes, activity, zone)),
             );
             lines.extend(served.iter().map(|worker| workers::line(worker, columns)));
             lines.push(tasks_line(team));
             continue;
         }
         for member in &team.members {
-            lines.push(members::line(
-                member, team, columns, accounts, activity, waits, shifts, zone,
-            ));
+            lines.push(members::line(member, team, columns, &notes, activity, zone));
             if let Some(steps) = team.task_plans.get(&member.task) {
                 for step in steps {
                     lines.push(render_plan_step(step));
@@ -1299,7 +1296,7 @@ pub(crate) fn shifts(
         })
         .filter_map(|member| {
             let found = state.find_task(&member.task)?;
-            let worked_secs = agent_core::decide::shift::worked_secs(&found.member, now);
+            let worked_secs = agent_core::decide::shift::worked_secs(found.member, now);
             let worked_minutes = worked_secs / 60;
             Some((
                 member.task.clone(),
