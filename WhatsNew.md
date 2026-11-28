@@ -9,11 +9,16 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
-## agent 0.149.0 · agent-core 0.149.0 · agent-runtime 0.136.0 — 27.11.2026 — PR #362
+## agent 0.150.0 · agent-core 0.150.0 · agent-runtime 0.136.0 — 28.11.2026 — PR #362
 
 ### New features
 - [agent] [agent-core] [agent-runtime] A session belongs to its account: when the account of an agent changes while its task is open, the next run starts a new session from the briefing of `agent renew`, with the reason `account_changed`, instead of resuming the old one. No new session is counted against the task. An investigator, which works for no round, is told in its prompt that the account changed, and given the plan its session before saved in its worktree.
 - [agent-core] `state.json` keeps the account each task's session began under (`session_accounts`, written only when there are any); a state without it loads as before.
+
+## agent 0.149.0 · agent-core 0.149.0 — 28.11.2026 — PR #363
+
+### New features
+- [agent] [agent-core] A human's swap skips only the tier rule, allowing tasks to be handed over to any configured tier except workers, with new socket command `Swap` on protocol 10, trouble reason `swap`, and typed refusal causes. An older daemon cannot read a state holding `swap`.
 
 ## agent 0.148.0 · agent-core 0.148.0 — 27.11.2026 — PR #361
 

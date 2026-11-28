@@ -69,7 +69,7 @@ pub use findings::{
     RaisedFinding, Reconciled, RecordedFinding, SecondOpinion, Verification, VerifierAnswers, reconcile,
 };
 pub use gate::{GateOutcome, GateRecord, GateResult, GateTree};
-pub use holding::{HandOverError, Holding};
+pub use holding::{Choice, HandOverError, Holding};
 pub use item::{
     AdvanceError, AskReviewsError, Completion, ConflictInvestigation, FixPass, FixingWithoutFixPass, InvalidAdvance,
     InvalidReviews, ItemMut, ItemPhase, ItemProgress, MergeConflict, NotWorkedOn, PhaseKind, PullRequest, Rejection,
@@ -1034,14 +1034,34 @@ impl State {
         Ok(member.start_waiting(at))
     }
 
-    /// Gives `task` to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a solo
-    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
-    /// that the state it leaves loads again.
+    /// Hands `task` over to `holder` at `at`, keeping the agent that held it among its past holders: only the task of a
+    /// solo agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its
+    /// team, so that the state it leaves loads again.
+    ///
+    /// The choice is [`Choice::Harness`].
     ///
     /// # Errors
     /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
     /// `holder` is of a lower tier than the agent that holds it or is in its team, or a run of it is going.
     pub fn hand_over_task(&mut self, task: &TaskId, holder: Participant, at: Timestamp) -> Result<(), HandOverError> {
+        self.hand_over_task_as(task, holder, Choice::Harness, at)
+    }
+
+    /// Hands `task` over to `holder`, chosen by `choice` at `at`: only for an agent outside the team, of a solo
+    /// agent, a coordinator or a member, not in the middle of a run, and only to an agent that is not in its team, so
+    /// that the state it leaves loads again.
+    ///
+    /// # Errors
+    /// [`HandOverError`] when the task is not in the state, is of a worker or a reviewer, is held by `holder` already,
+    /// `choice` is [`Choice::Harness`] and `holder` is of a lower tier than the agent that holds it, `holder` is in its
+    /// team or is a worker, or a run of it is going.
+    pub fn hand_over_task_as(
+        &mut self,
+        task: &TaskId,
+        holder: Participant,
+        choice: Choice,
+        at: Timestamp,
+    ) -> Result<(), HandOverError> {
         let no_task = || HandOverError::NoTask { task: task.clone() };
         let team = self
             .teams
@@ -1064,13 +1084,20 @@ impl State {
         if held_by == holder {
             return Err(HandOverError::SameHolder { task: task.clone() });
         }
-        // A task is never given to a lower tier; for a solo agent's, a coordinator's or a member's task, the tiers
-        // left are the ones the crew allows it.
-        if crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier()) {
+        // A task is never given to a lower tier by the harness; a human swap allows any tier.
+        if choice == Choice::Harness
+            && crate::decide::replacement::rank(holder.tier()) < crate::decide::replacement::rank(held_by.tier())
+        {
             return Err(HandOverError::LowerTier {
                 task: task.clone(),
                 holder: holder.tier(),
                 held: held_by.tier(),
+            });
+        }
+        if let Participant::Worker(agent) = &holder {
+            return Err(HandOverError::Worker {
+                task: task.clone(),
+                agent: agent.clone(),
             });
         }
         let in_team = team

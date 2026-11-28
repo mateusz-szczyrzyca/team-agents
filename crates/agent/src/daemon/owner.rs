@@ -3298,6 +3298,10 @@ impl Owner {
                 kind: FailureKind::Internal,
                 message: "a removal is carried out by the owner, not answered from the state".to_owned(),
             }),
+            Command::Swap(_) => Err(Failure {
+                kind: FailureKind::Internal,
+                message: "a swap is carried out by the owner, not answered from the state".to_owned(),
+            }),
         }
     }
 
