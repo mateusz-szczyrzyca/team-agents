@@ -26,6 +26,8 @@
 #   ratelimit             the provider answers HTTP 429
 #   rate-limit-window     the account's rate-limit window rejects the request: a rejected rate_limit_event whose resetsAt is
 #                         12:00 UTC on 2026-11-12, then an error result of HTTP 429 whose text says the reset is at 3pm
+#   reading               ends like `done` after a rate_limit_event of Claude Code 2.1 that tells the five-hour window used by
+#                         62% until 12:00 UTC on 2026-11-12 and the seven-day window used by 41% until 12:00 UTC on 2026-11-16
 #   env                   ends like `done` after writing PATH and FAKE_SECRET to .fake-env
 #   env-git               ends like `done` after writing to .fake-git who a commit would be by and how git would sign it
 #   env-home              ends like `done` after writing AGENTS_HOME to .fake-home
@@ -314,6 +316,12 @@ case $scenario in
     printf '{"type":"rate_limit_event","rate_limit_info":{"status":"rejected","resetsAt":1794484800,"rateLimitType":"five_hour"},"session_id":"%s"}\n' "$session"
     result true 'API Error: 429 rate limit exceeded · resets 3pm'
     exit 1
+    ;;
+  reading)
+    init
+    printf '{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.62,"resetsAt":1794484800},"seven_day":{"utilization":0.41,"resetsAt":1794830400}}},"session_id":"%s"}\n' "$session"
+    say "working"
+    result false 'Finished the item.\nSTATUS: DONE'
     ;;
   env)
     printf 'PATH=%s\nFAKE_SECRET=%s\n' "$PATH" "${FAKE_SECRET:-}" > .fake-env
