@@ -170,12 +170,6 @@ fn account_no_agent_names() {
 }
 
 #[test]
-fn max_runs_and_hold_at_are_unknown_keys_until_their_items() {
-    let text = "[accounts.comp-claude]\nowner = \"comp\"\nhold_at = 0.9\n";
-    assert!(matches!(load(text), ConfigError::Parse(_)), "hold_at = 0.9");
-}
-
-#[test]
 fn variable_in_env_and_account_env() {
     let config =
         Config::from_toml_str(&with_account("[accounts.comp-claude.env]\nCLAUDE_CONFIG_DIR = \"/x\"")).unwrap();
