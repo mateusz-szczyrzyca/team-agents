@@ -9,6 +9,7 @@ use agent_core::kinds::Role;
 use agent_core::state::{AccountPause, State};
 use agent_core::status::TaskStatus;
 
+use super::Step;
 use super::fixture::{Daemon, pair_state};
 use super::takeover::Takeover;
 use crate::daemon::notice::Notice;
@@ -165,6 +166,33 @@ async fn a_lead_of_a_paused_account_is_not_given_the_work_of_a_member() {
         owner.parts.state.find_task(&task(2)).unwrap().member.agent().name(),
         "claude-2"
     );
+}
+
+// Rule: a member's task that has no step of the ladder left and whose lead's account is paused waits — the ladder
+// answers `Waits`, the task is not failed and is woken at the end of the lead's pause.
+#[tokio::test]
+async fn a_member_with_no_step_left_waits_for_a_lead_of_a_paused_account() {
+    let mut state = pair_state();
+    pause(&mut state, "claude-paused");
+    let daemon = Daemon::new(&state, None);
+    let path = daemon.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let header = "[agents.claude-1]\ncli = \"claude\"\n";
+    assert!(text.contains(header), "{text}");
+    let text = text.replace(header, &format!("{header}account = \"claude-paused\"\n"));
+    std::fs::write(
+        &path,
+        format!(
+            "{text}\n[accounts.claude-paused]\nowner = \"claude\"\n[replacement]\nmode = \"lead\"\nnew_sessions = 0\n"
+        ),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    let step = owner.climb(&task(2), Role::Member, Trouble::Failed, 1).unwrap();
+
+    assert_eq!(step, Step::Waits);
+    assert_eq!(owner.wakes.get(&task(2)), Some(&FAR.parse().unwrap()));
 }
 
 // Rule: the agents that take nothing new at a moment are those of paused accounts, investigators included.
