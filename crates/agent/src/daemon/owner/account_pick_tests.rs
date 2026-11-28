@@ -276,3 +276,46 @@ async fn a_task_waiting_for_a_lead_of_a_paused_account_is_woken_at_the_reset_aft
 
     assert_eq!(owner.wakes.get(&task(2)), Some(&FAR.parse().unwrap()));
 }
+
+// Rule: a member's task that its own agent's account holds is woken, after a restart of the daemon, at the end of that
+// pause, also when the account of its lead is paused until later: the lead's pause matters only to a task that waits
+// for the lead.
+#[tokio::test]
+async fn a_task_held_for_its_own_account_is_woken_at_its_own_reset_after_a_restart() {
+    let mut state = pair_state();
+    pause(&mut state, "claude-paused");
+    state.record_account_pause(
+        "claude-own".parse().unwrap(),
+        Some(AccountPause {
+            until: at(10),
+            reason: Limit::RateLimit,
+        }),
+    );
+    let daemon = Daemon::new(&state, None);
+    let path = daemon.home.config_file();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let lead = "[agents.claude-1]\ncli = \"claude\"\n";
+    let member = "[agents.claude-2]\ncli = \"claude\"\n";
+    assert!(text.contains(lead) && text.contains(member), "{text}");
+    let text = text
+        .replace(lead, &format!("{lead}account = \"claude-paused\"\n"))
+        .replace(member, &format!("{member}account = \"claude-own\"\n"));
+    std::fs::write(
+        &path,
+        format!(
+            "{text}\n[accounts.claude-paused]\nowner = \"claude\"\n[accounts.claude-own]\nowner = \"claude\"\n"
+        ),
+    )
+    .unwrap();
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    owner.hold(&task(2), at(10));
+    let team = owner.locate(&task(2)).unwrap().team;
+    owner
+        .move_to(&task(2), &team, TaskStatus::Paused, &mut Vec::new())
+        .unwrap();
+    owner.wakes.clear();
+
+    owner.wake_held_tasks(at(0));
+
+    assert_eq!(owner.wakes.get(&task(2)), Some(&at(10)));
+}
