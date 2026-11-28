@@ -34,6 +34,7 @@ impl fmt::Display for ReadingOwner {
 
 /// A reading with the moment it was read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct KeptReading {
     /// What the CLI told of the window.
     reading: LimitReading,
