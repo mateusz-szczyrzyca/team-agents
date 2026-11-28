@@ -325,7 +325,6 @@ impl LogEvent {
             | Self::InvestigationKindUnknown
             | Self::CheckpointFailed
             | Self::FindingsUnavailable
-            | Self::ShiftNoFreeAgent
             | Self::HistoryRecordIncomplete => LogLevel::Warn,
             Self::TeamChanged
             | Self::FindingsShown
@@ -367,7 +366,8 @@ impl LogEvent {
             | Self::InvestigationAnswered
             | Self::InvestigationRequeued
             | Self::InvestigationFailed
-            | Self::TaskWaitForFreeAgent => LogLevel::Info,
+            | Self::TaskWaitForFreeAgent
+            | Self::ShiftNoFreeAgent => LogLevel::Info,
             Self::DecisionTaken | Self::OutsideCallCompleted | Self::PeerGone => LogLevel::Debug,
         }
     }
