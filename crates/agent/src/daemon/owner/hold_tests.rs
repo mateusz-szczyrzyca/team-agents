@@ -140,8 +140,6 @@ const PAST_THE_RESET: time::Duration = time::Duration::hours(17);
 #[tokio::test]
 async fn reading_above_hold_at_holds_the_account() {
     let mut daemon = daemon_with_three_tasks();
-    let events = Events::default();
-    let _logged = tracing::subscriber::set_default(tracing_subscriber::registry().with(events.clone()));
     daemon.start().await;
 
     daemon.status_is(1, TaskStatus::Waiting).await;
@@ -164,18 +162,9 @@ async fn reading_above_hold_at_holds_the_account() {
         "one notification tells the hold: {:?}",
         daemon.notifications()
     );
-    let begun = events.decisions("account_held");
-    assert_eq!(begun.len(), 1);
-    assert_eq!(begun[0]["account"], "claude-main");
-    assert!(events.decisions("account_released").is_empty());
-
     daemon.clock.advance(PAST_THE_RESET);
     daemon.status_is(2, TaskStatus::Waiting).await;
     daemon.stop().await.unwrap();
-
-    let released = events.decisions("account_released");
-    assert_eq!(released.len(), 1);
-    assert_eq!(released[0]["account"], "claude-main");
 }
 
 // Rule: the hold follows from the readings the state keeps, so a daemon that starts again keeps it, tells it once
@@ -257,4 +246,47 @@ async fn a_reading_below_hold_at_picks_everybody() {
     let free = pickable(&daemon, &["claude-1", "claude-2", "other-1"]).await;
 
     assert_eq!(free, ["claude-1", "claude-2", "other-1"]);
+}
+
+// Rule: the log says once when a hold begins and once when it ends, and the human is told once, whatever number of
+// times the holds are looked at.
+#[tokio::test]
+async fn a_hold_is_logged_when_it_begins_and_when_it_ends_and_told_once() {
+    let daemon = Daemon::new(&state_with_reading(0.6), None);
+    configure(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+    let events = Events::default();
+    let _logged = tracing::subscriber::set_default(tracing_subscriber::registry().with(events.clone()));
+
+    owner.update_holds(at(0)).await;
+    owner.update_holds(at(1)).await;
+    owner.update_holds(at(3600)).await;
+    owner.update_holds(at(3601)).await;
+
+    let begun = events.decisions("account_held");
+    assert_eq!(begun.len(), 1);
+    assert_eq!(begun[0]["account"], "claude-main");
+    let released = events.decisions("account_released");
+    assert_eq!(released.len(), 1);
+    assert_eq!(released[0]["account"], "claude-main");
+    let told: Vec<String> = daemon
+        .notifications()
+        .into_iter()
+        .filter(|text| text.contains("claude-main is held"))
+        .collect();
+    assert_eq!(told.len(), 1, "{told:?}");
+    assert!(told[0].contains("claude-1") && told[0].contains("claude-2"), "{told:?}");
+}
+
+// Rule: a daemon that starts on a state that holds an account does not tell the hold again: it began before.
+#[tokio::test]
+async fn a_hold_that_began_before_a_restart_is_not_told_again() {
+    let daemon = Daemon::new(&state_with_reading(0.6), None);
+    configure(&daemon);
+    let (mut owner, _sinks) = daemon.bare_owner().await;
+
+    owner.remember_holds(at(0));
+    owner.update_holds(at(1)).await;
+
+    assert_eq!(daemon.notifications(), Vec::<String>::new());
 }
