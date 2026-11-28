@@ -898,7 +898,8 @@ another task; and when the task is done, or is the task of a worker, a reviewer 
 
 The swap counts no new session against `[replacement] new_sessions`, and `[replacement] replacements` does not refuse
 it: it is applied with `replacements = 0`. Human swaps keep the full holder history and do not consume the
-daemon’s automatic takeover allowance. `state.json` records their count separately; older states load with zero.
+daemon’s automatic takeover allowance. `state.json` records their count separately; older states load with zero. A count greater than the recorded
+number of past holders is rejected as an inconsistent state.
 
 The success line’s previous holder and `(run stopped)` marker come from a status snapshot taken before the swap.
 A run that starts or ends between the status request and the swap can make that marker stale; a run still starting

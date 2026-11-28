@@ -436,6 +436,16 @@ pub enum QuestionError {
 /// Why a member's runs or questions are out of order, found when reading a state.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum MemberError {
+    /// Human handovers cannot outnumber the recorded holders they replaced.
+    #[error("task {task}: {handovers} human handovers exceed its {holders} past holders")]
+    HumanHandovers {
+        /// The task whose history is inconsistent.
+        task: TaskId,
+        /// The persisted count of human handovers.
+        handovers: usize,
+        /// The number of recorded past holders.
+        holders: usize,
+    },
     /// A run that is not the last is still going.
     #[error("task {task}: run {run} is still going but is not the last")]
     RunningNotLast {
@@ -1142,6 +1152,13 @@ fn check_questions(task: &TaskId, questions: &[Question]) -> Result<(), MemberEr
 
 /// Checks the run, question and renewal invariants of a complete member.
 fn check_member(member: &Member) -> Result<(), MemberError> {
+    if member.human_handovers > member.past_holders.len() {
+        return Err(MemberError::HumanHandovers {
+            task: member.task.clone(),
+            handovers: member.human_handovers,
+            holders: member.past_holders.len(),
+        });
+    }
     check_runs(&member.task, &member.runs)?;
     check_questions(&member.task, &member.questions)?;
     if let Some(renewals) = &member.renewals {
