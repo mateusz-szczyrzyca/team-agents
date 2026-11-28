@@ -607,3 +607,31 @@ fn human_swap_to_worker_is_refused_without_changing_state() {
         State::from_json(&before).expect("the unchanged state loads again");
     }
 }
+
+#[test]
+fn human_swaps_preserve_the_harness_budget_across_reload() {
+    let mut state = old_state();
+    state
+        .hand_over_task_as(&task(), normal("claude-9"), Choice::Human, at())
+        .unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.past_holders().len(), 1);
+    assert_eq!(member.harness_takeovers(), 0);
+    state.hand_over_task(&task(), normal("claude-8"), at()).unwrap();
+    let loaded = State::from_json(&state.to_json().unwrap()).unwrap();
+    let member = loaded.find_task(&task()).unwrap().member;
+    assert_eq!(member.past_holders().len(), 2);
+    assert_eq!(member.harness_takeovers(), 1);
+}
+
+#[test]
+fn member_without_human_handovers_reads_as_zero() {
+    let member: crate::state::Member = serde_json::from_str(include_str!(
+        "../../../tests/fixtures/member-before-human-handovers.json"
+    ))
+    .unwrap();
+    let written = serde_json::to_value(&member).unwrap();
+    assert_eq!(written["human_handovers"], 0);
+    assert_eq!(member.harness_takeovers(), member.past_holders().len());
+}

@@ -104,6 +104,9 @@ pub struct Member {
     /// The agents that held the task before the one that holds it now, oldest first; empty until it is handed over.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     past_holders: Vec<holding::Holding>,
+    /// Human-selected hand-overs, excluded from the harness replacement allowance.
+    #[serde(default)]
+    human_handovers: usize,
     /// When the task began to wait for its agent, which runs another task at its limit; `None` when it does not wait.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     waiting_since: Option<Timestamp>,
@@ -161,6 +164,9 @@ struct MemberWire {
     /// See [`Member`]; a member written before hand-overs existed has none.
     #[serde(default)]
     past_holders: Vec<holding::Holding>,
+    /// Human-selected hand-overs, excluded from the harness replacement allowance.
+    #[serde(default)]
+    human_handovers: usize,
     /// See [`Member`]; legacy tasks have no holder boundary.
     #[serde(default)]
     holder_after_run: Option<RunId>,
@@ -482,6 +488,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -511,6 +518,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -532,6 +540,7 @@ impl Member {
             running_check: None,
             renewals: None,
             past_holders: Vec::new(),
+            human_handovers: 0,
             waiting_since: None,
             holder_after_run: None,
             role: None,
@@ -600,6 +609,12 @@ impl Member {
         "The agents that held the task before the one that holds it now, oldest first.",
         pub fn past_holders(&self) -> &[holding::Holding] = &self.past_holders
     );
+
+    /// Hand-overs selected by the harness, excluding those selected by the human.
+    #[must_use]
+    pub fn harness_takeovers(&self) -> usize {
+        self.past_holders.len()
+    }
 
     getter!(
         "How many times the task was started in a new session again; `None` until it was.",
@@ -1184,6 +1199,7 @@ mod tests {
                 running_check: wire.running_check,
                 renewals: None,
                 past_holders: Vec::new(),
+                human_handovers: 0,
                 waiting_since: None,
                 holder_after_run: None,
                 role: None,
