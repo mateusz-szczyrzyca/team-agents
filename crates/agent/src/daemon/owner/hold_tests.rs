@@ -149,7 +149,7 @@ async fn reading_above_hold_at_holds_the_account() {
 
     let state = daemon.state();
     assert_eq!(state.find_task(&task(2)).unwrap().member.status(), TaskStatus::Queued);
-    assert!(state.find_task(&task(2)).unwrap().member.runs().is_empty());
+    assert_eq!(state.find_task(&task(2)).unwrap().member.runs().len(), 0);
     assert!(told.contains("claude-1") && told.contains("claude-2"), "{told}");
     let told_once = daemon
         .notifications()
