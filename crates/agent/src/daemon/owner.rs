@@ -534,6 +534,8 @@ enum Step {
     HandedOver,
     /// The member's task stops and its lead is given the work.
     ToLead,
+    /// Only the lead could take it, and its account is paused: the task is paused until the reset, not failed.
+    Waits,
     /// Nobody takes it: the task fails and the human decides.
     Failed,
 }
@@ -972,6 +974,7 @@ impl Owner {
             let next = match self.restart_anew(task, &located)? {
                 Step::NewSession | Step::HandedOver => Some(TaskStatus::Queued),
                 Step::ToLead => Some(TaskStatus::Stopped),
+                Step::Waits => Some(TaskStatus::Paused),
                 Step::SameSession | Step::Failed => None,
             };
             if let Some(status) = next {
@@ -1712,6 +1715,7 @@ impl Owner {
                 match self.restart_anew(task, &located)? {
                     Step::NewSession | Step::HandedOver => status = TaskStatus::Queued,
                     Step::ToLead => status = TaskStatus::Stopped,
+                    Step::Waits => status = TaskStatus::Paused,
                     Step::SameSession | Step::Failed => {}
                 }
             }
@@ -1719,7 +1723,7 @@ impl Owner {
             let notice = (status == TaskStatus::Failed).then_some(Notice::NoStatus { exit: None });
             self.commit(task, &located, now, events, notice).await?;
             // The lead is told of a failed task, and of a member's work that is its own now.
-            if failed && status != TaskStatus::Queued {
+            if failed && !matches!(status, TaskStatus::Queued | TaskStatus::Paused) {
                 self.after_run(task, &located, &RunEnd::NoStatus { exit_code: None }, None)?;
             }
             return Ok(());
@@ -2816,6 +2820,7 @@ impl Owner {
             // A declared failure is never resumed in its session, so SameSession does not come from the ladder for it.
             Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
             Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Waits => (TaskStatus::Paused, None),
             Step::Failed => (TaskStatus::Failed, Some(notice)),
         })
     }
@@ -2840,6 +2845,7 @@ impl Owner {
                 match self.climb(task, role, Trouble::TurnLimit, u32::try_from(count).unwrap_or(u32::MAX))? {
                     Step::SameSession | Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
                     Step::ToLead => (TaskStatus::Stopped, None),
+                    Step::Waits => (TaskStatus::Paused, None),
                     Step::Failed => (TaskStatus::Failed, Some(Notice::TurnLimitExhausted { count, limit })),
                 }
             }
@@ -2870,6 +2876,7 @@ impl Owner {
             }
             Step::NewSession | Step::HandedOver => (TaskStatus::Queued, None),
             Step::ToLead => (TaskStatus::Stopped, None),
+            Step::Waits => (TaskStatus::Paused, None),
             Step::Failed => (TaskStatus::Failed, Some(Notice::NoStatus { exit })),
         };
         Ok(next)
@@ -2903,6 +2910,10 @@ impl Owner {
             Step::ToLead => {
                 self.hangs.remove(task);
                 (TaskStatus::Stopped, None)
+            }
+            Step::Waits => {
+                self.hangs.remove(task);
+                (TaskStatus::Paused, None)
             }
             Step::Failed => {
                 self.hangs.remove(task);
@@ -2995,6 +3006,7 @@ impl Owner {
             None => match self.take_over(task, role, trouble)? {
                 takeover::Takeover::Agent => Step::HandedOver,
                 takeover::Takeover::Lead => Step::ToLead,
+                takeover::Takeover::Wait => Step::Waits,
                 takeover::Takeover::Nobody => Step::Failed,
             },
         };

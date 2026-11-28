@@ -67,6 +67,9 @@ pub(super) enum Takeover {
     Agent,
     /// The member's task stops and the team's lead is given its work.
     Lead,
+    /// Nobody for now: the only one that fits is the lead, whose account is paused. The task is paused until the reset
+    /// and carries on then, not failed.
+    Wait,
     /// Nobody: the task fails and the human decides, as before `[replacement] agents`.
     Nobody,
 }
