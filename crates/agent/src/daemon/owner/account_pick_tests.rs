@@ -108,35 +108,64 @@ async fn a_refused_coordinator_is_not_given_to_an_investigator_of_a_paused_accou
     assert_eq!(refused_and_replaced(&daemon, 1).await, "inv-3");
 }
 
-// Rule: a waiting task is not handed over to an investigator whose account is paused, as it is not to an agent.
-#[tokio::test]
-async fn an_investigator_of_a_paused_account_takes_no_waiting_task_over() {
-    let mut state = solo_state();
+/// A solo task held by the investigator `inv-held`, waiting past `busy_after` for its busy agent, with the free
+/// investigator `inv-1` as the only agent of `[replacement]`. Tiers must match for a hand-over, so the holder is an
+/// investigator too. With `paused` the account of `inv-1` is paused; returns whether the task changed hands and the name
+/// of its holder.
+async fn busy_wait_of_an_investigator(paused: bool) -> (bool, String) {
+    let crew =
+        agent_core::state::Crew::solo(crate::fixtures::member(1, crate::fixtures::investigator("inv-held"))).unwrap();
+    let team = agent_core::state::Team::new(
+        crate::fixtures::team_id(0),
+        crate::fixtures::repo(),
+        at(0),
+        agent_core::state::MergeMode::Autopilot,
+        agent_core::state::TaskListText::new(crate::fixtures::LIST.to_owned()).unwrap(),
+        crew,
+    );
+    let mut state = State::new();
+    state.insert_team(team).unwrap();
     state.start_waiting(&task(1), at(0)).unwrap();
-    pause(&mut state, "inv-paused");
+    if paused {
+        pause(&mut state, "inv-paused");
+    }
     let daemon = Daemon::new(&state, None);
-    let path = daemon.home.config_file();
-    let text = std::fs::read_to_string(&path).unwrap();
-    let header = "[investigators.inv-1]\ncli = \"claude\"\n";
-    assert!(text.contains(header), "{text}");
-    let text = text.replace(header, &format!("{header}account = \"inv-paused\"\n"));
-    std::fs::write(
-        &path,
-        format!(
-            "{text}\n[accounts.inv-paused]\nowner = \"inv\"\n[replacement]\nagents = [\"inv-1\"]\nbusy_after = 1\n"
-        ),
-    )
-    .unwrap();
+    write_config(
+        &daemon,
+        "[investigators.inv-held]\ncli = \"claude\"\n\
+         [investigators.inv-1]\ncli = \"claude\"\naccount = \"inv-paused\"\n\
+         [accounts.inv-paused]\nowner = \"inv\"\n\
+         [binaries]\nclaude = \"fake\"\n\
+         [replacement]\nagents = [\"inv-1\"]\nbusy_after = 1\n\
+         [repos.team-agents]\nbase_branch = \"main\"\ngate = [\"true\"]\n",
+    );
     daemon.clock.advance(time::Duration::seconds(2));
     let (mut owner, _sinks) = daemon.bare_owner().await;
 
     let changed = owner.hand_over_busy_wait(&task(1)).await.unwrap();
 
-    assert!(!changed, "an investigator of a paused account is not free");
-    assert_eq!(
-        owner.parts.state.find_task(&task(1)).unwrap().member.agent().name(),
-        "claude-1"
-    );
+    let holder = owner
+        .parts
+        .state
+        .find_task(&task(1))
+        .unwrap()
+        .member
+        .agent()
+        .name()
+        .to_owned();
+    (changed, holder)
+}
+
+// Rule: a waiting task is handed over to a free investigator of the holder's tier: the setup of the next test.
+#[tokio::test]
+async fn a_waiting_task_is_handed_to_a_free_investigator_of_an_account_that_runs() {
+    assert_eq!(busy_wait_of_an_investigator(false).await, (true, "inv-1".to_owned()));
+}
+
+// Rule: a waiting task is not handed over to an investigator whose account is paused, as it is not to an agent.
+#[tokio::test]
+async fn an_investigator_of_a_paused_account_takes_no_waiting_task_over() {
+    assert_eq!(busy_wait_of_an_investigator(true).await, (false, "inv-held".to_owned()));
 }
 
 // Rule: with `mode = "lead"` the work of a member goes to its lead — unless the lead's account is paused: nobody is
