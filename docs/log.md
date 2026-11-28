@@ -427,4 +427,9 @@ that were shown to the agent. These events are recorded in both the daemon's std
 |---|---|---|
 | `findings_shown` | `info` | Records which findings from other tasks were shown at the start of a run. Fields: `task` (the task ID that was shown the findings), `ids` (JSON-array text of finding IDs such as `["F-3", "F-8"]`), `scores` (JSON-array text of relevance scores for each finding, matching the order of `ids`). |
 | `findings_unavailable` | `warn` | Indicates that findings from other tasks could not be retrieved or processed for display. Fields: `task` (the task that was affected), `error` (a description of what went wrong). The run continues normally without the findings section. |
+
+### Lead shift events
+
+| Event | Level | Meaning |
+|---|---|---|
 | `shift_no_free_agent` | `info` | A lead task reached its shift boundary but no eligible replacement agent was free; logged once per shift with `task`, `holder` and `worked_minutes`. |

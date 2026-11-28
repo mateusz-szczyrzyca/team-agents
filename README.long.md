@@ -620,6 +620,9 @@ Each affected task continues in a new session briefed with reason `shift`. Shift
 `[replacement] replacements` allowance. They record history decision `shift` and log `task_handed_over` with
 `reason = "shift"` for each task. `agent status` shows a lead's progress, for example `shift: 1h40m of 2h worked`.
 
+The history upgrades to schema 38 for `shift_no_free_agent`, preserving existing log IDs, links, search entries
+and cursors. Older daemons refuse this upgraded history; keep a backup before upgrading if you need to go back.
+
 The optional `lead_worked_secs` task field defaults to zero when loading older states and is omitted when zero.
 A holder session may record reason `shift`, also used for the briefing and history decision. Older daemons
 reject a state with a nonzero `lead_worked_secs` or the new reason; restore the pre-upgrade state before

@@ -9,6 +9,16 @@ From PR #271 every crate has a version of its own: a pull request raises by `0.1
 code it changes, and only those, and the heading names them (`## agent 0.109.0 · agent-core 0.109.0 — ...`). Until
 0.108.0 the four crates shared one version, and the heading gave that one.
 
+## agent 0.158.0 · agent-core 0.158.0 · agent-runtime 0.139.0 — 28.11.2026 — PR pending
+
+### New features
+- [agent] [agent-core] The daemon rotates a coordinator or solo task to the next free agent after its worked-time limit. Team agents trade coordinator and member tasks, keeping each task's worktree, branch, pull request and checkpoint; both continue in new sessions. A running gate may finish first, for up to 15 minutes. Shifts do not use the replacement allowance.
+- [agent] Status shows a lead's worked time, for example `shift: 1h40m of 2h worked`. If no agent is free, the holder continues, the log records `shift_no_free_agent` once, and later minute ticks try again.
+- [agent-runtime] **Action:** History upgrades to schema 38 to record shifts without losing existing records. Keep a backup before upgrading if you need to return to an older daemon.
+
+### Configuration
+- [agent] changed: `[limits] lead_shift_minutes` (default `0`, disabled; `1`–`1440`) — now enables automatic daemon rotation on minute ticks once the round has a pull request. The example remains `120`; rounds without a pull request stay under `round_minutes`.
+
 ## agent 0.157.0 · agent-core 0.157.0 — 28.11.2026 — PR #378
 
 ### New features
