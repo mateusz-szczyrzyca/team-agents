@@ -596,7 +596,6 @@ A holder session may record reason `shift`, also used for the briefing and histo
 reject a state with a nonzero `lead_worked_secs` or the new reason; restore the pre-upgrade state before
 downgrading. Existing states and history rows remain readable.
 
-
 **Returns of a lead.** When the lead of a team sends the work of a member back instead of taking it, it ends its final
 message with a line `RETURNED: <item>` beside `STATUS:` (its role text says so). The daemon counts the line only where
 its own facts agree: the member's last run on the item ended `DONE` and the member is started again for it. The count is

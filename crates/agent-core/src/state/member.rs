@@ -1925,3 +1925,7 @@ mod tests {
 #[cfg(test)]
 #[path = "member/shift_tests.rs"]
 mod shift_tests;
+
+#[cfg(test)]
+#[path = "member/shift_compatibility_tests.rs"]
+mod shift_compatibility_tests;
