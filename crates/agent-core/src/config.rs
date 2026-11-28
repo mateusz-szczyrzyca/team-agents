@@ -2447,7 +2447,7 @@ workers = ["qwen", "qwen"]"#,
         }
         let error = format!("{:?}", failure("[limits]\nlead_shift_minutes = 1441\n"));
         assert!(error.contains("lead_shift_minutes"), "{error}");
-        assert!(error.contains("0") && error.contains("1440"), "{error}");
+        assert!(error.contains('0') && error.contains("1440"), "{error}");
     }
 
     #[test]

@@ -5,7 +5,6 @@ use crate::decide::ladder::Trouble;
 
 /// The legacy fixture with work recorded on the task before a holder change.
 fn worked_state() -> State {
-    let mut json: serde_json::Value = serde_json::from_str(&old_state().to_json().unwrap()).unwrap();
     fn record(value: &mut serde_json::Value) {
         match value {
             serde_json::Value::Object(object) => {
@@ -20,6 +19,7 @@ fn worked_state() -> State {
             _ => {}
         }
     }
+    let mut json: serde_json::Value = serde_json::from_str(&old_state().to_json().unwrap()).unwrap();
     record(&mut json);
     State::from_json(&json.to_string()).unwrap()
 }
