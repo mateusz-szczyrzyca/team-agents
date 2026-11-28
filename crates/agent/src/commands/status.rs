@@ -1025,7 +1025,7 @@ fn render_in(
     )
 }
 
-/// What [`render_with_requests`] writes under the lines of a team: the requests for workers under each task's plan,
+/// What [`render_with_accounts`] writes under the lines of a team: the requests for workers under each task's plan,
 /// and the workers that served the team before its count of tasks.
 #[derive(Clone, Copy)]
 struct Under<'a> {
@@ -1072,7 +1072,7 @@ fn render_with_requests(
     )
 }
 
-/// [`render_with_requests`] with the account of each agent that has one told after its name.
+/// `render_with_requests` with the account of each agent that has one told after its name.
 fn render_with_accounts(
     teams: &[TeamSummary],
     view: View,
