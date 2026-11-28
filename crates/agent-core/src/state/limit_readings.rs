@@ -72,8 +72,12 @@ impl KeptReading {
 /// A reading whose window has reset is dropped, kept or new; of two readings the one read later is kept, and the new
 /// one when both were read at the same moment, as the run that is settled last read last.
 #[must_use]
-pub fn keep_reading(kept: Option<KeptReading>, _new: KeptReading, _now: Timestamp) -> Option<KeptReading> {
-    kept
+pub fn keep_reading(kept: Option<KeptReading>, new: KeptReading, now: Timestamp) -> Option<KeptReading> {
+    let kept = kept.filter(|kept| !kept.is_over(now));
+    if new.is_over(now) {
+        return kept;
+    }
+    Some(newer(kept, new))
 }
 
 /// The one of `kept` and `new` that was read later; `new` when they were read together.
@@ -94,7 +98,19 @@ pub struct LimitReadings {
 
 impl LimitReadings {
     /// Keeps `readings` of `owner`, read at `read_at`, and forgets every reading that has reset by `now`.
-    pub fn keep(&mut self, _owner: &ReadingOwner, _readings: &[LimitReading], _read_at: Timestamp, now: Timestamp) {
+    pub fn keep(&mut self, owner: &ReadingOwner, readings: &[LimitReading], read_at: Timestamp, now: Timestamp) {
+        for reading in readings {
+            let windows = self.owners.entry(owner.clone()).or_default();
+            let window = reading.window();
+            match keep_reading(windows.get(&window).copied(), KeptReading::new(*reading, read_at), now) {
+                Some(kept) => {
+                    windows.insert(window, kept);
+                }
+                None => {
+                    windows.remove(&window);
+                }
+            }
+        }
         self.forget_over(now);
     }
 
@@ -109,8 +125,15 @@ impl LimitReadings {
     /// The readings that have not reset at `now`, by owner — accounts first, in the order of their names, then agents —
     /// each owner's readings in the order of [`LimitWindow`]; an owner without one is not listed.
     #[must_use]
-    pub fn live(&self, _now: Timestamp) -> Vec<(&ReadingOwner, Vec<KeptReading>)> {
-        Vec::new()
+    pub fn live(&self, now: Timestamp) -> Vec<(&ReadingOwner, Vec<KeptReading>)> {
+        self.owners
+            .iter()
+            .map(|(owner, windows)| {
+                let live: Vec<KeptReading> = windows.values().copied().filter(|kept| !kept.is_over(now)).collect();
+                (owner, live)
+            })
+            .filter(|(_, live)| !live.is_empty())
+            .collect()
     }
 
     /// Whether no reading is kept.

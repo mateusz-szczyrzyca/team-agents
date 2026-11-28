@@ -54,6 +54,7 @@ pub enum ResetTimeError {
 
 /// The state of one window at one moment.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(try_from = "StoredReading")]
 pub struct LimitReading {
     /// The window.
     window: LimitWindow,
@@ -61,6 +62,26 @@ pub struct LimitReading {
     used: f64,
     /// When the window resets.
     resets_at: Timestamp,
+}
+
+/// How a [`LimitReading`] is read from the state: its parts, checked by [`LimitReading::new`].
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredReading {
+    /// The window.
+    window: LimitWindow,
+    /// The share used, not yet checked.
+    used: f64,
+    /// When the window resets.
+    resets_at: Timestamp,
+}
+
+impl TryFrom<StoredReading> for LimitReading {
+    type Error = InvalidLimitReading;
+
+    fn try_from(stored: StoredReading) -> Result<Self, Self::Error> {
+        Self::new(stored.window, stored.used, stored.resets_at)
+    }
 }
 
 // A share is never NaN — every constructor and the deserializer refuse it — so equality is reflexive.
